@@ -4,6 +4,7 @@ import type { LlmErrorKind } from "./llm-types";
 import type { FlakeReport as SharedFlakeReport } from "../../shared/flake-analysis.mjs";
 import type { CostCurrency } from "../../shared/cost-units.mjs";
 import type { ProxySource, ProxyTraffic } from "../../shared/proxy-config.mjs";
+import type { TestIdAttributeOverride } from "../../shared/testid-attr.mjs";
 
 export type { CostCurrency };
 export type { ProxySource, ProxyTraffic };
@@ -89,6 +90,11 @@ export interface LocatorContext {
 export interface Locator {
   k: LocatorKind;
   v?: string;
+  /** For a testid locator: which test-id attribute matched at record time,
+   *  when it was not data-testid (mirror of main types). The generator emits
+   *  it as an attribute selector because `getByTestId` resolves only
+   *  data-testid — see shared/testid-attr.mjs. */
+  attr?: TestIdAttributeOverride;
   role?: string;
   name?: string;
   /** Index into the matches, when the recorder could not find a locator that

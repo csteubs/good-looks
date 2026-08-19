@@ -11,6 +11,7 @@ import { fileURLToPath } from "url";
 import { app, logger } from "@shell/backend";
 
 import { healKeyAnd, healKeyHasText, healKeyWithin } from "../../shared/heal-key.mjs";
+import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 
 import { sendToMain } from "./app-window.js";
 import { getScriptsDir, testStore } from "./test-store.js";
@@ -407,8 +408,14 @@ function signatureEnv(entries: readonly ShopifySignatureEntry[]): Record<string,
  *  healing silently stops happening with no error. */
 function healKeyBase(loc: Locator): string {
   switch (loc.k) {
-    case "testid":
-      return `testid|${loc.v ?? ""}`;
+    case "testid": {
+      // A testid on a non-default attribute is EMITTED as `locator("[…]")`,
+      // so at run time the fixture tags it through the `locator` factory —
+      // the key must therefore be the css key of that exact selector string,
+      // or every lookup for such a step misses.
+      const attr = testIdOverride(loc.attr);
+      return attr ? `css|${testIdSelector(attr, loc.v ?? "")}` : `testid|${loc.v ?? ""}`;
+    }
     case "label":
       return `label|${loc.v ?? ""}`;
     case "placeholder":

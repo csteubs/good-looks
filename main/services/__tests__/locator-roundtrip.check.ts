@@ -216,6 +216,31 @@ function main(): void {
     "punctuation and parens in hasText",
   );
 
+  // ── 7b. A test id that lives on another attribute ────────────────────────
+  //
+  // `getByTestId` resolves only data-testid (nothing here configures
+  // Playwright's testIdAttribute), so a locator recorded off data-test-id or
+  // data-test is emitted as an attribute selector — and the parser must read
+  // that selector back as the SAME testid locator, or a hand edit of the
+  // Script tab silently relabels the step and drops which attribute it meant.
+  roundTrip({ k: "testid", attr: "data-test-id", v: "save" }, "testid on data-test-id");
+  roundTrip({ k: "testid", attr: "data-test", v: "save" }, "testid on data-test");
+  roundTrip({ k: "testid", attr: "data-test", v: 'a"b' }, "a quote in a data-test value");
+  roundTrip({ k: "testid", attr: "data-test", v: "a\\b" }, "a backslash in a data-test value");
+  roundTrip(
+    {
+      k: "role",
+      role: "button",
+      name: "Edit",
+      ctx: { within: { k: "testid", attr: "data-test", v: "card" } },
+    },
+    "a data-test container",
+  );
+  roundTrip(
+    { k: "testid", attr: "data-test-id", v: "edit", nth: 1 },
+    "an indexed testid on data-test-id",
+  );
+
   // ── 8. A refinement the model still has no field for is REFUSED ──────────
   //
   // `.filter()` on the target (rather than on a container) has no counterpart

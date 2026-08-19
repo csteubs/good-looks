@@ -236,6 +236,28 @@ describe("buildPicked — the signals offered, and their prices", () => {
     expect(s?.resolves, "…which is the whole answer").toBe(true);
   });
 
+  it("offers a data-test container WITH its attribute, so the run can scope by it", () => {
+    // Same two-cards shape, but the cards spell their test ids as data-test.
+    // The offered container must carry which attribute matched — a bare
+    // testid here would generate getByTestId("billing-card") as the chain's
+    // container, and the run would find no container at all.
+    install(`
+      <section data-test="billing-card">
+        <h3>Billing</h3>
+        <button class="btn edit" data-qa="edit-billing">Edit</button>
+      </section>
+      <section data-test="shipping-card">
+        <h3>Shipping</h3>
+        <button class="btn edit" data-qa="edit-shipping">Edit</button>
+      </section>
+    `);
+    const p = pick(document.querySelector('[data-qa="edit-billing"]'));
+    const s = signal(p, "within", "section");
+    expect(s, "the enclosing section is offered as a container").toBeDefined();
+    expect(s?.ctx.within).toEqual({ k: "testid", attr: "data-test", v: "billing-card" });
+    expect(s?.count, "scoping to the billing card leaves one Edit button").toBe(1);
+  });
+
   it("prices a signal that does NOT disambiguate honestly", () => {
     // `class="btn edit"` is on both buttons. Offering it without a count would
     // invite the user to pin a property that narrows nothing — and because

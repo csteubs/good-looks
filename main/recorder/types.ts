@@ -9,9 +9,15 @@ import type { CostCurrency } from "../../shared/cost-units.mjs";
 // same guards the Settings pane offers options from, and the MCP server
 // applies the same rules to the runs it spawns.
 import type { ProxySource, ProxyTraffic } from "../../shared/proxy-config.mjs";
+// The test-id attribute vocabulary lives in shared/ because the selector it
+// produces is spelled identically by the generator, the runner's heal key,
+// the heal fixture and the renderer's locator renderings — see the header of
+// `shared/testid-attr.mjs`.
+import { TESTID_ATTRIBUTE_OVERRIDES, type TestIdAttributeOverride } from "../../shared/testid-attr.mjs";
 
 export type { CostCurrency };
 export type { ProxySource, ProxyTraffic };
+export type { TestIdAttributeOverride };
 
 export type StepType =
   | "goto"
@@ -128,6 +134,21 @@ export interface Locator {
   k: LocatorKind;
   /** value for testid/label/placeholder/text/css/xpath */
   v?: string;
+  /**
+   * For a testid locator: WHICH test-id attribute matched at record time,
+   * when it was not data-testid. Absent means data-testid — the only
+   * attribute `getByTestId` resolves, since nothing in this repo configures
+   * Playwright's `testIdAttribute`.
+   *
+   * This exists because the capture script accepts data-test-id and data-test
+   * as test ids too, and used to record all three as the same bare locator.
+   * The trainer's oracle counted matches across all three attributes, so the
+   * step was declared unique and replayed green — and the emitted
+   * `getByTestId()` then matched nothing on every run. The generator spells a
+   * non-default attribute out as an attribute selector instead; see
+   * shared/testid-attr.mjs for the one definition of that spelling.
+   */
+  attr?: TestIdAttributeOverride;
   /** aria role for role locators */
   role?: string;
   /** accessible name for role locators */
@@ -930,6 +951,15 @@ export function normalizeLocator(input: unknown, allowContext = true): Locator |
   if (v !== undefined) out.v = v;
   if (role !== undefined) out.role = role;
   if (name !== undefined) out.name = name;
+  // Allowlisted, not merely length-capped: the attribute is interpolated into
+  // an attribute SELECTOR by the generator, and only the two names in
+  // TESTID_ATTRIBUTE_OVERRIDES mean anything there. data-testid itself is
+  // deliberately not accepted — absent already means it, and a second spelling
+  // of the same locator would be a second heal-map key.
+  if (k === "testid") {
+    const attr = oneOf(l.attr, TESTID_ATTRIBUTE_OVERRIDES);
+    if (attr !== undefined) out.attr = attr;
+  }
   // `int`, not a typeof check. This field reaches the generator as a BARE
   // NUMERAL — `.nth(<here>)` — which is the exact shape that was remote code
   // execution the last time a numeric step field was trusted for having the

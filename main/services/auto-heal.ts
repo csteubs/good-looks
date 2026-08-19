@@ -80,6 +80,7 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
     if (!stepCtx) return loc;
     var out = { k: loc.k };
     if (loc.v != null) out.v = loc.v;
+    if (loc.attr != null) out.attr = loc.attr;
     if (loc.role != null) out.role = loc.role;
     if (loc.name != null) out.name = loc.name;
     out.ctx = stepCtx;
@@ -90,11 +91,10 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
   // is expressed in the same strategies the recorder understands.
   function candidatesFor(el) {
     var out = [];
-    var tid =
-      (el.getAttribute && (el.getAttribute("data-testid") ||
-        el.getAttribute("data-test-id") ||
-        el.getAttribute("data-test"))) || "";
-    if (tid) out.push({ k: "testid", v: tid });
+    // testIdLocatorOf (DOM_HELPERS) records WHICH attribute it found, so an
+    // applied heal resolves the same element the probe ranked.
+    var tid = testIdLocatorOf(el);
+    if (tid) out.push(tid);
     var role = roleOf(el);
     var nm = accName(el);
     if (role && nm) out.push({ k: "role", role: role, name: nm });
@@ -212,7 +212,11 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
   }
 
   function sameLocator(a, b) {
-    return !!a && !!b && a.k === b.k && a.v === b.v && a.role === b.role && a.name === b.name;
+    // \`attr\` too: {testid, v} and {testid, attr: "data-test", v} resolve
+    // DIFFERENT elements, so treating them as one would silently drop the
+    // second element's best candidate.
+    return !!a && !!b && a.k === b.k && a.v === b.v && a.attr === b.attr &&
+      a.role === b.role && a.name === b.name;
   }
 
   // \`resolveAllFor\` used to live here: a fourth near-copy of \`matchesFor\`,
