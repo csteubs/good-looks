@@ -263,11 +263,15 @@ export const UNIQUENESS_HELPERS = `
     if (!loc) return [];
     try {
       if (loc.k === "testid") {
-        return scanAll(
-          '[data-testid="' + cssEscape(loc.v) + '"],' +
-          '[data-test-id="' + cssEscape(loc.v) + '"],' +
-          '[data-test="' + cssEscape(loc.v) + '"]'
-        );
+        // ONLY the recorded attribute — the same one the generated source
+        // resolves. This used to scan all three test-id attributes for every
+        // testid locator, which is how a step recorded off data-test could be
+        // "unique" here while getByTestId found nothing on a run, and how a
+        // unique data-testid could be rejected because another attribute held
+        // the same value.
+        var tidAttr = (loc.attr === "data-test-id" || loc.attr === "data-test")
+          ? loc.attr : "data-testid";
+        return scanAll("[" + tidAttr + '="' + cssEscape(loc.v) + '"]');
       }
       if (loc.k === "css") return scanAll(loc.v);
       if (loc.k === "xpath") {
@@ -353,7 +357,7 @@ export const UNIQUENESS_HELPERS = `
           // the normalizer once — an index computed against the CONTEXT-
           // narrowed set, attached to a locator that had lost its context,
           // indexes a different set and points at a different element.
-          fallback = { k: loc.k, v: loc.v, role: loc.role, name: loc.name, nth: ix };
+          fallback = { k: loc.k, v: loc.v, attr: loc.attr, role: loc.role, name: loc.name, nth: ix };
           if (loc.ctx) fallback.ctx = loc.ctx;
         }
       }
@@ -445,11 +449,8 @@ export const PICKED_HELPERS = `
   // Every locator strategy that applies to this element, best-first.
   function candidatesFor(el) {
     var out = [];
-    var tid =
-      (el.getAttribute && (el.getAttribute("data-testid") ||
-        el.getAttribute("data-test-id") ||
-        el.getAttribute("data-test"))) || "";
-    if (tid) out.push({ k: "testid", v: tid });
+    var tid = testIdLocatorOf(el);
+    if (tid) out.push(tid);
     var role = roleOf(el);
     var nm = accName(el);
     if (role && nm) out.push({ k: "role", role: role, name: nm });
@@ -515,9 +516,8 @@ export const PICKED_HELPERS = `
    *  unique id, and a grouping role are the three that survive a redesign. */
   function scopeLocatorFor(el) {
     if (!el || el.nodeType !== 1 || !el.getAttribute) return null;
-    var tid = el.getAttribute("data-testid") || el.getAttribute("data-test-id") ||
-      el.getAttribute("data-test") || "";
-    if (tid) return { k: "testid", v: tid };
+    var tid = testIdLocatorOf(el);
+    if (tid) return tid;
     if (el.id && isUniqueId(el.id)) return { k: "css", v: "#" + cssEscape(el.id) };
     var role = roleOf(el);
     if (role && GL_SCOPE_ROLES.indexOf(role) >= 0) {
@@ -603,7 +603,7 @@ export const PICKED_HELPERS = `
   function contextSignalsFor(el, base) {
     var signals = [];
     function priced(sig, ctx) {
-      var probe = { k: base.k, v: base.v, role: base.role, name: base.name, ctx: ctx };
+      var probe = { k: base.k, v: base.v, attr: base.attr, role: base.role, name: base.name, ctx: ctx };
       sig.ctx = ctx;
       sig.count = matchesFor(probe).length;
       // Whether this signal ALONE is the whole answer. The UI leads with these:
@@ -642,7 +642,7 @@ export const PICKED_HELPERS = `
 
     return {
       base: base,
-      baseCount: matchesFor({ k: base.k, v: base.v, role: base.role, name: base.name }).length,
+      baseCount: matchesFor({ k: base.k, v: base.v, attr: base.attr, role: base.role, name: base.name }).length,
       signals: signals
     };
   }
@@ -724,6 +724,24 @@ export const DOM_HELPERS = `
   function cssEscape(s) {
     try { return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s); }
     catch (e) { return String(s); }
+  }
+
+  /** The element's test-id locator, or null. WHICH attribute matched is part
+   *  of the locator: \`getByTestId\` resolves only data-testid (nothing in this
+   *  app configures Playwright's testIdAttribute), so the other two spellings
+   *  must be recorded on the step or the generated spec resolves nothing while
+   *  the trainer counts a match. data-testid wins when an element carries more
+   *  than one, and carries no \`attr\` — absent means the default, so one
+   *  locator never has two spellings. */
+  function testIdLocatorOf(el) {
+    if (!el || !el.getAttribute) return null;
+    var v = el.getAttribute("data-testid");
+    if (v) return { k: "testid", v: v };
+    v = el.getAttribute("data-test-id");
+    if (v) return { k: "testid", attr: "data-test-id", v: v };
+    v = el.getAttribute("data-test");
+    if (v) return { k: "testid", attr: "data-test", v: v };
+    return null;
   }
 
   function txt(el) {
@@ -1031,11 +1049,8 @@ export function buildCaptureScript(nonce: string): string {
   // that cannot be ambiguous, and the recorder never has to record nothing.
   function locatorCandidates(el) {
     var out = [];
-    var tid =
-      (el.getAttribute && (el.getAttribute("data-testid") ||
-        el.getAttribute("data-test-id") ||
-        el.getAttribute("data-test"))) || "";
-    if (tid) out.push({ k: "testid", v: tid });
+    var tid = testIdLocatorOf(el);
+    if (tid) out.push(tid);
 
     var tag = el.tagName.toLowerCase();
     var role = roleOf(el);
@@ -1066,6 +1081,7 @@ export function buildCaptureScript(nonce: string): string {
     // key that JSON.stringify would drop unpredictably across the queue.
     var loc = { k: chosen.k };
     if (chosen.v != null) loc.v = chosen.v;
+    if (chosen.attr != null) loc.attr = chosen.attr;
     if (chosen.role != null) loc.role = chosen.role;
     if (chosen.name != null) loc.name = chosen.name;
     if (typeof chosen.nth === "number") loc.nth = chosen.nth;

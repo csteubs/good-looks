@@ -19,6 +19,7 @@
 
 import { randomUUID } from "crypto";
 
+import { parseTestIdSelector } from "../../shared/testid-attr.mjs";
 import { fromPlaywrightSameSite } from "../recorder/types.js";
 import type {
   AssertKind,
@@ -336,6 +337,16 @@ function parseBuilderAt(s: string, idx: number): { locator: Locator; rest: strin
   // begins with "xpath=" and matches nothing.
   if (locator.k === "css" && locator.v?.startsWith("xpath=")) {
     locator = { k: "xpath", v: locator.v.slice("xpath=".length) };
+  }
+  // `locator('[data-test-id="…"]')` is how the generator writes a testid that
+  // lives on an attribute `getByTestId` cannot resolve. Read it back as the
+  // SAME testid locator — left as css, every hand edit of the Script tab would
+  // silently relabel the step and drop which attribute it meant. A hand-written
+  // `[data-testid="…"]` is deliberately NOT converted: it resolves identically
+  // as css everywhere, so the relabel would change nothing but the label.
+  if (locator.k === "css") {
+    const tid = parseTestIdSelector(locator.v ?? "");
+    if (tid) locator = { k: "testid", attr: tid.attr, v: tid.value };
   }
   return { locator, rest: s.slice(end + 1) };
 }

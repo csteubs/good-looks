@@ -63,6 +63,15 @@ const FIXTURE = `<!doctype html>
   <div role="group" data-testid="outer-group" data-el="outer-group">
     <div role="group" data-el="inner-group">inner</div>
   </div>
+
+  <!-- Test ids that live on the attributes getByTestId does NOT resolve, and a
+       value shared across two different attributes. The recorder accepts all
+       three spellings; which one it records decides what a run can find. -->
+  <section data-test="legacy-card" data-el="legacy-card">
+    <button data-test-id="legacy-save" data-el="legacy-save">Keep</button>
+  </section>
+  <i data-testid="dup-id" data-el="dup-modern">m</i>
+  <i data-test="dup-id" data-el="dup-legacy">l</i>
 </body></html>`;
 
 let server: http.Server;
@@ -238,6 +247,33 @@ const ROWS: Row[] = [
       ctx: { and: [{ k: "css", v: "[data-qa='nope']" }] },
     },
     expected: [],
+  },
+
+  // ---- which test-id attribute -------------------------------------------
+  //
+  // The disagreement these rows pin: the injected oracle used to count matches
+  // across data-testid, data-test-id AND data-test for one "testid" locator,
+  // while the emitted `getByTestId()` resolves only data-testid. A step
+  // recorded off either other attribute was unique in the trainer and matched
+  // nothing on a run.
+  {
+    label: "a test id on data-test-id names its attribute, and a run resolves it",
+    loc: { k: "testid", attr: "data-test-id", v: "legacy-save" },
+    expected: ["legacy-save"],
+  },
+  {
+    label: "a data-test container scopes the same way it was recorded",
+    loc: {
+      k: "css",
+      v: "button",
+      ctx: { within: { k: "testid", attr: "data-test", v: "legacy-card" } },
+    },
+    expected: ["legacy-save"],
+  },
+  {
+    label: "a bare testid means data-testid ONLY — an equal value on another attribute is not a match",
+    loc: { k: "testid", v: "dup-id" },
+    expected: ["dup-modern"],
   },
 
   // ---- everything together ------------------------------------------------

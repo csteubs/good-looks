@@ -17,6 +17,13 @@
 // the heal map is keyed by that. No ordering assumptions, and it behaves the
 // same whether or not screenshot capture is on.
 //
+// A testid on a non-default attribute needs no factory of its own: the
+// generator emits it as \`locator("[data-test-id=…]")\`, so the \`locator\`
+// factory tags it with the css key of that selector — which is exactly what
+// \`healKeyBase\` composes for such a locator. The two agreeing depends on the
+// selector being SPELLED identically, which is why \`fromModel\` below builds
+// it with the shared \`testIdSelector\` rather than its own concatenation.
+//
 // Two steps sharing an identical locator share a heal-map entry. They also
 // share an element, so the fingerprint is the same one — the collision is
 // harmless.
@@ -30,6 +37,7 @@
 // Babel transform.
 
 import { healKeyOperatorSource } from "../../shared/heal-key.mjs";
+import { testIdSelectorSource } from "../../shared/testid-attr.mjs";
 
 export const HEAL_FIXTURE_FILE = "glaze-heal.mjs";
 
@@ -42,6 +50,12 @@ import * as path from "path";
 // hand-written copy of the grammar is how the two would come to disagree, and
 // the symptom of disagreeing is that healing silently does nothing.
 ${healKeyOperatorSource()}
+
+// How a testid locator's non-default attribute is spelled as a selector —
+// embedded from shared/testid-attr.mjs for the same reason as the operators
+// above: the generator wrote this exact string into the spec, and the runner
+// keyed the heal map with it.
+${testIdSelectorSource()}
 
 const HEAL_DIR = process.env.GLAZE_HEAL_DIR || "";
 const MAP_FILE = process.env.GLAZE_HEAL_MAP || "";
@@ -95,7 +109,12 @@ const REFINERS = ["nth", "first", "last", "filter", "and", "or"];
 /** One builder call, against whatever root it is given — the page, or a
  *  container locator when the model carries element context. */
 function baseFromModel(root, loc) {
-  if (loc.k === "testid") return root.getByTestId(loc.v);
+  if (loc.k === "testid") {
+    // The probe's candidates arrive from a page-controlled evaluation, so the
+    // attribute is validated here too, not just where the model is stored.
+    var tidAttr = testIdOverride(loc.attr);
+    return tidAttr ? root.locator(testIdSelector(tidAttr, loc.v)) : root.getByTestId(loc.v);
+  }
   if (loc.k === "label") return root.getByLabel(loc.v);
   if (loc.k === "placeholder") return root.getByPlaceholder(loc.v);
   if (loc.k === "text") return root.getByText(loc.v);

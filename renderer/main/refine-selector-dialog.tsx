@@ -7,13 +7,20 @@ import * as React from "react";
 import { Badge, Dialog, Text } from "@ui";
 
 import { ElementContextPicker } from "./element-context-picker";
+import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import type { Locator, LocatorContext, PickedElement } from "../lib/recorder-types";
 
 /** Playwright-style label for a locator candidate. */
 export function formatLocator(l: Locator): string {
   switch (l.k) {
-    case "testid":
-      return `getByTestId(${JSON.stringify(l.v ?? "")})`;
+    case "testid": {
+      // Mirrors locatorBase in script-generator.ts — what this label promises
+      // is the call the generated script will contain.
+      const attr = testIdOverride(l.attr);
+      return attr
+        ? `locator(${JSON.stringify(testIdSelector(attr, l.v ?? ""))})`
+        : `getByTestId(${JSON.stringify(l.v ?? "")})`;
+    }
     case "role":
       return l.name
         ? `getByRole(${JSON.stringify(l.role ?? "")}, { name: ${JSON.stringify(l.name)} })`

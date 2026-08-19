@@ -35,7 +35,9 @@ function step(partial: Partial<Step> & { type: StepType }): Step {
 function resolve(loc: Locator): Element | null {
   switch (loc.k) {
     case "testid":
-      return document.querySelector(`[data-testid="${loc.v}"]`);
+      // The recorded attribute, defaulting to the only one getByTestId
+      // resolves — the same rule the generator emits by.
+      return document.querySelector(`[${loc.attr ?? "data-testid"}="${loc.v}"]`);
     case "css":
       return document.querySelector(loc.v ?? "");
     case "text":
@@ -106,6 +108,18 @@ describe("candidate generation", () => {
     // At least one candidate should actually resolve to the button on the page.
     const kinds = cands.map((c) => c.locator.k);
     expect(kinds.some((k) => ["testid", "role", "text", "css"].includes(k))).toBe(true);
+  });
+
+  it("proposes the element's actual test-id attribute, so an applied heal resolves at run time", () => {
+    // The step's testid is stale AND the replacement element spells its test
+    // id as data-test. A candidate recorded as a bare testid would emit
+    // getByTestId() and match nothing on a run — WHICH attribute is part of
+    // the answer, not a detail.
+    document.body.innerHTML = `<button data-test="submit-v2">Submit</button>`;
+    const cands = probe(step({ type: "click", locator: { k: "testid", v: "submit-v1" } }));
+    const tid = cands.find((c) => c.locator.k === "testid");
+    expect(tid?.locator).toMatchObject({ k: "testid", attr: "data-test", v: "submit-v2" });
+    expect(resolve(tid!.locator)).toBe(document.querySelector("button"));
   });
 
   it("finds an element by its accessible name when the testid is gone", () => {

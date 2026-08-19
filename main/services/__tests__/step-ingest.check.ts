@@ -165,6 +165,41 @@ function main(): void {
       undefined,
       "an unknown locator kind is dropped",
     );
+    // The test-id attribute is allowlisted, not merely capped: the generator
+    // interpolates it into an attribute selector, so only the two names it can
+    // emit may survive ingest.
+    assertEqual(
+      normalizeRawStep({
+        type: "click",
+        locator: { k: "testid", v: "x", attr: 'foo="y"],[id' },
+      })?.locator,
+      { k: "testid", v: "x" },
+      "a test-id attribute outside the allowlist is dropped",
+    );
+    assertEqual(
+      normalizeRawStep({
+        type: "click",
+        locator: { k: "testid", v: "x", attr: "data-test-id" },
+      })?.locator,
+      { k: "testid", v: "x", attr: "data-test-id" },
+      "an allowlisted test-id attribute survives ingest",
+    );
+    assertEqual(
+      normalizeRawStep({
+        type: "click",
+        locator: { k: "testid", v: "x", attr: "data-testid" },
+      })?.locator,
+      { k: "testid", v: "x" },
+      "the default attribute normalizes to absent, so one locator has one spelling",
+    );
+    assertEqual(
+      normalizeRawStep({
+        type: "click",
+        locator: { k: "text", v: "x", attr: "data-test" },
+      })?.locator,
+      { k: "text", v: "x" },
+      "attr means nothing off a testid locator and is dropped there",
+    );
     assertEqual(
       normalizeRawStep({ type: "if", cond: "evil" })?.cond,
       undefined,

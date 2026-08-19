@@ -12,6 +12,7 @@ import type { Locator, TestSpeed } from "./recorder-types";
 // the wrong one. Deriving it means a kind added to the app is a kind the model
 // can reach on the same commit.
 import { ASSERT_SEMANTICS } from "../../shared/step-semantics.mjs";
+import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import { logRequestProtocol, type LogRequestNeed } from "./ai-log-request";
 // The runner's own table, not a copy of it. The model is told what the run
 // ACTUALLY did, so a stale number here is the app confidently stating a wrong
@@ -371,7 +372,7 @@ const GENERATE_STEPS_SYSTEM_PROMPT = `You are an expert QA automation engineer e
 Output format:
 - Output ONLY a single fenced code block tagged "json" containing a JSON array of step objects. No prose before or after.
 - Each step is an object. Allowed "type" values: "click", "fill", "press", "select", "check", "uncheck", "assert", "wait", "viewport".
-- Locators use a "locator" object: { "k": <kind>, "v": <value>, "role": <ariaRole>, "name": <accessibleName> }. Locator kinds ("k"): "testid", "role", "label", "placeholder", "text", "css", "xpath". Prefer "role" (with "name"), "label", "placeholder", "text", or "testid" over "css"/"xpath".
+- Locators use a "locator" object: { "k": <kind>, "v": <value>, "role": <ariaRole>, "name": <accessibleName> }. Locator kinds ("k"): "testid", "role", "label", "placeholder", "text", "css", "xpath". Prefer "role" (with "name"), "label", "placeholder", "text", or "testid" over "css"/"xpath". A "testid" locator may add "attr": "data-test-id" or "data-test" when the element's test id lives on that attribute instead of data-testid; keep the "attr" of the original locator when proposing a changed value for the same element.
 - Step fields by type:
   - click/check/uncheck: { "type": "click", "locator": {...} }
   - fill/select: { "type": "fill", "locator": {...}, "value": "..." }
@@ -438,8 +439,15 @@ export function locatorToPrompt(l: Locator): string {
 
 function locatorBase(l: Locator): string {
   switch (l.k) {
-    case "testid":
-      return `getByTestId(${JSON.stringify(l.v ?? "")})`;
+    case "testid": {
+      // Mirrors locatorBase in script-generator.ts: the prompt must name the
+      // call the failing spec actually contains, and for a testid on a
+      // non-default attribute that is an attribute selector, not getByTestId.
+      const attr = testIdOverride(l.attr);
+      return attr
+        ? `locator(${JSON.stringify(testIdSelector(attr, l.v ?? ""))})`
+        : `getByTestId(${JSON.stringify(l.v ?? "")})`;
+    }
     case "role":
       return l.name
         ? `getByRole(${JSON.stringify(l.role ?? "")}, { name: ${JSON.stringify(l.name)} })`
