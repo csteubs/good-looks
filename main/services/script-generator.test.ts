@@ -334,6 +334,143 @@ describe("flow variable binding", () => {
   });
 });
 
+describe("flow loops", () => {
+  // A repeated flow call emits a real `for` loop rather than unrolling: a
+  // variable-driven count CANNOT be unrolled (its value arrives via
+  // GLAZE_VARS at run time), so the loop emitter must exist anyway, and two
+  // code paths for one feature is how they drift. The emitted clamp is the
+  // load-bearing line — a dataset value is user input, and an unclamped
+  // `Number(V.n)` bound is an unbounded loop in executed code.
+
+  const loginFlow: FlowSource = {
+    id: "f1",
+    name: "Login",
+    flowParams: [],
+    steps: [step({ type: "click", locator: { k: "testid", v: "go" } })],
+  };
+  const resolve = (id: string) => (id === "f1" ? loginFlow : null);
+
+  it("wraps a fixed repeat in a for loop and attributes body lines to the call row", () => {
+    const steps = [
+      step({ type: "goto", url: "https://example.com" }),
+      step({ type: "runFlow", flowId: "f1", label: "Login", repeat: 3 }),
+      step({ type: "click", locator: { k: "testid", v: "after" } }),
+    ];
+    const { source, lineMap } = generateSpecDetailed(
+      { name: "t", url: "u", steps },
+      { resolveFlow: resolve },
+    );
+    expect(source).toContain("for (let gl_i0 = 0; gl_i0 < 3; gl_i0++) {");
+    const mapped = mappedLines(source, lineMap);
+    // The body line inside the loop still points at the visible runFlow row...
+    expect(mapped).toContainEqual(['await page.getByTestId("go").click();', 1]);
+    // ...and the step after the loop keeps its own index.
+    expect(mapped).toContainEqual(['await page.getByTestId("after").click();', 2]);
+    // The loop's own lines are not mapped — no reporter marker ever names them.
+    expect(source.split("\n").filter((l) => l.includes("for (let"))).toHaveLength(1);
+  });
+
+  it("emits a clamped run-time bound for a variable-driven repeat", () => {
+    const steps = [step({ type: "runFlow", flowId: "f1", repeatVar: "n" })];
+    const { source } = generateSpecDetailed(
+      {
+        name: "t",
+        url: "u",
+        steps,
+        variables: [{ name: "n", kind: "plain", value: "2" }],
+      },
+      { resolveFlow: resolve },
+    );
+    expect(source).toContain(
+      "for (let gl_i0 = 0, gl_n0 = Math.max(0, Math.min(100, Number(V.n) || 0)); gl_i0 < gl_n0; gl_i0++) {",
+    );
+  });
+
+  it("a variable repeat wins over a fixed one", () => {
+    const steps = [step({ type: "runFlow", flowId: "f1", repeat: 7, repeatVar: "n" })];
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps, variables: [{ name: "n", kind: "plain", value: "2" }] },
+      { resolveFlow: resolve },
+    );
+    expect(source).toContain("Number(V.n)");
+    expect(source).not.toContain("gl_i0 < 7");
+  });
+
+  it("runs once with a visible sentence when the repeat variable is not declared", () => {
+    const steps = [step({ type: "runFlow", flowId: "f1", label: "Login", repeatVar: "ghost" })];
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps },
+      { resolveFlow: resolve },
+    );
+    expect(source).not.toContain("for (let");
+    // The flow still runs — degrading to zero runs would be worse than once.
+    expect(source).toContain('await page.getByTestId("go").click();');
+    expect(source).toContain("repeat count ${ghost} is not a declared variable — running once");
+    // And the refused loop's close marker is skipped too: braces stay balanced.
+    expect(source.split("{").length).toBe(source.split("}").length);
+  });
+
+  it("gives nested repeated flows distinct counters", () => {
+    const inner: FlowSource = {
+      id: "f2",
+      name: "Inner",
+      flowParams: [],
+      steps: [step({ type: "click", locator: { k: "testid", v: "in" } })],
+    };
+    const outer: FlowSource = {
+      id: "f1",
+      name: "Outer",
+      flowParams: [],
+      steps: [step({ type: "runFlow", flowId: "f2", repeat: 2 })],
+    };
+    const steps = [step({ type: "runFlow", flowId: "f1", repeat: 3 })];
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps },
+      { resolveFlow: (id) => (id === "f1" ? outer : id === "f2" ? inner : null) },
+    );
+    expect(source).toContain("gl_i0 = 0; gl_i0 < 3");
+    expect(source).toContain("gl_i1 = 0; gl_i1 < 2");
+  });
+
+  it("clamps a hostile fixed count instead of emitting it", () => {
+    // Records written before the boundary learned these fields regenerate from
+    // stored JSON — the TypeScript type is not a runtime check, same argument
+    // as num().
+    const steps = [
+      { id: "s", timestamp: 0, type: "runFlow", flowId: "f1", repeat: "3); evil(); (" },
+    ] as unknown as Step[];
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps },
+      { resolveFlow: resolve },
+    );
+    expect(source).not.toContain("evil(");
+    // An unparseable count degrades to once — no loop at all.
+    expect(source).not.toContain("for (let");
+  });
+
+  it("refuses a hostile repeat variable rather than emitting it", () => {
+    const steps = [
+      { id: "s", timestamp: 0, type: "runFlow", flowId: "f1", repeatVar: "x); evil(); (" },
+    ] as unknown as Step[];
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps },
+      { resolveFlow: resolve },
+    );
+    expect(source).not.toContain("evil(");
+    expect(source).not.toContain("for (let");
+  });
+
+  it("emits no loop around a disabled call's commented-out steps", () => {
+    const steps = [step({ type: "runFlow", flowId: "f1", repeat: 3, disabled: true })];
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps },
+      { resolveFlow: resolve },
+    );
+    expect(source).not.toContain("for (let");
+    expect(source).toContain("// disabled — skipped:");
+  });
+});
+
 describe("viewport steps log the resize", () => {
   // A resize is the only recorded action with no visible effect in the run
   // output — every other step names its target ("click getByRole(...)"). Without

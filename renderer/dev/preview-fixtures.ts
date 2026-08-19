@@ -132,6 +132,8 @@ export const TESTS: TestRecord[] = [
         flowId: "t-flow-signin",
         label: "Sign in",
         flowArgs: { email: "docs-reader@example.com" },
+        // Repeated, so the ×N suffix in the step description is visible here.
+        repeat: 2,
       },
       { type: "fill", locator: { k: "role", role: "searchbox" }, value: "locator" },
       { type: "press", value: "Enter" },

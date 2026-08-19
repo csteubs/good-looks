@@ -99,6 +99,55 @@ function main(): void {
     assertEqual(vp?.height, 800, "…while the legitimate height beside it survives");
   }
 
+  // ── 1b. The loop fields on a runFlow step ────────────────────────────────
+  //
+  // `repeat` bounds a `for` loop in the emitted spec and `repeatVar` becomes
+  // `Number(V.name)` — both are executed source, so both properties are pinned
+  // here the same way count's are: rejected at the boundary AND refused by the
+  // generator for steps already stored from before the boundary knew them.
+  {
+    assertEqual(
+      normalizeRawStep({ type: "runFlow", flowId: "f", repeat: NODE_CODE })?.repeat,
+      undefined,
+      "a forged repeat is dropped at the boundary",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "runFlow", flowId: "f", repeat: 1000 })?.repeat,
+      undefined,
+      "an out-of-range repeat is dropped, not clamped into meaning something",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "runFlow", flowId: "f", repeat: 3 })?.repeat,
+      3,
+      "a legitimate repeat survives ingest",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "runFlow", flowId: "f", repeatVar: "x); evil(); (" })?.repeatVar,
+      undefined,
+      "a repeat variable that is not an identifier is dropped",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "runFlow", flowId: "f", repeatVar: "resultCount" })?.repeatVar,
+      "resultCount",
+      "a legitimate repeat variable survives ingest",
+    );
+
+    // The generator half: steps stored before the boundary learned these
+    // fields regenerate from raw JSON.
+    const hostile = specFor([
+      {
+        id: "s1",
+        timestamp: 0,
+        type: "runFlow",
+        flowId: "missing",
+        repeat: NODE_CODE,
+        repeatVar: "y); evil(); (",
+      } as unknown as Step,
+    ]);
+    assert(!hostile.includes("pwned"), "a forged repeat never reaches the emitted spec");
+    assert(!hostile.includes("evil"), "a forged repeat variable never reaches the emitted spec");
+  }
+
   // ── 2. Numbers that are numbers, but not usable numerals ─────────────────
   //
   // `String(NaN)`/`String(Infinity)` are valid JS identifiers-ish tokens that

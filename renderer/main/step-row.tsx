@@ -764,7 +764,7 @@ export function StepRow({
           step={step}
           open={flowCallOpen}
           onOpenChange={setFlowCallOpen}
-          onSave={(flowArgs) => onEdit({ flowArgs })}
+          onSave={(patch) => onEdit(patch)}
         />
       ) : null}
     </div>

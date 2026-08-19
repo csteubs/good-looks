@@ -71,7 +71,13 @@ describe("FlowCallDialog", () => {
     const email = await screen.findByLabelText("Override for email");
     fireEvent.change(email, { target: { value: "buyer@example.com" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith({ email: "buyer@example.com" }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith({
+        flowArgs: { email: "buyer@example.com" },
+        repeat: undefined,
+        repeatVar: undefined,
+      }),
+    );
   });
 
   it("clearing an override reverts the call to the flow's default", async () => {
@@ -89,7 +95,9 @@ describe("FlowCallDialog", () => {
     expect(input.value).toBe("pinned@example.com");
     fireEvent.change(input, { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith({}));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith({ flowArgs: {}, repeat: undefined, repeatVar: undefined }),
+    );
   });
 
   it("drops a stale argument for a parameter the flow no longer declares", async () => {
@@ -105,7 +113,13 @@ describe("FlowCallDialog", () => {
     );
     await screen.findByLabelText("Override for email");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith({ email: "x@example.com" }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith({
+        flowArgs: { email: "x@example.com" },
+        repeat: undefined,
+        repeatVar: undefined,
+      }),
+    );
   });
 
   it("offers no text override for a secret parameter", async () => {
@@ -152,5 +166,60 @@ describe("paramFields", () => {
     expect(paramFields({ flowParams: ["bare"], variables: [] })).toEqual([
       { name: "bare", defaultValue: "" },
     ]);
+  });
+});
+
+describe("FlowCallDialog — the Repeat controls", () => {
+  it("saves a fixed repeat count", async () => {
+    flowRecord = makeFlow();
+    const onSave = vi.fn();
+    render(<FlowCallDialog step={makeCall()} open onOpenChange={() => {}} onSave={onSave} />);
+    await screen.findByLabelText("Override for email");
+    fireEvent.click(screen.getByText("N times"));
+    fireEvent.change(screen.getByLabelText("Repeat count"), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith({ flowArgs: {}, repeat: 5, repeatVar: undefined }),
+    );
+  });
+
+  it("saves a variable-driven repeat and drops an invalid name", async () => {
+    flowRecord = makeFlow();
+    const onSave = vi.fn();
+    render(<FlowCallDialog step={makeCall()} open onOpenChange={() => {}} onSave={onSave} />);
+    await screen.findByLabelText("Override for email");
+    fireEvent.click(screen.getByText("By variable"));
+    fireEvent.change(screen.getByLabelText("Repeat count variable"), {
+      target: { value: "resultCount" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith({
+        flowArgs: {},
+        repeat: undefined,
+        repeatVar: "resultCount",
+      }),
+    );
+  });
+
+  it("choosing Once clears an existing repeat", async () => {
+    flowRecord = makeFlow();
+    const onSave = vi.fn();
+    render(
+      <FlowCallDialog
+        step={makeCall({ repeat: 3 })}
+        open
+        onOpenChange={() => {}}
+        onSave={onSave}
+      />,
+    );
+    await screen.findByLabelText("Override for email");
+    fireEvent.click(screen.getByText("Once"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    // Both loop keys are PRESENT and undefined — an omitted key would leave
+    // the old loop on the step.
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith({ flowArgs: {}, repeat: undefined, repeatVar: undefined }),
+    );
   });
 });

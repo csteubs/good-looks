@@ -7,6 +7,8 @@ import {
   cookieScopeIsValid,
   ELEMENT_STATES,
   isCssPropName,
+  isValidVariableName,
+  MAX_FLOW_REPEAT,
   toPlaywrightSameSite,
   VAR_REF_RE,
 } from "../recorder/types.js";
@@ -743,7 +745,10 @@ export function describeFlow(step: Step): string {
     const val = v.length > 24 ? v.slice(0, 24) + "…" : v;
     return `${k}=${val}`;
   });
-  return args.length > 0 ? `run flow ${name} (${args.join(", ")})` : `run flow ${name}`;
+  const base = args.length > 0 ? `run flow ${name} (${args.join(", ")})` : `run flow ${name}`;
+  const { fixed, variable } = repeatSpec(step);
+  if (variable !== undefined) return `${base} ×\${${variable}}`;
+  return fixed > 1 ? `${base} ×${fixed}` : base;
 }
 
 /** Readable phrasing of a cookie step for the trainer's step list. Kept in
@@ -856,6 +861,23 @@ interface ExpandedStep {
   /** set when the step can't be generated (missing flow, cycle); emitted as a
    *  comment so the spec stays runnable and the problem stays visible. */
   problem?: string;
+  /** marks the boundary of a repeated flow call: `open` emits the `for` line,
+   *  `close` its `}`. Both carry the `runFlow` step itself (so emission can
+   *  read `repeat`/`repeatVar`) and the call row's sourceIndex. */
+  loop?: "open" | "close";
+}
+
+/** A `runFlow` step's effective repeat, both clamped forms. Applied at
+ *  expansion AND baked into the emitted expression: the emitted clamp is the
+ *  one that bounds a variable-driven count, whose value only exists at run
+ *  time and arrives from a dataset row — user input. */
+function repeatSpec(step: Step): { fixed: number; variable?: string } {
+  const variable = isValidVariableName(step.repeatVar) ? step.repeatVar : undefined;
+  const raw =
+    typeof step.repeat === "number" && Number.isFinite(step.repeat)
+      ? Math.trunc(step.repeat)
+      : 1;
+  return { fixed: Math.max(1, Math.min(MAX_FLOW_REPEAT, raw)), variable };
 }
 
 /** Substitute `${param}` references in a flow step's interpolatable fields.
@@ -993,7 +1015,15 @@ function expandSteps(
       [...stack, flowId],
       extras,
     );
-    out.push(...inner);
+    // A repeated call wraps its inlined block in loop markers. A DISABLED call
+    // doesn't: its steps are emitted commented out, and a live `for` around
+    // dead lines would be an empty loop that claims to run something.
+    const { fixed, variable } = repeatSpec(step);
+    if ((variable !== undefined || fixed > 1) && !step.disabled) {
+      out.push({ step, sourceIndex, loop: "open" }, ...inner, { step, sourceIndex, loop: "close" });
+    } else {
+      out.push(...inner);
+    }
   });
   return out;
 }
@@ -1086,9 +1116,50 @@ export function generateSpecDetailed(
     lineMap[bodyStartLine + body.length] = index;
   };
 
-  for (const { step, sourceIndex, problem } of expanded) {
+  // Loop bookkeeping: sequential counter names so nested repeated flows can't
+  // collide, and the set of calls whose loop was refused (repeat variable not
+  // declared) so the matching close marker is skipped too.
+  let loopIdx = 0;
+  const refusedLoops = new Set<Step>();
+
+  for (const { step, sourceIndex, problem, loop } of expanded) {
     if (problem) {
       body.push("  // " + problem);
+      continue;
+    }
+    if (loop === "open") {
+      const { fixed, variable } = repeatSpec(step);
+      if (variable !== undefined && !vars.has(variable)) {
+        // A count read from a variable nothing declares would emit
+        // `Number(V.x)` against a header that may not even exist. Running the
+        // flow ONCE with a visible sentence is the degradation that loses the
+        // least — the steps still run, and the file says why only once.
+        refusedLoops.add(step);
+        body.push(
+          commentSafe(
+            "  ".repeat(depth) +
+              `// flow ${step.label || step.flowId || "flow"} repeat count \${${variable}} is not a declared variable — running once`,
+          ),
+        );
+        continue;
+      }
+      const indent = "  ".repeat(depth);
+      const k = loopIdx;
+      loopIdx += 1;
+      const i = `gl_i${k}`;
+      const n = `gl_n${k}`;
+      body.push(
+        variable !== undefined
+          ? `${indent}for (let ${i} = 0, ${n} = Math.max(0, Math.min(${MAX_FLOW_REPEAT}, Number(V.${variable}) || 0)); ${i} < ${n}; ${i}++) {`
+          : `${indent}for (let ${i} = 0; ${i} < ${String(fixed)}; ${i}++) {`,
+      );
+      depth += 1;
+      continue;
+    }
+    if (loop === "close") {
+      if (refusedLoops.has(step)) continue;
+      depth = Math.max(1, depth - 1);
+      body.push("  ".repeat(depth) + "}");
       continue;
     }
     const line = stepLine(step, vars);

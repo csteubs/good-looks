@@ -40,7 +40,7 @@ import { expect, test } from "@playwright/test";
 import { captureFixtureSource } from "../main/services/capture-fixture-source.js";
 import { glazeRuntimeSource, GLAZE_RUNTIME_FILE } from "../main/services/glaze-runtime-source.js";
 import { healFixtureSource, HEAL_FIXTURE_FILE } from "../main/services/heal-fixture-source.js";
-import { generateSpecDetailed } from "../main/services/script-generator.js";
+import { generateSpecDetailed, type FlowSource } from "../main/services/script-generator.js";
 import { settleFixtureSource, SETTLE_FIXTURE_FILE } from "../main/services/settle-fixture-source.js";
 import {
   signatureFixtureSource,
@@ -131,8 +131,12 @@ async function run(
    *  timeout of its own — an action waits until the test's runs out — so a row
    *  built around one sets this rather than spending the default. */
   timeoutMs = 20_000,
+  resolveFlow?: (flowId: string) => FlowSource | null,
 ): Promise<RunResult> {
-  const { source, lineMap } = generateSpecDetailed({ name, url: base, steps: spec });
+  const { source, lineMap } = generateSpecDetailed(
+    { name, url: base, steps: spec },
+    resolveFlow ? { resolveFlow } : {},
+  );
   const specPath = path.join(dir, `${name}.spec.ts`);
   fs.writeFileSync(
     specPath,
@@ -236,6 +240,43 @@ for (const capture of [false, true]) {
     }
   });
 }
+
+test("a repeated flow call reports each iteration against the visible call row", async () => {
+  // The loop emitter wraps the inlined block in a real `for`, so the same spec
+  // LINES execute N times. The line map attributes those lines to the runFlow
+  // row the user can see — which means the row must report begin/end once per
+  // iteration, and nothing may report against an index that does not exist in
+  // the caller's step list. A wrong shape here is the progress bar sticking or
+  // skipping while a loop runs.
+  const flow: FlowSource = {
+    id: "f-loop",
+    name: "Poke",
+    flowParams: [],
+    steps: [{ id: "fl1", type: "click", locator: { k: "testid", v: "go" }, timestamp: 0 } as Step],
+  };
+  const spec = [
+    { id: "s0", type: "goto", url: base },
+    { id: "s1", type: "runFlow", flowId: "f-loop", label: "Poke", repeat: 3 },
+    { id: "s2", type: "assert", assert: "text", locator: { k: "testid", v: "out" }, text: "clicked" },
+  ] as Step[];
+  const result = await run("looped", spec, false, 20_000, (id) =>
+    id === "f-loop" ? flow : null,
+  );
+
+  const callRow = result.reported.get(1);
+  expect(callRow, "the call row reports").toBeTruthy();
+  const events = callRow!.map((m) => m.event);
+  expect(events, "one begin/end pair per iteration").toEqual([
+    "begin", "end", "begin", "end", "begin", "end",
+  ]);
+  expect(callRow!.filter((m) => m.event === "end").every((m) => m.ok)).toBe(true);
+  // The assertion after the loop still lands on its own row.
+  expect(result.reported.get(2)?.map((m) => m.event)).toEqual(["begin", "end"]);
+  // And nothing reported against an index the caller's list does not have.
+  for (const index of result.reported.keys()) {
+    expect(index).toBeLessThanOrEqual(2);
+  }
+});
 
 test("a failing action, not an assertion, is reported as the failing step", async () => {
   // The other half of "which step failed": an action that throws. It travels by

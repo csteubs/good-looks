@@ -665,6 +665,9 @@ export function StepComposer({
       setCaptureAttr("");
       setFlowId("");
       setFlowArgDrafts({});
+      setFlowRepeatMode("once");
+      setFlowRepeatCount("2");
+      setFlowRepeatName("");
       setFillVar("");
       setCreatingVar(false);
     }
@@ -677,6 +680,11 @@ export function StepComposer({
   // when the flow changes — two flows sharing a parameter name is common
   // ("email"), and a draft carried across would silently pre-fill the new call.
   const [flowArgDrafts, setFlowArgDrafts] = React.useState<Record<string, string>>({});
+  // The call's loop: once, a fixed count, or driven by a variable's run-time
+  // value. Mirrors flow-call-editor.tsx, which edits the same fields later.
+  const [flowRepeatMode, setFlowRepeatMode] = React.useState<"once" | "count" | "variable">("once");
+  const [flowRepeatCount, setFlowRepeatCount] = React.useState("2");
+  const [flowRepeatName, setFlowRepeatName] = React.useState("");
   React.useEffect(() => {
     if (kind !== "runFlow") return;
     let live = true;
@@ -791,6 +799,12 @@ export function StepComposer({
           const draft = flowArgDrafts[param];
           if (typeof draft === "string" && draft !== "") flowArgs[param] = draft;
         }
+        // A variable-driven repeat needs a usable name; refuse the submit
+        // rather than silently adding a call that runs once.
+        if (flowRepeatMode === "variable" && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(flowRepeatName)) {
+          return null;
+        }
+        const repeatCount = Math.max(2, Math.min(100, Math.trunc(Number(flowRepeatCount) || 2)));
         return [
           {
             type: "runFlow",
@@ -799,6 +813,8 @@ export function StepComposer({
             // the flow is later renamed or deleted.
             label: flow?.name ?? flowId,
             ...(Object.keys(flowArgs).length > 0 ? { flowArgs } : {}),
+            ...(flowRepeatMode === "count" ? { repeat: repeatCount } : {}),
+            ...(flowRepeatMode === "variable" ? { repeatVar: flowRepeatName } : {}),
           },
         ];
       }
@@ -1268,6 +1284,52 @@ export function StepComposer({
                 </>
               );
             })()}
+            {flowId ? (
+              <>
+                <Field label="Repeat" orientation="vertical">
+                  <SegmentedControl
+                    size="small"
+                    value={flowRepeatMode}
+                    onValueChange={(v) => setFlowRepeatMode(v as "once" | "count" | "variable")}
+                  >
+                    <SegmentedControlItem value="once">Once</SegmentedControlItem>
+                    <SegmentedControlItem value="count">N times</SegmentedControlItem>
+                    <SegmentedControlItem value="variable">By variable</SegmentedControlItem>
+                  </SegmentedControl>
+                </Field>
+                {flowRepeatMode === "count" ? (
+                  <Field label="Times" orientation="vertical">
+                    <Input
+                      size="small"
+                      type="number"
+                      min={2}
+                      max={100}
+                      value={flowRepeatCount}
+                      aria-label="Repeat count"
+                      onChange={(e) => setFlowRepeatCount(e.target.value)}
+                    />
+                  </Field>
+                ) : null}
+                {flowRepeatMode === "variable" ? (
+                  <>
+                    <Field label="Count variable" orientation="vertical">
+                      <Input
+                        size="small"
+                        className="font-mono"
+                        value={flowRepeatName}
+                        placeholder="resultCount"
+                        aria-label="Repeat count variable"
+                        onChange={(e) => setFlowRepeatName(e.target.value)}
+                      />
+                    </Field>
+                    <Text size="small" className="text-secondary">
+                      The variable&apos;s value at run time decides how many times the flow runs
+                      (capped at 100). Each iteration uses the same parameter values.
+                    </Text>
+                  </>
+                ) : null}
+              </>
+            ) : null}
           </>
         ) : null}
 

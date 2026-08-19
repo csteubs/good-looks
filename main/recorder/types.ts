@@ -299,6 +299,17 @@ export interface Step {
   /** argument bindings for a `runFlow` step: flow parameter name → value
    *  expression (which may itself interpolate `${var}` from the caller). */
   flowArgs?: Record<string, string>;
+  /** how many times a `runFlow` step repeats its flow (a loop). Absent or 1
+   *  means once. Clamped at the boundary AND re-clamped at emission — the
+   *  generated `for` bound is executed code, and an unclamped count is an
+   *  unbounded loop. */
+  repeat?: number;
+  /** variable whose run-time value drives the repeat count instead of a fixed
+   *  number (wins over `repeat` when both are set). A bare variable NAME, not
+   *  a `${name}` reference — it compiles to `Number(V.name)`, so it carries
+   *  the same identifier constraint as a variable name and is re-validated by
+   *  the generator before emission. */
+  repeatVar?: string;
   /** names of the variables this step's value/text/url interpolates. Derived on
    *  write by `collectVarRefs` — never hand-maintained — so the editor can warn
    *  before deleting a variable something still references. */
@@ -387,6 +398,8 @@ export interface RawStep {
   captureAttr?: string;
   flowId?: string;
   flowArgs?: Record<string, string>;
+  repeat?: number;
+  repeatVar?: string;
   /** the target element's recorded identity, attached by the capture script */
   fingerprint?: ElementFingerprint;
 }
@@ -882,6 +895,11 @@ export const MAX_STEP_STRING_LENGTH = 8000;
 export const MAX_FINGERPRINT_CANDIDATES = 40;
 export const MAX_FINGERPRINT_ATTRIBUTES = 40;
 export const MAX_FLOW_ARGS = 50;
+
+/** Most times a `runFlow` step may repeat its flow. Clamped at the boundary,
+ *  re-clamped in the EMITTED count expression — the second clamp is the one
+ *  that bounds a variable-driven count, whose value only exists at run time. */
+export const MAX_FLOW_REPEAT = 100;
 /** Upper bound on `Locator.nth`. The recorder only ever writes this when no
  *  candidate locator was unique, and it caps its own scan well below here
  *  (`MAX_UNIQUENESS_SCAN` in capture-script.ts) — so a value near this one did
@@ -1170,6 +1188,13 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   if (flowId !== undefined) out.flowId = flowId;
   const flowArgs = normalizeFlowArgs(s.flowArgs);
   if (flowArgs && Object.keys(flowArgs).length > 0) out.flowArgs = flowArgs;
+  // Loop fields. `repeat` is stored only when it means something (2+): 1 is
+  // the default and 0 would be a step that claims to exist and never runs.
+  // `repeatVar` is an identifier headed for `Number(V.name)` in executed
+  // source, so it carries the variable-name grammar, not just a length cap.
+  const repeat = int(s.repeat, 2, MAX_FLOW_REPEAT);
+  if (repeat !== undefined) out.repeat = repeat;
+  if (isValidVariableName(s.repeatVar)) out.repeatVar = s.repeatVar;
 
   const fingerprint = normalizeFingerprint(s.fingerprint);
   if (fingerprint) out.fingerprint = fingerprint;
@@ -1558,13 +1583,20 @@ export function interpolatableFields(step: Step): string[] {
   return parts;
 }
 
-/** All variable names a step references across its interpolatable fields. */
+/** All variable names a step references across its interpolatable fields.
+ *  `repeatVar` is included even though it is a bare name rather than a
+ *  `${name}` reference — it reads a variable at run time, and a variable the
+ *  usage counts miss is one the user is invited to delete while a loop still
+ *  depends on it. */
 export function collectVarRefs(step: Step): string[] {
   const out: string[] = [];
   for (const field of interpolatableFields(step)) {
     for (const name of varRefsIn(field)) {
       if (!out.includes(name)) out.push(name);
     }
+  }
+  if (isValidVariableName(step.repeatVar) && !out.includes(step.repeatVar)) {
+    out.push(step.repeatVar);
   }
   return out;
 }

@@ -8165,3 +8165,33 @@ with a user folder of that name and put one test in two places.
 (`testStore.callersOf`, hidden tests included — a hidden caller still has a
 spec on disk). A stored reverse index would be one more thing to keep true;
 the scan is a JSON read the library's size makes free.
+
+## 2026-08-19 — Flow loops emit a real `for`, never an unrolled copy
+
+A `runFlow` call can now repeat: a fixed count (2–100) or a variable whose
+run-time value drives it (`repeatVar`, which wins when both are set). The
+generator wraps the inlined block in `for (let gl_i0 = 0; …)` — variable
+counts emit `Math.max(0, Math.min(100, Number(V.name) || 0))` as the bound.
+
+**Why a loop and not unrolling.** A variable-driven count cannot be unrolled
+(the value arrives via GLAZE_VARS or a dataset row at run time), so a loop
+emitter has to exist; unrolling fixed counts as well would be a second code
+path producing different specs for the same feature. Loop-body lines are
+stable, so the existing line map attributes every iteration to the visible
+call row and the step-progress reporter needs no change — the row re-reports
+begin/end per iteration, pinned by a new `step-progress.spec.ts` row, with the
+emitted semantics pinned end-to-end by a new `assert-parity.spec.ts` test that
+counts real clicks through a real loop.
+
+**The emitted clamp is load-bearing.** A dataset value is user input and an
+unclamped `Number(V.n)` bound is an unbounded loop in executed code — so the
+cap is baked into the emitted expression, not merely checked at ingest. Both
+halves are pinned by `check:step-ingest` §1b: the boundary drops a forged
+`repeat`/`repeatVar`, and the generator refuses them again for steps stored
+before the boundary knew the fields (the `num()` argument, again).
+
+Degradations chosen over surprises: a repeat variable nothing declares runs
+the flow ONCE with a visible comment (zero runs would silently skip steps; an
+undeclared `V.x` could be a ReferenceError against a spec with no header); a
+disabled call gets no loop around its commented-out lines; counter names are
+sequential (`gl_i0`, `gl_i1`) so nested repeated flows cannot collide.

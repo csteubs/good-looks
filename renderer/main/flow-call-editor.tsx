@@ -12,10 +12,19 @@
 // `onEdit`, so the same component edits a live session step and a local draft.
 
 import * as React from "react";
-import { Dialog, Field, Input, Text } from "@ui";
+import { Dialog, Field, Input, SegmentedControl, SegmentedControlItem, Text } from "@ui";
 
 import { api } from "../lib/api";
 import type { Step, TestRecord } from "../lib/recorder-types";
+
+/** Mirror of `isValidVariableName` in main/recorder/types.ts — UI-side only,
+ *  the backend re-validates on write (same duplication note as
+ *  variables-panel.tsx). */
+function isValidName(name: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && name.length <= 40;
+}
+
+type RepeatMode = "once" | "count" | "variable";
 
 /** The editable view of one flow call: each parameter with its default and the
  *  call's current override. Derived from the FLOW record, not the step — the
@@ -47,12 +56,17 @@ export function FlowCallDialog({
   step: Step;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Receives the next `flowArgs` map — only non-empty overrides, possibly
-   *  empty (every parameter following the default). */
-  onSave: (flowArgs: Record<string, string>) => void;
+  /** Receives the next call-site patch: `flowArgs` holds only non-empty
+   *  overrides (possibly empty — every parameter following the default), and
+   *  the loop fields are ALWAYS present so clearing a repeat actually clears
+   *  it — a patch that omitted them would leave the old loop in place. */
+  onSave: (patch: { flowArgs: Record<string, string>; repeat?: number; repeatVar?: string }) => void;
 }) {
   const [flow, setFlow] = React.useState<TestRecord | null | undefined>(undefined);
   const [drafts, setDrafts] = React.useState<Record<string, string>>({});
+  const [repeatMode, setRepeatMode] = React.useState<RepeatMode>("once");
+  const [repeatCount, setRepeatCount] = React.useState("2");
+  const [repeatName, setRepeatName] = React.useState("");
 
   // Fetched on open rather than held by the host: the flow's parameter set can
   // change in another window while this list is on screen, and the dialog must
@@ -62,6 +76,19 @@ export function FlowCallDialog({
     let live = true;
     setFlow(undefined);
     setDrafts(step.flowArgs ? { ...step.flowArgs } : {});
+    if (step.repeatVar) {
+      setRepeatMode("variable");
+      setRepeatName(step.repeatVar);
+      setRepeatCount("2");
+    } else if (typeof step.repeat === "number" && step.repeat > 1) {
+      setRepeatMode("count");
+      setRepeatCount(String(step.repeat));
+      setRepeatName("");
+    } else {
+      setRepeatMode("once");
+      setRepeatCount("2");
+      setRepeatName("");
+    }
     if (!step.flowId) {
       setFlow(null);
       return;
@@ -77,10 +104,11 @@ export function FlowCallDialog({
     return () => {
       live = false;
     };
-  }, [open, step.flowId, step.flowArgs]);
+  }, [open, step.flowId, step.flowArgs, step.repeat, step.repeatVar]);
 
   const fields = flow ? paramFields(flow) : [];
   const name = flow?.name ?? step.label ?? "flow";
+  const repeatNameOk = repeatMode !== "variable" || isValidName(repeatName);
 
   const save = () => {
     const next: Record<string, string> = {};
@@ -89,7 +117,12 @@ export function FlowCallDialog({
       const draft = drafts[field.name];
       if (typeof draft === "string" && draft !== "") next[field.name] = draft;
     }
-    onSave(next);
+    const count = Math.max(2, Math.min(100, Math.trunc(Number(repeatCount) || 2)));
+    onSave({
+      flowArgs: next,
+      repeat: repeatMode === "count" ? count : undefined,
+      repeatVar: repeatMode === "variable" && isValidName(repeatName) ? repeatName : undefined,
+    });
     onOpenChange(false);
   };
 
@@ -112,36 +145,83 @@ export function FlowCallDialog({
             This flow can&apos;t be found — it may have been deleted. The call will say so in the
             generated script until it points at an existing flow.
           </Text>
-        ) : fields.length === 0 ? (
-          <Text size="small" className="text-tertiary">
-            “{name}” declares no parameters. Add some on the flow&apos;s Variables tab to make
-            calls like this one configurable.
-          </Text>
         ) : (
-          fields.map((field) => (
-            <Field key={field.name} label={field.name} orientation="vertical">
-              {field.defaultValue === null ? (
-                <Text size="small" className="text-tertiary">
-                  Resolved at run time (secret or captured) — not overridable here.
-                </Text>
-              ) : (
+          <>
+            {fields.length === 0 ? (
+              <Text size="small" className="text-tertiary">
+                “{name}” declares no parameters. Add some on the flow&apos;s Variables tab to make
+                calls like this one configurable.
+              </Text>
+            ) : (
+              fields.map((field) => (
+                <Field key={field.name} label={field.name} orientation="vertical">
+                  {field.defaultValue === null ? (
+                    <Text size="small" className="text-tertiary">
+                      Resolved at run time (secret or captured) — not overridable here.
+                    </Text>
+                  ) : (
+                    <Input
+                      size="small"
+                      className="font-mono"
+                      value={drafts[field.name] ?? ""}
+                      placeholder={
+                        field.defaultValue === ""
+                          ? "default: (empty)"
+                          : `default: ${field.defaultValue}`
+                      }
+                      aria-label={`Override for ${field.name}`}
+                      onChange={(e) =>
+                        setDrafts((prev) => ({ ...prev, [field.name]: e.target.value }))
+                      }
+                    />
+                  )}
+                </Field>
+              ))
+            )}
+            <Field label="Repeat" orientation="vertical">
+              <SegmentedControl
+                size="small"
+                value={repeatMode}
+                onValueChange={(v) => setRepeatMode(v as RepeatMode)}
+              >
+                <SegmentedControlItem value="once">Once</SegmentedControlItem>
+                <SegmentedControlItem value="count">N times</SegmentedControlItem>
+                <SegmentedControlItem value="variable">By variable</SegmentedControlItem>
+              </SegmentedControl>
+            </Field>
+            {repeatMode === "count" ? (
+              <Field label="Times" orientation="vertical">
                 <Input
                   size="small"
-                  className="font-mono"
-                  value={drafts[field.name] ?? ""}
-                  placeholder={
-                    field.defaultValue === ""
-                      ? "default: (empty)"
-                      : `default: ${field.defaultValue}`
-                  }
-                  aria-label={`Override for ${field.name}`}
-                  onChange={(e) =>
-                    setDrafts((prev) => ({ ...prev, [field.name]: e.target.value }))
-                  }
+                  type="number"
+                  min={2}
+                  max={100}
+                  value={repeatCount}
+                  aria-label="Repeat count"
+                  onChange={(e) => setRepeatCount(e.target.value)}
                 />
-              )}
-            </Field>
-          ))
+              </Field>
+            ) : null}
+            {repeatMode === "variable" ? (
+              <>
+                <Field label="Count variable" orientation="vertical">
+                  <Input
+                    size="small"
+                    className="font-mono"
+                    value={repeatName}
+                    placeholder="resultCount"
+                    aria-label="Repeat count variable"
+                    onChange={(e) => setRepeatName(e.target.value)}
+                  />
+                </Field>
+                <Text size="small" className={repeatNameOk ? "text-secondary" : "text-danger"}>
+                  {repeatNameOk
+                    ? "The variable's value at run time decides how many times the flow runs (capped at 100). Each iteration uses the same parameter values."
+                    : "Use letters, numbers and underscores, starting with a letter — the name becomes a property in the generated spec."}
+                </Text>
+              </>
+            ) : null}
+          </>
         )}
       </div>
     </Dialog>

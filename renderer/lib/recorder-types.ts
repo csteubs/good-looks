@@ -261,6 +261,10 @@ export interface Step {
   captureAttr?: string;
   flowId?: string;
   flowArgs?: Record<string, string>;
+  /** loop fields on a runFlow step (mirror of main types): a fixed repeat
+   *  count, or a variable NAME whose run-time value drives it (wins). */
+  repeat?: number;
+  repeatVar?: string;
   /** variable names this step interpolates; derived backend-side on write. */
   varRefs?: string[];
   /** the target element's recorded identity (mirror of main types). */
@@ -325,6 +329,8 @@ export interface RawStep {
   captureAttr?: string;
   flowId?: string;
   flowArgs?: Record<string, string>;
+  repeat?: number;
+  repeatVar?: string;
 }
 
 export type TestSpeed = "crawl" | "slow" | "medium" | "fast";

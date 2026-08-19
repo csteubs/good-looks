@@ -60,6 +60,7 @@ import {
   isRunBrowser,
   isValidVariableName,
   MAX_DRAIN_BYTES,
+  MAX_FLOW_REPEAT,
   MAX_STEP_STRING_LENGTH,
   MAX_VARIABLES_PER_TEST,
   mergeSessionVariables,
@@ -2379,6 +2380,22 @@ export const recorderService = {
           const args = normalizeFlowArgs(patch.flowArgs);
           if (args && Object.keys(args).length > 0) target.flowArgs = args;
           else delete target.flowArgs;
+        }
+        // The loop fields, re-checked like flowArgs: `repeat` bounds a `for`
+        // loop in executed source, and `repeatVar` becomes `Number(V.name)`.
+        // Cleared (not merely ignored) on an invalid value, so the editor's
+        // "Once" choice can actually turn a loop off.
+        if ("repeat" in patch) {
+          const n =
+            typeof patch.repeat === "number" && Number.isFinite(patch.repeat)
+              ? Math.trunc(patch.repeat)
+              : 0;
+          if (n >= 2 && n <= MAX_FLOW_REPEAT) target.repeat = n;
+          else delete target.repeat;
+        }
+        if ("repeatVar" in patch) {
+          if (isValidVariableName(patch.repeatVar)) target.repeatVar = patch.repeatVar;
+          else delete target.repeatVar;
         }
         // Retargeting a step (Refine Selector) may point it at a DIFFERENT
         // element, which makes the recorded fingerprint a description of
