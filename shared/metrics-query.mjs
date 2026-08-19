@@ -272,6 +272,26 @@ export function browserMatrix(db, { testId } = {}) {
  * "unknown" cluster — a cluster is read as "these all failed the same way", and
  * "we could not tell" is not that.
  */
+/**
+ * How many captured steps exceeded their visual threshold since `since`.
+ *
+ * For the insights report's stats strip. Returns `null` — not 0 — when the
+ * database is unavailable or the query fails: "the metrics DB was closed" is a
+ * different fact from "nothing changed", and a report that renders the second
+ * when the first is true is lying reassuringly.
+ */
+export function changedStepCount(db, { since = 0 } = {}) {
+  const row = one(
+    db,
+    `SELECT COUNT(*) AS changed
+     FROM step_metrics s
+     JOIN runs r ON r.id = s.run_id
+     WHERE s.diff_state = 'changed' AND r.started_at >= ?`,
+    [since],
+  );
+  return row === null ? null : Number(row.changed ?? 0);
+}
+
 export function failureClusters(db, { limit = 20, since = 0 } = {}) {
   return all(
     db,

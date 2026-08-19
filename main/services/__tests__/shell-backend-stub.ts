@@ -43,6 +43,11 @@ export const app = {
   getAppPath(): string {
     return appPathOverride ?? process.cwd();
   },
+  /** A recognizably fake version, so a test that forgot to inject its own
+   *  cannot mistake the stub's answer for the app's. */
+  getVersion(): string {
+    return "0.0.0-test";
+  },
   /** Records rather than performs. A test asserting on a relaunch must never
    *  actually restart anything, and `relaunched` is the only way to see that
    *  the switcher got as far as scheduling one. */

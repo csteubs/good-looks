@@ -42,6 +42,7 @@ import { testStore } from "./services/test-store.js";
 import { aiDebugStore } from "./services/ai-debug-store.js";
 import { aiDebugHistoryStore } from "./services/ai-debug-history-store.js";
 import { metricsStore } from "./services/metrics-store.js";
+import { insightsService } from "./services/insights/insights-service.js";
 import { setPrunePreflight } from "./services/artifact-store.js";
 
 // ── Data directory ────────────────────────────────────────────────────
@@ -476,6 +477,15 @@ app.whenReady().then(async () => {
   // Retention is where per-step evidence dies. This is the last moment anything
   // can distil a run into the rows that outlive its screenshots.
   setPrunePreflight((testId, runId) => metricsStore.ingestBeforePrune(testId, runId));
+
+  // ── AI insights ────────────────────────────────────────────────────
+  // Deliberately HERE and not at module scope beside routineScheduler.start():
+  // the report's facts read the metrics DB, and a tick before init() would not
+  // crash (every query tolerates a null handle) — it would generate a report
+  // that confidently reports "no failure clusters" because the cache was
+  // closed. First evaluation is one tick (~60s) after ready; a period missed
+  // while the app was closed is still due then and generates quietly.
+  insightsService.start();
 
   await setupApplicationMenu();
   await setupDebugScreenshots();

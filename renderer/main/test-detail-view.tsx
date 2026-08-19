@@ -56,6 +56,7 @@ import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
 import { latestA11yRun } from "../lib/a11y-format";
 import { summariseRun } from "../lib/run-summary";
 import { BROWSER_SF_SYMBOLS } from "../lib/browser-icons";
+import { consumeAiDebugRequest } from "./insight-intents";
 import {
   RUN_BROWSERS,
   RUN_BROWSER_LABELS,
@@ -542,6 +543,16 @@ export function TestDetailView() {
       context: runContext,
     });
   }, [aiDebug, aiKey, id, test, runContext, runKey]);
+
+  // An Insights recommendation asked for this test's AI debug session. It is
+  // consumed only once the run context exists, so the dialog opens through the
+  // exact same path as the Output panel's button — context assembly, Sending
+  // strip and the manual send included. One-shot: a later manual visit to the
+  // same test cannot replay the click.
+  React.useEffect(() => {
+    if (!test || !runContext) return;
+    if (consumeAiDebugRequest(id)) openAiDebug();
+  }, [test, runContext, id, openAiDebug]);
 
   const saveName = async (name: string) => {
     const trimmed = name.trim();

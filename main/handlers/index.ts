@@ -72,6 +72,8 @@ import {
   recorderSettingsStore,
 } from "../services/recorder-settings-store.js";
 import { notifyAiDebugOutcome } from "../services/ai-debug-notifier.js";
+import { insightReportStore } from "../services/insight-report-store.js";
+import { insightsService } from "../services/insights/insights-service.js";
 import { summarizeCaptureOverhead } from "../services/capture-overhead.js";
 import { applyRetention } from "../services/retention.js";
 import { compareRuns } from "../services/run-comparison.js";
@@ -1266,6 +1268,33 @@ export function registerHandlers(): void {
     const status = params?.status === "error" ? "error" : "done";
     notifyAiDebugOutcome({ testName, status }, recorderSettingsStore.get().notifyOnAiDebugDone);
     return { ok: true };
+  });
+
+  // ── AI insights (the scheduled report) ──────────────────────────────
+  // Generation itself lives in the MAIN process (insights-service.ts) — the
+  // renderer only reads reports and asks for one. Mutations push
+  // `insights:changed` so the rail's unread dot updates from any route; the
+  // one subscriber is `RecorderProvider`, for the run-derived-cache reason.
+  ipcMain.handle("insights:list", async () => insightReportStore.list());
+  ipcMain.handle("insights:get", async (_e, params: { id?: unknown }) =>
+    insightReportStore.get(String(params?.id ?? "")),
+  );
+  ipcMain.handle("insights:status", async () => insightsService.status());
+  ipcMain.handle("insights:generateNow", async () => insightsService.generateNow());
+  ipcMain.handle("insights:markRead", async (_e, params: { id?: unknown }) => {
+    const changed = insightReportStore.markRead(String(params?.id ?? ""));
+    if (changed) sendToMain("insights:changed", null);
+    return { changed };
+  });
+  ipcMain.handle("insights:delete", async (_e, params: { id?: unknown }) => {
+    const removed = insightReportStore.delete(String(params?.id ?? ""));
+    if (removed) sendToMain("insights:changed", null);
+    return { removed };
+  });
+  ipcMain.handle("insights:clearAll", async () => {
+    const removed = insightReportStore.clearAll();
+    if (removed > 0) sendToMain("insights:changed", null);
+    return { removed };
   });
 
   // ── Alert (outgoing webhook) handlers ───────────────────────────────

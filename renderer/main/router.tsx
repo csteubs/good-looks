@@ -9,6 +9,7 @@ import { BranchesView } from "./branches-view";
 import { HomeView } from "./home-view";
 import { RootView } from "./root-view";
 import { HealsView } from "./heals-view";
+import { InsightsView } from "./insights-view";
 import { StatsView } from "./stats-view";
 import { StatsCategoryView } from "./stats/stats-category-view";
 import { TestDetailView } from "./test-detail-view";
@@ -119,6 +120,15 @@ const healsRoute = createRoute({
   },
 });
 
+const insightsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/insights",
+  component: InsightsView,
+  staticData: {
+    title: "Insights",
+  },
+});
+
 /** The branch switcher. Registered unconditionally — the route is cheap and the
  *  view explains itself when the feature is unavailable — while the SIDEBAR
  *  entry is what's conditional, so there is no dead end to navigate into. */
@@ -140,6 +150,7 @@ const routeTree = rootRoute.addChildren([
   visualRoute,
   batchRoute,
   healsRoute,
+  insightsRoute,
   branchesRoute,
 ]);
 

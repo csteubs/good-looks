@@ -42,6 +42,7 @@ import {
   currencySymbol,
 } from "../../shared/cost-units.mjs";
 import type { CostCurrency } from "../../shared/cost-units.mjs";
+import { flakeRuns } from "../../shared/period-digest.mjs";
 
 /**
  * The two assumptions, with the defaults the app ships.
@@ -144,40 +145,11 @@ function realRuns(runs: readonly RunRecord[]): RunRecord[] {
     .sort((a, b) => a.startedAt - b.startedAt);
 }
 
-/**
- * Which of a test's failed runs the history suggests were FLAKE.
- *
- * The rule is §6.1's, reused rather than re-derived: a failure directly
- * followed by a pass, with none of the run settings this app records having
- * changed in between, is a failure nobody fixed — same engine, same pacing,
- * same budget, opposite outcome. That is the definition already on screen in
- * the retry panel, and having two definitions of flake in one app is how the
- * two surfaces end up disagreeing in front of a user.
- *
- * It is a SUGGESTION and the panel says so. A real fix committed between the
- * two runs looks identical from here — this app does not watch the repository.
- */
-export function flakeRuns(runsForOneTest: readonly RunRecord[]): Set<string> {
-  const out = new Set<string>();
-  for (let i = 0; i < runsForOneTest.length - 1; i++) {
-    const a = runsForOneTest[i];
-    const b = runsForOneTest[i + 1];
-    if (a.status !== "failed" || b.status !== "passed") continue;
-    if (sameSettings(a, b)) out.add(a.id);
-  }
-  return out;
-}
-
-/** Did anything this app records about HOW a run executed differ? */
-function sameSettings(a: RunRecord, b: RunRecord): boolean {
-  return (
-    (a.runBrowser ?? "chromium") === (b.runBrowser ?? "chromium") &&
-    Boolean(a.runHeadless) === Boolean(b.runHeadless) &&
-    a.speed === b.speed &&
-    Boolean(a.captureArtifacts) === Boolean(b.captureArtifacts) &&
-    (a.datasetName ?? null) === (b.datasetName ?? null)
-  );
-}
+// `flakeRuns` — §6.1's flake rule — lives in `shared/period-digest.mjs` now,
+// because the digest (Stats panel AND the main-process AI Insights report)
+// reuses it rather than defining a second rule. Re-exported here so this
+// module stays the renderer's home for the cost/flake vocabulary.
+export { flakeRuns };
 
 /** Why this row is worth a look, or null if it is not.
  *

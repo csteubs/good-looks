@@ -56,6 +56,7 @@ const VIEWS: { path: string; label: string; keywords: string }[] = [
   { path: "/visual", label: "Visual", keywords: "screenshot replay diff baseline" },
   { path: "/batch", label: "Routines", keywords: "batch run many tests suite job" },
   { path: "/heals", label: "Heals", keywords: "auto-heal locators review" },
+  { path: "/insights", label: "Insights", keywords: "ai report digest trends recommendations" },
   { path: "/branches", label: "Branches", keywords: "git worktree build switch" },
 ];
 

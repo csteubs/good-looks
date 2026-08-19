@@ -120,10 +120,12 @@ export const PANES: readonly PaneDef[] = [
   {
     id: "alerts",
     title: "Alerts",
-    // Says "on this Mac" since the webhook moved to Integrations: what is left
-    // here is three local notifications, and the pane's whole claim is now that
-    // none of it goes anywhere.
-    subtitle: "Being told when a run goes wrong, on this Mac.",
+    // The pane used to claim "on this Mac" — three local notifications and
+    // nothing else. AI insights changed that deliberately: the report rows can
+    // send a summary to the configured provider, and a subtitle still claiming
+    // locality would be the inaccurate disclosure that is worse than none. The
+    // notification rows each still say they are local; the pane no longer does.
+    subtitle: "Being told when a run goes wrong, and a periodic AI report.",
     group: "Connections",
   },
   {
@@ -558,6 +560,33 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "notification macos banner ai debug llm answer ready local",
     key: "notifyOnAiDebugDone",
   },
+  {
+    id: "ai-insights-enabled",
+    pane: "alerts",
+    label: "AI insights report",
+    keywords: "ai insights report digest summary trends recommendations provider llm",
+    key: "aiInsightsEnabled",
+  },
+  {
+    id: "ai-insights-cadence",
+    pane: "alerts",
+    label: "Report frequency",
+    keywords: "insights cadence frequency daily weekly monthly schedule",
+    key: "aiInsightsCadence",
+  },
+  {
+    id: "notify-insights-ready",
+    pane: "alerts",
+    label: "Notify when a report is ready",
+    keywords: "notification macos banner insights report ready local",
+    key: "notifyOnInsightsReady",
+  },
+  {
+    id: "ai-insights-generate-now",
+    pane: "alerts",
+    label: "Generate a report now",
+    keywords: "insights report generate now manual",
+  },
 
   // Integrations
   //
@@ -735,6 +764,9 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   notifyOnRunIssues: false,
   notifyOnBatchDone: true,
   notifyOnAiDebugDone: false,
+  aiInsightsEnabled: false,
+  aiInsightsCadence: "weekly",
+  notifyOnInsightsReady: true,
   autoAcceptAiDebugFixes: false,
   alertWebhookEnabled: false,
   autoHealEnabled: true,

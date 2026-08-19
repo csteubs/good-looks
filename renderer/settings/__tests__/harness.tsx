@@ -12,6 +12,7 @@
 // there the wiring IS the subject.
 
 import { render } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 import { vi } from "vitest";
 
@@ -152,10 +153,17 @@ export function renderPane(
     matchedIds = null,
   }: { controller?: SettingsController; matchedIds?: readonly string[] | null } = {},
 ) {
+  // The real settings window mounts a QueryClient (renderer/settings/index.tsx),
+  // and a pane may read app state through react-query the way the Alerts pane
+  // reads the insights status. Fresh per render, retries off — a pane test
+  // that reaches an unmocked query should fail once, not spin.
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const result = render(
-    <SettingsControllerProvider value={controller}>
-      <RowFilterProvider matchedIds={matchedIds}>{ui}</RowFilterProvider>
-    </SettingsControllerProvider>,
+    <QueryClientProvider client={qc}>
+      <SettingsControllerProvider value={controller}>
+        <RowFilterProvider matchedIds={matchedIds}>{ui}</RowFilterProvider>
+      </SettingsControllerProvider>
+    </QueryClientProvider>,
   );
   return { ...result, controller };
 }

@@ -429,6 +429,18 @@ export function isUiTypeface(v: unknown): v is UiTypeface {
   return typeof v === "string" && (UI_TYPEFACES as string[]).includes(v);
 }
 
+/** How often the AI insights report generates. An enum for the same reason a
+ *  Routine schedule is: every value comes from a picker, so a cadence that
+ *  never fires — the failure mode a free-form value invites — cannot be
+ *  expressed. Validated on BOTH read and set (see the settings store). */
+export type InsightsCadence = "daily" | "weekly" | "monthly";
+
+export const INSIGHTS_CADENCES: InsightsCadence[] = ["daily", "weekly", "monthly"];
+
+export function isInsightsCadence(v: unknown): v is InsightsCadence {
+  return typeof v === "string" && (INSIGHTS_CADENCES as string[]).includes(v);
+}
+
 export interface TestRecord {
   id: string;
   name: string;
@@ -2089,6 +2101,21 @@ export interface RecorderSettings {
    *  to be told is that the user minimized a slow job and walked away, and
    *  "the answer is ready" is the message they were waiting for. Local only. */
   notifyOnAiDebugDone: boolean;
+  /** Generate a periodic AI insights report with the configured LLM provider
+   *  (default false). This is the consent switch for the app's only
+   *  UNATTENDED AI send: while it is on, a summary of recent activity —
+   *  aggregates, test names, error signatures, never logs or scripts — goes
+   *  to the configured provider on the cadence below, with nobody reviewing
+   *  the individual send. Off by default for exactly that reason, and the
+   *  Alerts pane row states what goes. */
+  aiInsightsEnabled: boolean;
+  /** How often the insights report generates (default "weekly"). */
+  aiInsightsCadence: InsightsCadence;
+  /** Post a macOS notification when an insights report is ready (default
+   *  true). Fires on success by design — the report generates unattended, so
+   *  "it's ready" is the message being waited for. The notification itself is
+   *  local to this Mac. */
+  notifyOnInsightsReady: boolean;
   /** EXPERIMENTAL. Apply an AI debug job's suggested script fix automatically
    *  the moment the job completes (default false). Guarded: only a run-scoped
    *  job, only while its dialog is minimized, and only when the script is
@@ -3004,4 +3031,306 @@ export function initialCursor(editing: boolean, steps: readonly Step[]): number 
   if (navIndex === -1) return Math.min(1, steps.length);
   // Just past the navigation, or the end of a shorter list.
   return Math.min(navIndex + 1, steps.length);
+}
+
+// ── AI Insights ─────────────────────────────────────────────────────────────
+//
+// The scheduled report the insights service generates. The report is PRIMARY
+// data (an LLM answer cannot be re-derived from history), stored in
+// `insight-reports.json` — never in the metrics DB, which drops and replays
+// itself on schema bumps. The model's output crosses a trust boundary on the
+// way in — it was steered by test names and error text a web page can
+// influence — so everything here is rebuilt field-by-field like every other
+// boundary-crossing record in this file.
+
+/**
+ * What a recommendation's button can DO. A closed enum on purpose: each kind
+ * maps to a hard-coded renderer behavior (run a test, open the AI debug
+ * dialog, navigate), so the model chooses from a menu and can never name a
+ * path, a channel or a target the app didn't offer. Test-scoped kinds carry a
+ * `testId` that is validated against the tests the model was SHOWN at parse
+ * time, and against the live library at render time.
+ */
+export type InsightActionKind =
+  | "run-test"
+  | "debug-test"
+  | "open-test"
+  | "open-stats"
+  | "open-heals"
+  | "open-visual"
+  | "open-settings-integrations";
+
+export const INSIGHT_ACTION_KINDS: InsightActionKind[] = [
+  "run-test",
+  "debug-test",
+  "open-test",
+  "open-stats",
+  "open-heals",
+  "open-visual",
+  "open-settings-integrations",
+];
+
+export function isInsightActionKind(v: unknown): v is InsightActionKind {
+  return typeof v === "string" && (INSIGHT_ACTION_KINDS as string[]).includes(v);
+}
+
+const TEST_SCOPED_ACTION_KINDS: ReadonlySet<InsightActionKind> = new Set([
+  "run-test",
+  "debug-test",
+  "open-test",
+]);
+
+export interface InsightAction {
+  kind: InsightActionKind;
+  /** Required for the test-scoped kinds; absent otherwise. */
+  testId?: string;
+  /** The test's name AS IT WAS — copied, not joined, so a deleted test's
+   *  recommendation still reads as a sentence (same rule as
+   *  AiDebugHistoryRecord.testName). */
+  testName?: string;
+  /** The model's one-line reason for the recommendation. Prose, clamped —
+   *  the button's VERB is ours, fixed per kind, so this can never relabel
+   *  "Run test" into something else. */
+  label: string;
+}
+
+export interface InsightSection {
+  title: string;
+  /** Plain prose. Rendered as paragraphs, never interpreted as markup. */
+  body: string;
+}
+
+/**
+ * The deterministic numbers strip. Computed by the facts builder from the
+ * stores — NEVER parsed back out of the model's prose, so a hallucinated
+ * figure cannot reach a number the user reads. `null` fields are "the metrics
+ * DB was unavailable", which is a different fact from zero.
+ */
+export interface InsightStats {
+  runs: number;
+  failed: number;
+  previousRuns: number;
+  flakyRuns: number;
+  healedSteps: number;
+  healFailures: number;
+  visualChanges: number | null;
+  newClusters: number | null;
+  a11yNewSteps: number;
+  testsCreated: number;
+  unreviewedScriptChanges: number;
+  expiringSignatures: number;
+}
+
+/** One line of the per-report "what was sent" disclosure: a payload category
+ *  and its size in characters (characters, not tokens — a token count is a
+ *  guess dressed as a measurement). Stored WITH the report because it
+ *  describes the send that actually happened, not the one today's builder
+ *  would make. */
+export interface InsightSendingItem {
+  label: string;
+  chars: number;
+}
+
+export interface InsightReport {
+  id: string;
+  cadence: InsightsCadence;
+  /** The rolling window the report summarizes. */
+  periodStart: number;
+  periodEnd: number;
+  generatedAt: number;
+  /** Resolved by the completion call, same rationale as `llm:chat`'s return:
+   *  only the backend knows what the configured values were at send time. */
+  provider: string;
+  model: string;
+  headline: string;
+  sections: InsightSection[];
+  actions: InsightAction[];
+  stats: InsightStats;
+  sending: InsightSendingItem[];
+  /** Present when the model's answer failed the JSON contract and `sections`
+   *  holds its raw prose — the view labels it, and there are no actions.
+   *  Absent-not-false, like `testDeleted`. */
+  degraded?: true;
+  promptChars: number;
+  answerChars: number;
+  durationMs: number;
+  firstTokenMs: number | null;
+  read: boolean;
+}
+
+/** The list row: everything the Insights rail list renders, nothing more. */
+export interface InsightReportSummary {
+  id: string;
+  cadence: InsightsCadence;
+  generatedAt: number;
+  headline: string;
+  read: boolean;
+  degraded?: true;
+}
+
+export interface InsightsState {
+  /** Last successful generation. What the due-rule compares against. */
+  lastGeneratedAt: number | null;
+  /** Last FAILED attempt, stamped when the attempt settles — never at start,
+   *  so a quit mid-generation persists nothing and the period stays due. What
+   *  the retry backoff compares against. */
+  lastAttemptAt: number | null;
+  lastError: { at: number; kind: LlmErrorKind; message: string } | null;
+  /** App version at the last successful generation, so the next report can
+   *  say what changed in the app since the reader last heard. */
+  lastSeenAppVersion: string | null;
+}
+
+/** What `insights:status` answers: the persisted state plus whether a
+ *  generation is in flight right now. */
+export interface InsightsStatus extends InsightsState {
+  generating: boolean;
+}
+
+export const MAX_INSIGHT_SECTIONS = 8;
+export const MAX_INSIGHT_ACTIONS = 6;
+export const MAX_INSIGHT_HEADLINE_CHARS = 200;
+export const MAX_INSIGHT_SECTION_TITLE_CHARS = 120;
+export const MAX_INSIGHT_SECTION_BODY_CHARS = 4000;
+export const MAX_INSIGHT_ACTION_LABEL_CHARS = 160;
+
+function clampText(v: unknown, max: number): string {
+  const s = typeof v === "string" ? v.trim() : "";
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
+/**
+ * Rebuild one action from untrusted input.
+ *
+ * `knownTestIds` is the set of tests the model was SHOWN (the facts pack's
+ * index) — passed at PARSE time so an invented or off-menu id is dropped
+ * before persistence. Pass `null` when re-normalizing a stored report on
+ * read: the library has moved on since generation, and a since-deleted test's
+ * action must survive to render disabled rather than vanish from history.
+ */
+export function normalizeInsightAction(
+  input: unknown,
+  knownTestIds: ReadonlySet<string> | null,
+): InsightAction | null {
+  if (!input || typeof input !== "object") return null;
+  const raw = input as Record<string, unknown>;
+  if (!isInsightActionKind(raw.kind)) return null;
+  const label = clampText(raw.label, MAX_INSIGHT_ACTION_LABEL_CHARS);
+  if (!label) return null;
+  if (!TEST_SCOPED_ACTION_KINDS.has(raw.kind)) {
+    // Rebuilt, not spread: a navigation action carries no test identity, and
+    // whatever else rode in on the object stays behind.
+    return { kind: raw.kind, label };
+  }
+  const testId = typeof raw.testId === "string" ? raw.testId : "";
+  if (!testId) return null;
+  if (knownTestIds && !knownTestIds.has(testId)) return null;
+  const testName = clampText(raw.testName, 160);
+  return { kind: raw.kind, testId, ...(testName ? { testName } : {}), label };
+}
+
+export function normalizeInsightSection(input: unknown): InsightSection | null {
+  if (!input || typeof input !== "object") return null;
+  const raw = input as Record<string, unknown>;
+  const body = clampText(raw.body, MAX_INSIGHT_SECTION_BODY_CHARS);
+  if (!body) return null;
+  return { title: clampText(raw.title, MAX_INSIGHT_SECTION_TITLE_CHARS), body };
+}
+
+function normalizeInsightStats(input: unknown): InsightStats {
+  const raw = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const count = (v: unknown) => Math.max(0, Math.round(finiteOr(v, 0)));
+  const countOrNull = (v: unknown) => {
+    const n = nullableFinite(v);
+    return n === null ? null : Math.max(0, Math.round(n));
+  };
+  return {
+    runs: count(raw.runs),
+    failed: count(raw.failed),
+    previousRuns: count(raw.previousRuns),
+    flakyRuns: count(raw.flakyRuns),
+    healedSteps: count(raw.healedSteps),
+    healFailures: count(raw.healFailures),
+    visualChanges: countOrNull(raw.visualChanges),
+    newClusters: countOrNull(raw.newClusters),
+    a11yNewSteps: count(raw.a11yNewSteps),
+    testsCreated: count(raw.testsCreated),
+    unreviewedScriptChanges: count(raw.unreviewedScriptChanges),
+    expiringSignatures: count(raw.expiringSignatures),
+  };
+}
+
+function normalizeInsightSending(input: unknown): InsightSendingItem[] {
+  if (!Array.isArray(input)) return [];
+  const out: InsightSendingItem[] = [];
+  for (const item of input.slice(0, 20)) {
+    if (!item || typeof item !== "object") continue;
+    const raw = item as Record<string, unknown>;
+    const label = clampText(raw.label, 80);
+    if (!label) continue;
+    out.push({ label, chars: Math.max(0, Math.round(finiteOr(raw.chars, 0))) });
+  }
+  return out;
+}
+
+/** Rebuild a stored report. Returns null when the identity fields are
+ *  unusable — a report nothing can list or open is not worth carrying. */
+export function normalizeInsightReport(input: unknown): InsightReport | null {
+  if (!input || typeof input !== "object") return null;
+  const raw = input as Record<string, unknown>;
+  const id = String(raw.id ?? "");
+  const generatedAt = finiteOr(raw.generatedAt, 0);
+  if (!id || generatedAt <= 0 || !isInsightsCadence(raw.cadence)) return null;
+  const headline = clampText(raw.headline, MAX_INSIGHT_HEADLINE_CHARS);
+  if (!headline) return null;
+  const sections = (Array.isArray(raw.sections) ? raw.sections : [])
+    .slice(0, MAX_INSIGHT_SECTIONS)
+    .map(normalizeInsightSection)
+    .filter((s): s is InsightSection => s !== null);
+  const actions = (Array.isArray(raw.actions) ? raw.actions : [])
+    .slice(0, MAX_INSIGHT_ACTIONS)
+    .map((a) => normalizeInsightAction(a, null))
+    .filter((a): a is InsightAction => a !== null);
+  return {
+    id,
+    cadence: raw.cadence,
+    periodStart: finiteOr(raw.periodStart, 0),
+    periodEnd: finiteOr(raw.periodEnd, generatedAt),
+    generatedAt,
+    provider: String(raw.provider ?? ""),
+    model: String(raw.model ?? ""),
+    headline,
+    sections,
+    actions: raw.degraded ? [] : actions,
+    stats: normalizeInsightStats(raw.stats),
+    sending: normalizeInsightSending(raw.sending),
+    ...(raw.degraded ? { degraded: true as const } : {}),
+    promptChars: Math.max(0, Math.round(finiteOr(raw.promptChars, 0))),
+    answerChars: Math.max(0, Math.round(finiteOr(raw.answerChars, 0))),
+    durationMs: Math.max(0, Math.round(finiteOr(raw.durationMs, 0))),
+    firstTokenMs: nullableFinite(raw.firstTokenMs),
+    read: raw.read === true,
+  };
+}
+
+export function normalizeInsightsState(input: unknown): InsightsState {
+  const raw = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const err = raw.lastError as Record<string, unknown> | null | undefined;
+  const errKind = err?.kind as LlmErrorKind;
+  return {
+    lastGeneratedAt: nullableFinite(raw.lastGeneratedAt),
+    lastAttemptAt: nullableFinite(raw.lastAttemptAt),
+    lastError:
+      err && typeof err === "object" && typeof err.message === "string" && err.message
+        ? {
+            at: finiteOr(err.at, 0),
+            kind: LLM_ERROR_KINDS.includes(errKind) ? errKind : "provider",
+            message: clampText(err.message, 500),
+          }
+        : null,
+    lastSeenAppVersion:
+      typeof raw.lastSeenAppVersion === "string" && raw.lastSeenAppVersion
+        ? raw.lastSeenAppVersion
+        : null,
+  };
 }

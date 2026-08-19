@@ -107,6 +107,9 @@ export declare function failureClusters(
   firstSeenAt: number;
 }[];
 
+/** Steps over their visual threshold since `since`; null = DB unavailable. */
+export declare function changedStepCount(db: Db, opts?: { since?: number }): number | null;
+
 export interface StepDurationRow {
   stepId: string;
   label: string | null;

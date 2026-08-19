@@ -7,6 +7,7 @@ import * as path from "path";
 import { app, logger } from "@shell/backend";
 
 import {
+  isInsightsCadence,
   isRunBrowser,
   isTestSpeed,
   isUiScale,
@@ -184,6 +185,14 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   // away from, and the whole point is to be told it ended.
   notifyOnBatchDone: true,
   notifyOnAiDebugDone: false,
+  // OFF by default, and this one is load-bearing: enabling it is the consent
+  // for the app's only unattended AI send.
+  aiInsightsEnabled: false,
+  aiInsightsCadence: "weekly",
+  // ON by default like notifyOnBatchDone, and gated behind aiInsightsEnabled
+  // in practice: a report that generates unattended and announces nothing is
+  // one nobody finds.
+  notifyOnInsightsReady: true,
   autoAcceptAiDebugFixes: false,
   disabledAestheticEnhancements: [],
   // 100%. The theme is drawn at these exact pixel sizes, so the default has to
@@ -325,6 +334,17 @@ function read(): RecorderSettings {
         typeof parsed.notifyOnAiDebugDone === "boolean"
           ? parsed.notifyOnAiDebugDone
           : DEFAULT_SETTINGS.notifyOnAiDebugDone,
+      aiInsightsEnabled:
+        typeof parsed.aiInsightsEnabled === "boolean"
+          ? parsed.aiInsightsEnabled
+          : DEFAULT_SETTINGS.aiInsightsEnabled,
+      aiInsightsCadence: isInsightsCadence(parsed.aiInsightsCadence)
+        ? parsed.aiInsightsCadence
+        : DEFAULT_SETTINGS.aiInsightsCadence,
+      notifyOnInsightsReady:
+        typeof parsed.notifyOnInsightsReady === "boolean"
+          ? parsed.notifyOnInsightsReady
+          : DEFAULT_SETTINGS.notifyOnInsightsReady,
       autoAcceptAiDebugFixes:
         typeof parsed.autoAcceptAiDebugFixes === "boolean"
           ? parsed.autoAcceptAiDebugFixes
@@ -488,6 +508,18 @@ export const recorderSettingsStore = {
         update.notifyOnAiDebugDone !== undefined
           ? update.notifyOnAiDebugDone
           : current.notifyOnAiDebugDone,
+      aiInsightsEnabled:
+        update.aiInsightsEnabled !== undefined ? update.aiInsightsEnabled : current.aiInsightsEnabled,
+      // Same allowlist as `read()`, on the standing principle: a value refused
+      // on load but accepted on save is written to disk and then silently
+      // ignored forever, which reads as "the setting does not work".
+      aiInsightsCadence: isInsightsCadence(update.aiInsightsCadence)
+        ? update.aiInsightsCadence
+        : current.aiInsightsCadence,
+      notifyOnInsightsReady:
+        update.notifyOnInsightsReady !== undefined
+          ? update.notifyOnInsightsReady
+          : current.notifyOnInsightsReady,
       autoAcceptAiDebugFixes:
         update.autoAcceptAiDebugFixes !== undefined
           ? update.autoAcceptAiDebugFixes
@@ -556,6 +588,9 @@ export const recorderSettingsStore = {
       notifyOnRunIssues: next.notifyOnRunIssues,
       notifyOnBatchDone: next.notifyOnBatchDone,
       notifyOnAiDebugDone: next.notifyOnAiDebugDone,
+      aiInsightsEnabled: next.aiInsightsEnabled,
+      aiInsightsCadence: next.aiInsightsCadence,
+      notifyOnInsightsReady: next.notifyOnInsightsReady,
       autoAcceptAiDebugFixes: next.autoAcceptAiDebugFixes,
       disabledAestheticEnhancements: next.disabledAestheticEnhancements,
       uiScale: next.uiScale,

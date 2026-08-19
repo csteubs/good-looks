@@ -387,6 +387,116 @@ export const UI_TYPEFACE_LABELS: Record<UiTypeface, string> = {
   classic: "Menlo / Helvetica",
 };
 
+/** How often the AI insights report generates (mirror of main types). */
+export type InsightsCadence = "daily" | "weekly" | "monthly";
+
+export const INSIGHTS_CADENCES: InsightsCadence[] = ["daily", "weekly", "monthly"];
+
+export const INSIGHTS_CADENCE_LABELS: Record<InsightsCadence, string> = {
+  daily: "Daily",
+  weekly: "Weekly",
+  monthly: "Monthly",
+};
+
+/** Mirror of main types — what a recommendation's button can do. A closed
+ *  enum: each kind maps to a hard-coded behavior in the Insights view, so
+ *  model output can never name a path or a channel. */
+export type InsightActionKind =
+  | "run-test"
+  | "debug-test"
+  | "open-test"
+  | "open-stats"
+  | "open-heals"
+  | "open-visual"
+  | "open-settings-integrations";
+
+export interface InsightAction {
+  kind: InsightActionKind;
+  testId?: string;
+  /** The test's name as it was at generation — what renders when the test has
+   *  since been deleted and the button is disabled. */
+  testName?: string;
+  /** The model's one-line reason. The button's verb is fixed per kind. */
+  label: string;
+}
+
+export interface InsightSection {
+  title: string;
+  /** Plain prose, rendered as paragraphs — never interpreted as markup. */
+  body: string;
+}
+
+/** The deterministic numbers strip — computed by the backend's facts builder,
+ *  never parsed from model prose. Null = the metrics DB was unavailable,
+ *  which is a different fact from zero. */
+export interface InsightStats {
+  runs: number;
+  failed: number;
+  previousRuns: number;
+  flakyRuns: number;
+  healedSteps: number;
+  healFailures: number;
+  visualChanges: number | null;
+  newClusters: number | null;
+  a11yNewSteps: number;
+  testsCreated: number;
+  unreviewedScriptChanges: number;
+  expiringSignatures: number;
+}
+
+export interface InsightSendingItem {
+  label: string;
+  chars: number;
+}
+
+export interface InsightReport {
+  id: string;
+  cadence: InsightsCadence;
+  periodStart: number;
+  periodEnd: number;
+  generatedAt: number;
+  provider: string;
+  model: string;
+  headline: string;
+  sections: InsightSection[];
+  actions: InsightAction[];
+  stats: InsightStats;
+  /** What that generation actually sent, category by category, in characters. */
+  sending: InsightSendingItem[];
+  /** The model's answer failed the JSON contract; sections hold raw prose and
+   *  there are no actions. */
+  degraded?: true;
+  promptChars: number;
+  answerChars: number;
+  durationMs: number;
+  firstTokenMs: number | null;
+  read: boolean;
+}
+
+export interface InsightReportSummary {
+  id: string;
+  cadence: InsightsCadence;
+  generatedAt: number;
+  headline: string;
+  read: boolean;
+  degraded?: true;
+}
+
+export interface InsightsState {
+  lastGeneratedAt: number | null;
+  lastAttemptAt: number | null;
+  lastError: { at: number; kind: string; message: string } | null;
+  lastSeenAppVersion: string | null;
+}
+
+export interface InsightsStatus extends InsightsState {
+  generating: boolean;
+}
+
+export type InsightsGenerateNowResult =
+  | { started: true }
+  | { started: false; reason: "disabled" | "alreadyRunning" };
+
 export interface TestRecord {
   id: string;
   name: string;
@@ -1026,6 +1136,16 @@ export interface RecorderSettings {
   /** post a macOS notification when an AI debug job finishes or fails
    *  (default false). */
   notifyOnAiDebugDone: boolean;
+  /** generate a periodic AI insights report with the configured provider
+   *  (default false). This is the consent switch for the app's only
+   *  UNATTENDED AI send — the Alerts pane row states exactly what goes. */
+  aiInsightsEnabled: boolean;
+  /** how often the insights report generates (default "weekly"). */
+  aiInsightsCadence: InsightsCadence;
+  /** post a macOS notification when an insights report is ready (default
+   *  true). The report generates unattended, so "it's ready" is the whole
+   *  point; the notification itself is local to this Mac. */
+  notifyOnInsightsReady: boolean;
   /** EXPERIMENTAL. Auto-apply a finished AI debug job's script fix while its
    *  dialog is minimized, only when the script hasn't changed since the prompt
    *  was sent (default false). */
