@@ -10,6 +10,33 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-19 — The composer's kind menus are pinned against the model's lists
+
+`titleContains` was in `ASSERT_KINDS`, in the recording view's assert menu, in
+the trainer panel's, and in the training browser's right-click menu — but not
+in the step composer's `ASSERT_OPTIONS`. That was worse than one missing menu
+row: all three of those menus open the composer with the kind PRESELECTED, and
+the composer looks its option up with a non-null assertion, so picking "Page
+title contains" anywhere crashed the panel. The same omission existed one file
+over in `step-row.tsx`, whose inline-edit gate skipped `titleContains` — and a
+kind missing from that gate does not degrade, it loses the pencil entirely,
+which reads as designed rather than broken.
+
+**Why a test and not a review rule.** The kind dropdowns are native-menu-backed
+Selects, so a forgotten kind never enters the DOM of any rendered test — every
+existing composer test passed throughout. The option lists are now exported and
+pinned in `step-composer.test.tsx` against the model's own lists
+(`ASSERT_KINDS`, `CONDITION_KINDS`, `WAIT_UNTIL_KINDS`, `CAPTURE_SOURCES`),
+sorted equality in both directions, so the next kind added to the model but not
+the panel fails, and so does a phantom option or a duplicate.
+
+**Pinned against `main/recorder/types.ts`, not the renderer mirror** in
+`renderer/lib/recorder-types.ts` — the mirror is itself a copy that can drift,
+and it turned out its doc comment claimed `check:step-semantics` pins it
+against the backend's list when nothing did. That check now really does
+(section 5), so the chain is closed at both links: mirror ↔ backend by the
+check, panel ↔ model by the test.
+
 ### 2026-08-19 — Proxy settings: two traffic classes, one shared rule, one encrypted half
 
 Settings → Proxy, modelled on the mabl Desktop App's proxy settings (traffic

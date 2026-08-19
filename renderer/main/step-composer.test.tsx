@@ -18,8 +18,20 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
+import {
+  ASSERT_KINDS,
+  CAPTURE_SOURCES,
+  CONDITION_KINDS,
+  WAIT_UNTIL_KINDS,
+} from "../../main/recorder/types";
 import type { PickedElement, RawStep, WaitDialogMode } from "../lib/recorder-types";
-import { StepComposer } from "./step-composer";
+import {
+  ASSERT_OPTIONS,
+  CAPTURE_OPTIONS,
+  CONDITION_OPTIONS,
+  StepComposer,
+  WAIT_UNTIL_OPTIONS,
+} from "./step-composer";
 
 const PICKED: PickedElement = {
   tag: "button",
@@ -395,6 +407,74 @@ describe("the composer panel", () => {
       />,
     );
     expect(panel()?.getAttribute("aria-label")).toBe("Add assertion");
+  });
+});
+
+// ── The option lists cover the model's vocabulary ─────────────────────────
+//
+// The kind dropdowns are native-menu-backed Selects, so their options never
+// enter the DOM (see the header) — no rendered test can notice a kind the
+// menu forgot to offer. What can is pinning each option list against the
+// model's own kind list, from main/recorder/types.ts rather than the renderer
+// mirror, because the mirror is exactly the kind of copy that could drift in
+// step with the panel. Sorted equality, both directions: a kind added to the
+// model but not offered here fails, and so does a phantom option or a
+// duplicate.
+//
+// Not hypothetical: `titleContains` was in ASSERT_KINDS and in every OTHER
+// assert menu (recording view, trainer panel, browser right-click), but not
+// in ASSERT_OPTIONS — and because those menus open this composer with the
+// kind preselected, the miss was not one absent row but a crash on open.
+
+describe("the option lists cover the model's vocabulary", () => {
+  it("offers every assert kind exactly once", () => {
+    expect([...ASSERT_OPTIONS.map((o) => o.value)].sort()).toEqual([...ASSERT_KINDS].sort());
+  });
+
+  it("offers every condition kind exactly once", () => {
+    expect([...CONDITION_OPTIONS.map((o) => o.value)].sort()).toEqual([...CONDITION_KINDS].sort());
+  });
+
+  it("offers every wait-until kind exactly once", () => {
+    expect([...WAIT_UNTIL_OPTIONS.map((o) => o.value)].sort()).toEqual([...WAIT_UNTIL_KINDS].sort());
+  });
+
+  it("offers every capture source exactly once", () => {
+    expect([...CAPTURE_OPTIONS.map((o) => o.value)].sort()).toEqual([...CAPTURE_SOURCES].sort());
+  });
+});
+
+// ── A page-level assertion preselected from a menu ────────────────────────
+//
+// Every surface offering "Page title contains" — the recording view's assert
+// menu, the trainer panel's, the training browser's right-click menu — opens
+// this composer with `initialAssert` set and nothing picked. That path has to
+// survive a kind the composer's own list is missing (it used to throw on the
+// failed option lookup) and then build the page-level step with no element.
+
+describe("a page-level assertion preselected from a menu", () => {
+  it("builds a titleContains assert with no element picked", () => {
+    const onAdd = vi.fn((_steps: RawStep[]) => {});
+    render(
+      <StepComposer
+        kind="assertion"
+        onCancel={() => {}}
+        onAdd={onAdd}
+        picked={null}
+        onStartPick={() => {}}
+        onClearPick={() => {}}
+        initialAssert="titleContains"
+        prefillValue="Dashboard"
+      />,
+    );
+    // Page-level: the expected substring is the only operand on offer. (The
+    // visible Field label, not getByLabelText — Field does not associate its
+    // label with the input.)
+    expect(screen.getByText("Expected (substring or regex)")).toBeTruthy();
+    submit();
+    expect(emitted(onAdd)).toEqual([
+      { type: "assert", assert: "titleContains", value: "Dashboard" },
+    ]);
   });
 });
 

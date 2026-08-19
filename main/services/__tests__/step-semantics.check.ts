@@ -19,6 +19,11 @@
 //  4. Where the wait vocabulary overlaps the assert vocabulary, the two agree.
 //     "Wait until the URL contains X" and "assert the URL contains X" differing
 //     by a case rule would be this bug one level down.
+//  5. The renderer's mirror of the kind lists is verbatim. The mirror's own
+//     doc comment has claimed this check pins it since the mirror was
+//     exported; nothing actually did, so a kind added to the backend and
+//     forgotten in the mirror would quietly lag the LLM prompt schema and the
+//     response validator built from it.
 
 import { buildReplayScript } from "../step-replayer.js";
 import { generateSpec } from "../script-generator.js";
@@ -31,8 +36,12 @@ import {
   WAIT_SEMANTICS,
   WAIT_TO_ASSERT_KIND,
 } from "../../../shared/step-semantics.mjs";
-import { ASSERT_KINDS } from "../../recorder/types.js";
+import { ASSERT_KINDS, WAIT_UNTIL_KINDS } from "../../recorder/types.js";
 import type { AssertKind, Step } from "../../recorder/types.js";
+import {
+  ASSERT_KINDS as RENDERER_ASSERT_KINDS,
+  WAIT_UNTIL_KINDS as RENDERER_WAIT_UNTIL_KINDS,
+} from "../../../renderer/lib/recorder-types.js";
 
 let failures = 0;
 function ok(cond: boolean, label: string): void {
@@ -157,6 +166,13 @@ ok(matchesValue("  a   b  ", "a b", ASSERT_SEMANTICS.exactText!), "exactText nor
 ok(!matchesValue("  a   b  ", "a b", ASSERT_SEMANTICS.value!), "value does not normalize whitespace");
 // The `endsWith` empty-string trap: `"x".slice(-0)` is the whole string.
 ok(!matchesValue("https://x.test/a", "", ASSERT_SEMANTICS.urlEndsWith!), "urlEndsWith with an empty value matches nothing");
+
+// ---------------------------------------------------------------------------
+// 5. The renderer's mirror lists are verbatim copies of the backend's.
+// ---------------------------------------------------------------------------
+
+eq(RENDERER_ASSERT_KINDS, ASSERT_KINDS, "renderer ASSERT_KINDS mirrors the backend's exactly");
+eq(RENDERER_WAIT_UNTIL_KINDS, WAIT_UNTIL_KINDS, "renderer WAIT_UNTIL_KINDS mirrors the backend's exactly");
 
 console.log(failures === 0 ? "\nall step-semantics checks passed" : `\n${failures} check(s) failed`);
 process.exit(failures === 0 ? 0 : 1);

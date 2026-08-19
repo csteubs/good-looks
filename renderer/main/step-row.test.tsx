@@ -702,3 +702,25 @@ describe("inserting a variable inline", () => {
     expect(input.value).toBe("hunter2");
   });
 });
+
+// ── Inline editing a page-level assert ─────────────────────────────────────
+//
+// The pencil only renders when `inlineField` names a field, so an assert kind
+// missing from its gate does not degrade — it silently loses the edit control
+// altogether, which reads as designed rather than broken. `titleContains`
+// shipped that way while every sibling page-level kind (`url`, `urlEndsWith`,
+// `urlIs`, `title`) offered the Expected field.
+
+describe("inline editing a page-level assert", () => {
+  it("offers the Expected field on a titleContains assert", () => {
+    render(
+      <StepRow
+        index={0}
+        step={step({ type: "assert", assert: "titleContains", value: "Dashboard" })}
+        onEdit={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText(/edit step/i));
+    expect((screen.getByLabelText(/edit expected/i) as HTMLInputElement).value).toBe("Dashboard");
+  });
+});
