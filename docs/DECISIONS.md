@@ -41,6 +41,15 @@ failure as an invented selector. That is also why the JSON schema still offers
 no `nth`: an index into matches the model has never seen could only be
 invented, though the validator keeps accepting one defensively.
 
+**Rebasing over the test-id attribute work surfaced the same drift, one day
+old.** That change taught the generate-steps prompt that a testid locator "may
+add `attr`" but not the validator, so an `attr` the model emitted was silently
+stripped and the step resolved by `data-testid` — the wrong element or none,
+with nothing saying why. `validateLocator` now applies `testIdOverride` from
+shared/testid-attr.mjs (overrides only, testid only — the default attribute is
+expressed by absence, exactly as `normalizeLocator` rules it), and the
+llm-knowledge drift guard covers the field.
+
 ### 2026-08-19 — The composer's kind menus are pinned against the model's lists
 
 `titleContains` was in `ASSERT_KINDS`, in the recording view's assert menu, in

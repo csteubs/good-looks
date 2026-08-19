@@ -78,6 +78,22 @@ describe("the model can express every assert kind the app has", () => {
   });
 });
 
+describe("the model can name which test-id attribute it means", () => {
+  it("the prompt offers attr and the validator carries it through", () => {
+    // The prompt gained "a testid locator may add attr" with the test-id
+    // attribute work; the validator did not, so an attr the model emitted was
+    // silently stripped and the step resolved by data-testid — the wrong
+    // element or none, with nothing saying why.
+    const sys = stepsSystemPrompt();
+    expect(sys).toContain('"attr"');
+    const parsed = extractStepsJson(
+      '```json\n[{"type":"click","locator":{"k":"testid","v":"save","attr":"data-test-id"}}]\n```',
+    );
+    expect(parsed, "the response should parse").not.toBeNull();
+    expect(parsed![0].locator?.attr).toBe("data-test-id");
+  });
+});
+
 describe("the model can express element context", () => {
   it("the prompt describes ctx and the validator carries it through", () => {
     // Same drift rule as the assert kinds: the prompt is the contract, the

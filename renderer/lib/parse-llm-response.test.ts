@@ -105,6 +105,31 @@ describe("extractStepsJson", () => {
     expect(steps).toBeNull();
   });
 
+  it("carries a testid locator's attr override, by the shared rule", () => {
+    // The prompt tells the model a "testid" locator may add "attr" when the
+    // element's test id lives on data-test-id/data-test. Same rule as
+    // normalizeLocator: overrides only (the default attribute is absence —
+    // a second spelling would be a second heal-map key), testid only, and it
+    // applies inside ctx too.
+    const steps = extractStepsJson(
+      JSON.stringify([
+        { type: "click", locator: { k: "testid", v: "save", attr: "data-test-id" } },
+        { type: "click", locator: { k: "testid", v: "save", attr: "data-testid" } },
+        { type: "click", locator: { k: "testid", v: "save", attr: "onclick" } },
+        { type: "click", locator: { k: "text", v: "Save", attr: "data-test-id" } },
+        {
+          type: "click",
+          locator: { k: "text", v: "Save", ctx: { within: { k: "testid", v: "billing", attr: "data-test" } } },
+        },
+      ]),
+    );
+    expect(steps![0].locator?.attr).toBe("data-test-id");
+    expect(steps![1].locator?.attr).toBeUndefined();
+    expect(steps![2].locator?.attr).toBeUndefined();
+    expect(steps![3].locator?.attr).toBeUndefined();
+    expect(steps![4].locator?.ctx?.within?.attr).toBe("data-test");
+  });
+
   it("carries a locator's ctx through — within, withinHasText and and", () => {
     // The Locator model, the generator and normalizeLocator all support
     // element context; a parse that dropped it meant an AI-proposed step could

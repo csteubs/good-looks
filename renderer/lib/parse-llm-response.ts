@@ -7,6 +7,7 @@ import {
   LOCATOR_KINDS as ALL_LOCATOR_KINDS,
   WAIT_UNTIL_KINDS as ALL_WAIT_UNTIL_KINDS,
 } from "./recorder-types";
+import { testIdOverride } from "../../shared/testid-attr.mjs";
 import type {
   AssertKind,
   Locator,
@@ -145,6 +146,13 @@ function validateLocator(raw: unknown, allowContext: boolean): Locator | undefin
     name: str(loc.name),
     ...(nth !== undefined && nth >= 0 ? { nth: Math.trunc(nth) } : {}),
   };
+  // Same rule as normalizeLocator: overrides only — the default attribute is
+  // expressed by absence, so a "data-testid" the model writes out is dropped
+  // rather than kept as a second spelling of the same locator.
+  if (loc.k === "testid") {
+    const attr = testIdOverride(loc.attr);
+    if (attr) out.attr = attr;
+  }
   if (allowContext) {
     const ctx = validateLocatorContext(loc.ctx);
     if (ctx) out.ctx = ctx;
