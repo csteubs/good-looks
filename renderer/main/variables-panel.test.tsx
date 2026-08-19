@@ -28,6 +28,7 @@ const batchRun = vi.fn(async (_ids: string[], _opts: unknown) => ({
   batchId: "b1",
   alreadyRunning: false,
 }));
+const setFlow = vi.fn(async (_id: string, _isFlow: boolean, _params: string[]) => ({}) as TestRecord);
 let secretStatus: SecretStatus[] = [];
 
 vi.mock("../lib/api", () => ({
@@ -38,6 +39,7 @@ vi.mock("../lib/api", () => ({
       setSecret: (id: string, name: string, value: string) => setSecret(id, name, value),
       clearSecret: (id: string, name: string) => clearSecret(id, name),
       secretStatus: async () => secretStatus,
+      setFlow: (id: string, isFlow: boolean, params: string[]) => setFlow(id, isFlow, params),
     },
     batch: { run: (ids: string[], opts: unknown) => batchRun(ids, opts) },
   },
@@ -316,5 +318,71 @@ describe("the plaintext warning", () => {
     // needs telling before they type one in.
     renderPanel(makeTest({ variables: [{ name: "email", kind: "plain", value: "a@b.com" }] }));
     expect(await screen.findByText(/Row values are stored as plain text/i)).toBeTruthy();
+  });
+});
+
+describe("the Reusable flow section", () => {
+  it("turns a test into a flow, preserving its declared parameters", async () => {
+    renderPanel(makeTest({ flowParams: ["email"] }));
+    fireEvent.click(await screen.findByRole("switch", { name: /reusable flow/i }));
+    await waitFor(() => expect(setFlow).toHaveBeenCalledWith("t1", true, ["email"]));
+  });
+
+  it("offers plain variables as parameters and persists a tick", async () => {
+    renderPanel(
+      makeTest({
+        isFlow: true,
+        variables: [{ name: "email", kind: "plain", value: "a@b.com" }],
+      }),
+    );
+    fireEvent.click(await screen.findByLabelText("Parameter email"));
+    await waitFor(() => expect(setFlow).toHaveBeenCalledWith("t1", true, ["email"]));
+  });
+
+  it("never offers a secret as a parameter", async () => {
+    // An argument is stored as plain text on the CALLING test's record, so a
+    // secret parameter would route its value around the encrypted store —
+    // the same rule that keeps secrets out of dataset columns.
+    renderPanel(
+      makeTest({
+        isFlow: true,
+        variables: [
+          { name: "email", kind: "plain", value: "a@b.com" },
+          { name: "password", kind: "secret" },
+        ],
+      }),
+    );
+    await screen.findByLabelText("Parameter email");
+    expect(screen.queryByLabelText("Parameter password")).toBeNull();
+  });
+
+  it("unticking removes just that parameter", async () => {
+    renderPanel(
+      makeTest({
+        isFlow: true,
+        flowParams: ["email", "user"],
+        variables: [
+          { name: "email", kind: "plain", value: "" },
+          { name: "user", kind: "plain", value: "" },
+        ],
+      }),
+    );
+    fireEvent.click(await screen.findByLabelText("Parameter email"));
+    await waitFor(() => expect(setFlow).toHaveBeenCalledWith("t1", true, ["user"]));
+  });
+
+  it("surfaces parameters that no longer match a variable, with a way out", async () => {
+    // A parameter whose variable was renamed, deleted, or made secret still
+    // binds (callers fall back to ""), but it is probably stale — so it is
+    // shown as removable instead of silently kept or silently dropped.
+    renderPanel(makeTest({ isFlow: true, flowParams: ["ghost"] }));
+    await screen.findByText(/no matching variable/i);
+    fireEvent.click(screen.getByRole("button", { name: /remove parameter ghost/i }));
+    await waitFor(() => expect(setFlow).toHaveBeenCalledWith("t1", true, []));
+  });
+
+  it("says what off means while the toggle is off", async () => {
+    renderPanel(makeTest());
+    expect(await screen.findByText(/not offered in the trainer/i)).toBeTruthy();
   });
 });

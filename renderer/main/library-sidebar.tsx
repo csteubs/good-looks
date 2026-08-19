@@ -15,7 +15,7 @@ import {
   Text,
   toast,
 } from "@ui";
-import { Plus, ChevronDown, ChevronRight, Folder, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
+import { Plus, ChevronDown, ChevronRight, Folder, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy, Workflow } from "lucide-react";
 
 import { ChromeButton, Rail, RailEmpty, RailGroup, RailRow, SiteIcon } from "../theme";
 import { RoutinesRail, useCreateRoutine } from "./routines-rail";
@@ -258,15 +258,25 @@ function AiConnectionFooter() {
 function RowIndicators({
   sessions,
   verdict,
+  isFlow,
 }: {
   sessions: SessionLike[];
   verdict: RunVerdictTone | undefined;
+  /** Marked as a reusable flow — worth a glyph because a flow behaves oddly as
+   *  a plain test (hidden from the Batch checklist, callable from the
+   *  composer), and nothing else in the rail says why. */
+  isFlow?: boolean;
 }) {
   const agg = aggregateStatus(sessions);
   const tone = agg === null ? null : toneFor(agg);
-  if (!tone && !verdict) return null;
+  if (!tone && !verdict && !isFlow) return null;
   return (
     <span className="flex shrink-0 items-center gap-1.5">
+      {isFlow ? (
+        <span role="img" aria-label="Reusable flow" title="Reusable flow">
+          <Workflow aria-hidden="true" className="size-3.5 text-tertiary" />
+        </span>
+      ) : null}
       {tone ? (
         <Sparkles
           role="img"
@@ -595,6 +605,7 @@ export function LibrarySidebar() {
             <RowIndicators
               sessions={sessionsByTest.get(t.id) ?? []}
               verdict={verdictByTest.get(t.id)}
+              isFlow={t.isFlow}
             />
           }
           onClick={() => navigate({ to: "/test/$id", params: { id: t.id } })}

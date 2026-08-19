@@ -88,6 +88,17 @@ import type {
   LlmProviderStatus,
 } from "./llm-types";
 
+/** One reusable flow as `tests:listFlows` reports it — enough to offer the
+ *  flow and to build its argument form, without shipping whole records. */
+export interface FlowInfo {
+  id: string;
+  name: string;
+  flowParams: string[];
+  /** Per-parameter fallback (the flow's own variable value): what a caller
+   *  gets for any argument it leaves blank. Placeholder text, not data. */
+  paramDefaults: Record<string, string>;
+}
+
 export interface ImportResult {
   imported: number;
   names: string[];
@@ -310,10 +321,7 @@ export const api = {
       ipc().invoke<TestRecord>("tests:setDatasets", { id, datasets }),
     setFlow: (id: string, isFlow: boolean, flowParams: string[]) =>
       ipc().invoke<TestRecord>("tests:setFlow", { id, isFlow, flowParams }),
-    listFlows: (fromId?: string) =>
-      ipc().invoke<{ id: string; name: string; flowParams: string[] }[]>("tests:listFlows", {
-        fromId,
-      }),
+    listFlows: (fromId?: string) => ipc().invoke<FlowInfo[]>("tests:listFlows", { fromId }),
     importFiles: () => ipc().invoke<ImportResult>("tests:importFiles"),
     /** `ref` is an optional branch or tag. Validated in the main process with
      *  the branch switcher's own rule (`shared/branch-paths.mjs`) — a ref

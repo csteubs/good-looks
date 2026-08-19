@@ -1077,7 +1077,10 @@ function normalizeCookieSpec(input: unknown): CookieSpec | undefined {
   return out;
 }
 
-function normalizeFlowArgs(input: unknown): Record<string, string> | undefined {
+/** Exported for `recorder-service.updateStep`: `flowArgs` is the one map-valued
+ *  field a step patch can carry, so it gets the same rebuild `insertStep` gives
+ *  it rather than the allowlist's raw copy. */
+export function normalizeFlowArgs(input: unknown): Record<string, string> | undefined {
   if (!input || typeof input !== "object") return undefined;
   const out: Record<string, string> = {};
   let n = 0;

@@ -21,6 +21,7 @@ import { DEFAULT_WAIT_TIMEOUT_MS } from "../lib/recorder-types";
 import { clampViewportAxis } from "../lib/viewport-presets";
 import type { Step, TestVariable } from "../lib/recorder-types";
 import { insertAtCaret, varRef } from "../components/variable-picker";
+import { FlowArgsDialog } from "./flow-args-fields";
 
 /* `badgeColor` and `badgeLabel` were here, and `TypeChip` replaces both.
  *
@@ -264,6 +265,10 @@ export function StepRow({
 }) {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState("");
+  // "Edit Flow Arguments…" dialog for runFlow steps. Local to the row: unlike
+  // Refine (which needs the training browser's pick mode), the args editor is
+  // self-contained, so parents get it for free wherever onEdit is wired.
+  const [flowArgsOpen, setFlowArgsOpen] = React.useState(false);
   const rowRef = React.useRef<HTMLDivElement | null>(null);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   // Where the caret was when the variable menu was opened, and a latch that
@@ -672,7 +677,8 @@ export function StepRow({
             // only renders when at least one utility applies to this step.
             const canRefine = onRefine && step.locator;
             const canContinue = onEdit && step.type !== "if" && step.type !== "endif";
-            if (!canRefine && !canContinue) return null;
+            const canFlowArgs = onEdit && step.type === "runFlow";
+            if (!canRefine && !canContinue && !canFlowArgs) return null;
             return (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -691,7 +697,12 @@ export function StepRow({
                       Refine Selection
                     </DropdownMenuItem>
                   ) : null}
-                  {canRefine && canContinue ? <DropdownMenuSeparator /> : null}
+                  {canFlowArgs ? (
+                    <DropdownMenuItem onSelect={() => setFlowArgsOpen(true)}>
+                      Edit Flow Arguments…
+                    </DropdownMenuItem>
+                  ) : null}
+                  {(canRefine || canFlowArgs) && canContinue ? <DropdownMenuSeparator /> : null}
                   {canContinue ? (
                     <DropdownMenuCheckboxItem
                       checked={!!step.continueOnFailure}
@@ -723,6 +734,14 @@ export function StepRow({
             </button>
           ) : null}
         </div>
+      ) : null}
+      {flowArgsOpen ? (
+        <FlowArgsDialog
+          step={step}
+          open={flowArgsOpen}
+          onOpenChange={setFlowArgsOpen}
+          onSave={(args) => onEdit?.({ flowArgs: args })}
+        />
       ) : null}
     </div>
   );

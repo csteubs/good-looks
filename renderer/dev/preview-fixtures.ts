@@ -88,6 +88,17 @@ export const TESTS: TestRecord[] = [
       // not what the label says and could never pass.
       { type: "assert", assert: "url", value: "/order/confirmed" },
       { type: "assert", assert: "titleContains", value: "Order" },
+      // LAST, so the s1–s8 ids above keep meaning what the visual baselines,
+      // drift ratios and the s4 heal say they mean. A parameterized flow call:
+      // the recorder preview serves THIS test's steps as its live session, so
+      // this is what renders the `name=value` runFlow row and the kebab's
+      // "Edit Flow Arguments…" dialog.
+      {
+        type: "runFlow",
+        flowId: "t-login",
+        label: "Login — wrong password shows an error",
+        flowArgs: { email: "buyer@example.com" },
+      },
     ),
   },
   {
@@ -100,9 +111,16 @@ export const TESTS: TestRecord[] = [
     tags: ["smoke", "auth"],
     group: "Storefront",
     runBrowser: "webkit",
+    // The preview's one reusable flow: what the Variables tab's "Reusable
+    // flow" section, the composer's argument fields, and the rail glyph render
+    // against. The email fill references the parameter the way a real flow
+    // would, so the argument form's default placeholder shows a true value.
+    isFlow: true,
+    flowParams: ["email"],
+    variables: [{ name: "email", kind: "plain", value: "nobody@example.com" }],
     steps: steps(
       { type: "goto", url: "https://app.example.com/login" },
-      { type: "fill", locator: { k: "label", v: "Email" }, value: "nobody@example.com" },
+      { type: "fill", locator: { k: "label", v: "Email" }, value: "${email}" },
       { type: "fill", locator: { k: "label", v: "Password" }, value: "hunter2" },
       { type: "click", locator: { k: "role", role: "button", name: "Sign in" } },
       { type: "assert", assert: "visible", locator: { k: "testid", v: "login-error" } },

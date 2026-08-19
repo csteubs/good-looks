@@ -181,8 +181,10 @@ export function describeCapture(step: Step): string {
 /** Mirror of describeFlow in main/services/script-generator.ts — keep in sync. */
 export function describeFlow(step: Step): string {
   const name = step.label || step.flowId || "flow";
-  const args = step.flowArgs ? Object.keys(step.flowArgs) : [];
-  return args.length > 0 ? `run flow ${name} (${args.join(", ")})` : `run flow ${name}`;
+  const entries = Object.entries(step.flowArgs ?? {});
+  if (entries.length === 0) return `run flow ${name}`;
+  const args = entries.map(([k, v]) => `${k}=${v.length > 18 ? v.slice(0, 17) + "…" : v}`);
+  return `run flow ${name} (${args.join(", ")})`;
 }
 
 /** Mirror of describeWait in main/services/script-generator.ts — keep in sync.

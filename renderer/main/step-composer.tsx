@@ -59,8 +59,9 @@ import type {
   WaitDialogMode,
   WaitUntilKind,
 } from "../lib/recorder-types";
-import { api } from "../lib/api";
+import { api, type FlowInfo } from "../lib/api";
 import { buildStateSteps, type StatePick } from "../lib/element-states";
+import { collectFlowArgs, FlowArgsFields } from "./flow-args-fields";
 import { clampViewportAxis, RESIZE_PRESETS } from "../lib/viewport-presets";
 import { ElementContextPicker } from "./element-context-picker";
 import {
@@ -609,6 +610,10 @@ export function StepComposer({
   const [captureFrom, setCaptureFrom] = React.useState<CaptureSource>("text");
   const [captureAttr, setCaptureAttr] = React.useState("");
   const [flowId, setFlowId] = React.useState("");
+  // Draft values for the selected flow's parameters, keyed by parameter name.
+  // Reset when the flow changes: two flows sharing a parameter name is a
+  // coincidence, not a reason to carry a value across.
+  const [flowArgVals, setFlowArgVals] = React.useState<Record<string, string>>({});
   // Which declared variable a `fill` step will use, and whether the inline
   // "declare one" form is open. The name rather than an index: the list can
   // gain an entry while this panel is open (that is the whole point of the
@@ -670,7 +675,7 @@ export function StepComposer({
 
   // Flows available to call from here. Fetched on mount rather than held by the
   // parent, so a flow created in another window shows up without a reload.
-  const [flows, setFlows] = React.useState<{ id: string; name: string; flowParams: string[] }[]>([]);
+  const [flows, setFlows] = React.useState<FlowInfo[]>([]);
   React.useEffect(() => {
     if (kind !== "runFlow") return;
     let live = true;
@@ -777,6 +782,10 @@ export function StepComposer({
       case "runFlow": {
         if (!flowId) return null;
         const flow = flows.find((f) => f.id === flowId);
+        // Only filled-in arguments are stored: a blank field means "use the
+        // flow's default", which requires the KEY to be absent — an empty
+        // string would override the default (see collectFlowArgs).
+        const args = collectFlowArgs(flow?.flowParams ?? [], flowArgVals);
         return [
           {
             type: "runFlow",
@@ -784,6 +793,7 @@ export function StepComposer({
             // The name is stored on the step so the list stays readable even if
             // the flow is later renamed or deleted.
             label: flow?.name ?? flowId,
+            ...(Object.keys(args).length > 0 ? { flowArgs: args } : {}),
           },
         ];
       }
@@ -1188,7 +1198,13 @@ export function StepComposer({
         {kind === "runFlow" ? (
           <>
             <Field label="Flow" orientation="vertical">
-              <Select value={flowId} onValueChange={setFlowId}>
+              <Select
+                value={flowId}
+                onValueChange={(id) => {
+                  setFlowId(id);
+                  setFlowArgVals({});
+                }}
+              >
                 <SelectTrigger size="small">
                   <SelectValue placeholder="Choose a flow" />
                 </SelectTrigger>
@@ -1201,9 +1217,22 @@ export function StepComposer({
                 </SelectContent>
               </Select>
             </Field>
+            {(() => {
+              const selected = flows.find((f) => f.id === flowId);
+              if (!selected || selected.flowParams.length === 0) return null;
+              return (
+                <FlowArgsFields
+                  params={selected.flowParams}
+                  defaults={selected.paramDefaults}
+                  values={flowArgVals}
+                  onChange={setFlowArgVals}
+                />
+              );
+            })()}
             {flows.length === 0 ? (
               <Text size="small" className="text-tertiary">
-                No flows yet. Mark a test as a reusable flow to call it from here.
+                No flows yet. Mark a test as a reusable flow on its Variables tab to call it from
+                here.
               </Text>
             ) : (
               <Text size="small" className="text-secondary">
