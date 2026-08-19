@@ -6,6 +6,7 @@
 import * as React from "react";
 import { Badge, Dialog, Text } from "@ui";
 
+import { CustomLocatorField } from "./custom-locator-field";
 import { ElementContextPicker } from "./element-context-picker";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import type { Locator, LocatorContext, PickedElement } from "../lib/recorder-types";
@@ -62,20 +63,24 @@ export function RefineSelectorDialog({
   onApply: (locator: Locator) => void;
   onClose: () => void;
 }) {
-  const [selected, setSelected] = React.useState(0);
+  const [selected, setSelected] = React.useState<number | "custom">(0);
   const [ctx, setCtx] = React.useState<LocatorContext | null>(null);
+  // The hand-typed alternative, valid or null. Held separately from `selected`
+  // so switching to a candidate and back keeps the draft's validity state.
+  const [customLoc, setCustomLoc] = React.useState<Locator | null>(null);
 
   // Reset selection whenever a new element is picked.
   React.useEffect(() => {
     setSelected(0);
     setCtx(null);
+    setCustomLoc(null);
   }, [picked]);
 
   const candidates = picked.candidates ?? [];
   const cssEntries = Object.entries(picked.css ?? {});
 
   function apply() {
-    const loc = candidates[selected];
+    const loc = selected === "custom" ? customLoc : candidates[selected];
     if (!loc) {
       onClose();
       return;
@@ -98,6 +103,7 @@ export function RefineSelectorDialog({
       size="large"
       onConfirm={apply}
       confirmLabel="Update selector"
+      confirmDisabled={selected === "custom" && !customLoc}
     >
       <div className="flex flex-col gap-4">
         {stepLabel ? (
@@ -153,6 +159,36 @@ export function RefineSelectorDialog({
                 );
               })
             )}
+            {/* The escape hatch, LAST and collapsed behind its radio — the
+                order is the recommendation. Same hierarchy as the guidance
+                this feature was modelled on: structured picking first, a
+                hand-written locator when the candidates can't express the
+                intent (a non-ancestor relation, a negative match, the nth of
+                many near-identical rows). */}
+            <button
+              type="button"
+              onClick={() => setSelected("custom")}
+              className={`flex items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
+                selected === "custom"
+                  ? "border-accent bg-accent/10"
+                  : "border-separator hover:bg-background-secondary"
+              }`}
+            >
+              <span
+                className={`size-3.5 shrink-0 rounded-full border ${
+                  selected === "custom" ? "border-accent bg-accent" : "border-separator"
+                }`}
+              />
+              <Badge color={selected === "custom" ? "blue" : "secondary"} className="shrink-0">
+                Custom
+              </Badge>
+              <Text variant="small" color="secondary" className="min-w-0 flex-1 truncate">
+                Write a CSS selector or XPath by hand
+              </Text>
+            </button>
+            {selected === "custom" ? (
+              <CustomLocatorField ctx={ctx} onLocator={setCustomLoc} />
+            ) : null}
           </div>
         </div>
 
