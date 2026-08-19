@@ -12,13 +12,16 @@
 //   - a main-process module that throws at import, before whenReady
 
 import { test, expect } from "./fixtures.js";
+import { fillWorkArea } from "../main/services/window-fill.js";
 
 test("the main window opens and renders the library", async ({ window }) => {
   // Served over the custom scheme, not file://. This is the regression that
   // produced a blank window with nothing in any log.
   expect(new URL(window.url()).protocol).toBe("app:");
 
-  await expect(window.getByRole("heading", { name: "GOOD LOOKS!" })).toBeVisible();
+  await expect(
+    window.getByRole("heading", { name: "GOOD LOOKS!" }),
+  ).toBeVisible();
 
   // A fresh userData dir means an empty library, so the empty state is the
   // correct thing to see. Asserting it — rather than just "something rendered"
@@ -26,15 +29,63 @@ test("the main window opens and renders the library", async ({ window }) => {
   await expect(window.getByText(/No tests yet/)).toBeVisible();
 });
 
+test("the main window opens filling the display", async ({ app, window }) => {
+  // ONLY AN END-TO-END RUN CAN CHECK THIS. `fillWorkArea` is unit-tested, but
+  // the arithmetic being right is not the property here — the property is that
+  // the real window is created against a real display's work area. Deleting the
+  // call in main/index.ts leaves every unit test green and the app opening at
+  // 1000×700 again, which is the regression this file exists to notice.
+  // The `window` fixture is load-bearing before its first use below: it awaits
+  // the app's first window, and without it `getAllWindows()` can run against an
+  // app whose window has not been created yet and read `undefined`.
+  const geometry = await app.evaluate(({ BrowserWindow, screen }) => {
+    const bounds = BrowserWindow.getAllWindows()[0].getBounds();
+    return { bounds, workArea: screen.getDisplayMatching(bounds).workArea };
+  });
+
+  // The floor is in the expectation rather than assumed away: a headless CI
+  // display can be smaller than the main window's 960×456 minimum, and there
+  // the correct window is the floor-sized one, not the screen-sized one.
+  const expected = fillWorkArea(geometry.workArea, { width: 960, height: 456 });
+
+  // WITHIN A COUPLE OF POINTS, not `toEqual`, and the slack is a real
+  // difference between platforms rather than room for the app to be wrong. An
+  // X11 window manager can grant a frame a point smaller than the one asked
+  // for — CI came back 1279×1023 on a 1280×1024 work area — while macOS gives
+  // the rectangle exactly. The regression this test exists for is the window
+  // opening at its 1000×700 fallback, which is 280 points shy of the display
+  // and fails this as loudly as an exact comparison would.
+  for (const axis of ["x", "y", "width", "height"] as const) {
+    expect(
+      Math.abs(geometry.bounds[axis] - expected[axis]),
+      `the window's ${axis}`,
+    ).toBeLessThanOrEqual(2);
+  }
+
+  // And the renderer got the room, rather than a window that merely reports it.
+  // A viewport is what the sidebar and the toolbar actually lay out against.
+  const viewport = await window.evaluate(
+    () => document.documentElement.clientWidth,
+  );
+  expect(viewport).toBeGreaterThanOrEqual(
+    Math.min(geometry.workArea.width, 960),
+  );
+});
+
 test("the preload bridge is exposed to the renderer", async ({ window }) => {
   // Not a style preference: if this is missing every view falls back to an
   // empty state that looks exactly like "you have no data yet".
   const bridge = await window.evaluate(() => {
-    const api = (window as unknown as { glazeAPI?: Record<string, unknown> }).glazeAPI;
+    const api = (window as unknown as { glazeAPI?: Record<string, unknown> })
+      .glazeAPI;
     if (!api) return null;
     return {
-      hasIpc: typeof (api.glaze as { ipc?: { invoke?: unknown } })?.ipc?.invoke === "function",
-      hasClipboard: typeof (api.clipboard as { writeText?: unknown })?.writeText === "function",
+      hasIpc:
+        typeof (api.glaze as { ipc?: { invoke?: unknown } })?.ipc?.invoke ===
+        "function",
+      hasClipboard:
+        typeof (api.clipboard as { writeText?: unknown })?.writeText ===
+        "function",
       hasMenu: typeof (api.Menu as { popup?: unknown })?.popup === "function",
     };
   });
@@ -62,7 +113,9 @@ test("the sidebar offers every view", async ({ window }) => {
   // and so are the channels — per ROUTINES.md's rename table, only what a
   // person reads changed. This assertion is on what a person reads.
   for (const name of ["Stats", "Visual", "Routines", "Heals"]) {
-    await expect(views.getByRole("button", { name: new RegExp(`^${name}`) })).toBeVisible();
+    await expect(
+      views.getByRole("button", { name: new RegExp(`^${name}`) }),
+    ).toBeVisible();
   }
   await expect(window.getByRole("button", { name: "Add test" })).toBeVisible();
 });
@@ -77,12 +130,19 @@ test("the renderer loads without console errors", async ({ app }) => {
     // runner. That failure is the app working correctly, and the footer
     // reports it — filtering it here rather than not asserting at all keeps
     // the check meaningful for every OTHER error.
-    if (text.includes("11434") || text.includes("127.0.0.1") || text.includes("localhost")) return;
+    if (
+      text.includes("11434") ||
+      text.includes("127.0.0.1") ||
+      text.includes("localhost")
+    )
+      return;
     errors.push(text);
   });
 
   await window.reload();
-  await expect(window.getByRole("heading", { name: "GOOD LOOKS!" })).toBeVisible();
+  await expect(
+    window.getByRole("heading", { name: "GOOD LOOKS!" }),
+  ).toBeVisible();
 
   expect(errors).toEqual([]);
 });
