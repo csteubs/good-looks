@@ -10,6 +10,25 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-18 — Where work happens: session worktrees, and a root checkout that only pulls
+
+CLAUDE.md gains a "Where work happens" section under "Making a change",
+because the session that fixed the startup retention sweep found the root
+checkout four commits behind `origin/main` with fourteen files of uncommitted
+changes — duplicates of work other sessions had already merged as PRs. That
+tree could neither pull nor switch branches, and the fix had to be committed
+by filtering its own hunks out of three files that also carried the leftovers.
+
+The section encodes the split that already exists in practice: local sessions
+work in git worktrees under `.claude/worktrees/`, which share the repo's
+`.git` — a branch committed in one is visible to GitHub Desktop and every
+other local tree with no push and no copying; cloud sessions reach the repo
+only as pushed branches and PRs; and the root checkout is the tree GitHub
+Desktop pulls `origin/main` into, which only fast-forwards while it stays on
+`main` and clean. The rule underneath all three: work leaves a session as a
+committed branch or it does not leave — parked uncommitted edits are how the
+same change ended up both merged on `main` and blocking the pull of it.
+
 ### 2026-08-18 — The startup retention sweep runs after the prune preflight is registered
 
 The metrics DB's contract is that a run is rolled up before retention deletes

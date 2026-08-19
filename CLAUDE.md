@@ -272,6 +272,31 @@ git switch -c feat/step-reordering
 
 Branch names: `feat/…`, `fix/…`, `chore/…`, `docs/…`.
 
+### Where work happens
+
+Three kinds of tree touch this repo, and the 2026-08-18 collision (see
+DECISIONS) came from mixing them: uncommitted copies of already-merged work
+parked in the root checkout left `main` four commits behind and unable to pull
+or switch branches.
+
+- **The root checkout** — the clone GitHub Desktop pulls `origin/main` into —
+  stays on `main` with a clean working tree, so that pull is always a
+  fast-forward. It is where merged work arrives, not where work happens.
+- **A local session** works in its git worktree under `.claude/worktrees/`
+  (`npm run bootstrap` first — see the gotchas), on a branch cut from a fresh
+  `origin/main`: `git fetch origin` before branching, because the local `main`
+  ref may be days old. Worktrees share the repo's `.git`, so a branch
+  COMMITTED in one is immediately visible to GitHub Desktop and to every other
+  local tree — there is never a reason to copy files between trees.
+- **A cloud session** works in its own clone; its work reaches the repo only
+  as a pushed branch and a PR. No local tree should hold uncommitted copies of
+  work a cloud session is landing.
+
+Whichever tree it is: work leaves a session as a committed branch — pushed and
+PR'd when the maintainer says to — or it does not leave. A session explicitly
+pointed at the root checkout still branches first, commits only its own
+changes, and returns the checkout to `main`, or says exactly why it could not.
+
 **1. Write the change, and tests with it.** A suite nobody extends decays into one nobody trusts, and most bugs found in this codebase so far were silent — wrong behaviour that threw no error and looked fine on screen. See the Testing section for the conventions that matter, especially *verify a test can fail*.
 
 **2. Run the full gate.** Nothing runs it for you; CI cannot (see below).
