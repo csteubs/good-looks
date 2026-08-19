@@ -71,6 +71,16 @@ const richSteps: Step[] = [
   step({ type: "assert", locator: { k: "css", v: "#h" }, assert: "attribute", attr: "data-x", value: "y" }),
   step({ type: "assert", locator: { k: "css", v: "#i" }, assert: "count", count: 3 }),
   step({ type: "assert", assert: "url", value: "https://example.com/done" }),
+  // `urlPathIs` emits a STRUCTURAL pattern (`^scheme://host` + path + `/?` +
+  // `(?:[?#]|$)`), which ends in `$` like an exact match — so without its own
+  // parser branch it would round-trip as `urlIs` carrying the raw pattern, and
+  // the next regeneration would escape the escapes. The dotted value pins that
+  // the middle is un-escaped on the way back.
+  step({ type: "assert", assert: "urlPathIs", value: "/products/synbiotic-2.0" }),
+  // The site root: the pattern spells "/" as an empty middle, so parsing it
+  // back must restore the "/" rather than storing an empty value the
+  // generator refuses to re-emit.
+  step({ type: "assert", assert: "urlPathIs", value: "/" }),
   step({ type: "assert", assert: "title", value: "Done" }),
   step({ type: "assert", locator: { k: "css", v: "#j" }, assert: "visible", soft: true }),
 ];
@@ -89,8 +99,11 @@ assertEqual(richParsed.steps[10]?.attr, "data-x", "attribute assertion captures 
 assertEqual(richParsed.steps[10]?.value, "y", "attribute assertion captures attr value");
 assertEqual(richParsed.steps[11]?.count, 3, "count assertion captures expected count");
 assertEqual(richParsed.steps[12]?.value, "https://example.com/done", "url assertion captures expected url");
-assertEqual(richParsed.steps[13]?.value, "Done", "title assertion captures expected title");
-assertEqual(richParsed.steps[14]?.soft, true, "soft assertion flag round-trips");
+assertEqual(richParsed.steps[13]?.assert, "urlPathIs", "urlPathIs is not misread as urlIs");
+assertEqual(richParsed.steps[13]?.value, "/products/synbiotic-2.0", "urlPathIs un-escapes its path on the way back");
+assertEqual(richParsed.steps[14]?.value, "/", "a root urlPathIs restores the slash its pattern spells as nothing");
+assertEqual(richParsed.steps[15]?.value, "Done", "title assertion captures expected title");
+assertEqual(richParsed.steps[16]?.soft, true, "soft assertion flag round-trips");
 
 // ── 4. A genuinely unmappable statement is flagged, not silently dropped ──
 //

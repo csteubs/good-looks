@@ -193,6 +193,12 @@ export type AssertKind =
   | "url"
   | "urlEndsWith"
   | "urlIs"
+  // The URL's PATH alone, exactly — query string and #fragment ignored, one
+  // trailing slash tolerated. The robust default for "did the navigation land
+  // where I meant": the three kinds above compare the FULL URL, and every URL
+  // assertion recorded in this app's own store had failed on query noise
+  // (`?variant=`, `utm_*`) that differed between the recording and the run.
+  | "urlPathIs"
   // `title` is an EXACT whole-title match, which is what its "Page title is"
   // label has always promised and what the generator has always emitted. The
   // trainer's replayer read it as a case-insensitive substring, so "Cart"
@@ -792,8 +798,8 @@ export const STEP_TYPES: StepType[] = [
 
 export const ASSERT_KINDS: AssertKind[] = [
   "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked",
-  "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs", "title",
-  "titleContains", "css",
+  "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs",
+  "urlPathIs", "title", "titleContains", "css",
 ];
 
 export const ELEMENT_STATES: ElementState[] = ["hover", "focus", "press", "release"];

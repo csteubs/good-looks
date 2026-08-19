@@ -3,7 +3,7 @@
 // script generator so what the user sees matches the generated script.
 
 import { DEFAULT_WAIT_TIMEOUT_MS, ELEMENT_STATES, isCssPropName } from "./recorder-types";
-import { ASSERT_SEMANTICS, reEscape, textMatchExpr } from "../../shared/step-semantics.mjs";
+import { ASSERT_SEMANTICS, reEscape, textMatchExpr, urlPathExpr } from "../../shared/step-semantics.mjs";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import type { Locator, Step, StepType } from "./recorder-types";
 
@@ -51,6 +51,10 @@ function describeAssert(step: Step, target: string | null): string {
     const s = ASSERT_SEMANTICS[step.assert];
     if (!s || (step.value ?? "") === "") return "assert";
     return e + "(page).toHaveURL(" + textMatchExpr(step.value ?? "", s) + ")";
+  }
+  if (step.assert === "urlPathIs") {
+    if ((step.value ?? "") === "") return "assert";
+    return e + "(page).toHaveURL(" + urlPathExpr(step.value ?? "") + ")";
   }
   if (step.assert === "title") {
     if ((step.value ?? "") === "") return "assert";

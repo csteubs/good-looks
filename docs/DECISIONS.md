@@ -10,6 +10,73 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-19 — "URL path is": the URL assertion that survives real URLs
+
+The report was "the URL assertion has never passed as a test step", and the
+engine turned out to be innocent: the generator, the injected replayer and the
+parity harness all agree, and a true URL assertion passes under real
+Playwright. What the store showed instead was that every URL assertion a user
+had actually recorded was DOA for one of two reasons, neither of which any
+existing guard could see:
+
+- **The value was a path and the kind compared the full URL.** Both real
+  recordings used `urlEndsWith` with a bare path (`/bundle-and-save`,
+  `/collections/all/products/synbiotic-plus-for-gut-health`), and a real
+  site's run-time URL carries a query string the recording did not —
+  `?variant=` on every product card click, `utm_*` after every redirect. "Ends
+  with the path" is false the moment anything follows the path. The parity
+  harness never caught this because its fixture pages have clean URLs; the
+  semantics were right, the VALUES could never survive contact with the site.
+- **Three tests carried `urlIs` steps with no value at all** (arrived through
+  the AI-steps path, which validated the kind but not the value). The
+  generator refuses an empty expected value, so the steps rendered normally in
+  the list and generated nothing — a step that looks added and asserts
+  nothing, for weeks.
+
+**The fix is a fourth URL kind rather than a repaired third.** `urlPathIs`
+("URL path is") compares the URL's PATH alone — query and fragment ignored,
+one trailing slash tolerated, missing leading slash supplied, case-insensitive
+like the other URL kinds. This is mabl's model (their URL assertions target a
+picked component, pathname by default) adopted at the scope that pays: the
+pathname is the one component users actually mean when they assert "the
+navigation landed on the right page", and the query is the part that changes
+under their feet. Changing `urlEndsWith`'s meaning instead was rejected — its
+label promises the literal end of the URL, stored tests rely on that, and a
+kind whose label lies is the exact bug `step-semantics.mjs` exists to end.
+The other mabl components (host, port, protocol, hash, per-param query
+asserts) were deliberately not added: `urlIs`/`url` already cover host
+assertions, and each new kind is another row in every table and menu.
+
+**One pattern, applied to one string, by all three readers.** `urlPathPattern`
+builds `^scheme://host + path + /?(?:[?#]|$)` as RegExp source; the generator
+emits it inside `toHaveURL(new RegExp(…, "i"))`, the replayer tests the same
+pattern against `location.href`, and `describe-step` shows the same
+expression. The alternative — Playwright's predicate form
+`toHaveURL(url => url.pathname === …)` — reads better in a spec but would be a
+new statement grammar for the spec-parser, the step line map and the AI
+prompts, and its page-side twin would be a SECOND spelling of how a path is
+carved out of a URL. A structural pattern keeps the single-spelling property
+the semantics module is built on. It is serialized into the replayer with
+`toString` like `matchesValue`, which is why it inlines its escape rule
+instead of calling `reEscape` — a module-scope reference would be renamed by
+esbuild and throw inside the page; `assert-emission.test.ts` pins the two
+escape spellings together. The spec-parser recognizes the pattern's literal
+prefix/suffix BEFORE the anchor classification, because the pattern ends in
+`$`-inside-an-alternation and would otherwise be filed as `urlIs` carrying the
+raw pattern, re-escaped on every regeneration.
+
+**Robust-by-default, not robust-if-you-know.** `urlPathIs` leads every URL
+assert menu (composer, both panels, the URL bar, the right-click menu) and
+prefills with the live pathname; at a site root it suggests `/`, which is safe
+for an exact path match where it would be vacuous for a contains one. And the
+valueless-step hole is closed at both doors: the composer refuses to submit a
+page-level value assert with an empty value (same rule as its css case), the
+AI-steps validator drops one (the prompt already said it would be refused),
+and the replayer now fails one with "nothing will be generated for it" instead
+of letting `matchesValue`'s empty-substring true paint it green. The
+generator's UNGENERATABLE comment stays as the backstop for steps already on
+disk.
+
 ### 2026-08-19 — AI-proposed steps can carry element context
 
 `extractStepsJson` (renderer/lib/parse-llm-response.ts) rebuilt a proposed

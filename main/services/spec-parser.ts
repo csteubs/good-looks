@@ -1025,6 +1025,31 @@ function parseBody(
             const reM = argStr.match(/^new\s+RegExp\s*\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*(?:,\s*"(?:[^"\\]|\\.)*"\s*)?\)/);
             if (reM) {
               const pattern = unescapeLit(reM[1].slice(1, -1));
+              // "URL path is" first: its pattern is structural — it starts
+              // with `^` and ends with `$` INSIDE an alternation, so the
+              // anchored-start/anchored-end classification below would file it
+              // as `urlIs` and store the whole pattern as the value. The
+              // prefix and suffix are `urlPathPattern`'s, verbatim; only the
+              // generator writes this shape, because `reEscape` would escape
+              // these metacharacters in any literal value.
+              const PATH_PREFIX = "^[a-z][a-z0-9+.-]*://[^/?#]*";
+              const PATH_SUFFIX = "/?(?:[?#]|$)";
+              if (
+                pageAssertM[1] === "toHaveURL" &&
+                pattern.startsWith(PATH_PREFIX) &&
+                pattern.endsWith(PATH_SUFFIX)
+              ) {
+                const middle = pattern.slice(PATH_PREFIX.length, pattern.length - PATH_SUFFIX.length);
+                // An empty middle is the site root — the pattern spells "/" as
+                // nothing, so reading it back must restore the "/".
+                emit(
+                  "urlPathIs",
+                  { ...(soft ? { soft: true } : {}) },
+                  { value: middle === "" ? "/" : reUnescape(middle) },
+                );
+                i = isWait ? lineEnd : aClose + 1;
+                continue;
+              }
               const anchoredStart = pattern.startsWith("^");
               const anchoredEnd = pattern.endsWith("$");
               const isUrl = pageAssertM[1] === "toHaveURL";

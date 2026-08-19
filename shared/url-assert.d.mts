@@ -1,8 +1,8 @@
 /** Hand-written types for url-assert.mjs — see CLAUDE.md on why `shared/` is
  *  `.mjs` with a `.d.mts` beside it rather than TypeScript. */
 
-/** The three assert kinds this helper knows how to seed. */
-export type UrlAssertKind = "url" | "urlEndsWith" | "urlIs";
+/** The four assert kinds this helper knows how to seed. */
+export type UrlAssertKind = "url" | "urlEndsWith" | "urlIs" | "urlPathIs";
 
 /**
  * The value to pre-fill a URL assertion's "Expected" field with.
