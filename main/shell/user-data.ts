@@ -123,8 +123,8 @@ export function resolveUserData(
  *  MUST be called before any store resolves a path — every store calls
  *  `app.getPath("userData")` lazily on each access, so the only requirement is
  *  that this runs first. `main/index.ts` imports it above everything else for
- *  that reason; `applyRetention()` in particular runs at module scope there and
- *  would otherwise sweep the wrong directory. */
+ *  that reason; its module-scope reconciliation and migration passes (batch
+ *  history, routines, AI debug) would otherwise repair the wrong store. */
 export function installUserDataPath(): void {
   const current = app.getPath("userData");
   const { dir, reason, legacy } = resolveUserData(current, process.env);

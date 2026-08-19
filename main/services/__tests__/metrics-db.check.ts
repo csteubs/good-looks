@@ -17,18 +17,26 @@
 //      if the translation is wrong, just against the wrong step.
 //   4. A metrics failure reaching the run. This must never fail a test run,
 //      block teardown, or surface as an error; it is bookkeeping.
+//   5. The launch sweep outrunning the preflight registration. The app prunes
+//      at startup; if that prune runs before `setPrunePreflight`, every run it
+//      removes — the "older than N days" population, precisely the runs
+//      nothing will ever ingest again — is deleted unrolled, silently, because
+//      pruning skips an unregistered preflight rather than waiting for one.
 //
 // The database is EXERCISED FOR REAL against a temp file rather than asserted
 // on as source text, because "the same run ingested twice yields one row set"
 // is behaviour, and a source assertion would pass against a schema that does
-// none of it.
+// none of it. Section 7 is the one exception — source-level, because its
+// subject is `main/index.ts`, which nothing can execute under a check.
 //
 // Run with: npm run check:metrics-db
 
 import { DatabaseSync } from "node:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import ts from "typescript";
 
 import {
   bind,
@@ -595,6 +603,71 @@ try {
 } finally {
   db.close();
   rmSync(dir, { recursive: true, force: true });
+}
+
+// ── 7. Launch ordering: the startup sweep cannot outrun the preflight ─
+//
+// Everything above proves the preflight DOES the right thing; none of it can
+// prove the app REGISTERS it before the first prune. The startup sweep used to
+// run at module scope while the registration waited inside `app.whenReady()`,
+// and every run the sweep removed was deleted unrolled (failure mode 5 above).
+//
+// Source-level via the real TypeScript AST, because the subject is the
+// Electron entry file — nothing can execute it under a check — and because the
+// property is structural: the old broken layout also sat indented inside a
+// bare `{}` block, so text position and indentation cannot tell the two
+// shapes apart.
+{
+  const entry = readFileSync(join(process.cwd(), "main", "index.ts"), "utf-8");
+  const sf = ts.createSourceFile("index.ts", entry, ts.ScriptTarget.Latest, true);
+
+  const calls: ts.CallExpression[] = [];
+  const walk = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) calls.push(node);
+    ts.forEachChild(node, walk);
+  };
+  walk(sf);
+
+  const callee = (c: ts.CallExpression): string => c.expression.getText(sf).replace(/\s+/g, "");
+  const callsTo = (name: string): ts.CallExpression[] => calls.filter((c) => callee(c) === name);
+
+  const enclosingFunction = (node: ts.Node): ts.Node | undefined => {
+    for (let p: ts.Node | undefined = node.parent; p; p = p.parent) {
+      if (ts.isFunctionLike(p)) return p;
+    }
+    return undefined;
+  };
+
+  const sweeps = callsTo("applyRetention");
+  const registrations = callsTo("setPrunePreflight");
+  const opens = callsTo("metricsStore.init");
+
+  assert(sweeps.length === 1, "ordering: index.ts sweeps retention exactly once");
+  assert(registrations.length === 1, "ordering: index.ts registers the preflight exactly once");
+  assert(opens.length === 1, "ordering: index.ts opens the metrics db exactly once");
+
+  if (sweeps.length === 1 && registrations.length === 1 && opens.length === 1) {
+    const fn = enclosingFunction(sweeps[0]);
+    assert(fn !== undefined, "ordering: the startup sweep is not at module scope");
+    assert(
+      fn !== undefined &&
+        enclosingFunction(registrations[0]) === fn &&
+        enclosingFunction(opens[0]) === fn,
+      "ordering: sweep, preflight registration and db open share one function",
+    );
+
+    let inWhenReady = false;
+    for (let p: ts.Node | undefined = fn; p; p = p.parent) {
+      if (ts.isCallExpression(p) && callee(p) === "app.whenReady().then") inWhenReady = true;
+    }
+    assert(inWhenReady, "ordering: that function is the whenReady callback");
+
+    assert(
+      opens[0].getStart(sf) < registrations[0].getStart(sf) &&
+        registrations[0].getStart(sf) < sweeps[0].getStart(sf),
+      "ordering: metrics open, then preflight registration, then the sweep",
+    );
+  }
 }
 
 if (failures > 0) {

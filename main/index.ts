@@ -47,10 +47,11 @@ import { setPrunePreflight } from "./services/artifact-store.js";
 // ── Data directory ────────────────────────────────────────────────────
 // FIRST STATEMENT IN THIS FILE, before anything touches a store. Every store
 // resolves `app.getPath("userData")` lazily on each access, so this only has to
-// run before the first access — but `applyRetention()` below runs at module
-// scope, and pointing it at the wrong directory means sweeping the wrong
-// artifacts. Imports are hoisted, so being "first" means first in the body, not
-// first in the import list. See shell/user-data.ts for what it decides and why.
+// run before the first access — but the reconciliation and migration passes
+// below (batch history, routines, AI debug) run at module scope, and pointing
+// them at the wrong directory means repairing the wrong store. Imports are
+// hoisted, so being "first" means first in the body, not first in the import
+// list. See shell/user-data.ts for what it decides and why.
 installUserDataPath();
 
 // ── Custom scheme ─────────────────────────────────────────────────────
@@ -70,17 +71,6 @@ registerDeepLinks();
 // Host surface first (dialogs/shell/clipboard/theme/menus), then the app's own.
 registerHostHandlers();
 registerHandlers();
-
-// ── Artifact retention ────────────────────────────────────────────────
-// Sweep on launch so the retention settings apply to every test, including
-// ones that haven't been run lately — otherwise an "older than N days" rule
-// would only ever take effect for a test you happen to run again.
-{
-  const swept = applyRetention();
-  if (swept.removedRuns > 0) {
-    logger.info("artifacts", "Applied retention at startup", swept);
-  }
-}
 
 // ── Batch history reconciliation ──────────────────────────────────────
 // A batch persisted as "running" means the app exited mid-batch; nothing is
@@ -476,6 +466,23 @@ app.whenReady().then(async () => {
   // Retention is where per-step evidence dies. This is the last moment anything
   // can distil a run into the rows that outlive its screenshots.
   setPrunePreflight((testId, runId) => metricsStore.ingestBeforePrune(testId, runId));
+
+  // ── Artifact retention ─────────────────────────────────────────────
+  // Sweep on launch so the retention settings apply to every test, including
+  // ones that haven't been run lately — otherwise an "older than N days" rule
+  // would only ever take effect for a test you happen to run again.
+  //
+  // AFTER setPrunePreflight, never earlier: pruning skips an unregistered
+  // preflight rather than waiting for one (a metrics failure must never block
+  // retention), so a sweep before this point deletes runs that were never
+  // rolled up — and the launch sweep's older-than-N-days population is exactly
+  // the runs nothing will ever ingest again. check:metrics-db pins the order.
+  {
+    const swept = applyRetention();
+    if (swept.removedRuns > 0) {
+      logger.info("artifacts", "Applied retention at startup", swept);
+    }
+  }
 
   await setupApplicationMenu();
   await setupDebugScreenshots();

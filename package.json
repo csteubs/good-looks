@@ -37,7 +37,7 @@
     "check:test-tags": "tsx main/services/__tests__/test-tags.check.ts",
     "check:mcp-boot": "node mcp/boot.check.mjs",
     "check:mcp-select": "node mcp/select-tests.check.mjs",
-    "check:metrics-db": "esbuild main/services/__tests__/metrics-db.check.ts --bundle --platform=node --format=esm --external:node:sqlite --alias:@shell/backend=./main/services/__tests__/shell-backend-stub.ts --external:electron --outfile=node_modules/.cache/metrics-db.check.mjs && node node_modules/.cache/metrics-db.check.mjs",
+    "check:metrics-db": "esbuild main/services/__tests__/metrics-db.check.ts --bundle --platform=node --format=esm --external:node:sqlite --external:typescript --alias:@shell/backend=./main/services/__tests__/shell-backend-stub.ts --external:electron --outfile=node_modules/.cache/metrics-db.check.mjs && node node_modules/.cache/metrics-db.check.mjs",
     "check:mcp-parity": "esbuild main/services/__tests__/mcp-parity.check.ts --bundle --platform=node --format=esm --alias:@shell/backend=./main/services/__tests__/shell-backend-stub.ts --external:electron --outfile=node_modules/.cache/mcp-parity.check.mjs && node node_modules/.cache/mcp-parity.check.mjs",
     "check:docs-blocks": "tsx main/services/__tests__/docs-blocks.check.ts",
     "check:alerts": "esbuild main/services/__tests__/alerts.check.ts --bundle --platform=node --format=cjs --alias:@shell/backend=./main/services/__tests__/shell-backend-stub.ts --external:electron --outfile=node_modules/.cache/alerts.check.cjs && node node_modules/.cache/alerts.check.cjs",
