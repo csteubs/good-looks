@@ -22,6 +22,7 @@ import {
   Badge,
   Button,
   Callout,
+  Checkbox,
   Input,
   ScrollArea,
   Select,
@@ -29,10 +30,11 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Switch,
   Text,
   toast,
 } from "@ui";
-import { KeyRound, Play, Plus, Trash2, TriangleAlert, Variable } from "lucide-react";
+import { KeyRound, Play, Plus, Trash2, TriangleAlert, Variable, Workflow } from "lucide-react";
 
 import { api } from "../lib/api";
 import {
@@ -293,6 +295,37 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
     onError: (err: unknown) => toast.error(String(err)),
   });
 
+  // ── Reusable flow ─────────────────────────────────────────────────
+  const flowParams = React.useMemo(() => test.flowParams ?? [], [test.flowParams]);
+  const setFlowState = useMutation({
+    mutationFn: (p: { isFlow: boolean; params: string[] }) =>
+      api.tests.setFlow(test.id, p.isFlow, p.params),
+    onSuccess: invalidate,
+    onError: (err: unknown) => toast.error(String(err)),
+  });
+  // Secrets are never offered as parameters: an argument is stored as plain
+  // text on the CALLING test's record, so parameterizing a secret would route
+  // its value around the encrypted store. Same rule as dataset columns above.
+  const paramCandidates = React.useMemo(() => {
+    const seen = new Set<string>();
+    return variables.filter((v) => {
+      if (v.kind === "secret" || !isValidName(v.name) || seen.has(v.name)) return false;
+      seen.add(v.name);
+      return true;
+    });
+  }, [variables]);
+  // Declared parameters no longer backed by an offerable variable — a renamed
+  // or deleted variable, or one since made secret. Callers can still bind
+  // them (the generator falls back to ""), but they are probably stale.
+  const orphanParams = React.useMemo(
+    () => flowParams.filter((p) => !paramCandidates.some((v) => v.name === p)),
+    [flowParams, paramCandidates],
+  );
+  const toggleParam = (name: string, on: boolean) => {
+    const next = on ? [...flowParams, name] : flowParams.filter((p) => p !== name);
+    setFlowState.mutate({ isFlow: true, params: next });
+  };
+
   // Only plain/captured variables get dataset columns: a secret's value comes
   // from the encrypted store, and a row that could override it would put a
   // plaintext credential straight back into tests.json.
@@ -366,6 +399,81 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
                 />
               ))}
             </div>
+          )}
+        </section>
+
+        {/* ── Reusable flow ─────────────────────────────────────────── */}
+        <section className="flex flex-col gap-3">
+          <div className="flex items-center gap-2">
+            <Workflow className="size-4 text-secondary" />
+            <Text weight="medium">Reusable flow</Text>
+            <div className="flex-1" />
+            <Switch
+              checked={!!test.isFlow}
+              onCheckedChange={(on) => setFlowState.mutate({ isFlow: on, params: flowParams })}
+              aria-label="Reusable flow"
+            />
+          </div>
+          {test.isFlow ? (
+            <>
+              <Text size="small" className="text-secondary">
+                Other tests can insert this test&apos;s steps with a <em>Run flow</em> step from the
+                trainer&apos;s Add-step menu. Tick the variables a caller may override; an argument
+                left blank falls back to the variable&apos;s value here.
+              </Text>
+              {paramCandidates.length === 0 ? (
+                <Text size="small" className="text-tertiary">
+                  No variables to offer as parameters yet — declare one above to make this flow
+                  configurable.
+                </Text>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  {paramCandidates.map((v) => (
+                    <label key={v.name} className="flex cursor-pointer items-center gap-2">
+                      <Checkbox
+                        checked={flowParams.includes(v.name)}
+                        onCheckedChange={(on: boolean | "indeterminate") =>
+                          toggleParam(v.name, on === true)
+                        }
+                        aria-label={`Parameter ${v.name}`}
+                      />
+                      <Text size="small" className="font-mono">
+                        {v.name}
+                      </Text>
+                      {v.value ? (
+                        <Text size="small" className="truncate text-tertiary">
+                          default: {v.value}
+                        </Text>
+                      ) : null}
+                    </label>
+                  ))}
+                </div>
+              )}
+              {orphanParams.length > 0 ? (
+                <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
+                  <Callout.Text>
+                    Parameters with no matching variable — callers that bind them still work, but
+                    an argument left blank falls back to empty:{" "}
+                    {orphanParams.map((p) => (
+                      <Button
+                        key={p}
+                        size="small"
+                        variant="muted"
+                        className="mx-0.5"
+                        onClick={() => toggleParam(p, false)}
+                        aria-label={`Remove parameter ${p}`}
+                      >
+                        {p} ×
+                      </Button>
+                    ))}
+                  </Callout.Text>
+                </Callout>
+              ) : null}
+            </>
+          ) : (
+            <Text size="small" className="text-tertiary">
+              Off — this test is not offered in the trainer&apos;s Add-step flow list.
+            </Text>
           )}
         </section>
 

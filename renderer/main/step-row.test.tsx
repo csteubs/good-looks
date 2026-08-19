@@ -724,3 +724,71 @@ describe("inline editing a page-level assert", () => {
     expect((screen.getByLabelText(/edit expected/i) as HTMLInputElement).value).toBe("Dashboard");
   });
 });
+
+// ── The flow-arguments editor ─────────────────────────────────────────────
+//
+// The kebab's "Edit Flow Arguments…" is the only way to change a runFlow
+// step's arguments after insertion. The dialog's own rules are covered in
+// flow-args-fields.test.tsx; what's pinned here is the WIRING — the item is
+// offered for runFlow steps (and only reachable with onEdit), and saving
+// lands on onEdit as a flowArgs patch, which is the shape
+// `recorder:updateStep` re-normalizes.
+
+vi.mock("../lib/api", () => ({
+  api: {
+    tests: {
+      listFlows: async () => [
+        { id: "f1", name: "Login", flowParams: ["email"], paramDefaults: { email: "d@x.com" } },
+      ],
+    },
+  },
+}));
+
+describe("the flow-arguments editor", () => {
+  async function openKebabAnd(label: string): Promise<{ labels: string[] }> {
+    const seen: string[] = [];
+    const popup = vi.fn(
+      async (opts: { items: { label?: string; commandId?: number }[] }) => {
+        const flat = opts.items;
+        for (const i of flat) if (i.label) seen.push(i.label);
+        const hit = flat.find((i) => i.label === label);
+        return hit?.commandId !== undefined ? { commandId: hit.commandId } : {};
+      },
+    );
+    (window as unknown as { glazeAPI: { Menu: unknown } }).glazeAPI = { Menu: { popup } };
+    fireEvent.click(screen.getByLabelText("Step utilities"));
+    await waitFor(() => expect(popup).toHaveBeenCalled());
+    return { labels: seen };
+  }
+
+  it("offers the item for a runFlow step and saves through onEdit", async () => {
+    const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+    const onEdit = vi.fn();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <StepRow
+          index={0}
+          step={step({ type: "runFlow", flowId: "f1", label: "Login" })}
+          onEdit={onEdit}
+        />
+      </QueryClientProvider>,
+    );
+    const { labels } = await openKebabAnd("Edit Flow Arguments…");
+    expect(labels).toContain("Edit Flow Arguments…");
+    const email = await screen.findByLabelText("Flow argument email");
+    fireEvent.change(email, { target: { value: "caller@x.com" } });
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() =>
+      expect(onEdit).toHaveBeenCalledWith({ flowArgs: { email: "caller@x.com" } }),
+    );
+  });
+
+  it("does not offer the item for other step types", async () => {
+    render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} onEdit={vi.fn()} />,
+    );
+    const { labels } = await openKebabAnd("Continue on Failure");
+    expect(labels).not.toContain("Edit Flow Arguments…");
+  });
+});

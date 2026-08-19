@@ -63,6 +63,7 @@ import {
   MAX_STEP_STRING_LENGTH,
   MAX_VARIABLES_PER_TEST,
   mergeSessionVariables,
+  normalizeFlowArgs,
   normalizeLocator,
   normalizePickedElement,
   normalizeRawStep,
@@ -2370,6 +2371,16 @@ export const recorderService = {
         const src = patch as Record<string, unknown>;
         for (const key of allowed) {
           if (key in patch) target[key] = src[key];
+        }
+        // `flowArgs` is not in the plain list above: it is map-valued, so it
+        // gets the same rebuild `insertStep` gives it instead of a raw copy —
+        // its values are what `bindFlowStep` splices into other steps' text.
+        // An empty or invalid map clears the key, which is how the args editor
+        // expresses "use the flow's own defaults for everything".
+        if ("flowArgs" in patch) {
+          const args = normalizeFlowArgs((patch as Record<string, unknown>).flowArgs);
+          if (args && Object.keys(args).length > 0) target.flowArgs = args;
+          else delete target.flowArgs;
         }
         // Retargeting a step (Refine Selector) may point it at a DIFFERENT
         // element, which makes the recorded fingerprint a description of

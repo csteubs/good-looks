@@ -735,8 +735,15 @@ export function describeCapture(step: Step): string {
  *  renderer/lib/describe-step.ts. */
 export function describeFlow(step: Step): string {
   const name = step.label || step.flowId || "flow";
-  const args = step.flowArgs ? Object.keys(step.flowArgs) : [];
-  return args.length > 0 ? `run flow ${name} (${args.join(", ")})` : `run flow ${name}`;
+  // name=value rather than the bare names: a bound flow call's meaning IS its
+  // arguments, and two calls to the same flow differ only here. Values are
+  // clipped for the step list; the only spec-side sink is a comment, and both
+  // comment emitters run through `commentSafe`, so a hostile value cannot
+  // escape (pinned in assert-emission.test.ts).
+  const entries = Object.entries(step.flowArgs ?? {});
+  if (entries.length === 0) return `run flow ${name}`;
+  const args = entries.map(([k, v]) => `${k}=${v.length > 18 ? v.slice(0, 17) + "…" : v}`);
+  return `run flow ${name} (${args.join(", ")})`;
 }
 
 /** Readable phrasing of a cookie step for the trainer's step list. Kept in
@@ -1027,7 +1034,14 @@ export function generateSpecDetailed(
 
   for (const { step, sourceIndex, problem } of expanded) {
     if (problem) {
-      body.push("  // " + problem);
+      // Through `commentSafe` like every other comment: `problem` embeds the
+      // step's LABEL, which is user text that `str()` length-caps but does not
+      // strip line terminators from. Raw, a label containing a newline ended
+      // the comment early and its remainder became a statement in the spec —
+      // reachable from the capture channel with an unresolvable flowId, which
+      // made it page input compiled into executed code. Pinned alongside the
+      // other comment sinks in assert-emission.test.ts.
+      body.push(commentSafe("  // " + problem));
       continue;
     }
     const line = stepLine(step, vars);

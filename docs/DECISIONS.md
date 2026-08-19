@@ -76,6 +76,66 @@ and it turned out its doc comment claimed `check:step-semantics` pins it
 against the backend's list when nothing did. That check now really does
 (section 5), so the chain is closed at both links: mirror ↔ backend by the
 check, panel ↔ model by the test.
+### 2026-08-19 — The flows UI last mile, and the comment the generator wrote raw
+
+The flow backend (`isFlow`, `flowParams`, `runFlow` inlining with parameter
+binding, `tests:setFlow`) has been complete since it landed — and unreachable:
+`api.tests.setFlow` had zero renderer callers, and the composer never wrote
+`flowArgs`, so no test could become a flow and no flow call could carry an
+argument. The composer's own empty-state copy told the user to do a thing the
+app provided no way to do. This change is deliberately UI-only: the mark-as-flow
+switch and parameter checkboxes on the Variables tab, argument fields on the
+composer's Run-flow panel, an "Edit Flow Arguments…" dialog on the step row's
+kebab, and a rail glyph on flow rows. Modeled on mabl's Flows (their central
+reuse mechanism), which is also where the argument-form conventions come from.
+
+**Parameters are a subset of the declared variables, and secrets are excluded.**
+`tests:setFlow` accepts any valid identifier, but the UI only offers the test's
+own non-secret variables, for two reasons. Binding is textual: an unsupplied
+parameter falls back to the flow's own variable value, so a parameter *not*
+backed by a variable has an empty default and a flow that breaks the moment a
+caller leaves it blank. And a caller's argument is stored in plain text on the
+calling test's record — offering a secret as a parameter would invite its value
+to route around the encrypted store one call site at a time. The same rule that
+keeps secrets out of dataset columns, applied to the same data for the same
+reason. A parameter whose variable was later renamed, deleted, or made secret
+is surfaced as removable rather than silently kept (callers still bind it, so
+dropping it silently would change their behavior) or silently hidden.
+
+**Blank means absent, and one function owns that.** The generator treats any
+supplied argument string — including `""` — as the caller's answer; only an
+absent key falls back to the flow's default. So the UI rule "a blank field
+means use the default" requires *omitting the key*, and an implementation that
+stored `""` instead would override every default invisibly. `collectFlowArgs`
+in `flow-args-fields.tsx` is the one place that rule is spelled; the composer
+and the kebab dialog both call it, `flow-binding.test.ts` pins the generator
+side of the contract (both directions), and the dialog tests pin the UI side.
+`recorder:updateStep` gained `flowArgs` handling for the dialog's patch — not
+in the raw-copy allowlist but re-normalized through `normalizeFlowArgs`,
+because it is the one map-valued field a step patch can carry.
+
+**No flows filter in the library rail — a glyph instead.** mabl gives flows
+their own library page. Here a flow is a test with a flag, groups already
+organize the rail, and a filter would be a second organizing axis for a list
+that fits on screen. What the rail actually lacked was an *explanation*: a flow
+behaves oddly as a plain test (hidden from the Batch checklist, offered in the
+composer), and nothing said why. The glyph answers that; a filter can come back
+if libraries grow enough to need one.
+
+**Found while wiring it: the generator's one raw comment.** Every path that
+writes a step description into a spec comment runs through `commentSafe` —
+except the `problem` path for a `runFlow` that cannot be inlined (no resolver,
+unknown id, cycle, empty flow), which concatenated the step's LABEL raw.
+`str()` length-caps but does not strip line terminators, `normalizeRawStep`
+accepts `runFlow` steps from any channel, and the capture channel is one of
+them — so a page could hand over a label whose embedded newline ended the
+comment and left the remainder as a statement in the spec: page input, compiled
+into code the next run executes. The fix is the missing `commentSafe`; the pin
+is a `runFlow` entry in `assert-emission.test.ts`'s terminator-sink loop, which
+fails eight ways against the raw version. `describeFlow` now also renders
+argument values (`run flow Login (email=…)` — a bound call's meaning is its
+arguments), which is safe for the same reason: both comment emitters are
+`commentSafe`, and the step list is HTML, not source.
 
 ### 2026-08-19 — Proxy settings: two traffic classes, one shared rule, one encrypted half
 
