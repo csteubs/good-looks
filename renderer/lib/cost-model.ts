@@ -17,15 +17,15 @@
 //
 // WHAT IT REFUSES TO DO IS THE INTERESTING PART.
 //
-// It does not convert saved time into money. That needs a third assumption — an
-// hourly rate for whoever would have done the testing — and it is the one this
-// app has no business guessing: it varies by an order of magnitude between
-// users, nobody would notice a bad default, and a dollar figure carries far
-// more authority than the guess behind it deserves. So spend is money (a CI
-// minute has a price), value is TIME (hours of manual testing not done), and
-// the ratio between them is stated in its own honest unit: hours avoided per
-// dollar spent. A reader who wants a currency figure can multiply by their own
-// rate, which is a calculation they can check.
+// It does not convert saved time into money UNINVITED. That needs an hourly
+// rate for whoever would have done the testing — the one assumption this app
+// has no business guessing: it varies by an order of magnitude between users,
+// nobody would notice a bad default, and a dollar figure carries far more
+// authority than the guess behind it deserves. So the CI figure is money (a CI
+// minute has a published price the user picked), value is TIME (hours of
+// manual testing not done), and money appears on the value side only where the
+// user has stated their own rate in Settings → Cost — `shared/cost-units.mjs`,
+// where zero means "don't say" and suppresses the figure entirely.
 //
 // It does not call a caught failure a "regression". The plan's phrase is
 // "regressions caught"; what the history actually supports is "failures", and
@@ -125,10 +125,6 @@ export interface CostSummary {
   ciMinutes: number;
   spend: number;
   manualHoursAvoided: number;
-  /** Hours of manual testing avoided per unit of currency spent. Null when
-   *  nothing has been spent — a ratio over zero is not "infinite value", it is
-   *  no measurement. */
-  hoursPerUnitSpent: number | null;
   failures: number;
   /** Failures the history suggests were flake, and what they cost. */
   flakeRuns: number;
@@ -264,7 +260,6 @@ export function computeCost(
     ciMinutes,
     spend,
     manualHoursAvoided,
-    hoursPerUnitSpent: spend > 0 ? manualHoursAvoided / spend : null,
     failures: real.filter((r) => r.status === "failed").length,
     flakeRuns: flakeIds.size,
     flakeMinutes,
@@ -318,6 +313,17 @@ export function formatHours(hours: number): string {
   if (hours < 1) return `${Math.round(hours * 60)}m`;
   if (hours < 10) return `${hours.toFixed(1)}h`;
   return `${Math.round(hours)}h`;
+}
+
+/** A net time figure that is allowed to be NEGATIVE — the AI Debug savings
+ *  are gross minus the wait, and a feature asked constantly whose answers are
+ *  rarely kept genuinely costs time. Moved here from the AI Debug dashboard
+ *  when the Cost panel became its second reader; a formatter with two private
+ *  copies is how the two surfaces come to print one number two ways. */
+export function formatNetMinutes(minutes: number): string {
+  const abs = Math.abs(minutes);
+  const body = abs < 60 ? `${Math.round(abs)} min` : `${(abs / 60).toFixed(1)} h`;
+  return minutes < 0 ? `−${body}` : body;
 }
 
 /** Minutes, at the precision the number deserves.

@@ -10,6 +10,57 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-18 — The Cost panel reads as savings, and every stat card carries its own math
+
+The first tile read **CI spend**, and every run it counts executed on this
+machine. Nobody was invoiced. `spend` is `total run minutes × the CI rate in
+Settings` — a counterfactual: what these runs *would* have cost had they gone
+through CI. Labelling that "spend" told the user they had been charged money
+they had not been charged, so it is now **CI cost savings**. The arithmetic did
+not change and neither did the field name in `cost-model.ts`; only the claim
+the panel makes about it did.
+
+- **The ratio tile did not survive the reframe, twice.** "Return on spend"
+  divided hours avoided by the same counterfactual — once the first tile is
+  savings, that is one hypothetical divided by another, and its "per $1 spent"
+  denominator described money nobody spends. An intermediate rename ("Hours per
+  CI cost") fixed the words and not the concept. The slot now holds
+  **Debugging avoided**: what AI Debug gave back, which is a real quantity with
+  a real owner.
+- **The debug tile is `summariseSavings` with a second reader, not a second
+  arithmetic.** It inherits the dashboard's two refusals unmodified — only a
+  KEPT fix counts (a diagnosis nobody applied saved nothing; a reverted one
+  cost time), and the wait on the model is subtracted, so the figure can be
+  negative and goes amber when it is. It also inherits the money gate: with no
+  hourly rate stated the value stays in time, and once the user prices their
+  hour (`costHourlyRate`, zero = "don't say") it becomes currency — making
+  this the panel's one tile where saved time turns into money, and only ever
+  at a rate the user typed. A negative money figure is printed absolute with
+  "net cost, not saving" carrying the sign, because that is how the AI Debug
+  dashboard prints the same number and one number should not have two
+  spellings. `formatNetMinutes` moved to `cost-model.ts` (re-exported from the
+  dashboard) for the same reason.
+- **Every card now shows its derivation on hover or focus — the stat-card
+  convention, landed here first.** The note line swaps IN PLACE for the
+  arithmetic with its live operands ("52 min × $0.008/min = $0.42"). Two
+  mechanics are load-bearing. The note and the math occupy ONE grid cell and
+  swap by `visibility`, not `display`: the slot is sized by the taller of the
+  two from first paint, so a math line that wraps where the note did not
+  cannot grow the row under the pointer — a display swap shipped first and did
+  exactly that. And both spans are always in the DOM, which is what lets jsdom
+  (which cannot hover) assert the math strings directly. Cards with math are
+  in the tab order; `:focus-visible` reveals the same answer a mouse gets.
+- **The empty state's hover states the RULE.** A dash whose derivation is
+  invisible reads as broken, so "no kept fix to claim time for" reveals
+  "kept fixes × 15 min − time waiting on the model" rather than nothing.
+- **The assumptions sentence grew what the tiles grew.** It now states the
+  debug minutes, and the hourly rate when one is set — and the blanket "All
+  are this app's guesses" drops the moment ANY stated number is the user's
+  own, because a stated wage is the one number the app did not invent.
+- **"Spent on flake" keeps its spend framing deliberately.** Amber, money with
+  nothing bought — a reading that survives whether the bill was paid or
+  avoided.
+
 ### 2026-08-18 — The main window opens filling the display
 
 The app opened at a fixed 1000×700 and every screen in it is a list that grows

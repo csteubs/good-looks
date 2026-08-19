@@ -530,6 +530,23 @@ export const SCRIPT_CHANGES: ScriptChangeListEntry[] = [
     status: "pending",
     at: NOW - 20 * MINUTE,
   },
+  // A KEPT fix, on the passing test — the state the Cost panel's "Debugging
+  // avoided" tile claims time for (`summariseFixes` counts it via `accepted`),
+  // and without which that tile could only ever be seen at its dash.
+  {
+    id: "sc-3",
+    testId: "t-checkout",
+    testName: "Checkout — happy path",
+    origin: "ai-debug",
+    model: "claude-sonnet-4",
+    reviewed: true,
+    before: SPEC_BEFORE,
+    after: SPEC_AFTER,
+    addedLines: 1,
+    removedLines: 1,
+    status: "accepted",
+    at: NOW - 2 * DAY + 60_000,
+  },
   {
     id: "sc-2",
     testId: "t-login",
