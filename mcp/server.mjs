@@ -58,6 +58,7 @@ import {
 } from "../shared/step-insights.mjs";
 import { compareReplays } from "../shared/run-comparison.mjs";
 import { TRIAGE_COHORT, triageRun } from "../shared/triage.mjs";
+import { resolveFailureReason, suggestFailureReason } from "../shared/failure-reasons.mjs";
 import {
   PLAYWRIGHT_CONFIG_FILE,
   playwrightConfigSource,
@@ -110,6 +111,14 @@ function listRuns() {
 
 function listBatches() {
   return readJsonFile(dataDir, "recorder/batch-history.json", []);
+}
+
+/** The user's CUSTOM failure reasons. Run records carry a reason ID; the
+ *  built-ins live in shared/failure-reasons.mjs and this file holds the rest,
+ *  which is what lets a rename in the app reach every historical label this
+ *  server displays. */
+function readFailureReasons() {
+  return readJsonFile(dataDir, "recorder/failure-reasons.json", []);
 }
 
 /**
@@ -505,6 +514,10 @@ server.registerTool(
       .filter((r) => !r.testDeleted)
       .sort((a, b) => b.startedAt - a.startedAt);
     if (testId) runs = runs.filter((r) => r.testId === testId);
+    // The reason vocabulary, read once per call rather than per run: reasons
+    // are stored on records by ID, and the current name is what a reader can
+    // act on (renames in the app reach history through exactly this lookup).
+    const customReasons = readFailureReasons();
     runs = runs.slice(0, limit ?? 50).map((r) => ({
       id: r.id,
       testId: r.testId,
@@ -515,6 +528,17 @@ server.registerTool(
       startedAt: r.startedAt,
       finishedAt: r.finishedAt,
       durationMs: r.durationMs,
+      // Why the run failed, when categorized — assigned automatically by the
+      // app's triage mapping ("auto") or by a person ("user"). Null on
+      // unlabelled failures and on every passed run.
+      failureReason: r.failureReasonId
+        ? {
+            id: r.failureReasonId,
+            name:
+              resolveFailureReason(r.failureReasonId, customReasons)?.name ?? r.failureReasonId,
+            by: r.failureReasonBy ?? null,
+          }
+        : null,
     }));
     return { content: [{ type: "text", text: JSON.stringify(runs, null, 2) }] };
   },
@@ -1865,6 +1889,11 @@ server.registerTool(
       // "does not fail on other engines" is unreadable — it means one thing
       // against 30 sibling runs and nothing at all against zero.
       cohortSize: siblings.length,
+      // The failure-reason label this evidence argues for — the same mapping
+      // the app's automatic categorization applies at run end. Advisory here:
+      // this server never writes app data, so assigning it (or overriding it)
+      // is done in the app's run panel.
+      suggestedFailureReason: suggestFailureReason(result, run.error_signature ?? ""),
     });
   },
 );

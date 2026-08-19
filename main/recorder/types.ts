@@ -1788,6 +1788,19 @@ export interface RunRecord {
   /** set when this run re-executed a past run's recorded steps; the id of that
    *  run, so the two can be compared then-vs-now. */
   replayOfRunId?: string;
+  /** WHY this failed run failed, when categorized — the id of a reason from
+   *  shared/failure-reasons.mjs's built-ins or the custom-reason store. The ID
+   *  is stored and the name resolved at display time, so renaming a custom
+   *  reason updates every historical run without touching this file. Only ever
+   *  present on a failed run. */
+  failureReasonId?: string;
+  /** Who assigned it. "auto" is the deterministic triage mapping at run end;
+   *  "user" is the run panel's picker — and a user assignment is never
+   *  overwritten by an automatic one (see setFailureReason). */
+  failureReasonBy?: "user" | "auto";
+  /** The triage signal that argued for an automatic assignment — the label's
+   *  own evidence. Absent on manual assignments. */
+  failureReasonSignal?: string;
   /** Distinguishes a real test "run" (default) from a "baseline-update" event
    *  logged when the user accepts screenshots as new baselines. Baseline-update
    *  records are excluded from the pass/fail charts but shown in the history
@@ -2126,6 +2139,12 @@ export interface RecorderSettings {
    *  stored for it (default false). Inert until that URL is configured; the
    *  send goes through alert-service, the app's one webhook egress. */
   insightsSlackEnabled: boolean;
+  /** Automatically label WHY a failed run failed (default true), by mapping
+   *  the triage classifier's strongest signal to a built-in failure reason at
+   *  run end. Deterministic and local — no AI, no egress — which is why it
+   *  defaults on where the AI toggles above default off. A label the user set
+   *  by hand is never overwritten (see runHistoryStore.setFailureReason). */
+  autoFailureReasons: boolean;
   /** EXPERIMENTAL. Apply an AI debug job's suggested script fix automatically
    *  the moment the job completes (default false). Guarded: only a run-scoped
    *  job, only while its dialog is minimized, and only when the script is

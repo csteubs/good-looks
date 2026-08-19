@@ -88,8 +88,11 @@ async function renderSettings() {
 /** Click, not mouse-down: the rows are `RailRow` since B4 — see
  *  settings-nav.test.tsx for why that distinction has its own comment. */
 async function goToPane(title: string) {
-  fireEvent.click(screen.getByRole("button", { name: new RegExp(title, "i") }));
-  await screen.findByRole("heading", { name: new RegExp(title, "i") });
+  // Anchored at the start (rows may carry trailing badge text): an unanchored
+  // /AI/i also matches "F-AI-lure reasons", and which row it finds first then
+  // depends on sidebar order.
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${title}`, "i") }));
+  await screen.findByRole("heading", { name: new RegExp(`^${title}`, "i") });
 }
 
 function search(value: string) {

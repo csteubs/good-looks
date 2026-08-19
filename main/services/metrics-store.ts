@@ -41,8 +41,10 @@ import {
   SCHEMA_VERSION,
   STEP_COLUMNS,
 } from "../../shared/metrics-schema.mjs";
-import { lifetimeRunCounts } from "../../shared/metrics-query.mjs";
+import { lifetimeRunCounts, runEvidence, siblingRuns, stepHealth } from "../../shared/metrics-query.mjs";
 import { rollupRun } from "../../shared/rollup.mjs";
+import { TRIAGE_COHORT, triageRun } from "../../shared/triage.mjs";
+import type { TriageResult } from "../../shared/triage.mjs";
 import type { RunRecord } from "../recorder/types.js";
 
 /** The minimal slice of node:sqlite's DatabaseSync this module uses. Declared
@@ -363,6 +365,36 @@ export const metricsStore = {
     const result = this.backfill();
     logger.info("metrics", "Rebuilt the metrics database", result);
     return result;
+  },
+
+  /**
+   * Classify one recorded run — site problem or runner problem.
+   *
+   * The reasoning is shared/triage.mjs; this is the impure gathering around it
+   * (the evidence rows, the sibling window, the failing step's history), kept
+   * HERE so the two callers cannot assemble it differently: the `runs:triage`
+   * handler answers the run panel on demand, and the runner asks at run end to
+   * auto-assign a failure reason. Null when metrics are unavailable or the run
+   * has no rows — "no opinion", never an error (rule 1).
+   */
+  triage(runId: string): TriageResult | null {
+    try {
+      const evidence = runEvidence(db, runId);
+      if (!evidence) return null;
+      const { run, steps } = evidence;
+      const failingStepId =
+        run.failed_step_id ?? steps.find((s) => s.status === "failed")?.step_id;
+      return triageRun({
+        run,
+        steps,
+        siblings: siblingRuns(db, run.test_id, { limit: TRIAGE_COHORT, excludeRunId: run.id }),
+        stepHistory:
+          stepHealth(db, { testId: run.test_id }).find((s) => s.stepId === failingStepId) ?? null,
+      });
+    } catch (err) {
+      logger.warn("metrics", "Could not triage a run", { runId, err: String(err) });
+      return null;
+    }
   },
 
   /** The open handle, for the curated queries in shared/metrics-query.mjs.

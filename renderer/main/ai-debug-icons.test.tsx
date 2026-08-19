@@ -135,6 +135,10 @@ vi.mock("../lib/api", () => ({
         return h.triage;
       },
     },
+    // The run panel's failure-reason row queries the vocabulary on mount. An
+    // empty catalog, so the row renders its Uncategorized state and cannot
+    // disturb the icon — run-failure-reason.test.tsx covers the row itself.
+    failureReasons: { list: async () => ({ builtin: [], custom: [] }) },
     // The sidebar asks before offering the Branches row. Unavailable, so the
     // extra row cannot shift anything these icon assertions look at.
     branches: { status: async () => ({ available: false, switched: false, hasToken: false }) },
@@ -173,11 +177,20 @@ const FAILED_SUMMARY = summariseRun({
   now: 0,
 });
 
+/** The run panel now queries (its failure-reason row), so every helper that
+ *  renders it needs a QueryClient. One shared client: the queries resolve to
+ *  the same empty fixtures in every test here. */
+const panelQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
 /** Stands in for TestDetailView: looks the status up by the CURRENT test's key
  *  and hands it to the run panel, exactly as the real view does. */
 function TestPanel({ testId }: { testId: string }) {
   const status = useAiDebugStatus(runSessionKey(testId));
-  return <RunOutput info={info()} summary={FAILED_SUMMARY} onDebug={() => {}} aiStatus={status} />;
+  return (
+    <QueryClientProvider client={panelQueryClient}>
+      <RunOutput info={info()} summary={FAILED_SUMMARY} onDebug={() => {}} aiStatus={status} />
+    </QueryClientProvider>
+  );
 }
 
 function session(over: Partial<AiDebugSession> = {}): AiDebugSession {
@@ -492,7 +505,11 @@ describe("the run panel icon, across runs of one test", () => {
   /** The panel as the real view drives it: keyed by test, but describing one run. */
   function RunPanel({ testId, runKey }: { testId: string; runKey: string }) {
     const status = useAiDebugStatus(runSessionKey(testId), runKey);
-    return <RunOutput info={info()} summary={FAILED_SUMMARY} onDebug={() => {}} aiStatus={status} />;
+    return (
+      <QueryClientProvider client={panelQueryClient}>
+        <RunOutput info={info()} summary={FAILED_SUMMARY} onDebug={() => {}} aiStatus={status} />
+      </QueryClientProvider>
+    );
   }
 
   it("does not show the previous run's colour on a new run", async () => {
@@ -544,7 +561,11 @@ describe("the run panel icon, across runs of one test", () => {
 describe("the icon for a job kept across a re-run (experimental)", () => {
   function RunPanel({ testId, runKey }: { testId: string; runKey: string }) {
     const status = useAiDebugStatus(runSessionKey(testId), runKey);
-    return <RunOutput info={info()} summary={FAILED_SUMMARY} onDebug={() => {}} aiStatus={status} />;
+    return (
+      <QueryClientProvider client={panelQueryClient}>
+        <RunOutput info={info()} summary={FAILED_SUMMARY} onDebug={() => {}} aiStatus={status} />
+      </QueryClientProvider>
+    );
   }
 
   it("leaves the new run's icon blank while the kept job stays visible on the chip", async () => {

@@ -100,7 +100,12 @@ get_test testId="3f2a1c9e-..."
 
 ### `list_runs`
 
-List past test runs (pass/fail, duration, timestamps), newest first.
+List past test runs (pass/fail, duration, timestamps), newest first. Each run
+carries `failureReason` — why a failed run failed, as `{ id, name, by }` where
+`by` says whether the app's automatic triage mapping (`"auto"`) or a person
+(`"user"`) assigned it — or `null` for an unlabelled failure and for every
+passed run. Names resolve against the app's current vocabulary, so a reason
+renamed in Settings reads back renamed here.
 
 | Arg | Type | Required |
 |---|---|---|
@@ -423,7 +428,11 @@ evidence already on disk.
 | `runId` | string | yes |
 
 Returns `verdict` (`site` / `runner` / `mixed` / `unknown`), `confidence`,
-`evidence[]`, `limits[]` and `suggestedNext`.
+`evidence[]`, `limits[]`, `suggestedNext` and `suggestedFailureReason` — the
+built-in failure-reason label this evidence argues for (`{ reasonId, signal }`,
+or `null` when nothing points anywhere), the same mapping the app's automatic
+categorization applies at run end. Advisory only: this server never writes app
+data, so assigning or overriding a label is done in the app's run panel.
 
 **Read `evidence` and `limits` before `verdict`.** The verdict is a one-word
 summary; the evidence is the product, and each entry says which signal fired,

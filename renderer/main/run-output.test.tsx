@@ -7,6 +7,7 @@
 // or to keep waiting on one that already failed.
 
 import * as React from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 
@@ -16,11 +17,15 @@ import { RunOutput } from "./run-output";
 import { summariseRun } from "../lib/run-summary";
 import type { RunInfo } from "./recorder-store";
 
-// The panel now carries a triage line, which queries on mount. Mocked to "no
-// verdict" so these tests stay about the AI debug icon — run-triage.test.tsx
-// covers the line itself.
+// The panel now carries a triage line and a failure-reason row, both of which
+// query on mount. Mocked to "no verdict" and an empty history so these tests
+// stay about the AI debug icon — run-triage.test.tsx covers the line and
+// run-failure-reason.test.tsx the row.
 vi.mock("../lib/api", () => ({
-  api: { runs: { triage: async () => null } },
+  api: {
+    runs: { triage: async () => null, list: async () => [] },
+    failureReasons: { list: async () => ({ builtin: [], custom: [] }) },
+  },
 }));
 
 function info(over: Partial<RunInfo> = {}): RunInfo {
@@ -31,13 +36,18 @@ function info(over: Partial<RunInfo> = {}): RunInfo {
 // rather than a hand-written literal — these tests are about the panel, and a
 // literal here would keep passing after the mapping it depends on changed.
 // No history, so a passing run is a plain `passed` and a failing one `failed`.
+// One shared client — every query here resolves to the same empty fixtures.
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
 function Panel({ info: live, ...rest }: { info: RunInfo } & Omit<React.ComponentProps<typeof RunOutput>, "info" | "summary">) {
   return (
-    <RunOutput
-      info={live}
-      summary={summariseRun({ testId: "t1", runs: [], heals: [], stepCount: 3, live, now: 0 })}
-      {...rest}
-    />
+    <QueryClientProvider client={queryClient}>
+      <RunOutput
+        info={live}
+        summary={summariseRun({ testId: "t1", runs: [], heals: [], stepCount: 3, live, now: 0 })}
+        {...rest}
+      />
+    </QueryClientProvider>
   );
 }
 

@@ -27,6 +27,10 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("../../lib/api", () => ({
   api: {
+    // The Outcomes branch queries the reason vocabulary for its failures
+    // breakdown; empty, so the panel stays out of these routing assertions —
+    // outcomes-dashboard.test.tsx covers the panel itself.
+    failureReasons: { list: async () => ({ builtin: [], custom: [] }) },
     runs: {
       list: async () => [
         // `a11yChecks` is what makes this run COUNT as measured for the a11y

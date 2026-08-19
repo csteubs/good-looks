@@ -202,6 +202,11 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   // OFF by default — a send off the machine the user has to switch on, and
   // inert until they also store a webhook URL for it.
   insightsSlackEnabled: false,
+  // ON by default, unlike the AI toggles above, because it is nothing like
+  // them: the categorizer is the deterministic triage mapping, runs locally,
+  // and sends nothing anywhere. Off switches the AUTOMATIC half only — the
+  // run panel's manual picker is always there.
+  autoFailureReasons: true,
   autoAcceptAiDebugFixes: false,
   disabledAestheticEnhancements: [],
   // 100%. The theme is drawn at these exact pixel sizes, so the default has to
@@ -378,6 +383,10 @@ function read(): RecorderSettings {
         typeof parsed.insightsSlackEnabled === "boolean"
           ? parsed.insightsSlackEnabled
           : DEFAULT_SETTINGS.insightsSlackEnabled,
+      autoFailureReasons:
+        typeof parsed.autoFailureReasons === "boolean"
+          ? parsed.autoFailureReasons
+          : DEFAULT_SETTINGS.autoFailureReasons,
       autoAcceptAiDebugFixes:
         typeof parsed.autoAcceptAiDebugFixes === "boolean"
           ? parsed.autoAcceptAiDebugFixes
@@ -577,6 +586,10 @@ export const recorderSettingsStore = {
         update.insightsSlackEnabled !== undefined
           ? update.insightsSlackEnabled
           : current.insightsSlackEnabled,
+      autoFailureReasons:
+        update.autoFailureReasons !== undefined
+          ? update.autoFailureReasons
+          : current.autoFailureReasons,
       autoAcceptAiDebugFixes:
         update.autoAcceptAiDebugFixes !== undefined
           ? update.autoAcceptAiDebugFixes
@@ -665,6 +678,7 @@ export const recorderSettingsStore = {
       aiInsightsCadence: next.aiInsightsCadence,
       notifyOnInsightsReady: next.notifyOnInsightsReady,
       insightsSlackEnabled: next.insightsSlackEnabled,
+      autoFailureReasons: next.autoFailureReasons,
       autoAcceptAiDebugFixes: next.autoAcceptAiDebugFixes,
       disabledAestheticEnhancements: next.disabledAestheticEnhancements,
       uiScale: next.uiScale,

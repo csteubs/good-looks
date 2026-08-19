@@ -74,7 +74,14 @@ vi.mock("../lib/api", () => ({
       getSettings: async () =>
         ({ keepRunningAiDebugJobs: h.keepRunningJobs }) as unknown as RecorderSettings,
     },
-    runs: { captureOverhead: async () => null, triage: async () => null },
+    runs: {
+      captureOverhead: async () => null,
+      triage: async () => null,
+      // The run panel's failure-reason row queries these on mount; empty, so
+      // the row cannot disturb what these integration tests are about.
+      list: async () => [],
+    },
+    failureReasons: { list: async () => ({ builtin: [], custom: [] }) },
     artifacts: {
       hasLogs: async () => ({ hasLogs: h.hasLogs }),
       getLogs: async () => h.runLogs,

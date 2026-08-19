@@ -338,6 +338,12 @@ export function StatsCategoryView(): React.ReactElement {
     queryKey: ["captureOverhead"],
     queryFn: () => api.runs.captureOverhead(),
   });
+  // The reason vocabulary, for the Outcomes breakdown. The whole catalog,
+  // disabled customs included — a breakdown resolves ids runs already carry.
+  const failureReasonsQuery = useQuery({
+    queryKey: ["failure-reasons"],
+    queryFn: api.failureReasons.list,
+  });
   // THE ONE QUERY NOTHING ELSE MAKES. Every other key above is already warm
   // from the board; this one opens each test's replay file on disk, so it is
   // fetched only while you are actually standing on the a11y category rather
@@ -454,12 +460,18 @@ export function StatsCategoryView(): React.ReactElement {
     if (meta.id === "outcomes") {
       if (!runs) return <p className="gl-panel-note">Loading…</p>;
       return facet ? (
-        <OutcomesLeaf facet={facet} runs={runs} onOpenTest={openTest} />
+        <OutcomesLeaf
+          facet={facet}
+          runs={runs}
+          reasons={failureReasonsQuery.data}
+          onOpenTest={openTest}
+        />
       ) : (
         <OutcomesDashboard
           runs={runs}
           totals={totalsQuery.data}
           overhead={overheadQuery.data}
+          reasons={failureReasonsQuery.data}
           onDrill={drill}
         />
       );
