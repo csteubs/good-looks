@@ -7,7 +7,16 @@ import {
   LOCATOR_KINDS as ALL_LOCATOR_KINDS,
   WAIT_UNTIL_KINDS as ALL_WAIT_UNTIL_KINDS,
 } from "./recorder-types";
-import type { AssertKind, LocatorKind, RawStep, StepType, WaitUntilKind } from "./recorder-types";
+import { testIdOverride } from "../../shared/testid-attr.mjs";
+import type {
+  AssertKind,
+  Locator,
+  LocatorContext,
+  LocatorKind,
+  RawStep,
+  StepType,
+  WaitUntilKind,
+} from "./recorder-types";
 
 export type ResponseSegment =
   | { type: "text"; content: string }
@@ -112,6 +121,73 @@ function num(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
 }
 
+/**
+ * Rebuild a locator out of checked values — same discipline as
+ * `normalizeLocator` in main/recorder/types.ts: known fields only, never a
+ * spread, so an unknown key from the model cannot ride through to a step.
+ * `allowContext` is the recursion guard, not a feature flag: `ctx` holds
+ * locators of its own, so the type is self-referential, and one level is all
+ * the picker produces and all the generator emits — the inner calls pass
+ * `false` and a `ctx` on a context locator is dropped rather than recursed
+ * into.
+ */
+function validateLocator(raw: unknown, allowContext: boolean): Locator | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const loc = raw as Record<string, unknown>;
+  if (!LOCATOR_KINDS.has(loc.k as LocatorKind)) return undefined;
+  // `nth` carried through, because the model is now told it may pin down
+  // which of several matches it means. Without it a step against a page with
+  // two "Save" buttons is a strict-mode failure the model had no way to avoid.
+  const nth = num(loc.nth);
+  const out: Locator = {
+    k: loc.k as LocatorKind,
+    v: str(loc.v),
+    role: str(loc.role),
+    name: str(loc.name),
+    ...(nth !== undefined && nth >= 0 ? { nth: Math.trunc(nth) } : {}),
+  };
+  // Same rule as normalizeLocator: overrides only — the default attribute is
+  // expressed by absence, so a "data-testid" the model writes out is dropped
+  // rather than kept as a second spelling of the same locator.
+  if (loc.k === "testid") {
+    const attr = testIdOverride(loc.attr);
+    if (attr) out.attr = attr;
+  }
+  if (allowContext) {
+    const ctx = validateLocatorContext(loc.ctx);
+    if (ctx) out.ctx = ctx;
+  }
+  return out;
+}
+
+/**
+ * Rebuild a locator's element context, mirroring `normalizeLocatorContext`:
+ * `withinHasText` filters the CONTAINER, so without `within` it is dropped
+ * rather than reinterpreted as a filter on the target, and a context that
+ * validates to nothing is `undefined` rather than `{}` — absent and empty
+ * must stay the same value.
+ */
+function validateLocatorContext(raw: unknown): LocatorContext | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const c = raw as Record<string, unknown>;
+  const out: LocatorContext = {};
+  const within = validateLocator(c.within, false);
+  if (within) {
+    out.within = within;
+    const hasText = str(c.withinHasText);
+    if (hasText !== undefined) out.withinHasText = hasText;
+  }
+  if (Array.isArray(c.and)) {
+    const and: Locator[] = [];
+    for (const p of c.and) {
+      const loc = validateLocator(p, false);
+      if (loc) and.push(loc);
+    }
+    if (and.length > 0) out.and = and;
+  }
+  return out.within || out.and ? out : undefined;
+}
+
 function validateStep(raw: unknown): RawStep | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
@@ -119,20 +195,8 @@ function validateStep(raw: unknown): RawStep | null {
   if (!STEP_TYPES.has(type)) return null;
 
   const step: RawStep = { type };
-  const loc = o.locator as Record<string, unknown> | undefined;
-  if (loc && typeof loc === "object" && LOCATOR_KINDS.has(loc.k as LocatorKind)) {
-    // `nth` carried through, because the model is now told it may pin down
-    // which of several matches it means. Without it a step against a page with
-    // two "Save" buttons is a strict-mode failure the model had no way to avoid.
-    const nth = num(loc.nth);
-    step.locator = {
-      k: loc.k as LocatorKind,
-      v: str(loc.v),
-      role: str(loc.role),
-      name: str(loc.name),
-      ...(nth !== undefined && nth >= 0 ? { nth: Math.trunc(nth) } : {}),
-    };
-  }
+  const locator = validateLocator(o.locator, true);
+  if (locator) step.locator = locator;
   const value = str(o.value);
   if (value !== undefined) step.value = value;
   const url = str(o.url);

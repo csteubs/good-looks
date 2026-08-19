@@ -10,6 +10,46 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-19 — AI-proposed steps can carry element context
+
+`extractStepsJson` (renderer/lib/parse-llm-response.ts) rebuilt a proposed
+step's locator as `{k, v, role, name, nth}` and dropped any `ctx`, and the
+generate-steps prompt never described the field — so an AI-proposed step could
+not say "the Save button inside the Billing dialog" even though the Locator
+model, `normalizeLocator` and the generator's `locatorExpr` all support
+context. A `ctx` the model emitted anyway vanished with no error, the same
+silent-drop shape as the assert-kind drift recorded on 2026-08-13.
+
+**Both halves moved together, and the drift guard covers the new field.**
+`llm-knowledge.test.ts` asserts the prompt describes `ctx` and that a context
+emitted exactly as described survives the validator — the prompt is the
+contract, the validator enforces it, and a field in one but not the other is a
+step (or part of one) that vanishes.
+
+**The parse mirrors `normalizeLocatorContext`'s rules rather than inventing
+looser ones:** rebuilt field-by-field, never a spread; one level only, so a
+context locator's own `ctx` is dropped rather than recursed into (the type is
+self-referential and the model could nest it arbitrarily deep);
+`withinHasText` dropped without `within`; an empty context parsed the same as
+an absent one. Numeric and count bounds stay main-side — `insertStep`
+normalizes on ingest, which is the boundary that matters; this parse decides
+what the dialog shows and inserts.
+
+**The prompt restricts `ctx` to containers the description itself names.**
+Generate-steps runs against no live page, so an invented container is the same
+failure as an invented selector. That is also why the JSON schema still offers
+no `nth`: an index into matches the model has never seen could only be
+invented, though the validator keeps accepting one defensively.
+
+**Rebasing over the test-id attribute work surfaced the same drift, one day
+old.** That change taught the generate-steps prompt that a testid locator "may
+add `attr`" but not the validator, so an `attr` the model emitted was silently
+stripped and the step resolved by `data-testid` — the wrong element or none,
+with nothing saying why. `validateLocator` now applies `testIdOverride` from
+shared/testid-attr.mjs (overrides only, testid only — the default attribute is
+expressed by absence, exactly as `normalizeLocator` rules it), and the
+llm-knowledge drift guard covers the field.
+
 ### 2026-08-19 — The composer's kind menus are pinned against the model's lists
 
 `titleContains` was in `ASSERT_KINDS`, in the recording view's assert menu, in

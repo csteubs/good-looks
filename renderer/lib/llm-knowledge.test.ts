@@ -78,6 +78,58 @@ describe("the model can express every assert kind the app has", () => {
   });
 });
 
+describe("the model can name which test-id attribute it means", () => {
+  it("the prompt offers attr and the validator carries it through", () => {
+    // The prompt gained "a testid locator may add attr" with the test-id
+    // attribute work; the validator did not, so an attr the model emitted was
+    // silently stripped and the step resolved by data-testid — the wrong
+    // element or none, with nothing saying why.
+    const sys = stepsSystemPrompt();
+    expect(sys).toContain('"attr"');
+    const parsed = extractStepsJson(
+      '```json\n[{"type":"click","locator":{"k":"testid","v":"save","attr":"data-test-id"}}]\n```',
+    );
+    expect(parsed, "the response should parse").not.toBeNull();
+    expect(parsed![0].locator?.attr).toBe("data-test-id");
+  });
+});
+
+describe("the model can express element context", () => {
+  it("the prompt describes ctx and the validator carries it through", () => {
+    // Same drift rule as the assert kinds: the prompt is the contract, the
+    // validator is what enforces it. `ctx` lived in the Locator model, the
+    // generator and normalizeLocator, but in neither the prompt nor the
+    // validator — so "the Save button inside the Billing dialog" had no
+    // expressible answer, and a ctx the model emitted anyway vanished silently.
+    const sys = stepsSystemPrompt();
+    for (const field of ['"ctx"', '"within"', '"withinHasText"', '"and"']) {
+      expect(sys, `${field} is missing from the prompt's schema`).toContain(field);
+    }
+    const emitted = [
+      {
+        type: "click",
+        locator: {
+          k: "role",
+          role: "button",
+          name: "Save",
+          ctx: {
+            within: { k: "role", role: "dialog", name: "Billing" },
+            withinHasText: "Pro plan",
+            and: [{ k: "css", v: ".primary" }],
+          },
+        },
+      },
+    ];
+    const parsed = extractStepsJson("```json\n" + JSON.stringify(emitted) + "\n```");
+    expect(parsed, "the response should parse").not.toBeNull();
+    expect(parsed![0].locator?.ctx).toEqual({
+      within: { k: "role", role: "dialog", name: "Billing" },
+      withinHasText: "Pro plan",
+      and: [{ k: "css", v: ".primary" }],
+    });
+  });
+});
+
 describe("the model is shown the locator that actually ran", () => {
   it("renders .nth(k), which the generated spec contains", () => {
     expect(locatorToPrompt({ k: "text", v: "Save", nth: 3 })).toBe('getByText("Save").nth(3)');

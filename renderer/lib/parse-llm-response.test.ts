@@ -105,6 +105,101 @@ describe("extractStepsJson", () => {
     expect(steps).toBeNull();
   });
 
+  it("carries a testid locator's attr override, by the shared rule", () => {
+    // The prompt tells the model a "testid" locator may add "attr" when the
+    // element's test id lives on data-test-id/data-test. Same rule as
+    // normalizeLocator: overrides only (the default attribute is absence —
+    // a second spelling would be a second heal-map key), testid only, and it
+    // applies inside ctx too.
+    const steps = extractStepsJson(
+      JSON.stringify([
+        { type: "click", locator: { k: "testid", v: "save", attr: "data-test-id" } },
+        { type: "click", locator: { k: "testid", v: "save", attr: "data-testid" } },
+        { type: "click", locator: { k: "testid", v: "save", attr: "onclick" } },
+        { type: "click", locator: { k: "text", v: "Save", attr: "data-test-id" } },
+        {
+          type: "click",
+          locator: { k: "text", v: "Save", ctx: { within: { k: "testid", v: "billing", attr: "data-test" } } },
+        },
+      ]),
+    );
+    expect(steps![0].locator?.attr).toBe("data-test-id");
+    expect(steps![1].locator?.attr).toBeUndefined();
+    expect(steps![2].locator?.attr).toBeUndefined();
+    expect(steps![3].locator?.attr).toBeUndefined();
+    expect(steps![4].locator?.ctx?.within?.attr).toBe("data-test");
+  });
+
+  it("carries a locator's ctx through — within, withinHasText and and", () => {
+    // The Locator model, the generator and normalizeLocator all support
+    // element context; a parse that dropped it meant an AI-proposed step could
+    // never say "the Save button inside the Billing dialog".
+    const steps = extractStepsJson(
+      JSON.stringify([
+        {
+          type: "click",
+          locator: {
+            k: "role",
+            role: "button",
+            name: "Save",
+            ctx: {
+              within: { k: "role", role: "dialog", name: "Billing" },
+              withinHasText: "Pro plan",
+              and: [{ k: "css", v: ".primary" }],
+            },
+          },
+        },
+      ]),
+    );
+    expect(steps).toHaveLength(1);
+    expect(steps![0].locator?.ctx).toEqual({
+      within: { k: "role", role: "dialog", name: "Billing" },
+      withinHasText: "Pro plan",
+      and: [{ k: "css", v: ".primary" }],
+    });
+  });
+
+  it("drops a ctx nested on a context locator — one level only", () => {
+    // Mirrors normalizeLocator's recursion guard: the type is self-referential,
+    // so a model could nest containers arbitrarily deep; one level is all the
+    // picker can produce and all the generator emits.
+    const steps = extractStepsJson(
+      JSON.stringify([
+        {
+          type: "click",
+          locator: {
+            k: "text",
+            v: "Save",
+            ctx: { within: { k: "css", v: ".dialog", ctx: { within: { k: "css", v: "body" } } } },
+          },
+        },
+      ]),
+    );
+    expect(steps![0].locator?.ctx?.within).toEqual({ k: "css", v: ".dialog" });
+  });
+
+  it("drops withinHasText without within, and an empty ctx entirely", () => {
+    // withinHasText filters the CONTAINER; with no container there is nothing
+    // to filter, and reinterpreting it as a filter on the target would be worse
+    // than dropping it. The first entry pins that rule on its own — the `and`
+    // keeps the ctx alive, so a parse that kept the orphaned withinHasText
+    // would show here rather than being masked by the empty-ctx guard.
+    const steps = extractStepsJson(
+      JSON.stringify([
+        {
+          type: "click",
+          locator: { k: "text", v: "Save", ctx: { withinHasText: "Row 2", and: [{ k: "css", v: ".primary" }] } },
+        },
+        { type: "click", locator: { k: "text", v: "Save", ctx: { withinHasText: "Row 2" } } },
+        { type: "click", locator: { k: "text", v: "Save", ctx: { within: { k: "vibes", v: "x" } } } },
+      ]),
+    );
+    expect(steps![0].locator?.ctx).toEqual({ and: [{ k: "css", v: ".primary" }] });
+    // A ctx that validates to nothing parses the same as an absent one.
+    expect(steps![1].locator?.ctx).toBeUndefined();
+    expect(steps![2].locator?.ctx).toBeUndefined();
+  });
+
   it("returns null for malformed JSON", () => {
     expect(extractStepsJson("```json\n[{oops}]\n```")).toBeNull();
   });
