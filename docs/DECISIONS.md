@@ -7943,3 +7943,72 @@ retires the `docs/QA-KNOWN-GAPS.md` §2 entry that described the gap.
   `a11yNewSteps` while the replay beside it carried a serious violation, so the
   preview rendered a headline of 0 over a breakdown listing a rule. The Visual
   view had never put those two numbers on one screen, so nothing had noticed.
+
+## 2026-08-19 — A testid locator records WHICH attribute matched
+
+**The bug class is the documented one: an oracle and a run disagreeing, with
+the trainer green.** The capture script accepts three test-id attributes —
+`data-testid`, `data-test-id`, `data-test` — and recorded all three as the same
+`{k:"testid", v}` locator. The in-page uniqueness oracle (`matchesForBase`)
+counted matches across all three attribute selectors, so the recorder declared
+such a step unique and the trainer replayed it green. The generated spec said
+`getByTestId("v")`, and nothing in this repo configures Playwright's
+`testIdAttribute`, so a run resolves `data-testid` alone: a step recorded off
+either other attribute matched nothing on every run — failing outright, or
+worse, being silently auto-healed to a different locator kind run after run.
+The same over-counting also worked in reverse: a perfectly good unique
+`data-testid` was REJECTED at record time because another attribute somewhere
+on the page held the same value, and the recorder settled for something weaker.
+
+**The fix records the attribute on the locator (`Locator.attr`), and the
+default is spelled as ABSENCE.** Only `data-test-id` and `data-test` are ever
+stored — `normalizeLocator` allowlists exactly those two and drops
+`data-testid` to absent — because a locator with two spellings would be a
+locator with two heal-map keys, and the heal map is looked up by exact string.
+
+**Emission is an attribute selector, not a config change.** The alternative —
+setting `testIdAttribute` in the generated Playwright config — was rejected:
+it is one value per run, a single page can mix attribute conventions (two
+component libraries), and a generated spec should keep working copied out of
+this app. So the generator emits `locator('[data-test-id="v"]')` for the two
+override attributes and `getByTestId("v")` otherwise, and every emitter guards
+the field with the shared allowlist rather than the TypeScript type — steps
+recorded before the boundary learned `attr` are regenerated from stored JSON,
+which is the same argument `num()` records for `nth`.
+
+**The selector spelling is one definition, in `shared/testid-attr.mjs`,**
+because four worlds must produce it byte-identically: the generator writes it
+into the spec; `healKeyBase` keys the heal map with `css|<selector>`, which
+must equal what the run-time fixture derives from the `locator()` factory's
+argument — that argument IS the generator's string; the fixture's
+`baseFromModel` rebuilds a live locator when applying a heal (embedded via
+`testIdSelectorSource()`, the `heal-key.mjs` `toString` technique); and the
+renderer's step list, refine dialog and LLM prompts each promise the call the
+script will contain. A testid on an override attribute deliberately keys as
+`css|[data-test-id="v"]` rather than growing a new key shape: the fixture only
+ever sees the `locator` factory for it, and a key shape the fixture cannot
+derive is healing silently off.
+
+**The parser reads the emitted selector back as the same testid locator** —
+left as css, every hand edit of the Script tab would relabel the step and drop
+which attribute it meant (the model-survival half of `check:locator-roundtrip`).
+`parseTestIdSelector` is deliberately narrow: exactly one attribute equality,
+double-quoted, one of the two override attributes. A hand-written
+`[data-testid="v"]` stays a css locator on purpose — it resolves identically
+everywhere (same elements, same `css|` heal key), so converting it would be a
+relabel with no behaviour behind it.
+
+**The oracle now counts only the recorded attribute,** which fixes both
+directions of the disagreement at once, and fixes the injected replayer and the
+Auto-Heal probe with it, since both embed `UNIQUENESS_HELPERS`. Heal candidates
+record the attribute they found (`testIdLocatorOf` in DOM_HELPERS), carry it
+through `withCtx`, and dedupe on it (`sameLocator` — `{testid, v}` and
+`{testid, attr, v}` are different elements' candidates, not duplicates).
+
+**Verified to fail first, at every layer:** the new
+`locator-uniqueness.dom.test.ts` cases (recorded locator + the independent
+Playwright-semantics judge), six `check:locator-roundtrip` rows (model
+survival), and three `e2e/context-parity.spec.ts` rows (the injected oracle
+and the real emitted expression against an independently stated answer) were
+all run against the unfixed tree: 4, 6 and 3 failures respectively, exactly
+where the disagreement was claimed to be.

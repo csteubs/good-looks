@@ -25,6 +25,7 @@ import { pathToFileURL } from "url";
 
 import { healFixtureSource } from "./heal-fixture-source.js";
 import { healKeyFor } from "./playwright-runner.js";
+import { testIdSelector } from "../../shared/testid-attr.mjs";
 import type { Locator } from "../recorder/types.js";
 
 let dir: string;
@@ -216,6 +217,14 @@ describe("heal key agreement", () => {
   // error, no log line, nothing to notice. This compares them directly.
   const cases: { loc: Locator; expected: string }[] = [
     { loc: { k: "testid", v: "submit" }, expected: "testid|submit" },
+    // A testid on a non-default attribute is emitted as `locator("[…]")`, so
+    // its key is the css key of that selector — the run-time fixture only ever
+    // sees the `locator` factory for it.
+    {
+      loc: { k: "testid", attr: "data-test-id", v: "submit" },
+      expected: 'css|[data-test-id="submit"]',
+    },
+    { loc: { k: "testid", attr: "data-test", v: "submit" }, expected: 'css|[data-test="submit"]' },
     { loc: { k: "label", v: "Email" }, expected: "label|Email" },
     { loc: { k: "placeholder", v: "Search" }, expected: "placeholder|Search" },
     { loc: { k: "text", v: "Log in" }, expected: "text|Log in" },
@@ -255,6 +264,14 @@ describe("heal key agreement", () => {
       { loc: { k: "role", role: "button" }, factory: "getByRole", args: ["button", undefined] },
       { loc: { k: "css", v: "#main .btn" }, factory: "locator", args: ["#main .btn"] },
       { loc: { k: "xpath", v: "//button" }, factory: "locator", args: ["xpath=//button"] },
+      // The generator emits a non-default-attribute testid through `locator()`,
+      // and the argument the fixture sees is the selector exactly as
+      // `testIdSelector` spelled it in the source.
+      {
+        loc: { k: "testid", attr: "data-test", v: "submit" },
+        factory: "locator",
+        args: [testIdSelector("data-test", "submit")],
+      },
     ];
 
     for (const { loc, factory, args } of pairs) {

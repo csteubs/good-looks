@@ -78,6 +78,15 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      heal-key.mjs is the same shape again: how a chained locator's
                      heal-map key is SPELLED, built from a Locator model on one side
                      and from factory ARGUMENTS on the other.
+                     testid-attr.mjs is that shape for a testid locator's
+                     ATTRIBUTE: getByTestId resolves only data-testid, so a
+                     locator recorded off data-test-id/data-test carries
+                     `attr` and emits an attribute selector — spelled once
+                     here for the generator, the heal key, the heal fixture
+                     and the renderer's locator renderings, with the parser's
+                     inverse beside it. The trainer's oracle counts only the
+                     recorded attribute; counting all three is how a step
+                     could be unique live and match nothing on every run.
                      a11y-rollup.mjs is that shape a third time, and it retired two
                      hand-copies rather than adding a third: violationKey/keysOf lived
                      in main/services/a11y-diff.ts AND renderer/lib/a11y-format.ts,

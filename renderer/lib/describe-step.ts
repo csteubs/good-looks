@@ -4,6 +4,7 @@
 
 import { DEFAULT_WAIT_TIMEOUT_MS, ELEMENT_STATES, isCssPropName } from "./recorder-types";
 import { ASSERT_SEMANTICS, reEscape, textMatchExpr } from "../../shared/step-semantics.mjs";
+import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import type { Locator, Step, StepType } from "./recorder-types";
 
 function q(s: string): string {
@@ -12,8 +13,15 @@ function q(s: string): string {
 
 function locatorExpr(loc: Locator): string {
   switch (loc.k) {
-    case "testid":
-      return "getByTestId(" + q(loc.v ?? "") + ")";
+    case "testid": {
+      // Mirrors locatorBase in script-generator.ts: a testid on a non-default
+      // attribute is emitted as an attribute selector, because getByTestId
+      // resolves only data-testid.
+      const attr = testIdOverride(loc.attr);
+      return attr
+        ? "locator(" + q(testIdSelector(attr, loc.v ?? "")) + ")"
+        : "getByTestId(" + q(loc.v ?? "") + ")";
+    }
     case "role":
       return loc.name
         ? "getByRole(" + q(loc.role ?? "") + ", { name: " + q(loc.name) + " })"

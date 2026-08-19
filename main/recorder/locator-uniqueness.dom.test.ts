@@ -88,7 +88,13 @@ function countMatches(loc: Locator): number {
   const has = (hay: string | null | undefined, needle: string) =>
     norm(hay).includes(norm(needle));
 
-  if (loc.k === "testid") return document.querySelectorAll(`[data-testid="${loc.v}"]`).length;
+  // `getByTestId` resolves data-testid alone (nothing in this repo configures
+  // Playwright's testIdAttribute); any other recorded attribute is spelled out
+  // by the generator as an attribute selector. Counting all three here would
+  // encode the very oracle bug this judge exists to catch.
+  if (loc.k === "testid") {
+    return document.querySelectorAll(`[${loc.attr ?? "data-testid"}="${loc.v}"]`).length;
+  }
   if (loc.k === "css") return document.querySelectorAll(loc.v ?? "").length;
   if (loc.k === "placeholder") {
     return [...document.querySelectorAll("[placeholder]")].filter((el) =>
@@ -221,6 +227,51 @@ describe("the locator the recorder chooses", () => {
   });
 });
 
+describe("which test-id attribute the element carries", () => {
+  // The recorder accepted data-testid, data-test-id and data-test as one
+  // "testid" kind and the oracle counted matches across all three — but the
+  // generated spec said `getByTestId()`, which resolves ONLY data-testid. A
+  // step recorded off either other attribute was declared unique, replayed
+  // green in the trainer, and matched nothing on every run.
+
+  it("records WHICH attribute matched, so the run resolves what the trainer counted", () => {
+    install(`<button data-test="quick-save">Go</button>`);
+    const loc = clickAndCapture(document.querySelector("button"));
+    expect(loc).toEqual({ k: "testid", attr: "data-test", v: "quick-save" });
+    expectRunnable(loc);
+  });
+
+  it("records data-test-id the same way", () => {
+    install(`<button data-test-id="legacy-save">Go</button>`);
+    const loc = clickAndCapture(document.querySelector("button"));
+    expect(loc).toEqual({ k: "testid", attr: "data-test-id", v: "legacy-save" });
+    expectRunnable(loc);
+  });
+
+  it("leaves the attribute off for data-testid, the one getByTestId resolves", () => {
+    install(`<button data-testid="submit">Go</button>`);
+    expect(clickAndCapture(document.querySelector("button"))).toEqual({ k: "testid", v: "submit" });
+  });
+
+  it("does not let another attribute's equal value spoil a unique data-testid", () => {
+    // The reverse half of the same disagreement: the three-attribute oracle
+    // counted the data-test element as a second match for a locator the run
+    // resolves uniquely, so the recorder walked away from a perfectly good
+    // testid and recorded something weaker.
+    install(`<button data-testid="dup">A</button><i data-test="dup">B</i>`);
+    const loc = clickAndCapture(document.querySelector("button"));
+    expect(loc).toEqual({ k: "testid", v: "dup" });
+  });
+
+  it("prefers data-testid when an element carries more than one", () => {
+    install(`<button data-testid="modern" data-test="legacy">Go</button>`);
+    expect(clickAndCapture(document.querySelector("button"))).toEqual({
+      k: "testid",
+      v: "modern",
+    });
+  });
+});
+
 describe("the generated spec", () => {
   function specFor(loc: Locator): string {
     const record = {
@@ -251,6 +302,31 @@ describe("the generated spec", () => {
     const spec = specFor({ k: "text", v: "Browser" });
     expect(spec).toContain('getByText("Browser")');
     expect(spec).not.toContain(".nth(");
+  });
+
+  it("spells out a test-id attribute getByTestId would not resolve", () => {
+    expect(specFor({ k: "testid", attr: "data-test", v: "quick-save" })).toContain(
+      'locator("[data-test=\\"quick-save\\"]")',
+    );
+    expect(specFor({ k: "testid", attr: "data-test-id", v: "legacy-save" })).toContain(
+      'locator("[data-test-id=\\"legacy-save\\"]")',
+    );
+  });
+
+  it("still emits getByTestId when no attribute is recorded", () => {
+    const spec = specFor({ k: "testid", v: "submit" });
+    expect(spec).toContain('getByTestId("submit")');
+    expect(spec).not.toContain("data-testid");
+  });
+
+  it("ignores an attribute outside the allowlist rather than emitting it", () => {
+    // Steps recorded before the normalizer learned `attr` are regenerated from
+    // disk, so the generator guards the field itself rather than trusting that
+    // every stored step has been through `normalizeLocator`.
+    const hostile = { k: "testid", v: "x", attr: 'foo="y"],[id' } as unknown as Locator;
+    const spec = specFor(hostile);
+    expect(spec).toContain('getByTestId("x")');
+    expect(spec).not.toContain("foo=");
   });
 
   it("never interpolates a non-numeric index into the source", () => {

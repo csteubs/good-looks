@@ -2,6 +2,7 @@
 
 import { GLAZE_RUNTIME_FILE } from "./glaze-runtime-source.js";
 import { ASSERT_SEMANTICS, reEscape, textMatchExpr, WAIT_SEMANTICS } from "../../shared/step-semantics.mjs";
+import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import {
   cookieScopeIsValid,
   ELEMENT_STATES,
@@ -91,8 +92,20 @@ function valueExpr(raw: string | undefined, vars: ReadonlySet<string>): string {
 
 function locatorBase(loc: Locator): string {
   switch (loc.k) {
-    case "testid":
-      return "getByTestId(" + q(loc.v ?? "") + ")";
+    case "testid": {
+      // `getByTestId` resolves only data-testid (nothing configures
+      // Playwright's testIdAttribute), so a locator recorded off another
+      // test-id attribute spells it out. Allowlisted here as well as in
+      // `normalizeLocator`: steps recorded before that boundary learned
+      // `attr` are regenerated from their stored JSON, so the stored field
+      // cannot be trusted for having the right TypeScript type — an unknown
+      // attribute falls back to the default emission rather than reaching the
+      // selector.
+      const attr = testIdOverride(loc.attr);
+      return attr
+        ? "locator(" + q(testIdSelector(attr, loc.v ?? "")) + ")"
+        : "getByTestId(" + q(loc.v ?? "") + ")";
+    }
     case "role":
       return loc.name
         ? "getByRole(" + q(loc.role ?? "") + ", { name: " + q(loc.name) + " })"
