@@ -10,6 +10,59 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-19 — The custom locator returns, as the last resort with an honest count
+
+DECISIONS 7491 removed the manual locator input in favour of the picker, and
+the picker was the right default. What the removal also removed was the escape
+hatch: the intents a candidate list cannot express — a non-ancestor relation, a
+negative text match (`//button[not(starts-with(text(),"Submit"))]`), the nth of
+many near-identical rows — had no path left but hand-editing the Script tab,
+which costs `stepsDiverged`. This change brings typing back on both pick
+surfaces (the Refine dialog and the composer's target picker) as a "Custom" row
+placed LAST under the candidates: the order is the recommendation, the same
+hierarchy mabl's own docs teach for the feature this is modelled on. The
+composer's no-picked branch also offers the field outright, because it is the
+only route to an element the crosshair cannot reach — hidden until a hover that
+pick mode itself disturbs.
+
+**The gate refuses what the oracle can't count, with directions.** `css` and
+`xpath` have been first-class locator kinds end to end since the beginning, so
+storing, generating, healing and round-tripping a typed one needed no backend
+change at all. What needed designing was the boundary of the FIELD:
+Playwright's selector language is bigger than the in-page oracle's
+(`querySelectorAll` + `document.evaluate`), and accepting `text=`, `>>` or
+`:has-text(...)` would show a live count that is confidently wrong — the
+oracle-vs-run disagreement this repo documents as its worst failure class,
+arrived at by typing. So `classifyCustomLocator` refuses those inputs by name,
+each with the in-app alternative ("use an Inside clause", "the picker's
+candidates cover those kinds"), rather than accepting-and-miscounting or
+accepting-and-not-counting. Standard CSS pseudo-classes stay accepted; the
+tests pin the refusal set as hard as the acceptance set, because a false
+refusal makes the field useless for exactly the selectors it exists for.
+
+**The count includes the pending context.** The field counts through the same
+`recorder:countMatches` channel as the picker, with the dialog's configured
+context composed in — the number on screen is the number the finished step
+resolves to, not the selector's raw match count. Syntax is validated against
+the renderer's own document first (validity is page-independent), so an
+unparseable draft never reaches the channel, whose in-page try/catch would
+report it as a misleading "0 matches".
+
+**Lint advises, never blocks.** Positional `:nth-child` stacks, build-hashed
+class names, deep descendant paths — the shapes selectors have when copied out
+of DevTools — get a warning under the field and nothing more. The user may
+know something we don't, and a blocked expert reaches for the Script tab,
+which is strictly worse.
+
+**Fixed in passing: the composer dropped context on candidate switch.** The
+target picker composed context inline at context-change time, so configuring
+"inside billing-card" and then clicking a different candidate emitted the bare
+candidate — the pinned container silently fell off until the context was next
+touched. Emission now goes through one `emit(base, ctx)` for every path
+(candidates, custom, context changes), matching the Refine dialog's
+apply-time composition. Pinned by a test that fails against the old inline
+version.
+
 ### 2026-08-19 — AI-proposed steps can carry element context
 
 `extractStepsJson` (renderer/lib/parse-llm-response.ts) rebuilt a proposed

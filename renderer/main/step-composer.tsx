@@ -54,6 +54,7 @@ import type {
   ConditionKind,
   CssMatch,
   Locator,
+  LocatorContext,
   PickedElement,
   RawStep,
   WaitDialogMode,
@@ -63,6 +64,7 @@ import { api, type FlowInfo } from "../lib/api";
 import { buildStateSteps, type StatePick } from "../lib/element-states";
 import { collectFlowArgs, FlowArgsFields } from "./flow-args-fields";
 import { clampViewportAxis, RESIZE_PRESETS } from "../lib/viewport-presets";
+import { CustomLocatorField } from "./custom-locator-field";
 import { ElementContextPicker } from "./element-context-picker";
 import {
   NewVariableButton,
@@ -367,32 +369,65 @@ function TargetElementPicker({
   onClearPick,
 }: {
   picked: PickedElement | null;
-  onChange: (loc: Locator) => void;
+  /** null when the current choice is a custom draft that isn't valid (yet) —
+   *  the composer's Add button keys off it. */
+  onChange: (loc: Locator | null) => void;
   onStartPick: () => void;
   onClearPick: () => void;
 }) {
-  const [selected, setSelected] = React.useState(0);
+  const [selected, setSelected] = React.useState<number | "custom">(0);
+  const [customLoc, setCustomLoc] = React.useState<Locator | null>(null);
+  const [ctx, setCtx] = React.useState<LocatorContext | null>(null);
   const candidates = picked?.candidates ?? [];
+
+  /** One exit for every path, so context always rides the emitted locator —
+   *  including across candidate switches, where the old inline composition
+   *  silently dropped a configured context until it was next edited. */
+  const emit = React.useCallback(
+    (base: Locator | null, c: LocatorContext | null) => {
+      if (!base) {
+        onChange(null);
+        return;
+      }
+      const next: Locator = { ...base };
+      if (c) next.ctx = c;
+      else delete next.ctx;
+      onChange(next);
+    },
+    [onChange],
+  );
 
   // Seed the locator from the best candidate when a fresh element arrives.
   React.useEffect(() => {
     setSelected(0);
+    setCustomLoc(null);
+    setCtx(null);
     if (candidates[0]) onChange(candidates[0]);
     // onChange/candidates derive from picked; re-seed only on a new pick.
   }, [picked]);
 
   if (!picked || candidates.length === 0) {
+    // No element picked (or none derivable): the crosshair is the first ask,
+    // and the custom field is the standing alternative — it is also the ONLY
+    // route to an element the picker cannot reach, like one that is hidden
+    // until a hover the pick mode itself disturbs.
     return (
       <Field label="Target element" orientation="vertical">
-        <Button variant="secondary" size="small" onClick={onStartPick} className="w-fit">
-          <Crosshair className="size-3.5" />
-          {picked ? "No locator found — pick another" : "Pick element in browser"}
-        </Button>
-        {picked ? (
+        <div className="flex min-w-0 flex-col gap-2">
+          <Button variant="secondary" size="small" onClick={onStartPick} className="w-fit">
+            <Crosshair className="size-3.5" />
+            {picked ? "No locator found — pick another" : "Pick element in browser"}
+          </Button>
+          {picked ? (
+            <Text variant="small" color="tertiary">
+              No locator could be derived for the picked element. Try another element.
+            </Text>
+          ) : null}
           <Text variant="small" color="tertiary">
-            No locator could be derived for the picked element. Try another element.
+            Or write a locator by hand:
           </Text>
-        ) : null}
+          <CustomLocatorField ctx={null} onLocator={(l) => onChange(l)} />
+        </div>
       </Field>
     );
   }
@@ -444,7 +479,7 @@ function TargetElementPicker({
                 type="button"
                 onClick={() => {
                   setSelected(i);
-                  onChange(l);
+                  emit(l, ctx);
                 }}
                 className={`flex min-w-0 items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
                   active ? "border-accent bg-accent/10" : "border-separator hover:bg-background-secondary"
@@ -464,21 +499,53 @@ function TargetElementPicker({
               </button>
             );
           })}
+          {/* The escape hatch, LAST — same placement and same reasoning as the
+              Refine dialog's row: picked candidates first, a hand-written
+              locator when they can't express the intent. */}
+          <button
+            type="button"
+            onClick={() => {
+              setSelected("custom");
+              emit(customLoc, ctx);
+            }}
+            className={`flex min-w-0 items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
+              selected === "custom"
+                ? "border-accent bg-accent/10"
+                : "border-separator hover:bg-background-secondary"
+            }`}
+          >
+            <span
+              className={`size-3.5 shrink-0 rounded-full border ${
+                selected === "custom" ? "border-accent bg-accent" : "border-separator"
+              }`}
+            />
+            <Badge color={selected === "custom" ? "blue" : "secondary"} className="shrink-0">
+              Custom
+            </Badge>
+            <Text variant="small" color="secondary" className="min-w-0 flex-1 truncate">
+              Write a CSS selector or XPath by hand
+            </Text>
+          </button>
+          {selected === "custom" ? (
+            <CustomLocatorField
+              ctx={ctx}
+              onLocator={(l) => {
+                setCustomLoc(l);
+                emit(l, ctx);
+              }}
+            />
+          ) : null}
         </div>
         {/* The context picker sits UNDER the candidate list, because it answers
             the next question rather than the same one: the list is "how should
             this element be addressed", this is "which of the several it matches
-            did you mean". It re-applies the current candidate with the new
-            context so the caller only ever sees one locator. */}
+            did you mean". It re-applies the current base with the new context
+            so the caller only ever sees one locator. */}
         <ElementContextPicker
           picked={picked}
-          onChange={(ctx) => {
-            const base = candidates[selected];
-            if (!base) return;
-            const next: Locator = { ...base };
-            if (ctx) next.ctx = ctx;
-            else delete next.ctx;
-            onChange(next);
+          onChange={(c) => {
+            setCtx(c);
+            emit(selected === "custom" ? customLoc : (candidates[selected] ?? null), c);
           }}
         />
         <Button variant="ghost" size="small" onClick={onStartPick} className="w-fit">
