@@ -99,7 +99,7 @@ describe("the assumptions are the feature", () => {
     render(
       <CostPanel runs={runs} assumptions={{ costPerCiMinute: 1, minutesPerManualRun: 60 }} />,
     );
-    expect(figure(/CI spend/i)).toBe("$10.00");
+    expect(figure(/CI cost savings/i)).toBe("$10.00");
     expect(figure(/Manual testing avoided/i)).toBe("10h");
   });
 
@@ -120,7 +120,7 @@ describe("currency", () => {
 
   it("stamps the chosen symbol on the money figures", () => {
     render(<CostPanel runs={runs} assumptions={A} currency="gbp" />);
-    expect(figure(/CI spend/i)).toBe("£10.00");
+    expect(figure(/CI cost savings/i)).toBe("£10.00");
     expect(screen.getByText(/Assumes/).textContent).toContain("£1");
   });
 
@@ -132,17 +132,17 @@ describe("currency", () => {
     expect(figure(/Manual testing avoided/i)).not.toContain("$");
     expect(figure(/Failures caught/i)).not.toContain("$");
     const ratio = document.querySelector(".gl-cost-figure-unit")?.textContent ?? "";
-    expect(ratio).toContain("per $1 spent");
+    expect(ratio).toContain("per $1 of CI");
   });
 
   it("prints no symbol at all under `none`", () => {
     // The behaviour the panel shipped with, still reachable for a user whose
     // currency is not on the list.
     render(<CostPanel runs={runs} assumptions={A} currency="none" />);
-    expect(figure(/CI spend/i)).toBe("10.00");
+    expect(figure(/CI cost savings/i)).toBe("10.00");
     expect(screen.getByText(/Assumes/).textContent).not.toMatch(/[$£€¥]/);
     const ratio = document.querySelector(".gl-cost-figure-unit")?.textContent ?? "";
-    expect(ratio).toBe(" per 1 spent");
+    expect(ratio).toBe(" per 1 of CI");
   });
 
   it("puts the symbol in the spend column too", () => {
@@ -163,7 +163,7 @@ describe("the figures", () => {
 
   it("reports no return at all rather than a ratio over zero", () => {
     render(<CostPanel runs={[run({ id: "r1", startedAt: 1, durationMs: 0 })]} />);
-    expect(figure(/Return on spend/i)).toBe("—");
+    expect(figure(/Hours per CI cost/i)).toBe("—");
   });
 
   it("puts the flake figure in amber, and only when there is flake", () => {

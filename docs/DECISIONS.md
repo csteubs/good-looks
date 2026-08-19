@@ -10,6 +10,35 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-18 — The Cost panel's headline figure is savings, not a bill
+
+The first tile read **CI spend**, and every run it counts executed on this
+machine. Nobody was invoiced. `spend` is `total run minutes × the CI rate in
+Settings` — a counterfactual: what these runs *would* have cost had they gone
+through CI. Labelling that "spend" told the user they had been charged $35 they
+had not been charged, so it is now **CI cost savings**. The arithmetic did not
+change and neither did the field name in `cost-model.ts`; only the claim the
+panel makes about it did.
+
+- **The ratio tile was renamed for the same reason and a second one.** "Return
+  on spend" named the arithmetic rather than the question, and its denominator
+  read "per $1 spent" — which, once the first tile is savings, is measuring
+  hours-avoided per dollar *saved*. It is now **Hours per CI cost**, at "per $1 of CI"
+  — short because the label is uppercased and letter-spaced in a fifth of the
+  panel's width, and anything longer wraps and drops the tile's value out of
+  line with the other four. The question it answers is how much hand-testing each unit of
+  CI cost stands in for.
+- **Its note now says the number is time.** It was "of manual testing bought";
+  it is "hand-testing time, not money". The refusal to convert hours into
+  currency is the oldest decision in this module (it needs an hourly rate the
+  app was never told), but the tile renders a big figure immediately beside a
+  currency symbol, and nothing on screen said which of the two it was.
+- **The other three tiles keep their spend framing, deliberately.** "Spent on
+  flake" is amber precisely because it is money with nothing bought, and that
+  reading survives whether the bill was paid or avoided — flake minutes are
+  savings you did not get. Reframing the whole group is a larger copy pass than
+  the one this change is.
+
 ### 2026-08-18 — The main window opens filling the display
 
 The app opened at a fixed 1000×700 and every screen in it is a list that grows

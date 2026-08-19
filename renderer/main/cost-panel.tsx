@@ -147,8 +147,12 @@ export function CostPanel({
   return (
     <Panel title="Cost" id={`${cost.runs} runs`}>
       <div className="gl-cost-figures">
+        {/* SAVINGS, not a bill. Every run counted here executed on this
+            machine, so nobody was invoiced for it — the figure is what those
+            minutes WOULD have cost at the CI rate in Settings, which is money
+            the user did not spend. */}
         <Figure
-          label="CI spend"
+          label="CI cost savings"
           value={formatSpend(cost.spend, currency)}
           note={`${formatMinutes(cost.ciMinutes)} minutes of CI`}
         />
@@ -157,23 +161,33 @@ export function CostPanel({
           value={formatHours(cost.manualHoursAvoided)}
           note={`${cost.runs - cost.failures} passed runs`}
         />
-        {/* THE RATIO'S VALUE IS STILL TIME, not money, and a currency picker
-            does not change that: converting saved hours into cash needs an
-            hourly rate this app was never told. The currency reaches only the
-            DENOMINATOR — "per $1 spent" — which is a price the user did give
-            it. */}
+        {/* "RETURN ON SPEND" NAMED THE ARITHMETIC AND NOT THE QUESTION. It is
+            manual hours avoided divided by CI cost, which answers "how much
+            hand-testing does each unit of CI cost stand in for" — so the label
+            asks that, and the unit spells the denominator out. SHORT because
+            the label is uppercased and letter-spaced in a fifth of the panel's
+            width: "Manual hours per CI cost" wraps to two lines even at 1900px
+            and drops this tile's value out of line with the other four. The
+            note carries the word "hand-testing" that the label gave up.
+
+            THE VALUE IS STILL TIME, not money, and a currency picker does not
+            change that: converting saved hours into cash needs an hourly rate
+            this app was never told. The currency reaches only the DENOMINATOR
+            — "per $1 of CI" — which is a price the user did give it. The note
+            says so out loud, because a big number beside a currency symbol
+            reads as money to anyone who does not stop to check. */}
         <Figure
-          label="Return on spend"
+          label="Hours per CI cost"
           value={cost.hoursPerUnitSpent === null ? "—" : formatHours(cost.hoursPerUnitSpent)}
           unit={
             cost.hoursPerUnitSpent === null
               ? undefined
-              : ` per ${currencySymbol(currency)}1 spent`
+              : ` per ${currencySymbol(currency)}1 of CI`
           }
           note={
             cost.hoursPerUnitSpent === null
-              ? "nothing spent yet"
-              : "of manual testing bought"
+              ? "no CI time yet"
+              : "hand-testing time, not money"
           }
         />
         <Figure
