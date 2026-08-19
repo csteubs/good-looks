@@ -1077,7 +1077,11 @@ function normalizeCookieSpec(input: unknown): CookieSpec | undefined {
   return out;
 }
 
-function normalizeFlowArgs(input: unknown): Record<string, string> | undefined {
+/** Exported for `recorder-service.updateStep`, which copies its allowlisted
+ *  keys without re-normalizing — flowArgs is the one map-shaped field there,
+ *  and an un-checked map from the renderer is exactly the shape the boundary
+ *  exists to refuse. */
+export function normalizeFlowArgs(input: unknown): Record<string, string> | undefined {
   if (!input || typeof input !== "object") return undefined;
   const out: Record<string, string> = {};
   let n = 0;

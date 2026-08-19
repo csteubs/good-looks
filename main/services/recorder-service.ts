@@ -63,6 +63,7 @@ import {
   MAX_STEP_STRING_LENGTH,
   MAX_VARIABLES_PER_TEST,
   mergeSessionVariables,
+  normalizeFlowArgs,
   normalizeLocator,
   normalizePickedElement,
   normalizeRawStep,
@@ -2370,6 +2371,14 @@ export const recorderService = {
         const src = patch as Record<string, unknown>;
         for (const key of allowed) {
           if (key in patch) target[key] = src[key];
+        }
+        // The one map-shaped field, and the one that IS re-normalized here:
+        // its keys become bindings the generator resolves by name, so an
+        // invalid key must be dropped at the boundary rather than carried.
+        if ("flowArgs" in patch) {
+          const args = normalizeFlowArgs(patch.flowArgs);
+          if (args && Object.keys(args).length > 0) target.flowArgs = args;
+          else delete target.flowArgs;
         }
         // Retargeting a step (Refine Selector) may point it at a DIFFERENT
         // element, which makes the recorded fingerprint a description of

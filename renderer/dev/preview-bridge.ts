@@ -494,11 +494,40 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     // invokes, and `preview-bridge.test.ts` fails if this map ever names one
     // that does not exist.
     "tests:list": (): TestRecord[] => state.tests,
-    /** Not `TestRecord[]` — the flow picker takes a narrowed row. */
-    "tests:listFlows": (): { id: string; name: string; flowParams: string[] }[] =>
+    /** Not `TestRecord[]` — the flow picker takes a narrowed row. `defaults`
+     *  mirrors the real handler: each plain parameter's variable value. */
+    "tests:listFlows": (
+      p,
+    ): { id: string; name: string; flowParams: string[]; defaults: Record<string, string> }[] =>
       state.tests
-        .filter((t) => t.isFlow)
-        .map((t) => ({ id: t.id, name: t.name, flowParams: t.flowParams ?? [] })),
+        .filter((t) => t.isFlow && t.id !== p?.fromId)
+        .map((t) => {
+          const flowParams = t.flowParams ?? [];
+          const defaults: Record<string, string> = {};
+          for (const v of t.variables ?? []) {
+            if (v.kind === "plain" && flowParams.includes(v.name)) defaults[v.name] = v.value ?? "";
+          }
+          return { id: t.id, name: t.name, flowParams, defaults };
+        }),
+    /** The flow toggle + parameter manager on the Variables tab. Mirrors the
+     *  real handler's auto-declare: a parameter with no variable gets an empty
+     *  plain one, so the manager's checkbox round-trips visibly. */
+    "tests:setFlow": (p): TestRecord | null => {
+      const test = findTest(p?.id);
+      if (!test) return null;
+      test.isFlow = p?.isFlow === true;
+      const names = Array.isArray(p?.flowParams) ? (p.flowParams as string[]) : [];
+      test.flowParams = test.isFlow ? [...new Set(names)] : [];
+      const have = new Set((test.variables ?? []).map((v) => v.name));
+      const missing = test.flowParams.filter((n) => !have.has(n));
+      if (missing.length > 0) {
+        test.variables = [
+          ...(test.variables ?? []),
+          ...missing.map((n) => ({ name: n, kind: "plain" as const, value: "" })),
+        ];
+      }
+      return structuredClone(test);
+    },
     // CLONED, and that is what makes the preview behave like the app rather
     // than merely answer like it. The fixture handlers mutate `state.tests` in
     // place, so returning the live object hands React Query the SAME reference

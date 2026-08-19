@@ -16,6 +16,7 @@ import { Check, GripVertical, Loader2, MoreHorizontal, Pencil, Play, Variable, X
 import type { RunStepStatus } from "./recorder-store";
 
 import { SEL_BG, SEL_RING, TONE, Temp, TypeChip, formatDuration, insetRail } from "../theme";
+import { FlowCallDialog } from "./flow-call-editor";
 import { describeStep } from "../lib/describe-step";
 import { DEFAULT_WAIT_TIMEOUT_MS } from "../lib/recorder-types";
 import { clampViewportAxis } from "../lib/viewport-presets";
@@ -264,6 +265,9 @@ export function StepRow({
 }) {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState("");
+  // The flow-call parameter dialog, for `runFlow` rows. Held here so every
+  // host with an `onEdit` (trainer rows, Edit Steps) gets it without wiring.
+  const [flowCallOpen, setFlowCallOpen] = React.useState(false);
   const rowRef = React.useRef<HTMLDivElement | null>(null);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   // Where the caret was when the variable menu was opened, and a latch that
@@ -672,7 +676,8 @@ export function StepRow({
             // only renders when at least one utility applies to this step.
             const canRefine = onRefine && step.locator;
             const canContinue = onEdit && step.type !== "if" && step.type !== "endif";
-            if (!canRefine && !canContinue) return null;
+            const canFlowCall = onEdit && step.type === "runFlow" && step.flowId;
+            if (!canRefine && !canContinue && !canFlowCall) return null;
             return (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -686,6 +691,12 @@ export function StepRow({
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="bottom" align="end">
+                  {canFlowCall ? (
+                    <DropdownMenuItem onSelect={() => setFlowCallOpen(true)}>
+                      Flow Parameters…
+                    </DropdownMenuItem>
+                  ) : null}
+                  {canFlowCall && (canRefine || canContinue) ? <DropdownMenuSeparator /> : null}
                   {canRefine ? (
                     <DropdownMenuItem onSelect={onRefine} icon="crosshair">
                       Refine Selection
@@ -723,6 +734,14 @@ export function StepRow({
             </button>
           ) : null}
         </div>
+      ) : null}
+      {onEdit && step.type === "runFlow" ? (
+        <FlowCallDialog
+          step={step}
+          open={flowCallOpen}
+          onOpenChange={setFlowCallOpen}
+          onSave={(flowArgs) => onEdit({ flowArgs })}
+        />
       ) : null}
     </div>
   );

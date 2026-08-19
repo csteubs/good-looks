@@ -735,7 +735,14 @@ export function describeCapture(step: Step): string {
  *  renderer/lib/describe-step.ts. */
 export function describeFlow(step: Step): string {
   const name = step.label || step.flowId || "flow";
-  const args = step.flowArgs ? Object.keys(step.flowArgs) : [];
+  // `name=value` pairs, not bare names: which parameters are overridden is the
+  // whole difference between two calls of the same flow, and a list of keys
+  // reads as if every call were identical. Values are clipped so one long
+  // argument can't turn the row into a paragraph.
+  const args = Object.entries(step.flowArgs ?? {}).map(([k, v]) => {
+    const val = v.length > 24 ? v.slice(0, 24) + "…" : v;
+    return `${k}=${val}`;
+  });
   return args.length > 0 ? `run flow ${name} (${args.join(", ")})` : `run flow ${name}`;
 }
 
@@ -856,8 +863,13 @@ interface ExpandedStep {
  *  Binding happens HERE, textually, at generation time rather than through a
  *  runtime scope: the value a caller supplies may itself reference the
  *  caller's own variables, and rewriting the text lets that resolve against the
- *  caller's `V` with no nested scopes to reason about. */
-function bindFlowStep(step: Step, args: Record<string, string>): Step {
+ *  caller's `V` with no nested scopes to reason about.
+ *
+ *  Exported for the callers that need the SAME binding outside generation —
+ *  unwrapping a flow call into plain steps, and the trainer's inline preview of
+ *  what an inlined step will do. A second spelling of this substitution would
+ *  disagree with the generated spec the day either changed. */
+export function bindFlowStep(step: Step, args: Record<string, string>): Step {
   const names = Object.keys(args);
   if (names.length === 0) return step;
   const sub = (text: string | undefined): string | undefined => {
@@ -878,12 +890,57 @@ function bindFlowStep(step: Step, args: Record<string, string>): Step {
   return bound;
 }
 
-/** Expand `runFlow` steps into the steps they invoke, depth-first. */
+/**
+ * The textual bindings one `runFlow` call applies to its flow's steps.
+ *
+ * ALL of the flow's plain variables are bound, not only the declared
+ * parameters. A flow is written against its OWN variable scope, and before this
+ * a non-parameter `${x}` inside a flow fell through to the caller: if the
+ * caller happened to declare an `x` the step silently read the caller's value,
+ * and if it didn't the reference emitted as the literal string `"${x}"`. Both
+ * are wrong the same way — dynamic scoping nobody asked for.
+ *
+ * Two kinds stay UNBOUND on purpose, so they keep resolving through `V` at run
+ * time: a secret's value is never on the record (it arrives via env), and a
+ * captured variable's value doesn't exist until the flow's own `capture` step
+ * writes it mid-run. Both are surfaced to the caller's header instead — see
+ * the `extras` accumulator in `expandSteps`. A parameter naming a secret or
+ * captured variable is therefore not overridable; a parameter naming nothing
+ * at all still binds (caller's value, else empty).
+ */
+export function flowCallBindings(
+  flow: Pick<FlowSource, "variables" | "flowParams">,
+  flowArgs: Record<string, string> | undefined,
+): Record<string, string> {
+  const params = new Set(flow.flowParams ?? []);
+  const args: Record<string, string> = {};
+  for (const v of flow.variables ?? []) {
+    if (v.kind !== "plain") continue;
+    const supplied = params.has(v.name) ? flowArgs?.[v.name] : undefined;
+    args[v.name] = typeof supplied === "string" ? supplied : (v.value ?? "");
+  }
+  for (const param of params) {
+    if (param in args) continue;
+    const declared = (flow.variables ?? []).find((v) => v.name === param);
+    if (declared) continue; // secret/captured: stays a runtime V reference
+    const supplied = flowArgs?.[param];
+    args[param] = typeof supplied === "string" ? supplied : "";
+  }
+  return args;
+}
+
+/** Expand `runFlow` steps into the steps they invoke, depth-first.
+ *
+ *  `extras` accumulates the flow variables that CANNOT be bound textually
+ *  (secrets and captured variables) so the caller's `const V` header can
+ *  declare them — without that, a flow's `${sessionToken}` reference emits as
+ *  literal text and its secret has no `process.env` line to arrive through. */
 function expandSteps(
   steps: Step[],
   opts: GenerateOptions,
   sourceIndexOf: (i: number) => number,
   stack: string[],
+  extras: Map<string, TestVariable>,
 ): ExpandedStep[] {
   const out: ExpandedStep[] = [];
   steps.forEach((step, i) => {
@@ -915,17 +972,12 @@ function expandSteps(
       out.push({ step, sourceIndex, problem: `flow ${label} has no steps` });
       return;
     }
-    // Bind each parameter: the caller's argument wins, and a parameter the
-    // caller didn't supply falls back to the flow's own declared default.
-    const args: Record<string, string> = {};
-    for (const param of flow.flowParams ?? []) {
-      const supplied = step.flowArgs?.[param];
-      if (typeof supplied === "string") {
-        args[param] = supplied;
-        continue;
-      }
-      const own = (flow.variables ?? []).find((v) => v.name === param);
-      args[param] = own?.value ?? "";
+    // Bind the flow's variable scope: the caller's argument wins for a declared
+    // parameter, everything else takes the flow's own value.
+    const args = flowCallBindings(flow, step.flowArgs);
+    for (const v of flow.variables ?? []) {
+      if (v.kind === "plain") continue;
+      if (!extras.has(v.name)) extras.set(v.name, v);
     }
     const inner = expandSteps(
       flow.steps.map((s) => {
@@ -939,6 +991,7 @@ function expandSteps(
       opts,
       () => sourceIndex,
       [...stack, flowId],
+      extras,
     );
     out.push(...inner);
   });
@@ -997,14 +1050,22 @@ export function generateSpecDetailed(
   record: SpecSource,
   opts: GenerateOptions = {},
 ): GeneratedSpec {
-  const variables = record.variables ?? [];
-  const vars: ReadonlySet<string> = new Set(variables.map((v) => v.name));
   const body: string[] = [];
   const lineMap: Record<number, number> = {};
 
   // Track block nesting so conditional bodies are indented one level deeper.
   let depth = 1; // base level: statements sit inside the test() callback
-  const expanded = expandSteps(record.steps, opts, (i) => i, []);
+  const flowExtras = new Map<string, TestVariable>();
+  const expanded = expandSteps(record.steps, opts, (i) => i, [], flowExtras);
+
+  // The caller's declarations, plus the inlined flows' runtime-only variables
+  // (secrets and captured values). The caller's own declaration of a name wins
+  // — a flow must not be able to shadow what the test already says — and the
+  // extras keep their relative order so regeneration is deterministic.
+  const own = record.variables ?? [];
+  const ownNames = new Set(own.map((v) => v.name));
+  const variables = [...own, ...[...flowExtras.values()].filter((v) => !ownNames.has(v.name))];
+  const vars: ReadonlySet<string> = new Set(variables.map((v) => v.name));
 
   // Everything above the test body, built as lines so the line map is derived
   // from the real preamble rather than a hard-coded count — the preamble grows

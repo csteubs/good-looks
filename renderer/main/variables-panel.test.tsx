@@ -28,6 +28,7 @@ const batchRun = vi.fn(async (_ids: string[], _opts: unknown) => ({
   batchId: "b1",
   alreadyRunning: false,
 }));
+const setFlow = vi.fn(async (_id: string, _isFlow: boolean, _params: string[]) => ({}) as TestRecord);
 let secretStatus: SecretStatus[] = [];
 
 vi.mock("../lib/api", () => ({
@@ -38,6 +39,7 @@ vi.mock("../lib/api", () => ({
       setSecret: (id: string, name: string, value: string) => setSecret(id, name, value),
       clearSecret: (id: string, name: string) => clearSecret(id, name),
       secretStatus: async () => secretStatus,
+      setFlow: (id: string, isFlow: boolean, params: string[]) => setFlow(id, isFlow, params),
     },
     batch: { run: (ids: string[], opts: unknown) => batchRun(ids, opts) },
   },
@@ -316,5 +318,65 @@ describe("the plaintext warning", () => {
     // needs telling before they type one in.
     renderPanel(makeTest({ variables: [{ name: "email", kind: "plain", value: "a@b.com" }] }));
     expect(await screen.findByText(/Row values are stored as plain text/i)).toBeTruthy();
+  });
+});
+
+describe("the Reusable flow section", () => {
+  it("turns a test into a flow with no parameters", async () => {
+    renderPanel(makeTest());
+    const toggle = await screen.findByLabelText("Use this test as a reusable flow");
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setFlow).toHaveBeenCalledWith("t1", true, []));
+  });
+
+  it("offers a plain variable as a parameter and persists the tick", async () => {
+    renderPanel(
+      makeTest({
+        isFlow: true,
+        flowParams: [],
+        variables: [{ name: "email", kind: "plain", value: "a@b.com" }],
+      }),
+    );
+    const box = await screen.findByLabelText("Offer email as a flow parameter");
+    fireEvent.click(box);
+    await waitFor(() => expect(setFlow).toHaveBeenCalledWith("t1", true, ["email"]));
+  });
+
+  it("never offers a secret as a parameter", async () => {
+    // A parameter's default is a value on the record and its override is a
+    // value on a step — both plaintext sinks, so a secret must not be routable
+    // through either.
+    renderPanel(
+      makeTest({
+        isFlow: true,
+        flowParams: [],
+        variables: [
+          { name: "email", kind: "plain", value: "a@b.com" },
+          { name: "password", kind: "secret" },
+        ],
+      }),
+    );
+    await screen.findByLabelText("Offer email as a flow parameter");
+    expect(screen.queryByLabelText("Offer password as a flow parameter")).toBeNull();
+  });
+
+  it("drops a parameter whose variable was deleted rather than resurrecting it", async () => {
+    // The backend auto-declares a variable for any parameter without one, so a
+    // stale name sent back would bring the deleted row back as an empty
+    // variable.
+    renderPanel(
+      makeTest({
+        isFlow: true,
+        flowParams: ["gone", "email"],
+        variables: [{ name: "email", kind: "plain", value: "a@b.com" }],
+      }),
+    );
+    const toggle = await screen.findByLabelText("Use this test as a reusable flow");
+    // Any flow write goes through the same filter; toggling off is the
+    // simplest one to drive.
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setFlow).toHaveBeenCalled());
+    const params = setFlow.mock.calls[0][2];
+    expect(params).not.toContain("gone");
   });
 });

@@ -709,10 +709,27 @@ export function registerHandlers(): void {
       const rec = testStore.get(params.id);
       if (!rec) throw new Error("Test not found: " + params.id);
       rec.isFlow = params.isFlow === true;
-      rec.flowParams = Array.isArray(params.flowParams)
+      const names = Array.isArray(params.flowParams)
         ? params.flowParams.filter(isValidVariableName)
         : [];
+      // Deduped and capped the same way the variables they project onto are.
+      rec.flowParams = rec.isFlow ? [...new Set(names)].slice(0, 50) : [];
+      // A parameter IS a variable plus membership in flowParams — its default
+      // value is the variable's value, so a parameter with no variable would
+      // have no editable default and its `${name}` references would emit as
+      // literal text in the flow's own spec. Declare the missing ones.
+      const have = new Set((rec.variables ?? []).map((v) => v.name));
+      const missing = rec.flowParams.filter((n) => !have.has(n));
+      if (missing.length > 0) {
+        rec.variables = normalizeVariables([
+          ...(rec.variables ?? []),
+          ...missing.map((n) => ({ name: n, kind: "plain" as const, value: "" })),
+        ]);
+      }
       rec.updatedAt = Date.now();
+      // The declared set may have grown, which changes the flow's own `const V`
+      // header — and testStore.save regenerates every caller's spec after it.
+      if (!rec.scriptEdited) rec.scriptPath = testStore.regenerateScript(rec);
       testStore.save(rec);
       return rec;
     },
@@ -720,12 +737,23 @@ export function registerHandlers(): void {
 
   /** Tests usable as flows from `fromId`, excluding itself. Cycles are refused
    *  at generation time too, but keeping a test from listing itself is the
-   *  difference between "can't do that" and never offering it. */
+   *  difference between "can't do that" and never offering it.
+   *
+   *  `defaults` carries each parameter's default value (its variable's value)
+   *  so the composer can show what an unoverridden call will use — a secret or
+   *  captured parameter has no textual default and is omitted. */
   ipcMain.handle("tests:listFlows", async (_e, params: { fromId?: string }) => {
     return testStore
       .list()
       .filter((t) => t.isFlow && t.id !== params.fromId)
-      .map((t) => ({ id: t.id, name: t.name, flowParams: t.flowParams ?? [] }));
+      .map((t) => {
+        const flowParams = t.flowParams ?? [];
+        const defaults: Record<string, string> = {};
+        for (const v of t.variables ?? []) {
+          if (v.kind === "plain" && flowParams.includes(v.name)) defaults[v.name] = v.value ?? "";
+        }
+        return { id: t.id, name: t.name, flowParams, defaults };
+      });
   });
 
   // ── Heal journal ─────────────────────────────────────────────────────────

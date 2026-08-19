@@ -49,6 +49,7 @@ import {
 import type {
   AssertKind,
   CaptureSource,
+  FlowSummary,
   TestVariable,
   VariableKind,
   ConditionKind,
@@ -663,6 +664,7 @@ export function StepComposer({
       setCaptureFrom("text");
       setCaptureAttr("");
       setFlowId("");
+      setFlowArgDrafts({});
       setFillVar("");
       setCreatingVar(false);
     }
@@ -670,7 +672,11 @@ export function StepComposer({
 
   // Flows available to call from here. Fetched on mount rather than held by the
   // parent, so a flow created in another window shows up without a reload.
-  const [flows, setFlows] = React.useState<{ id: string; name: string; flowParams: string[] }[]>([]);
+  const [flows, setFlows] = React.useState<FlowSummary[]>([]);
+  // Per-parameter override drafts for the chosen flow. Keyed by name and reset
+  // when the flow changes — two flows sharing a parameter name is common
+  // ("email"), and a draft carried across would silently pre-fill the new call.
+  const [flowArgDrafts, setFlowArgDrafts] = React.useState<Record<string, string>>({});
   React.useEffect(() => {
     if (kind !== "runFlow") return;
     let live = true;
@@ -777,6 +783,14 @@ export function StepComposer({
       case "runFlow": {
         if (!flowId) return null;
         const flow = flows.find((f) => f.id === flowId);
+        // Only non-empty drafts become overrides: an empty field means "follow
+        // the flow's default", and storing it as "" would pin this call to an
+        // empty string instead.
+        const flowArgs: Record<string, string> = {};
+        for (const param of flow?.flowParams ?? []) {
+          const draft = flowArgDrafts[param];
+          if (typeof draft === "string" && draft !== "") flowArgs[param] = draft;
+        }
         return [
           {
             type: "runFlow",
@@ -784,6 +798,7 @@ export function StepComposer({
             // The name is stored on the step so the list stays readable even if
             // the flow is later renamed or deleted.
             label: flow?.name ?? flowId,
+            ...(Object.keys(flowArgs).length > 0 ? { flowArgs } : {}),
           },
         ];
       }
@@ -1188,7 +1203,13 @@ export function StepComposer({
         {kind === "runFlow" ? (
           <>
             <Field label="Flow" orientation="vertical">
-              <Select value={flowId} onValueChange={setFlowId}>
+              <Select
+                value={flowId}
+                onValueChange={(v) => {
+                  setFlowId(v);
+                  setFlowArgDrafts({});
+                }}
+              >
                 <SelectTrigger size="small">
                   <SelectValue placeholder="Choose a flow" />
                 </SelectTrigger>
@@ -1203,13 +1224,50 @@ export function StepComposer({
             </Field>
             {flows.length === 0 ? (
               <Text size="small" className="text-tertiary">
-                No flows yet. Mark a test as a reusable flow to call it from here.
+                No flows yet. Mark a test as a reusable flow on its Variables tab to call it from
+                here.
               </Text>
             ) : (
               <Text size="small" className="text-secondary">
                 The flow's steps are inlined into this test's script when it runs.
               </Text>
             )}
+            {(() => {
+              const flow = flows.find((f) => f.id === flowId);
+              if (!flow || flow.flowParams.length === 0) return null;
+              return (
+                <>
+                  <Text size="small" className="text-secondary">
+                    Parameters — leave one empty to use the flow&apos;s default. A value may
+                    reference this test&apos;s variables with{" "}
+                    <code className="font-mono">{"${name}"}</code>.
+                  </Text>
+                  {flow.flowParams.map((param) => {
+                    const fallback = flow.defaults[param];
+                    return (
+                      <Field key={param} label={param} orientation="vertical">
+                        {fallback === undefined ? (
+                          <Text size="small" className="text-tertiary">
+                            Resolved at run time (secret or captured) — not overridable.
+                          </Text>
+                        ) : (
+                          <Input
+                            size="small"
+                            className="font-mono"
+                            value={flowArgDrafts[param] ?? ""}
+                            placeholder={fallback === "" ? "default: (empty)" : `default: ${fallback}`}
+                            aria-label={`Value for ${param}`}
+                            onChange={(e) =>
+                              setFlowArgDrafts((prev) => ({ ...prev, [param]: e.target.value }))
+                            }
+                          />
+                        )}
+                      </Field>
+                    );
+                  })}
+                </>
+              );
+            })()}
           </>
         ) : null}
 

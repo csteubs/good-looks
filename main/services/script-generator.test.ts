@@ -177,6 +177,163 @@ describe("generateSpecDetailed line map", () => {
   });
 });
 
+describe("flow variable binding", () => {
+  // What a flow's `${x}` MEANS is decided here: a flow is written against its
+  // own variable scope, so its plain variables bind to its own values, its
+  // declared parameters can be overridden per call, and only its runtime-only
+  // variables (secrets, captured values) travel as live `V.x` references. Each
+  // failure below shipped or nearly shipped: a non-param `${x}` used to fall
+  // through to the CALLER's scope, which is dynamic scoping nobody asked for.
+
+  const resolve = (flow: FlowSource) => (id: string) => (id === flow.id ? flow : null);
+
+  it("binds a caller-supplied argument over the parameter's default", () => {
+    const flow: FlowSource = {
+      id: "f1",
+      name: "Login",
+      flowParams: ["email"],
+      variables: [{ name: "email", kind: "plain", value: "default@example.com" }],
+      steps: [step({ type: "fill", locator: { k: "label", v: "Email" }, value: "${email}" })],
+    };
+    const { source } = generateSpecDetailed(
+      {
+        name: "t",
+        url: "u",
+        steps: [step({ type: "runFlow", flowId: "f1", flowArgs: { email: "override@x.com" } })],
+      },
+      { resolveFlow: resolve(flow) },
+    );
+    expect(source).toContain('fill("override@x.com")');
+    expect(source).not.toContain("default@example.com");
+  });
+
+  it("falls back to the flow's own default for an unsupplied parameter", () => {
+    const flow: FlowSource = {
+      id: "f1",
+      name: "Login",
+      flowParams: ["email"],
+      variables: [{ name: "email", kind: "plain", value: "default@example.com" }],
+      steps: [step({ type: "fill", locator: { k: "label", v: "Email" }, value: "${email}" })],
+    };
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps: [step({ type: "runFlow", flowId: "f1" })] },
+      { resolveFlow: resolve(flow) },
+    );
+    expect(source).toContain('fill("default@example.com")');
+  });
+
+  it("binds a NON-parameter plain variable to the flow's own value, never the caller's", () => {
+    const flow: FlowSource = {
+      id: "f1",
+      name: "Login",
+      flowParams: [],
+      variables: [{ name: "region", kind: "plain", value: "eu" }],
+      steps: [step({ type: "fill", locator: { k: "label", v: "Region" }, value: "${region}" })],
+    };
+    const { source } = generateSpecDetailed(
+      {
+        name: "t",
+        url: "u",
+        steps: [step({ type: "runFlow", flowId: "f1" })],
+        // The caller declares the SAME name with a different value — before the
+        // fix the flow's step silently read this one.
+        variables: [{ name: "region", kind: "plain", value: "us" }],
+      },
+      { resolveFlow: resolve(flow) },
+    );
+    expect(source).toContain('fill("eu")');
+    expect(source).not.toContain("fill(V.region)");
+  });
+
+  it("keeps a flow's captured variable a live V reference and declares it in the caller's header", () => {
+    const flow: FlowSource = {
+      id: "f1",
+      name: "Order",
+      flowParams: [],
+      variables: [{ name: "orderId", kind: "captured", value: "fallback-1" }],
+      steps: [
+        step({
+          type: "capture",
+          locator: { k: "testid", v: "order" },
+          captureVar: "orderId",
+          captureFrom: "text",
+        }),
+        step({ type: "fill", locator: { k: "label", v: "Order" }, value: "${orderId}" }),
+      ],
+    };
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps: [step({ type: "runFlow", flowId: "f1" })] },
+      { resolveFlow: resolve(flow) },
+    );
+    // The read stays runtime — a textual binding would freeze the fallback and
+    // the capture step's write would go unread.
+    expect(source).toContain("fill(V.orderId)");
+    // And the declaration (with the flow's fallback) reaches the caller's header.
+    expect(source).toContain('orderId: "fallback-1",');
+  });
+
+  it("routes a flow's secret through the caller's header as an env reference", () => {
+    const flow: FlowSource = {
+      id: "f1",
+      name: "Login",
+      flowParams: [],
+      variables: [{ name: "password", kind: "secret" }],
+      steps: [step({ type: "fill", locator: { k: "label", v: "Password" }, value: "${password}" })],
+    };
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps: [step({ type: "runFlow", flowId: "f1" })] },
+      { resolveFlow: resolve(flow) },
+    );
+    expect(source).toContain("fill(V.password)");
+    expect(source).toContain('password: process.env.GLAZE_SECRET_password ?? "",');
+  });
+
+  it("lets the caller's own declaration of a name win over a flow's runtime one", () => {
+    const flow: FlowSource = {
+      id: "f1",
+      name: "Order",
+      flowParams: [],
+      variables: [{ name: "orderId", kind: "captured", value: "flow-fallback" }],
+      steps: [step({ type: "fill", locator: { k: "label", v: "Order" }, value: "${orderId}" })],
+    };
+    const { source } = generateSpecDetailed(
+      {
+        name: "t",
+        url: "u",
+        steps: [step({ type: "runFlow", flowId: "f1" })],
+        variables: [{ name: "orderId", kind: "plain", value: "caller-value" }],
+      },
+      { resolveFlow: resolve(flow) },
+    );
+    // Exactly one declaration — a duplicate key in `const V` would be a spec
+    // that lies about which value applies.
+    expect(source.match(/^\s*orderId:/gm)).toHaveLength(1);
+    expect(source).toContain('orderId: "caller-value",');
+  });
+
+  it("a caller-supplied argument may reference the caller's own variables", () => {
+    const flow: FlowSource = {
+      id: "f1",
+      name: "Login",
+      flowParams: ["email"],
+      variables: [{ name: "email", kind: "plain", value: "default@example.com" }],
+      steps: [step({ type: "fill", locator: { k: "label", v: "Email" }, value: "${email}" })],
+    };
+    const { source } = generateSpecDetailed(
+      {
+        name: "t",
+        url: "u",
+        steps: [step({ type: "runFlow", flowId: "f1", flowArgs: { email: "${user}" } })],
+        variables: [{ name: "user", kind: "plain", value: "row@example.com" }],
+      },
+      { resolveFlow: resolve(flow) },
+    );
+    // The argument's `${user}` resolves against the caller's V — that is the
+    // whole point of textual binding at generation time.
+    expect(source).toContain("fill(V.user)");
+  });
+});
+
 describe("viewport steps log the resize", () => {
   // A resize is the only recorded action with no visible effect in the run
   // output — every other step names its target ("click getByRole(...)"). Without

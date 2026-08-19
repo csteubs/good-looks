@@ -15,7 +15,7 @@ import {
   Text,
   toast,
 } from "@ui";
-import { Plus, ChevronDown, ChevronRight, Folder, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
+import { Plus, ChevronDown, ChevronRight, Folder, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy, Workflow } from "lucide-react";
 
 import { ChromeButton, Rail, RailEmpty, RailGroup, RailRow, SiteIcon } from "../theme";
 import { RoutinesRail, useCreateRoutine } from "./routines-rail";
@@ -258,15 +258,27 @@ function AiConnectionFooter() {
 function RowIndicators({
   sessions,
   verdict,
+  isFlow,
 }: {
   sessions: SessionLike[];
   verdict: RunVerdictTone | undefined;
+  /** Reusable flow — drawn in the type-chip palette's flow hue, not a status
+   *  colour, because being a flow is what the test IS rather than how it ran. */
+  isFlow?: boolean;
 }) {
   const agg = aggregateStatus(sessions);
   const tone = agg === null ? null : toneFor(agg);
-  if (!tone && !verdict) return null;
+  if (!tone && !verdict && !isFlow) return null;
   return (
     <span className="flex shrink-0 items-center gap-1.5">
+      {isFlow ? (
+        <Workflow
+          role="img"
+          aria-label="Reusable flow"
+          className="size-3.5"
+          style={{ color: "#b9a6e0" }}
+        />
+      ) : null}
       {tone ? (
         <Sparkles
           role="img"
@@ -595,6 +607,7 @@ export function LibrarySidebar() {
             <RowIndicators
               sessions={sessionsByTest.get(t.id) ?? []}
               verdict={verdictByTest.get(t.id)}
+              isFlow={t.isFlow === true}
             />
           }
           onClick={() => navigate({ to: "/test/$id", params: { id: t.id } })}

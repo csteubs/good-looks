@@ -181,7 +181,10 @@ export function describeCapture(step: Step): string {
 /** Mirror of describeFlow in main/services/script-generator.ts — keep in sync. */
 export function describeFlow(step: Step): string {
   const name = step.label || step.flowId || "flow";
-  const args = step.flowArgs ? Object.keys(step.flowArgs) : [];
+  const args = Object.entries(step.flowArgs ?? {}).map(([k, v]) => {
+    const val = v.length > 24 ? v.slice(0, 24) + "…" : v;
+    return `${k}=${val}`;
+  });
   return args.length > 0 ? `run flow ${name} (${args.join(", ")})` : `run flow ${name}`;
 }
 

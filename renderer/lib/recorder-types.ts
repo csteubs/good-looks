@@ -711,6 +711,16 @@ export interface SecretStatus {
   hasValue: boolean;
 }
 
+/** One callable flow, as `tests:listFlows` reports it: its parameter names and
+ *  each parameter's default value (the flow's own variable value). A secret or
+ *  captured parameter has no textual default and is absent from `defaults`. */
+export interface FlowSummary {
+  id: string;
+  name: string;
+  flowParams: string[];
+  defaults: Record<string, string>;
+}
+
 /** A single completed test run (mirror of main/recorder/types.ts RunRecord). */
 export type RunRecordKind = "run" | "baseline-update";
 

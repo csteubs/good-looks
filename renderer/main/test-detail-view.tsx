@@ -677,6 +677,16 @@ export function TestDetailView() {
                 <Pencil className="size-3.5 text-tertiary" />
               </ToolbarTitle>
             )}
+            {/* Same neutral chip vocabulary the step rows use: being a flow is
+                a fact about what this test IS, not an outcome, so no hue. */}
+            {test.isFlow ? (
+              <span
+                className="gl-chip"
+                title="Reusable flow — other tests inline these steps with a “Run a flow” step"
+              >
+                flow
+              </span>
+            ) : null}
             <ToolbarDescription>{test.url}</ToolbarDescription>
           </ToolbarContent>
           <ToolbarActions className="gl-detail-tools">

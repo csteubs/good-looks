@@ -104,6 +104,52 @@ export const testStore = {
     else all.push(record);
     writeAll(all);
     logger.info("recorder", "Saved test record", { id: record.id, steps: record.steps.length });
+    // A flow's steps and defaults are BAKED into every caller's spec at
+    // generation time, so a save that changed this record has silently
+    // invalidated the spec of every test that inlines it. Regenerating them
+    // here — at the one choke point every record write passes through — is
+    // what makes "edit the flow, every caller changes" true on disk rather
+    // than only at the next unrelated regeneration.
+    this.regenerateCallers(record.id);
+  },
+
+  /** Every record whose steps call `flowId` directly. Reads through
+   *  `readAll()` for the reason `removeTag` does: a hidden caller still has a
+   *  spec on disk, and a stale one comes back the day it is unhidden. */
+  callersOf(flowId: string): TestRecord[] {
+    return readAll().filter(
+      (t) =>
+        t.id !== flowId &&
+        t.steps.some((s) => s.type === "runFlow" && s.flowId === flowId),
+    );
+  },
+
+  /**
+   * Rewrite the spec of every test that inlines `flowId`, transitively — a
+   * caller can itself be a flow, so its own callers are stale too. Spec FILES
+   * only: the records themselves didn't change (their steps still say "run
+   * this flow"), so no record write and no `updatedAt` bump.
+   *
+   * Skips hand-edited and imported specs, which are their own source of truth,
+   * and refuses cycles the same way the generator does.
+   */
+  regenerateCallers(flowId: string, seen: Set<string> = new Set()): void {
+    if (seen.has(flowId)) return;
+    seen.add(flowId);
+    for (const caller of this.callersOf(flowId)) {
+      if (!caller.scriptEdited && !caller.sourceDir) {
+        try {
+          this.regenerateScript(caller);
+        } catch (err) {
+          logger.warn("recorder", "Could not regenerate a flow caller's spec", {
+            flowId,
+            callerId: caller.id,
+            err: String(err),
+          });
+        }
+      }
+      this.regenerateCallers(caller.id, seen);
+    }
   },
 
   /** Write a test's script, returning where it landed.

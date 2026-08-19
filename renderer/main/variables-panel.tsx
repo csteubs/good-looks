@@ -22,6 +22,7 @@ import {
   Badge,
   Button,
   Callout,
+  Checkbox,
   Input,
   ScrollArea,
   Select,
@@ -32,7 +33,7 @@ import {
   Text,
   toast,
 } from "@ui";
-import { KeyRound, Play, Plus, Trash2, TriangleAlert, Variable } from "lucide-react";
+import { KeyRound, Play, Plus, Trash2, TriangleAlert, Variable, Workflow } from "lucide-react";
 
 import { api } from "../lib/api";
 import {
@@ -298,9 +299,98 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
   // plaintext credential straight back into tests.json.
   const columns = variables.filter((v) => v.kind !== "secret").map((v) => v.name);
 
+  // ── Reusable flow ─────────────────────────────────────────────────────
+  //
+  // Local-first for the same reason `vars` is: the toggle and the parameter
+  // checkboxes must answer the click immediately, and the refetch reconciles.
+  // Parameters are a PROJECTION over the variables above — a parameter is a
+  // variable plus membership in `flowParams`, and its default value is the
+  // variable's value — so this section declares no fields of its own.
+  const [isFlow, setIsFlow] = React.useState<boolean>(() => test.isFlow === true);
+  const [flowParams, setFlowParams] = React.useState<string[]>(() => test.flowParams ?? []);
+  const [flowSeededFor, setFlowSeededFor] = React.useState(test.id);
+  if (flowSeededFor !== test.id) {
+    setFlowSeededFor(test.id);
+    setIsFlow(test.isFlow === true);
+    setFlowParams(test.flowParams ?? []);
+  }
+  const saveFlow = useMutation({
+    mutationFn: (p: { isFlow: boolean; flowParams: string[] }) =>
+      api.tests.setFlow(test.id, p.isFlow, p.flowParams),
+    onSuccess: invalidate,
+    onError: (err: unknown) => toast.error(String(err)),
+  });
+  // Only variables that survive a save can be parameters — a half-typed row
+  // offered as one would vanish from flowParams on the next normalize.
+  const paramCandidates = variables.filter(
+    (v, i) => isValidName(v.name) && !duplicateAt[i] && v.kind === "plain",
+  );
+  const applyFlow = (nextIsFlow: boolean, nextParams: string[]) => {
+    // Drop parameters whose variable no longer exists: the backend would
+    // otherwise auto-declare an empty variable for each, resurrecting rows the
+    // user just deleted.
+    const kept = nextParams.filter((n) => paramCandidates.some((v) => v.name === n));
+    setIsFlow(nextIsFlow);
+    setFlowParams(kept);
+    saveFlow.mutate({ isFlow: nextIsFlow, flowParams: kept });
+  };
+
   return (
     <ScrollArea className="h-full">
       <div className="flex flex-col gap-6 p-4">
+        {/* ── Reusable flow ─────────────────────────────────────────── */}
+        <section className="flex flex-col gap-3">
+          <div className="flex items-center gap-2">
+            <Workflow className="size-4 text-secondary" />
+            <Text weight="medium">Reusable flow</Text>
+          </div>
+          <label className="flex items-center gap-2">
+            <Checkbox
+              checked={isFlow}
+              onCheckedChange={(v) => applyFlow(v === true, v === true ? flowParams : [])}
+              aria-label="Use this test as a reusable flow"
+            />
+            <Text size="small">
+              Other tests can call this test&apos;s steps with a <em>Run a flow</em> step. Editing
+              it here updates every test that calls it.
+            </Text>
+          </label>
+          {isFlow ? (
+            paramCandidates.length === 0 ? (
+              <Text size="small" className="text-tertiary">
+                No parameters yet. Add a variable above and tick it here — callers can then
+                override its value per call, and its value above is the default.
+              </Text>
+            ) : (
+              <div className="flex flex-col gap-1">
+                <Text size="small" className="text-secondary">
+                  Parameters callers can override — the variable&apos;s value above is the
+                  default for calls that don&apos;t.
+                </Text>
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                  {paramCandidates.map((v) => (
+                    <label key={v.name} className="flex items-center gap-1.5">
+                      <Checkbox
+                        checked={flowParams.includes(v.name)}
+                        onCheckedChange={(checked) =>
+                          applyFlow(
+                            true,
+                            checked === true
+                              ? [...flowParams, v.name]
+                              : flowParams.filter((n) => n !== v.name),
+                          )
+                        }
+                        aria-label={`Offer ${v.name} as a flow parameter`}
+                      />
+                      <code className="font-mono text-[12px]">{v.name}</code>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )
+          ) : null}
+        </section>
+
         {/* ── Variables ─────────────────────────────────────────────── */}
         <section className="flex flex-col gap-3">
           <div className="flex items-center gap-2">

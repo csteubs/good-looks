@@ -15,6 +15,7 @@ import type {
   ScriptChangeListEntry,
   ScriptChangeSource,
   SecretStatus,
+  FlowSummary,
   TestVariable,
   VariableKind,
   AiDebugHistoryRecord,
@@ -311,7 +312,7 @@ export const api = {
     setFlow: (id: string, isFlow: boolean, flowParams: string[]) =>
       ipc().invoke<TestRecord>("tests:setFlow", { id, isFlow, flowParams }),
     listFlows: (fromId?: string) =>
-      ipc().invoke<{ id: string; name: string; flowParams: string[] }[]>("tests:listFlows", {
+      ipc().invoke<FlowSummary[]>("tests:listFlows", {
         fromId,
       }),
     importFiles: () => ipc().invoke<ImportResult>("tests:importFiles"),

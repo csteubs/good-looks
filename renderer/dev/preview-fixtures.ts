@@ -123,6 +123,16 @@ export const TESTS: TestRecord[] = [
     stepsDivergedReason: "unapplied",
     steps: steps(
       { type: "goto", url: "https://docs.example.com" },
+      // A flow call with an override, so the caller side of flows — the
+      // runFlow row, its `name=value` description and the parameter dialog —
+      // is visible from `?test=t-search`. This test's step ids are not
+      // referenced by any run fixture, so inserting here shifts nothing.
+      {
+        type: "runFlow",
+        flowId: "t-flow-signin",
+        label: "Sign in",
+        flowArgs: { email: "docs-reader@example.com" },
+      },
       { type: "fill", locator: { k: "role", role: "searchbox" }, value: "locator" },
       { type: "press", value: "Enter" },
       // Long enough to overflow the pane in both directions, which is the
@@ -166,6 +176,32 @@ export const TESTS: TestRecord[] = [
     // An imported spec is never regenerated from steps, and the parser only
     // recovers what it recognises — a helper-wrapped navigation is not one.
     steps: steps(),
+  },
+  {
+    // A REUSABLE FLOW, which is its own screen state: the `flow` badge in the
+    // detail header, the Workflow glyph on the sidebar row, and the Variables
+    // tab's "Reusable flow" section with a parameter manager. `t-checkout`
+    // calls it, so the caller side (the runFlow row and its parameter dialog)
+    // is one click away.
+    id: "t-flow-signin",
+    name: "Sign in",
+    url: "https://shop.example.com/login",
+    createdAt: NOW - 8 * DAY,
+    updatedAt: NOW - 1 * DAY,
+    scriptPath: "/preview/scripts/flow-signin.spec.ts",
+    group: "Storefront",
+    isFlow: true,
+    flowParams: ["email"],
+    variables: [
+      { name: "email", kind: "plain", value: "default@example.com" },
+      { name: "password", kind: "secret" },
+    ],
+    steps: steps(
+      { type: "goto", url: "https://shop.example.com/login" },
+      { type: "fill", locator: { k: "label", v: "Email" }, value: "${email}" },
+      { type: "fill", locator: { k: "label", v: "Password" }, value: "${password}" },
+      { type: "click", locator: { k: "role", role: "button", name: "Sign in" } },
+    ),
   },
   {
     id: "t-archived",

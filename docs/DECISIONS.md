@@ -8079,3 +8079,54 @@ survival), and three `e2e/context-parity.spec.ts` rows (the injected oracle
 and the real emitted expression against an independently stated answer) were
 all run against the unfixed tree: 4, 6 and 3 failures respectively, exactly
 where the disagreement was claimed to be.
+
+## 2026-08-19 — Flow parameters are variables, and a flow's variables bind to the flow
+
+The flow engine (`isFlow`/`flowParams`/`runFlow` with `flowArgs`) had existed
+since the Routines work, but nothing in the renderer could reach it: no UI
+called `tests:setFlow`, nothing wrote `flowArgs`, and the composer's own empty
+state pointed at an affordance that did not exist. This change is the first of
+the mabl-parity phases (see the plan in the PR): mark-as-flow and a parameter
+manager on the Variables tab, per-call overrides in the composer and in a
+dialog on the `runFlow` row, and the binding fix below.
+
+**A parameter is a variable plus membership in `flowParams` — there is no
+separate default field.** A flow is a runnable test, and when run standalone
+its `const V` header already uses `variables[name].value`. A dedicated
+`defaultValue` on the parameter would be a second number able to disagree with
+what the flow does when run alone. Consequence: `tests:setFlow` auto-declares
+an empty plain variable for any parameter that lacks one, so the default is
+always editable and the flow's own spec compiles its `${name}` references.
+
+**A flow's `${x}` now means the flow's `x`, not the caller's.** `expandSteps`
+used to bind only declared parameters; any other `${x}` fell through to the
+caller's scope — if the caller declared `x` the flow silently read the
+caller's value, and if it didn't the reference emitted as literal text. Both
+were dynamic scoping nobody asked for. Now every plain variable of the flow
+binds textually at generation time (caller's argument wins for a declared
+parameter), while secrets and captured variables stay live `V.x` references
+and their declarations are merged into the caller's header — with the caller's
+own declaration of a name winning, the same no-shadowing rule the header
+already applies to secrets. The runner walks `runFlow` targets (cycle-guarded)
+so a flow's secret arrives in the caller's child process env from the flow's
+own encrypted store. This is a behavior change for any existing flow that
+accidentally relied on reading the caller's variables; it is in the
+correct-scoping direction and the parity tests in `script-generator.test.ts`
+pin each case.
+
+**Propagation moved into `testStore.save`.** Caller specs bake a flow's steps
+in at generation time, so any change to a flow silently invalidated every
+caller's spec on disk — a flow edit only took effect for a caller at that
+caller's next unrelated regeneration. `save` now regenerates every direct and
+transitive caller's spec file (cycle-guarded; hand-edited and imported specs
+skipped; records untouched, so no `updatedAt` churn). The choke point is the
+same one that derives `varRefs`, for the same reason: every write path —
+finalize, Edit Steps, `tests:setVariables`, `tests:setFlow`, heals — passes
+through it, and the one that forgot would ship stale specs.
+
+**Overrides are stored sparsely.** An empty field in the composer or the call
+dialog is "follow the flow's default" and stores no key; only non-empty
+overrides land in `flowArgs`. Storing `""` would pin the call to an empty
+string and make a later default change silently not apply. Secret and captured
+parameters take no textual override at all — an override is a plaintext value
+on a step record, which is exactly where a secret must not go.
