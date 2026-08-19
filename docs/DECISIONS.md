@@ -10,6 +10,45 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-19 — Position becomes something the user can say, and the step list stops hiding the chain
+
+`Locator.nth` has existed since `pickLocator`'s ambiguity fallback began
+writing it, and DECISIONS 4208 admits it as the last resort. What never
+existed was the user's side of it: the picker offered container, text,
+attribute and class clauses — never position — so "the fourth row of very
+similar rows" or "the newest entry in this list" had no expressible form
+short of hand-editing the Script tab. Both pick surfaces now carry a
+"Position among matches" row (Auto / First / Last / Nth), composed after
+context because that is the order the emitted chain evaluates: `.nth()`
+indexes what the clauses leave.
+
+**"Last" is `nth: -1`, and -1 is the only negative admitted.** Playwright
+honours exactly one negative index — `.nth(-1)`, the last match — and it is
+the stable ordinal for a set whose size changes between runs, because the
+tail is where appended rows land. `normalizeLocator` bounds the field to
+[-1, MAX_MATCH_INDEX]; the parser's regex names `-1` explicitly so deeper
+negatives stay unclassified rather than round-tripping; and the generator
+floors anything below -1 to 0 on its own, because a forged index can also
+arrive through `recorder:updateStep`'s raw locator copy — the same
+boundary-AND-generator independence `check:step-ingest` pins for every other
+numeric field, now with rows for this one. The trainer's replayer resolves
+-1 off the end of the match list, pinned in `step-replayer-parity.dom.test.ts`
+against the same divergence its header documents for positive indexes.
+
+**Found while wiring it: the step list never showed the chain.** The
+renderer's `locatorExpr` mirror — whose file header promises the list shows
+the call the generated script contains — stopped at the base builder:
+context clauses and `.nth()` were generated, enforced at run time, and
+invisible on screen. A step pinned "inside billing-card, 2nd match" displayed
+as a bare `getByRole("button")`, hiding exactly the disambiguation the user
+added. An ordinal feature is pointless if choosing "Last" changes nothing
+visible, so the mirror now composes the full chain — and the sync is
+mechanical rather than a "keep in sync" comment: `describe-mirror.test.ts`
+diffs the renderer's and the generator's `locatorExpr` (exported for this)
+over every kind × context shape × legal index, 72 combinations, so the next
+clause added to one side fails a test instead of shipping as a step list
+that under-describes.
+
 ### 2026-08-19 — The custom locator returns, as the last resort with an honest count
 
 DECISIONS 7491 removed the manual locator input in favour of the picker, and

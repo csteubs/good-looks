@@ -87,3 +87,25 @@ describe("the custom row", () => {
     expect(onApply).toHaveBeenCalledWith({ k: "css", v: "#submit" });
   });
 });
+
+describe("position among matches", () => {
+  it("applies Last as the model's -1 on the selected candidate", () => {
+    const { onApply } = renderDialog();
+    fireEvent.click(screen.getByRole("radio", { name: "Last" }));
+    fireEvent.click(confirmButton());
+    expect(onApply).toHaveBeenCalledWith({
+      k: "role",
+      role: "button",
+      name: "Submit",
+      nth: -1,
+    });
+  });
+
+  it("Auto strips a previously chosen position", () => {
+    const { onApply } = renderDialog();
+    fireEvent.click(screen.getByRole("radio", { name: "First" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Auto" }));
+    fireEvent.click(confirmButton());
+    expect(onApply).toHaveBeenCalledWith({ k: "role", role: "button", name: "Submit" });
+  });
+});

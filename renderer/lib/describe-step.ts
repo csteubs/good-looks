@@ -11,7 +11,35 @@ function q(s: string): string {
   return JSON.stringify(s ?? "");
 }
 
-function locatorExpr(loc: Locator): string {
+/** Mirror of `locatorExpr` in main/services/script-generator.ts — keep in
+ *  sync, and mechanically so: `describe-mirror.test.ts` runs both over a
+ *  battery of locators and diffs the strings.
+ *
+ *  The chain is the point. This file's header promises the step list shows
+ *  the call the generated script contains, and until 2026-08-19 the mirror
+ *  stopped at the base builder — a step pinned "inside billing-card" with
+ *  `.nth(2)` displayed as a bare `getByRole(...)`, hiding exactly the
+ *  disambiguation the user added and the run enforces. */
+export function locatorExpr(loc: Locator): string {
+  let base = locatorBaseExpr(loc);
+  const ctx = loc.ctx;
+  if (ctx?.within) {
+    let scope = locatorBaseExpr(ctx.within);
+    if (ctx.withinHasText !== undefined) {
+      scope += ".filter({ hasText: " + q(ctx.withinHasText) + " })";
+    }
+    base = scope + "." + base;
+  }
+  if (ctx?.and) {
+    for (const pred of ctx.and) base += ".and(page." + locatorBaseExpr(pred) + ")";
+  }
+  if (typeof loc.nth === "number") {
+    base += ".nth(" + (loc.nth >= -1 ? Math.trunc(loc.nth) : 0) + ")";
+  }
+  return base;
+}
+
+function locatorBaseExpr(loc: Locator): string {
   switch (loc.k) {
     case "testid": {
       // Mirrors locatorBase in script-generator.ts: a testid on a non-default

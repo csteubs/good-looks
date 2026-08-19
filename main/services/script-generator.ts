@@ -140,7 +140,7 @@ function locatorBase(loc: Locator): string {
  * built below, and `check:locator-roundtrip`, which holds the property that
  * makes emitting one safe: everything written here can be read back.
  */
-function locatorExpr(loc: Locator): string {
+export function locatorExpr(loc: Locator): string {
   let base = locatorBase(loc);
 
   // ── The user's pinned context ────────────────────────────────────────────
@@ -185,7 +185,15 @@ function locatorExpr(loc: Locator): string {
   // follows for every numeric field — this lands in the source as a bare
   // numeral, which is precisely the hole a `count` of `"0); …; ("` went through
   // once.
-  return typeof loc.nth === "number" ? base + ".nth(" + num(loc.nth, 0) + ")" : base;
+  // -1 is Playwright's "last match" and the one negative the model admits
+  // (`normalizeLocator` bounds it). The generator guards independently of the
+  // boundary — the ternary is what stands between a forged deeper negative
+  // (reachable through `updateStep`'s raw copy, which never re-normalizes) and
+  // a `.nth(-7)` Playwright would refuse at run time; anything below -1 falls
+  // back to 0, exactly as a non-numeric always has.
+  return typeof loc.nth === "number"
+    ? base + ".nth(" + num(loc.nth >= -1 ? loc.nth : 0, 0) + ")"
+    : base;
 }
 
 function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>): string | null {
