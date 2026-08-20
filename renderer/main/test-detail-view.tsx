@@ -52,6 +52,7 @@ import { VariablesPanel } from "./variables-panel";
 import { HealsPanel } from "./heals-panel";
 import { A11yPanel } from "./a11y-panel";
 import { computeStepDepths } from "../lib/describe-step";
+import { gradeCounts } from "../lib/locator-grade";
 import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
 import { latestA11yRun } from "../lib/a11y-format";
 import { summariseRun } from "../lib/run-summary";
@@ -1113,6 +1114,24 @@ export function TestDetailView() {
             </div>
             <TabsContent value="steps" className="min-h-0 flex-1">
               <ScrollArea className="h-full" scrollbars="both">
+                {/* The hover-free surface for what the row glyphs can only
+                    hint at. Positional only: an index can be a deliberate
+                    ordinal, but a generated path is never anyone's intent. */}
+                {(() => {
+                  const { positional } = gradeCounts(test.steps);
+                  if (positional === 0) return null;
+                  return (
+                    <div className="px-3 pt-2">
+                      <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
+                        <Callout.Text>
+                          {positional === 1
+                            ? "1 step stands on a positional locator — a generated path that breaks when the page changes. Open it in the trainer and refine its selection."
+                            : `${positional} steps stand on positional locators — generated paths that break when the page changes. Open them in the trainer and refine their selections.`}
+                        </Callout.Text>
+                      </Callout>
+                    </div>
+                  );
+                })()}
                 <div className="gl-step-list">
                   {computeStepDepths(test.steps).map((depth, i) => (
                     <StepRow

@@ -140,7 +140,7 @@ have had the least real-world use:
 - The ⌘K command palette — especially **which row lands first**, since that is
   the only thing that matters about a palette.
 - The training browser's URL bar and the URL assertion's default.
-- Locator uniqueness feedback in the recorder.
+- ~~Locator uniqueness feedback in the recorder.~~ Built 2026-08-19: `renderer/lib/locator-grade.ts` grades every stored locator, risky tiers get a row glyph (button into Refine where wired) and the detail view rolls up positional counts.
 - The six run states in test detail, and the run summary opening cold on a test
   that has not run this session.
 - Visual: Wipe, Blink, the frame rail's diff percentages and the "changed only"
