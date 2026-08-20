@@ -215,6 +215,11 @@ export const ASSERT_OPTIONS: {
   { value: "attribute", label: "Has attribute", need: "attr" },
   { value: "count", label: "Has count", need: "count" },
   { value: "css", label: "Has CSS property", need: "css" },
+  // "URL path is" first among the URL kinds: it is the robust default. The
+  // other three compare the FULL URL, so query-string noise the site appends
+  // between the recording and the run (`?variant=`, `utm_*`) fails them for a
+  // reason that has nothing to do with the product.
+  { value: "urlPathIs", label: "URL path is", need: "value", pageLevel: true },
   { value: "url", label: "URL contains", need: "value", pageLevel: true },
   { value: "urlEndsWith", label: "URL ends with", need: "value", pageLevel: true },
   { value: "urlIs", label: "URL is", need: "value", pageLevel: true },
@@ -894,6 +899,13 @@ export function StepComposer({
           if (!locator) return null;
           step.locator = locator;
         }
+        // A page-level assert with an empty value refuses the WHOLE submit,
+        // the same rule the css case applies below: the generator refuses to
+        // emit it (an empty "contains" matches every page), so accepting it
+        // here plants a step that looks added and asserts nothing. Element
+        // `value` asserts stay submittable empty — asserting an input is
+        // blank is a real assertion.
+        if (opt.pageLevel && opt.need === "value" && value === "") return null;
         if (opt.need === "text") step.text = text;
         if (opt.need === "value") step.value = value;
         if (opt.need === "attr") {
@@ -1366,7 +1378,18 @@ export function StepComposer({
               </Field>
             ) : null}
             {opt.need === "value" ? (
-              <Field label={opt.pageLevel ? "Expected (substring or regex)" : "Expected value"} orientation="vertical">
+              // The label carries the kind's own contract, because the values
+              // are LITERAL — the old copy said "substring or regex", and a
+              // user who took it at its word got an assertion that matched
+              // their pattern characters, not their pattern.
+              <Field
+                label={
+                  assert === "urlPathIs"
+                    ? "Expected path (query string and #fragment ignored)"
+                    : "Expected value"
+                }
+                orientation="vertical"
+              >
                 <Input size="small" value={value} onChange={(e) => setValue(e.target.value)} />
               </Field>
             ) : null}

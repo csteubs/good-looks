@@ -32,6 +32,8 @@ import {
   matchesValue,
   matchSource,
   textMatchExpr,
+  urlPathExpr,
+  urlPathSource,
   visibilitySource,
   WAIT_SEMANTICS,
   WAIT_TO_ASSERT_KIND,
@@ -66,7 +68,7 @@ function eq(actual: unknown, expected: unknown, label: string): void {
  *  (`visible`, `count`, `css`, …) compare something else and correctly have no
  *  entry — `css` carries its match mode per-step in `cssMatch`. */
 const VALUE_KINDS: AssertKind[] = [
-  "url", "urlEndsWith", "urlIs", "title", "titleContains",
+  "url", "urlEndsWith", "urlIs", "urlPathIs", "title", "titleContains",
   "text", "exactText", "value", "attribute",
 ];
 
@@ -97,6 +99,9 @@ ok(script.includes('"caseSensitive"') || script.includes("caseSensitive"), "the 
 for (const [label, source, call] of [
   ["matchesValue", matchSource(), '(function(){ return matchesValue("abc", "b", {match:"substring",caseSensitive:true,normalizeWhitespace:false}); })()'],
   ["isVisibleByRect", visibilitySource(), '(function(){ return isVisibleByRect({width:1,height:1},{visibility:"visible",display:"block"}); })()'],
+  // Its escape rule is INLINED for this exact reason — a reference to the
+  // module's `reEscape` would be renamed by esbuild and throw in the page.
+  ["urlPathPattern", urlPathSource(), '(function(){ return new RegExp(urlPathPattern("/cart"), "i").test("https://x.test/cart?step=2"); })()'],
 ] as const) {
   let threw: string | null = null;
   let result: unknown = null;
@@ -143,6 +148,13 @@ ok(
 ok(
   !emitted({ assert: "url", value: "/cart" }).includes('toHaveURL("/cart")'),
   "'URL contains' never emits the bare-string (exact) form",
+);
+// `urlPathIs` is literally the shared builder's output too — its pattern is
+// structural, so a lookalike hand-built in the generator would be a THIRD
+// spelling of how a path is carved out of a URL.
+ok(
+  emitted({ assert: "urlPathIs", value: "/cart" }).includes(urlPathExpr("/cart")),
+  "the emitted urlPathIs line contains exactly what urlPathExpr builds",
 );
 
 // ---------------------------------------------------------------------------

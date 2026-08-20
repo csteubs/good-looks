@@ -124,6 +124,9 @@ export type AssertKind =
   | "url"
   | "urlEndsWith"
   | "urlIs"
+  // The URL's PATH alone, exactly — query string and #fragment ignored. See
+  // the note in main/recorder/types.ts.
+  | "urlPathIs"
   // `title` is exact ("Page title is"); `titleContains` is the substring kind
   // the vocabulary was missing. See the note in main/recorder/types.ts.
   | "title"
@@ -145,7 +148,20 @@ export type AssertKind =
 export const ASSERT_KINDS: AssertKind[] = [
   "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked",
   "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs",
-  "title", "titleContains", "css",
+  "urlPathIs", "title", "titleContains", "css",
+];
+
+/**
+ * The page-level assert kinds whose whole meaning is their `value` — a step
+ * of one of these with an empty value generates NOTHING (the generator refuses
+ * an assertion that would match every page or no page), so both places that
+ * accept steps from outside the recorder use this to refuse the step instead:
+ * the composer disables submit, and `parse-llm-response.ts` drops it. Three
+ * tests in the store carried valueless `urlIs` steps for weeks — visible in
+ * the list, asserting nothing in every run.
+ */
+export const PAGE_VALUE_ASSERT_KINDS: ReadonlyArray<AssertKind> = [
+  "url", "urlEndsWith", "urlIs", "urlPathIs", "title", "titleContains",
 ];
 
 /** Every `waitUntil` predicate, as a runtime list (mirror of main types). */

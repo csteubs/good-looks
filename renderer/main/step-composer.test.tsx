@@ -469,12 +469,59 @@ describe("a page-level assertion preselected from a menu", () => {
     );
     // Page-level: the expected substring is the only operand on offer. (The
     // visible Field label, not getByLabelText — Field does not associate its
-    // label with the input.)
-    expect(screen.getByText("Expected (substring or regex)")).toBeTruthy();
+    // label with the input.) The label says "value", not "substring or regex" —
+    // the values are LITERAL, and a user who took the old copy at its word got
+    // an assertion that matched their pattern characters, not their pattern.
+    expect(screen.getByText("Expected value")).toBeTruthy();
     submit();
     expect(emitted(onAdd)).toEqual([
       { type: "assert", assert: "titleContains", value: "Dashboard" },
     ]);
+  });
+
+  it("builds a urlPathIs assert from the prefilled pathname", () => {
+    const onAdd = vi.fn((_steps: RawStep[]) => {});
+    render(
+      <StepComposer
+        kind="assertion"
+        onCancel={() => {}}
+        onAdd={onAdd}
+        picked={null}
+        onStartPick={() => {}}
+        onClearPick={() => {}}
+        initialAssert="urlPathIs"
+        prefillValue="/products/synbiotic"
+      />,
+    );
+    // The label carries the kind's contract — this is the one URL kind whose
+    // whole point is what it does NOT compare.
+    expect(screen.getByText("Expected path (query string and #fragment ignored)")).toBeTruthy();
+    submit();
+    expect(emitted(onAdd)).toEqual([
+      { type: "assert", assert: "urlPathIs", value: "/products/synbiotic" },
+    ]);
+  });
+
+  it("refuses to submit a page-level value assert with an empty value", () => {
+    // The generator refuses to emit these (an empty "contains" matches every
+    // page), so accepting the submit would plant a step that looks added and
+    // asserts nothing — the exact shape of the valueless `urlIs` steps three
+    // stored tests carried for weeks.
+    const onAdd = vi.fn((_steps: RawStep[]) => {});
+    render(
+      <StepComposer
+        kind="assertion"
+        onCancel={() => {}}
+        onAdd={onAdd}
+        picked={null}
+        onStartPick={() => {}}
+        onClearPick={() => {}}
+        initialAssert="urlPathIs"
+        prefillValue=""
+      />,
+    );
+    submit();
+    expect(onAdd).not.toHaveBeenCalled();
   });
 });
 

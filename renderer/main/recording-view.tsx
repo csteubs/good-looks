@@ -55,6 +55,9 @@ const ASSERT_PICKABLE: { kind: AssertKind; label: string }[] = [
 // user knows to fill beats a plausible value they do not check — the training
 // browser's own right-click menu, which can read the real title, prefills it.
 const ASSERT_PAGE: { kind: AssertKind; label: string }[] = [
+  // "URL path is" first: the robust default. The other URL kinds compare the
+  // full URL, which query-string noise fails between runs.
+  { kind: "urlPathIs", label: "URL path is" },
   { kind: "url", label: "URL contains" },
   { kind: "urlEndsWith", label: "URL ends with" },
   { kind: "urlIs", label: "URL is" },
@@ -77,6 +80,7 @@ const ASSERT_LABEL: Record<AssertKind, string> = {
   url: "URL contains",
   urlEndsWith: "URL ends with",
   urlIs: "URL is",
+  urlPathIs: "URL path is",
   title: "Page title is",
   titleContains: "Page title contains",
   css: "Has CSS property",

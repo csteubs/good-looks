@@ -6,6 +6,10 @@ export interface MatchSemantics {
   match: "exact" | "substring" | "endsWith";
   caseSensitive: boolean;
   normalizeWhitespace: boolean;
+  /** Which part of the value the comparison applies to. Absent means the whole
+   *  string; "path" means the URL's pathname (query and fragment ignored), and
+   *  such kinds compare via `urlPathPattern`, never via `matchesValue`. */
+  part?: "path";
 }
 
 /** Every assert kind that compares a string against the page, and how.
@@ -37,6 +41,17 @@ export function matchesValue(
 
 /** `matchesValue` as source text, for embedding in an injected script. */
 export function matchSource(): string;
+
+/** RegExp source (no flags) for a "URL path is" assertion — test against the
+ *  full URL with the "i" flag. Query string and fragment are ignored, one
+ *  trailing slash is tolerated. */
+export function urlPathPattern(value: string | null | undefined): string;
+
+/** `urlPathPattern` as source text, for embedding in an injected script. */
+export function urlPathSource(): string;
+
+/** The `toHaveURL` argument for a "URL path is" assertion, as JS source. */
+export function urlPathExpr(value: string | null | undefined): string;
 
 /** Playwright's visibility rule: a non-empty box, not hidden, not display:none.
  *  Opacity is deliberately not consulted — Playwright does not consider it. */

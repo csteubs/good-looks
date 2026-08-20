@@ -10,22 +10,29 @@
 // Pure: no fs, no IPC, no process. `URL` is a language global.
 
 /**
- * The three URL assert kinds want DIFFERENT defaults, because they generate
+ * The four URL assert kinds want DIFFERENT defaults, because they generate
  * different assertions:
  *
  *   • `urlIs`   → `toHaveURL(/^…$/)`, an exact whole-URL match. Anything less
  *                 than the absolute URL can never pass, so it gets the full
  *                 string including origin.
- *   • `url`     → `toHaveURL("…")`, a substring/contains match.
+ *   • `url`     → an unanchored-RegExp contains match.
  *   • `urlEndsWith` → `toHaveURL(/…$/)`.
+ *   • `urlPathIs` → the URL's PATH alone, query and fragment ignored. This is
+ *                 the robust default: the other three compare the full URL, so
+ *                 a `?variant=` or `utm_*` the site appends between the
+ *                 recording and the run fails them for a reason that has
+ *                 nothing to do with the product. The pathname is the part the
+ *                 user actually chose.
  *
- * The latter two get the PATH (plus query and fragment) rather than the whole
- * URL, because the origin is the part that changes between environments. A spec
- * that asserts `https://ritual.com/cart` passes on production and fails on
- * staging for a reason that has nothing to do with the product; `/cart` passes
- * on both. That is the whole reason those two kinds exist next to `urlIs`.
+ * `url` and `urlEndsWith` get the PATH (plus query and fragment) rather than
+ * the whole URL, because the origin is the part that changes between
+ * environments. A spec that asserts `https://ritual.com/cart` passes on
+ * production and fails on staging for a reason that has nothing to do with the
+ * product; `/cart` passes on both. `urlPathIs` gets the pathname only — the
+ * whole point of the kind is that the query and fragment are not asserted.
  *
- * @param {string} kind  one of "url" | "urlEndsWith" | "urlIs"
+ * @param {string} kind  one of "url" | "urlEndsWith" | "urlIs" | "urlPathIs"
  * @param {string} url   the page's current absolute URL
  * @returns {string} the value to seed the dialog's field with ("" when there is
  *   nothing useful to suggest — the caller then behaves as it did before)
@@ -33,7 +40,7 @@
 export function urlAssertPrefill(kind, url) {
   if (typeof url !== "string" || url === "") return "";
   if (kind === "urlIs") return url;
-  if (kind !== "url" && kind !== "urlEndsWith") return "";
+  if (kind !== "url" && kind !== "urlEndsWith" && kind !== "urlPathIs") return "";
 
   let parsed;
   try {
@@ -49,6 +56,11 @@ export function urlAssertPrefill(kind, url) {
   // pathname is "blank", which would generate an assertion that reads like a
   // typo. Only the web schemes the trainer actually records get a suggestion.
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+
+  // The pathname alone — "/" at a site root included, because `urlPathIs` is
+  // an EXACT match and "path is /" is a true statement about the page the user
+  // is looking at, unlike the contains-"/" trap the fallback below exists for.
+  if (kind === "urlPathIs") return parsed.pathname;
 
   const path = parsed.pathname + parsed.search + parsed.hash;
 

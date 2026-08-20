@@ -86,7 +86,7 @@ function editableField(
     case "assert":
       if (step.assert === "text" || step.assert === "exactText")
         return { key: "text", label: "Text", value: step.text ?? "" };
-      if (step.assert === "value" || step.assert === "url" || step.assert === "urlEndsWith" || step.assert === "urlIs" || step.assert === "title" || step.assert === "titleContains")
+      if (step.assert === "value" || step.assert === "url" || step.assert === "urlEndsWith" || step.assert === "urlIs" || step.assert === "urlPathIs" || step.assert === "title" || step.assert === "titleContains")
         return { key: "value", label: "Expected", value: step.value ?? "" };
       if (step.assert === "attribute")
         return { key: "value", label: "Expected", value: step.value ?? "" };

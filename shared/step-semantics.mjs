@@ -78,6 +78,16 @@ export const ASSERT_SEMANTICS = {
   urlEndsWith: { match: "endsWith", ...URL_MATCH },
   urlIs: { match: "exact", ...URL_MATCH },
 
+  // "URL path is" — an exact match of the URL's PATH, with the query string
+  // and #fragment ignored. `part: "path"` is what says the comparison is not
+  // against the whole href; the pattern itself comes from `urlPathPattern`
+  // below, never from `textMatchExpr`. This kind exists because the other
+  // three all compare the FULL URL, and real URLs carry noise the user never
+  // chose: every recorded attempt at a URL assertion in this app's own history
+  // failed on a `?variant=` or `utm_*` that differed between the recording and
+  // the run. Asserting the path is the assertion those users meant.
+  urlPathIs: { match: "exact", part: "path", ...URL_MATCH },
+
   // "Page title is" — exact, and the replayer was the half that disagreed. It
   // read a case-insensitive SUBSTRING, so "Cart" passed live against a page
   // titled "Cart | Acme" and failed in every run. `titleContains` below exists
@@ -196,6 +206,61 @@ export function textMatchExpr(value, semantics) {
   const pattern =
     semantics.match === "exact" ? "^" + body + "$" : semantics.match === "endsWith" ? body + "$" : body;
   return "new RegExp(" + JSON.stringify(pattern) + (semantics.caseSensitive ? "" : ", \"i\"") + ")";
+}
+
+/**
+ * The RegExp source (pattern only, no flags) for a "URL path is" assertion.
+ *
+ * One pattern, three readers: the generator embeds it in a `toHaveURL` call,
+ * the replayer tests it against `location.href`, and `describe-step` shows it
+ * in the step list. The pattern anchors on the URL's structure rather than
+ * comparing extracted parts, so both engines can apply it to the same string —
+ * the full URL — and cannot disagree about how a path is carved out of it:
+ *
+ *   ^[a-z][a-z0-9+.-]*://   the scheme
+ *   [^/?#]*                 host (+ port, + userinfo) — everything up to the
+ *                           path, which cannot contain `/`, `?` or `#`
+ *   <the expected path>     regex-escaped literal
+ *   /?                      one trailing slash tolerated: /cart and /cart/ are
+ *                           the same resource on every server this app has met,
+ *                           and servers canonicalize in both directions
+ *   (?:[?#]|$)              then the query, the fragment, or the end — which is
+ *                           what makes ?variant= and utm_* noise invisible here
+ *
+ * The expected value is normalized the way a user types paths: a missing
+ * leading slash is added, trailing slashes are dropped ("/" itself becomes ""
+ * so the root asserts as scheme://host/ with or without the slash). Compared
+ * case-insensitively by every caller (the "i" flag), same as the other URL
+ * kinds — see URL_MATCH above.
+ *
+ * SELF-CONTAINED ON PURPOSE, exactly like `matchesValue`: `urlPathSource()`
+ * serializes this function into the replayer's injected script, so it inlines
+ * the escape rule rather than calling `reEscape` — a module-scope reference
+ * would be renamed by esbuild and throw inside the page. A test pins the two
+ * escape spellings together.
+ *
+ * @param {string} value the expected path, e.g. "/cart"
+ * @returns {string} RegExp source; test with the "i" flag
+ */
+export function urlPathPattern(value) {
+  var v = String(value == null ? "" : value);
+  if (v !== "" && v.charAt(0) !== "/") v = "/" + v;
+  while (v.length > 1 && v.charAt(v.length - 1) === "/") v = v.slice(0, v.length - 1);
+  if (v === "/") v = "";
+  var body = v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return "^[a-z][a-z0-9+.-]*://[^/?#]*" + body + "/?(?:[?#]|$)";
+}
+
+/** `urlPathPattern` as source text, on the same terms as `matchSource`. */
+export function urlPathSource() {
+  return "var urlPathPattern = " + urlPathPattern.toString() + ";";
+}
+
+/** The `toHaveURL` argument for a "URL path is" assertion, as JavaScript
+ *  source — the counterpart of `textMatchExpr` for the one kind whose pattern
+ *  is structural rather than a match-mode wrapper around the literal. */
+export function urlPathExpr(value) {
+  return "new RegExp(" + JSON.stringify(urlPathPattern(value)) + ", \"i\")";
 }
 
 /**

@@ -1894,6 +1894,9 @@ export const recorderService = {
         // location. Right-clicking a filled-in email box and choosing "URL
         // contains…" opened the dialog suggesting the email address.
         const assertPageItems: MenuItemConstructorOptions[] = [
+          // "URL path is" first: the robust default. The other kinds compare
+          // the full URL, which query-string noise fails between runs.
+          { label: "URL path is…", click: () => ctxAction({ kind: "assertion", assert: "urlPathIs", picked: null, prefillText: "", prefillValue: urlAssertPrefill("urlPathIs", currentPageUrl()) }) },
           { label: "URL contains…", click: () => ctxAction({ kind: "assertion", assert: "url", picked: null, prefillText: "", prefillValue: urlAssertPrefill("url", currentPageUrl()) }) },
           { label: "URL ends with…", click: () => ctxAction({ kind: "assertion", assert: "urlEndsWith", picked: null, prefillText: "", prefillValue: urlAssertPrefill("urlEndsWith", currentPageUrl()) }) },
           { label: "URL is…", click: () => ctxAction({ kind: "assertion", assert: "urlIs", picked: null, prefillText: "", prefillValue: urlAssertPrefill("urlIs", currentPageUrl()) }) },

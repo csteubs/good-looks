@@ -87,6 +87,9 @@ const ASSERT_PICKABLE: { kind: AssertKind; label: string }[] = [
  * URL strip.
  */
 const ASSERT_PAGE: { kind: AssertKind; label: string }[] = [
+  // "URL path is" first: the robust default. The other URL kinds compare the
+  // full URL, which query-string noise fails between runs.
+  { kind: "urlPathIs", label: "URL path is" },
   { kind: "url", label: "URL contains" },
   { kind: "urlEndsWith", label: "URL ends with" },
   { kind: "urlIs", label: "URL is" },

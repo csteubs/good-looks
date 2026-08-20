@@ -87,6 +87,9 @@ export const TESTS: TestRecord[] = [
       // `toHaveURL("/order/confirmed")` — an exact whole-URL match, which is
       // not what the label says and could never pass.
       { type: "assert", assert: "url", value: "/order/confirmed" },
+      // The robust default: path-only, so the step list shows the structural
+      // pattern (`^scheme://host` + path + `/?(?:[?#]|$)`) a run executes.
+      { type: "assert", assert: "urlPathIs", value: "/order/confirmed" },
       { type: "assert", assert: "titleContains", value: "Order" },
       // LAST, so the s1–s8 ids above keep meaning what the visual baselines,
       // drift ratios and the s4 heal say they mean. A parameterized flow call:

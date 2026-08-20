@@ -1,7 +1,7 @@
 // Convert recorded steps into a @playwright/test spec file.
 
 import { GLAZE_RUNTIME_FILE } from "./glaze-runtime-source.js";
-import { ASSERT_SEMANTICS, reEscape, textMatchExpr, WAIT_SEMANTICS } from "../../shared/step-semantics.mjs";
+import { ASSERT_SEMANTICS, reEscape, textMatchExpr, urlPathExpr, WAIT_SEMANTICS } from "../../shared/step-semantics.mjs";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import {
   cookieScopeIsValid,
@@ -216,6 +216,12 @@ function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>
     // value it cannot stand behind; this refuses to GENERATE one.
     if ((step.value ?? "") === "") return null;
     return "await " + e + "(page).toHaveURL(" + textMatchExpr(step.value ?? "", semantics) + ");";
+  }
+  if (step.assert === "urlPathIs") {
+    // Same empty-value refusal as above: with no path, `urlPathPattern` builds
+    // the site-root pattern, which asserts something the user never typed.
+    if ((step.value ?? "") === "") return null;
+    return "await " + e + "(page).toHaveURL(" + urlPathExpr(step.value ?? "") + ");";
   }
   if (step.assert === "title" || step.assert === "titleContains") {
     const semantics = ASSERT_SEMANTICS[step.assert];
@@ -595,7 +601,7 @@ function ungeneratableReason(step: Step): string {
   if (needsLocator && !step.locator) return "this step needs an element and none was recorded";
   if (step.type === "assert") {
     const a = step.assert;
-    if (a === "url" || a === "urlEndsWith" || a === "urlIs" || a === "title" || a === "titleContains") {
+    if (a === "url" || a === "urlEndsWith" || a === "urlIs" || a === "urlPathIs" || a === "title" || a === "titleContains") {
       // The only way to reach here for a page-level assert. Said plainly,
       // because the alternative — generating it — is an assertion that either
       // matches every page or no page.
