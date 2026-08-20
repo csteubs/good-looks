@@ -615,20 +615,35 @@ export interface TestRecord {
 }
 
 /** How a variable's value is sourced (mirror of main types). */
-export type VariableKind = "plain" | "secret" | "captured";
+export type VariableKind = "plain" | "secret" | "captured" | "generated";
 
-export const VARIABLE_KINDS: VariableKind[] = ["plain", "secret", "captured"];
+export const VARIABLE_KINDS: VariableKind[] = ["plain", "secret", "captured", "generated"];
 
 export const VARIABLE_KIND_LABELS: Record<VariableKind, string> = {
   plain: "Value",
   secret: "Secret",
   captured: "Captured at run time",
+  generated: "Generated each run",
+};
+
+/** Mirror of main/recorder/types.ts — what a generated variable produces. */
+export const GEN_SPECS = ["string", "email", "number", "uuid", "name"] as const;
+export type GenSpec = (typeof GEN_SPECS)[number];
+
+export const GEN_SPEC_LABELS: Record<GenSpec, string> = {
+  string: "Random string",
+  email: "Random email (@example.com)",
+  number: "Random 6-digit number",
+  uuid: "UUID",
+  name: "Random person name",
 };
 
 export interface TestVariable {
   name: string;
   value?: string;
   kind: VariableKind;
+  /** what a "generated" variable produces — mirror of main types */
+  genSpec?: GenSpec;
   description?: string;
 }
 

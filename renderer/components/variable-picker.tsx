@@ -22,7 +22,7 @@ import * as React from "react";
 import { Badge, Button, Callout, Field, Input, SegmentedControl, SegmentedControlItem, Text } from "@ui";
 import { KeyRound, Plus, TriangleAlert, Variable } from "lucide-react";
 
-import type { TestVariable, VariableKind } from "../lib/recorder-types";
+import { GEN_SPECS, type GenSpec, type TestVariable, type VariableKind } from "../lib/recorder-types";
 
 /** How a variable is spelled inside a step value. The ONE place the renderer
  *  writes this form — the generator's matcher is the authority on reading it
@@ -57,9 +57,20 @@ export function isValidVariableName(name: string): boolean {
 /** The kinds offered when declaring from a step. "captured" is deliberately
  *  absent: a captured variable is created BY a capture step, and offering it
  *  here would declare a name with nothing ever writing to it. */
+/** Segment labels for the generator picker — the long labels live in
+ *  GEN_SPEC_LABELS (variables tab); segments need short ones. */
+const GEN_SPEC_SHORT: Record<GenSpec, string> = {
+  string: "String",
+  email: "Email",
+  number: "Number",
+  uuid: "UUID",
+  name: "Name",
+};
+
 const NEW_VARIABLE_KINDS: { value: VariableKind; label: string }[] = [
   { value: "plain", label: "Value" },
   { value: "secret", label: "Secret" },
+  { value: "generated", label: "Generated" },
 ];
 
 /** What the trainer shows in place of a variable's value.
@@ -170,13 +181,14 @@ export function NewVariableForm({
   onCancel,
   existingNames,
 }: {
-  onCreate: (v: { name: string; kind: VariableKind; value: string }) => Promise<void>;
+  onCreate: (v: { name: string; kind: VariableKind; value: string; genSpec?: GenSpec }) => Promise<void>;
   onCancel: () => void;
   existingNames: string[];
 }) {
   const [name, setName] = React.useState("");
   const [kind, setKind] = React.useState<VariableKind>("secret");
   const [value, setValue] = React.useState("");
+  const [genSpec, setGenSpec] = React.useState<GenSpec>("string");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -190,7 +202,7 @@ export function NewVariableForm({
     setBusy(true);
     setError(null);
     try {
-      await onCreate({ name: trimmed, kind, value });
+      await onCreate({ name: trimmed, kind, value, ...(kind === "generated" ? { genSpec } : {}) });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -242,21 +254,37 @@ export function NewVariableForm({
         </SegmentedControl>
       </Field>
 
-      <Field label={kind === "secret" ? "Value (stored encrypted)" : "Value"} orientation="vertical">
-        <Input
-          size="small"
-          aria-label="New variable value"
-          type={kind === "secret" ? "password" : "text"}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              void submit();
-            }
-          }}
-        />
-      </Field>
+      {kind === "generated" ? (
+        <Field label="Generates" orientation="vertical">
+          <SegmentedControl
+            size="small"
+            value={genSpec}
+            onValueChange={(v) => setGenSpec(v as GenSpec)}
+          >
+            {GEN_SPECS.map((g) => (
+              <SegmentedControlItem key={g} value={g}>
+                {GEN_SPEC_SHORT[g]}
+              </SegmentedControlItem>
+            ))}
+          </SegmentedControl>
+        </Field>
+      ) : (
+        <Field label={kind === "secret" ? "Value (stored encrypted)" : "Value"} orientation="vertical">
+          <Input
+            size="small"
+            aria-label="New variable value"
+            type={kind === "secret" ? "password" : "text"}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void submit();
+              }
+            }}
+          />
+        </Field>
+      )}
 
       {kind === "secret" ? (
         <Text variant="small" color="secondary">
@@ -265,6 +293,11 @@ export function NewVariableForm({
           prints back is <code className="font-mono">{MASKED_VALUE}</code>. The spec gets an
           environment reference, not the value, and it is stripped from run logs and anything sent
           to a hosted model.
+        </Text>
+      ) : kind === "generated" ? (
+        <Text variant="small" color="secondary">
+          A fresh value on every run (this session keeps one sample so steps can use it now).
+          Emails use @example.com, so a signup test can never mail a real mailbox.
         </Text>
       ) : (
         <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>

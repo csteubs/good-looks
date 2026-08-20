@@ -129,6 +129,29 @@ describe("the plaintext warning", () => {
   });
 });
 
+describe("the generated kind", () => {
+  it("swaps the value field for a generator picker and submits the genSpec", async () => {
+    // SegmentedControl items activate on click in jsdom (unlike Radix Tabs).
+    const onCreate = vi.fn(async () => {});
+    render(<NewVariableForm onCreate={onCreate} onCancel={() => {}} existingNames={[]} />);
+    fireEvent.click(screen.getByText("Generated"));
+    // No value input — the value doesn't exist until the run generates it.
+    expect(screen.queryByLabelText(/new variable value/i)).toBe(null);
+    expect(screen.getByText(/fresh value on every run/i)).toBeTruthy();
+    type(/new variable name/i, "userEmail");
+    fireEvent.click(screen.getByText("Email"));
+    fireEvent.click(screen.getByRole("button", { name: /create variable/i }));
+    await waitFor(() =>
+      expect(onCreate).toHaveBeenCalledWith({
+        name: "userEmail",
+        kind: "generated",
+        value: "",
+        genSpec: "email",
+      }),
+    );
+  });
+});
+
 describe("creating", () => {
   it("submits the name, kind and value", async () => {
     const onCreate = vi.fn(async () => {});

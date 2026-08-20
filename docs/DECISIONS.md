@@ -8984,3 +8984,36 @@ a local axe-core install, else a clear error naming the fix. The injection
 uses page.evaluate, which runs through the driver and is not subject to the
 page's CSP the way a script tag is. The trainer preview narrates the step as
 a no-op — it carries no axe, and a green row must not read as "checked".
+## 2026-08-19 — Generated variables: fresh data per run, pinnable by a dataset row
+
+A fourth VariableKind, `generated`: the record stores WHAT to produce
+(`genSpec` — string, email, number, uuid, name) and never a value. The V
+header calls `glazeGenerate("<spec>", "<name>")` at spec start, so every
+reference in the run sees one consistent fresh value, and the helper logs the
+choice to stdout — "which email did this run sign up with?" has an answer in
+the run log after the fact.
+
+Three placements were the actual decisions:
+
+**In the header, BEFORE the GLAZE_VARS spread.** A dataset row naming a
+generated variable pins it — pinning beats randomness, the same way a row
+overrides a plain default. Secrets stay after the spread, so a row still
+cannot shadow one. This ordering is what makes "generated" compose with
+sweeps instead of fighting them.
+
+**The value is dropped at the boundary, deliberately.** normalizeVariables
+strips a generated variable's stored value the way it strips a secret's, for
+the opposite reason: fresh-per-run is the contract, and a stored value would
+read as load-bearing while never being used. The trainer SESSION is the one
+place a value lives — addVariable generates a sample so replay and the picker
+show something real while training — and the fold back into the record goes
+through the same normalizer, which strips it again.
+
+**Emails use example.com (RFC 2606).** A signup test that generates addresses
+must never be able to mail a mailbox someone could own.
+
+The genSpec is enum-guarded twice (boundary allowlist + emission fallback to
+"string"), because it lands in generated source as a string literal — the
+same double-guard rule every interpolated enum follows. The runtime test
+imports the EMITTED glaze-runtime.mjs as real JS and checks each spec's
+shape, that two calls differ, and that the choice is logged.

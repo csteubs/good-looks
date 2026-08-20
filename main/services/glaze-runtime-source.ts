@@ -176,4 +176,42 @@ export async function glazeA11yGate(page, minImpact) {
     );
   }
 }
+
+/**
+ * A fresh value for a "generated" variable, once per run at spec start (the
+ * V header calls this, so every reference in the test sees the same value).
+ *
+ * The choice is LOGGED to stdout — the run captures it, so "which email did
+ * this run sign up with?" has an answer after the fact. Generated emails use
+ * example.com, reserved by RFC 2606: a test must never send mail toward a
+ * mailbox someone could own.
+ */
+export function glazeGenerate(spec, name) {
+  const rand = (len) => {
+    let s = "";
+    while (s.length < len) s += Math.random().toString(36).slice(2);
+    return s.slice(0, len);
+  };
+  let value;
+  if (spec === "email") {
+    value = "gl-" + rand(8) + "@example.com";
+  } else if (spec === "number") {
+    value = String(Math.floor(100000 + Math.random() * 900000));
+  } else if (spec === "uuid") {
+    value = (globalThis.crypto && globalThis.crypto.randomUUID)
+      ? globalThis.crypto.randomUUID()
+      : rand(8) + "-" + rand(4) + "-" + rand(4) + "-" + rand(4) + "-" + rand(12);
+  } else if (spec === "name") {
+    const first = ["Alex", "Sam", "Jordan", "Casey", "Riley", "Morgan", "Quinn", "Avery"];
+    const last = ["Reed", "Lane", "Hayes", "Brooks", "Ellis", "Monroe", "Sutton", "Blake"];
+    value =
+      first[Math.floor(Math.random() * first.length)] +
+      " " +
+      last[Math.floor(Math.random() * last.length)];
+  } else {
+    value = rand(10);
+  }
+  console.log("[glaze-generate] " + name + " = " + value);
+  return value;
+}
 `;

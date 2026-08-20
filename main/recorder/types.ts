@@ -706,9 +706,9 @@ export interface TestRecord {
  *  has no stored value at all — it's written during the run by a `capture`
  *  step, and any default here is only a fallback for steps that read it before
  *  the capture happens. */
-export type VariableKind = "plain" | "secret" | "captured";
+export type VariableKind = "plain" | "secret" | "captured" | "generated";
 
-export const VARIABLE_KINDS: VariableKind[] = ["plain", "secret", "captured"];
+export const VARIABLE_KINDS: VariableKind[] = ["plain", "secret", "captured", "generated"];
 
 export function isVariableKind(v: unknown): v is VariableKind {
   return typeof v === "string" && (VARIABLE_KINDS as string[]).includes(v);
@@ -718,10 +718,25 @@ export interface TestVariable {
   /** identifier used in `${name}` interpolation; see `isValidVariableName` */
   name: string;
   /** default value. Always absent for "secret" — a secret's value never lives
-   *  on the record, only in the encrypted store. */
+   *  on the record, only in the encrypted store — and for "generated", whose
+   *  whole contract is a FRESH value on every run (a stored one would look
+   *  load-bearing and never be used). */
   value?: string;
   kind: VariableKind;
+  /** What a "generated" variable produces. Enum-checked at the boundary AND
+   *  at emission — it lands in generated source as a string literal. */
+  genSpec?: GenSpec;
   description?: string;
+}
+
+/** What a "generated" variable can produce. Small on purpose: each entry is a
+ *  case in the runtime's glazeGenerate, and the vocabulary is interpolated
+ *  into specs — grow it there and here together. */
+export const GEN_SPECS = ["string", "email", "number", "uuid", "name"] as const;
+export type GenSpec = (typeof GEN_SPECS)[number];
+
+export function isGenSpec(v: unknown): v is GenSpec {
+  return typeof v === "string" && (GEN_SPECS as readonly string[]).includes(v);
 }
 
 /** One row of variable values a test can be swept over. */
@@ -777,9 +792,14 @@ export function normalizeVariables(input: unknown): TestVariable[] {
     const entry: TestVariable = { name: v.name, kind };
     // A secret's value never round-trips through the record — it would land in
     // tests.json in plaintext, which is the exact thing the encrypted store
-    // exists to prevent.
-    if (kind !== "secret" && typeof v.value === "string") {
+    // exists to prevent. A generated variable's value is dropped for the
+    // opposite reason: its contract is fresh-per-run, and a stored value
+    // would read as load-bearing while never being used.
+    if (kind !== "secret" && kind !== "generated" && typeof v.value === "string") {
       entry.value = v.value.slice(0, MAX_VARIABLE_VALUE_LENGTH);
+    }
+    if (kind === "generated") {
+      entry.genSpec = isGenSpec(v.genSpec) ? v.genSpec : "string";
     }
     if (typeof v.description === "string" && v.description.trim()) {
       entry.description = v.description.trim().slice(0, 200);
