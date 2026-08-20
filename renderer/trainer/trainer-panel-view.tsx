@@ -105,6 +105,7 @@ const ADD_STEP_KINDS: AddStepKind[] = [
   "assertion",
   "elementState",
   "condition",
+  "loop",
   "wait",
   "goto",
   "press",

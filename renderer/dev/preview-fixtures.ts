@@ -144,8 +144,14 @@ export const TESTS: TestRecord[] = [
     stepsDivergedReason: "unapplied",
     steps: steps(
       { type: "goto", url: "https://docs.example.com" },
+      // A repeat block early in the LONG fixture (t-checkout's step count is
+      // budgeted by the bridge's simulated-run test, so the loop rows live
+      // here): renders the "repeat"/"end repeat" chips, the inline count
+      // edit, and the body's indent.
+      { type: "loop", loopCount: 3 },
       { type: "fill", locator: { k: "role", role: "searchbox" }, value: "locator" },
       { type: "press", value: "Enter" },
+      { type: "endLoop" },
       // Long enough to overflow the pane in both directions, which is the
       // state the step list's scrolling exists for and the one nothing in the
       // preview showed: 43 steps outrun the viewport vertically, and the fill

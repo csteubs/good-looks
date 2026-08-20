@@ -2362,6 +2362,7 @@ export const recorderService = {
           "waitMs",
           "waitUntil",
           "timeoutMs",
+          "loopCount",
           "soft",
           "assert",
           "locator",

@@ -35,6 +35,12 @@ export type StepType =
   // and the test continues gracefully.
   | "if"
   | "endif"
+  // `loop` opens a repeat-N-times block, `endLoop` closes it. Same pairing
+  // discipline as if/endif: the pair is inserted together, neither half can be
+  // disabled or wrapped, and the generator emits a real `for` whose body is
+  // the steps between them.
+  | "loop"
+  | "endLoop"
   // Cookie state. Applied through the browser session rather than injected JS,
   // because an httpOnly cookie is invisible to document.cookie by definition.
   | "cookie"
@@ -250,6 +256,9 @@ export interface Step {
   assert?: AssertKind;
   /** condition predicate when type === "if" */
   cond?: ConditionKind;
+  /** iterations for a `loop` step. Reaches the generator as a BARE NUMERAL —
+   *  see normalizeRawStep's `int` note — bounded [1, MAX_LOOP_COUNT]. */
+  loopCount?: number;
   /** assertion text / extra description */
   text?: string;
   /** soft assertion — reports a failure but doesn't stop the test (expect.soft) */
@@ -384,6 +393,7 @@ export interface RawStep {
   waitMs?: number;
   waitUntil?: WaitUntilKind;
   timeoutMs?: number;
+  loopCount?: number;
   /** cookie fields, so a cookie step can be inserted via insertStep */
   cookieAction?: CookieAction;
   cookie?: CookieSpec;
@@ -793,7 +803,7 @@ export function normalizeDatasets(input: unknown): Dataset[] {
 
 export const STEP_TYPES: StepType[] = [
   "goto", "click", "fill", "press", "select", "check", "uncheck", "assert",
-  "wait", "viewport", "if", "endif", "cookie", "capture", "runFlow", "state",
+  "wait", "viewport", "if", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
 ];
 
 export const ASSERT_KINDS: AssertKind[] = [
@@ -888,6 +898,12 @@ export const MAX_STEP_STRING_LENGTH = 8000;
 export const MAX_FINGERPRINT_CANDIDATES = 40;
 export const MAX_FINGERPRINT_ATTRIBUTES = 40;
 export const MAX_FLOW_ARGS = 50;
+/** Upper bound on a `loop` step's iterations — matches the ceiling mabl gives
+ *  its loops, and past it a "test" is a load generator. Reaches the spec as a
+ *  bare numeral, so it carries the same double-guard as every numeric field:
+ *  this bound at the boundary, and a clamp in the generator for steps that
+ *  arrive around it. */
+export const MAX_LOOP_COUNT = 500;
 /** Upper bound on `Locator.nth`. The recorder only ever writes this when no
  *  candidate locator was unique, and it caps its own scan well below here
  *  (`MAX_UNIQUENESS_SCAN` in capture-script.ts) — so a value near this one did
@@ -1161,6 +1177,8 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   if (height !== undefined) out.height = height;
   if (waitMs !== undefined) out.waitMs = waitMs;
   if (timeoutMs !== undefined) out.timeoutMs = timeoutMs;
+  const loopCount = int(s.loopCount, 1, MAX_LOOP_COUNT);
+  if (loopCount !== undefined) out.loopCount = loopCount;
 
   const cookieAction = oneOf(s.cookieAction, COOKIE_ACTIONS);
   if (cookieAction) out.cookieAction = cookieAction;

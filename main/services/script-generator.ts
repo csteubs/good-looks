@@ -7,6 +7,7 @@ import {
   cookieScopeIsValid,
   ELEMENT_STATES,
   isCssPropName,
+  MAX_LOOP_COUNT,
   toPlaywrightSameSite,
   VAR_REF_RE,
 } from "../recorder/types.js";
@@ -716,6 +717,8 @@ function stepLogLine(step: Step): string | null {
 export function describeStep(step: Step): string {
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
+  if (step.type === "loop") return "repeat " + (step.loopCount ?? 1) + " times";
+  if (step.type === "endLoop") return "end repeat";
   if (step.type === "wait" && step.waitUntil) return describeWait(step);
   if (step.type === "cookie") return describeCookie(step);
   if (step.type === "capture") return describeCapture(step);
@@ -1046,6 +1049,11 @@ export function generateSpecDetailed(
     lineMap[bodyStartLine + body.length] = index;
   };
 
+  // Open `for` loops, outermost first. Holds the loop VARIABLE names so nested
+  // loops don't shadow each other (`i`, `i2`, `i3`…) — a second `let i` inside
+  // the first is a SyntaxError, which is a spec that cannot run at all.
+  const loopNames: string[] = [];
+
   for (const { step, sourceIndex, problem } of expanded) {
     if (problem) {
       // Through `commentSafe` like every other comment: `problem` embeds the
@@ -1056,6 +1064,40 @@ export function generateSpecDetailed(
       // made it page input compiled into executed code. Pinned alongside the
       // other comment sinks in assert-emission.test.ts.
       body.push(commentSafe("  // " + problem));
+      continue;
+    }
+    // Loop halves are emitted here rather than in `stepLine`: the `for` line
+    // needs a variable name that depends on how many loops are already open,
+    // which is emission-order state a per-step formatter cannot hold. Same
+    // pairing rules as if/endif — never disabled, never wrapped — plus one
+    // repair the spec's parseability demands: a stray `endLoop` (its opening
+    // half was deleted) becomes a comment instead of an unbalanced `}` that
+    // would make the whole file a syntax error.
+    if (step.type === "loop") {
+      const lc = step.loopCount;
+      // The generator clamps independently of `normalizeLocator`-style bounds
+      // at the boundary — same double-guard as every numeral, covering steps
+      // that arrive through `updateStep`'s raw copy.
+      const count =
+        typeof lc === "number" && Number.isFinite(lc)
+          ? Math.min(MAX_LOOP_COUNT, Math.max(1, Math.trunc(lc)))
+          : 1;
+      const nm = loopNames.length === 0 ? "i" : "i" + (loopNames.length + 1);
+      record1(sourceIndex);
+      body.push("  ".repeat(depth) + `for (let ${nm} = 0; ${nm} < ${count}; ${nm}++) {`);
+      loopNames.push(nm);
+      depth += 1;
+      continue;
+    }
+    if (step.type === "endLoop") {
+      if (loopNames.length === 0) {
+        body.push(commentSafe("  ".repeat(depth) + "// end repeat without an open loop — skipped"));
+        continue;
+      }
+      loopNames.pop();
+      depth = Math.max(1, depth - 1);
+      record1(sourceIndex);
+      body.push("  ".repeat(depth) + "}");
       continue;
     }
     const line = stepLine(step, vars);
@@ -1103,6 +1145,16 @@ export function generateSpecDetailed(
       if (logLine) body.push(indent + logLine);
     }
     if (step.type === "if") depth += 1;
+  }
+
+  // A `loop` whose closing half was deleted would leave the file with an
+  // unclosed `for {` — a syntax error, a spec that cannot run. Close what
+  // remains open with plain braces: the parser reads each one back as an
+  // `endLoop`, so the next round-trip restores the pair instead of losing it.
+  while (loopNames.length > 0) {
+    loopNames.pop();
+    depth = Math.max(1, depth - 1);
+    body.push("  ".repeat(depth) + "}");
   }
 
   const title = record.name && record.name.trim() ? record.name.trim() : "recorded test";
