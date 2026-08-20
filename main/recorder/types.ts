@@ -1841,6 +1841,10 @@ export interface RunRecord {
   startedAt: number;
   /** epoch ms */
   finishedAt: number;
+  /** a failed run salvaged its Playwright trace into the artifact dir — the
+   *  Open Trace button renders off this, and the file may still be pruned
+   *  later by retention (the opener checks). */
+  hasTrace?: boolean;
   durationMs: number;
   /** absolute path to the raw console-output .log file for this run */
   logFile: string;

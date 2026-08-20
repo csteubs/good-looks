@@ -1208,6 +1208,15 @@ export function TestDetailView() {
         onDebug={openAiDebug}
         onReview={test.sourceDir ? undefined : () => setTab("heals")}
         onSendToTracker={setFailureRunId}
+        hasTrace={
+          runSummary.state === "failed" &&
+          ((runsQuery.data ?? []).find((r) => r.id === runSummary.recordId)?.hasTrace ?? false)
+        }
+        onOpenTrace={(runId) => {
+          void api.runs.openTrace(id, runId).then((res) => {
+            if (!res.ok) toast.error(res.reason ?? "No trace for this run.");
+          });
+        }}
         aiStatus={aiStatus}
       />
 

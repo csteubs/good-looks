@@ -762,6 +762,10 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       };
     },
     "runs:getLog": (): string => RUN_LOG,
+    "runs:openTrace": () => ({
+      ok: false,
+      reason: "No backend in the preview — traces open from the real app.",
+    }),
     "runs:logsDir": (): string => "/preview/runs",
     "runs:searchLogs": () => [],
     /** Mutates the fixture list in place so the picker's optimistic write and

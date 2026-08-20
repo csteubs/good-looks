@@ -604,6 +604,8 @@ export const api = {
      *  that is capped, and counting it is what made "Total runs" stop at 1000. */
     totals: () => ipc().invoke<RunTotals>("runs:totals"),
     getLog: (id: string) => ipc().invoke<string>("runs:getLog", { id }),
+    openTrace: (testId: string, runId: string) =>
+      ipc().invoke<{ ok: boolean; reason?: string }>("runs:openTrace", { testId, runId }),
     flake: () => ipc().invoke<FlakeReport>("runs:flake"),
     searchLogs: (query: string) =>
       ipc().invoke<LogSearchResult[]>("runs:searchLogs", { query }),

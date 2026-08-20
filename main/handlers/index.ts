@@ -26,7 +26,7 @@ import { webhookUrlStore } from "../services/webhook-url-store.js";
 import { postWebhook } from "../services/alert-service.js";
 import { issueTrackerService } from "../services/issue-tracker/issue-tracker-service.js";
 import { isProviderId } from "../services/issue-tracker/provider-registry.js";
-import { playwrightRunner } from "../services/playwright-runner.js";
+import { openTrace, playwrightRunner } from "../services/playwright-runner.js";
 import { runHistoryStore } from "../services/run-history-store.js";
 import { emitReport } from "../services/report-emitter.js";
 import { artifactStore } from "../services/artifact-store.js";
@@ -1956,6 +1956,12 @@ export function registerHandlers(): void {
       emitReport(params.emitter, params.stamp, { testId: params.testId }),
   );
   ipcMain.handle("runs:list", async () => runHistoryStore.list());
+  /** Open a failed run's salvaged trace in Playwright's trace viewer. The ids
+   *  become path segments, and `openTrace` validates them itself (separator-
+   *  free, no `..`) before building the path — `runDir` is a bare join. */
+  ipcMain.handle("runs:openTrace", async (_e, params: { testId: string; runId: string }) =>
+    openTrace(String(params?.testId ?? ""), String(params?.runId ?? "")),
+  );
   /** Lifetime run counts. Separate from `runs:list` because the list is capped
    *  and these are not — counting the rows this returns is exactly the mistake
    *  that made the Stats board's "Total runs" stop at 1000. */
