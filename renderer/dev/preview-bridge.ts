@@ -174,6 +174,19 @@ function previewRecorderSteps(): Step[] {
   ]);
 }
 
+/** The preview's open inline-flow scope, so `?view=recorder` can exercise the
+ *  whole enter → edit-banner → Done loop without a backend. */
+let previewFlowScope: {
+  flowId: string;
+  callStepId: string;
+  name: string;
+  steps: Step[];
+  cursor: number;
+} | null = null;
+/** Set by the flow-scope handlers; the invoke wrapper (which holds `emit`)
+ *  flushes it as the `recorder:flowScope` + `recorder:state` pushes. */
+let pendingFlowScopePush = false;
+
 function recorderState(): RecorderState {
   if (!recorderPreview()) {
     return {
@@ -214,6 +227,15 @@ function recorderState(): RecorderState {
     replaying: false,
     pageReady: true,
     loading: false,
+    flowScope: previewFlowScope
+      ? {
+          flowId: previewFlowScope.flowId,
+          callStepId: previewFlowScope.callStepId,
+          name: previewFlowScope.name,
+          cursor: previewFlowScope.cursor,
+          stepCount: previewFlowScope.steps.length,
+        }
+      : null,
   };
 }
 
@@ -1692,6 +1714,46 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       return recorderState();
     },
     "recorder:getState": (): RecorderState => recorderState(),
+    // Inline flow editing, over the fixtures: entering opens the sign-in
+    // flow's steps as the working copy; edits are not simulated (there is no
+    // capture here), but the banner, the gaps and Done are all drivable.
+    "recorder:enterFlowScope": (p: Payload) => {
+      const call = previewRecorderSteps().find((st) => st.id === p?.stepId);
+      const flow = call?.flowId ? findTest(call.flowId) : null;
+      if (!call || !flow) throw new Error("That step is not a flow call.");
+      previewFlowScope = {
+        flowId: flow.id,
+        callStepId: call.id,
+        name: flow.name,
+        steps: structuredClone(flow.steps),
+        cursor: flow.steps.length,
+      };
+      pendingFlowScopePush = true;
+      return recorderState();
+    },
+    "recorder:exitFlowScope": () => {
+      const scope = previewFlowScope;
+      previewFlowScope = null;
+      pendingFlowScopePush = true;
+      return scope
+        ? {
+            committed: true,
+            flowId: scope.flowId,
+            name: scope.name,
+            callers: 1,
+            conflict: false,
+            orphaned: false,
+          }
+        : null;
+    },
+    "recorder:setFlowCursor": (p: Payload) => {
+      if (previewFlowScope) {
+        const n = previewFlowScope.steps.length;
+        previewFlowScope.cursor = Math.max(0, Math.min(n, Number(p?.index) || 0));
+        pendingFlowScopePush = true;
+      }
+      return recorderState();
+    },
 
     // ── Batch ────────────────────────────────────────────────────────────
     // REDESIGN §6.5. The preview has no filesystem and no save dialog, so it
@@ -1974,7 +2036,17 @@ export function installPreviewBridge(): PreviewDiagnostics {
       return handlers["recorder:getState"]?.({} as Payload);
     }
     const handler = handlers[channel];
-    if (handler) return handler(args[0] as Payload);
+    if (handler) {
+      const reply = handler(args[0] as Payload);
+      if (pendingFlowScopePush) {
+        pendingFlowScopePush = false;
+        setTimeout(() => {
+          emit("recorder:flowScope", previewFlowScope ? structuredClone(previewFlowScope) : null);
+          emit("recorder:state", recorderState());
+        }, 0);
+      }
+      return reply;
+    }
 
     diagnostics.misses[channel] = (diagnostics.misses[channel] ?? 0) + 1;
     // Once per channel, not once per call — a polling view would otherwise

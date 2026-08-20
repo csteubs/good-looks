@@ -1418,6 +1418,37 @@ export interface RecorderState {
   pageReady: boolean;
   /** true while the training browser window is opening but hasn't shown yet. */
   loading: boolean;
+  /** The flow being edited inline through one of this session's runFlow rows,
+   *  or null (mirror of main). The flow's steps travel on `recorder:flowScope`. */
+  flowScope?: {
+    flowId: string;
+    callStepId: string;
+    name: string;
+    cursor: number;
+    stepCount: number;
+  } | null;
+}
+
+/** What committing an inline-flow scope amounted to (mirror of main's
+ *  FlowScopeCommit) — the reply to `recorder:exitFlowScope`, so the trainer can
+ *  toast it. Null when no scope was open. */
+export interface FlowScopeCommit {
+  committed: boolean;
+  flowId: string;
+  name: string;
+  callers: number;
+  conflict: boolean;
+  orphaned: boolean;
+}
+
+/** Payload of the `recorder:flowScope` push: the open scope's working copy of
+ *  the flow's steps, or null when no scope is open (mirror of main). */
+export interface FlowScopePayload {
+  flowId: string;
+  callStepId: string;
+  name: string;
+  steps: Step[];
+  cursor: number;
 }
 
 // ── Batch (suite) runs ────────────────────────────────────────────────

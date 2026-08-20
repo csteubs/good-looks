@@ -26,6 +26,7 @@ import { useRecorder, type ReplayRun } from "./recorder-store";
 import { CursorGap, INSERT_HERE, StepRow } from "./step-row";
 import { CreateFlowDialog } from "./create-flow-dialog";
 import { FlowStepsPreview } from "./flow-steps-preview";
+import { FlowScopeEditor } from "./flow-scope-editor";
 import {
   emptySelection,
   extractableRange,
@@ -486,6 +487,10 @@ export function RecordingView() {
     deleteStep,
     insertStep,
     extractFlow,
+    flowScope,
+    enterFlowScope,
+    exitFlowScope,
+    setFlowCursor,
     insertGeneratedSteps,
     reorderStep,
     updateStep,
@@ -776,8 +781,9 @@ export function RecordingView() {
   // list: the panel has to sit between the two steps the new one will land
   // between, and "between" is a position in this map, not a place in the tree.
   // It renders at most once — `state.cursor` is a single index.
-  const composerAt = (index: number) =>
-    addKind !== null && state.cursor === index ? (
+  const composerAt = (index: number, inScope = false) =>
+    addKind !== null &&
+    (inScope ? flowScope?.cursor === index : !flowScope && state.cursor === index) ? (
       <StepComposer
         // Remounts when the caller re-targets it from the context menu, so a
         // half-filled draft for one element never carries over to another.
@@ -1102,7 +1108,34 @@ export function RecordingView() {
                     }}
                   />
                   {s.type === "runFlow" && s.flowId && expandedFlows.has(s.id) ? (
-                    <FlowStepsPreview flowId={s.flowId} indent={stepDepths[i] + 1} />
+                    flowScope && flowScope.callStepId === s.id ? (
+                      <FlowScopeEditor
+                        scope={flowScope}
+                        controlsDisabled={controlsDisabled}
+                        onExit={() => void exitFlowScope()}
+                        composerAt={(index) => composerAt(index, true)}
+                        onDelete={deleteStep}
+                        onEdit={updateStep}
+                        onReplay={replayStep}
+                        onReorder={reorderStep}
+                        onSetCursor={setFlowCursor}
+                        indent={stepDepths[i] + 1}
+                      />
+                    ) : (
+                      <FlowStepsPreview
+                        // Remounted when a scope opens or closes, so the
+                        // read-only view refetches the just-committed steps
+                        // instead of quoting the pre-edit record.
+                        key={`${s.flowId}:${flowScope ? "scoped" : "plain"}`}
+                        flowId={s.flowId}
+                        indent={stepDepths[i] + 1}
+                        onEditFlow={
+                          controlsDisabled || flowScope
+                            ? undefined
+                            : () => void enterFlowScope(s.id)
+                        }
+                      />
+                    )
                   ) : null}
                   <CursorGap
                     active={state.cursor === i + 1}

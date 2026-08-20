@@ -230,6 +230,15 @@ export function registerHandlers(): void {
     async (_e, params: { stepIds: unknown; name: unknown }) =>
       recorderService.extractFlow(params?.stepIds, params?.name),
   );
+  // Inline flow editing: open a runFlow row's flow for recording, commit and
+  // close it, and move the insert cursor within it.
+  ipcMain.handle("recorder:enterFlowScope", async (_e, params: { stepId: unknown }) =>
+    recorderService.enterFlowScope(params?.stepId),
+  );
+  ipcMain.handle("recorder:exitFlowScope", async () => recorderService.exitFlowScope());
+  ipcMain.handle("recorder:setFlowCursor", async (_e, params: { index: number }) =>
+    recorderService.setFlowCursor(Number(params?.index) || 0),
+  );
   ipcMain.handle(
     "recorder:applyHeal",
     async (_e, params: { stepId: string; locator: Locator }) =>
@@ -1680,8 +1689,12 @@ export function registerHandlers(): void {
         runHeadless?: boolean;
         browser?: string;
       },
-    ) =>
-      playwrightRunner.start({
+    ) => {
+      // A run executes stored specs, so an open inline-flow scope commits
+      // first — otherwise the run reads the stale flow at the exact moment the
+      // user is verifying their edit. A no-op when no trainer scope is open.
+      recorderService.exitFlowScope();
+      return playwrightRunner.start({
         testId: params.id,
         headed: params.headed ?? true,
         captureArtifacts: params.captureArtifacts ?? false,
@@ -1689,7 +1702,8 @@ export function registerHandlers(): void {
         // Unvalidated input would reach the Playwright CLI verbatim; fall back
         // to the test/global default rather than failing the run.
         browser: isRunBrowser(params.browser) ? params.browser : undefined,
-      }),
+      });
+    },
   );
   // Re-execute a past run's recorded steps against the live site. Always
   // captures, so the re-run produces its own screenshots to compare.

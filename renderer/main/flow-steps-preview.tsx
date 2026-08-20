@@ -17,10 +17,14 @@ import type { TestRecord } from "../lib/recorder-types";
 export function FlowStepsPreview({
   flowId,
   indent = 1,
+  onEditFlow,
 }: {
   flowId: string;
   /** Indent level of the call row, so the preview nests one deeper. */
   indent?: number;
+  /** Enter the flow's inline-editing scope. Offered only where a host can
+   *  (the trainers); the detail view's preview stays purely a quotation. */
+  onEditFlow?: () => void;
 }) {
   const [flow, setFlow] = React.useState<TestRecord | null | undefined>(undefined);
 
@@ -71,9 +75,22 @@ export function FlowStepsPreview({
           “{flow.name}” has no steps yet.
         </Text>
       ) : (
-        flow.steps.map((s, i) => (
-          <StepRow key={s.id} index={i} step={s} indent={indent - 1 + depths[i]} />
-        ))
+        <>
+          {flow.steps.map((s, i) => (
+            <StepRow key={s.id} index={i} step={s} indent={indent - 1 + depths[i]} />
+          ))}
+          {onEditFlow ? (
+            <div className="px-2 py-1">
+              <button
+                type="button"
+                className="cursor-pointer text-[12px] underline decoration-dotted underline-offset-2"
+                onClick={onEditFlow}
+              >
+                Edit “{flow.name}” here — changes reach every test that calls it
+              </button>
+            </div>
+          ) : null}
+        </>
       )}
     </div>
   );

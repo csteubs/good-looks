@@ -15,6 +15,7 @@ import type {
   ScriptChangeListEntry,
   ScriptChangeSource,
   SecretStatus,
+  FlowScopeCommit,
   FlowSummary,
   TestVariable,
   VariableKind,
@@ -173,6 +174,15 @@ export const api = {
      *  be shown: a gapped or block-splitting selection, or a taken name. */
     extractFlow: (stepIds: string[], name: string) =>
       ipc().invoke<RecorderState>("recorder:extractFlow", { stepIds, name }),
+    /** Open a runFlow row's flow for inline editing — captures and edits then
+     *  land in the flow's working copy until exitFlowScope commits. */
+    enterFlowScope: (stepId: string) =>
+      ipc().invoke<RecorderState>("recorder:enterFlowScope", { stepId }),
+    /** Commit and close the open scope. Null when none was open. */
+    exitFlowScope: () => ipc().invoke<FlowScopeCommit | null>("recorder:exitFlowScope"),
+    /** Move the insert cursor within the open scope's working copy. */
+    setFlowCursor: (index: number) =>
+      ipc().invoke<RecorderState>("recorder:setFlowCursor", { index }),
     replayStep: (stepId: string) =>
       ipc().invoke<DebugEntry>("recorder:replayStep", { stepId }),
     replayFromStart: () =>

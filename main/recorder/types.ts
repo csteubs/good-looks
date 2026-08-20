@@ -2437,6 +2437,19 @@ export interface RecorderState {
    *  The renderer shows a loading modal with copy explaining the load; if this
    *  stays true past the timeout, the session is cancelled and an error shown. */
   loading: boolean;
+  /** The flow being edited INLINE through one of this session's `runFlow`
+   *  rows, or null. While set, captured and inserted steps land in the flow's
+   *  working copy rather than the session's list — the flow's steps themselves
+   *  travel on the `recorder:flowScope` push, not here, because two other
+   *  consumers type `recorder:steps` as the session's `Step[]` and a second
+   *  list in the state would invite reading the wrong one. */
+  flowScope?: {
+    flowId: string;
+    callStepId: string;
+    name: string;
+    cursor: number;
+    stepCount: number;
+  } | null;
 }
 
 // ── Batch (suite) runs ────────────────────────────────────────────────

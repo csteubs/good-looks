@@ -8234,3 +8234,53 @@ already shows what this call overrides.
 extraction there would persist a flow record while the caller's own edit is
 still uncommitted — a save-ordering trap. Mark-as-flow plus trainer extraction
 cover creation.
+
+## 2026-08-19 — Flows phase 5: inline flow editing, staged in the session, committed on scope exit
+
+Expanding a `runFlow` row in either trainer now offers "Edit here": the flow's
+steps become an editable region, the insert cursor can move inside it, and a
+step captured in the training browser — or added, edited, deleted, reordered,
+replayed — lands in the FLOW rather than the caller. mabl's model, on this
+app's session architecture.
+
+**The scope is a working copy, committed on exit — not written per edit, not
+deferred to the session's save.** `Session.flowScope` holds a clone of the
+flow record's steps plus its own cursor; `commitFlowScope` (the one commit
+path) normalizes the steps back through `normalizeStep`, writes the record,
+and lets `testStore.save`'s caller-propagation regenerate every dependent
+spec. Per-edit write-through was rejected because it breaks the trainer's own
+contract (nothing persists before an explicit save; "Discard" must mean it),
+regenerates N caller specs per keystroke, and lets a run elsewhere pick up a
+half-recorded flow. Deferring to finalize was rejected because an in-session
+replay resolves flows from the STORE, so it would run the stale flow at the
+exact moment the user is verifying the edit. Hence the commit triggers:
+"Done editing flow", entering another scope, all three whole-list replays,
+`runner:run`, and finalize — while `discardExit` drops the copy unwritten.
+`check:flow-scope` pins each of these structurally, including that the routing
+lives in `addStep` (the one funnel both capture channels reach) and that the
+scope's steps ride their own `recorder:flowScope` push rather than
+`recorder:steps`, whose payload two consumers type as the session's list.
+
+**Conflicts are detected, not merged.** The scope records the flow's
+`updatedAt` at open; a record that moved underneath (Edit Steps in the main
+window, MCP) is reported in the commit toast and overwritten —
+last-writer-wins is honest for a singleton-session app, and a merge UI for a
+case this rare would dwarf the feature.
+
+**Whole-list replays now execute flows.** `replayEntries` expands `runFlow`
+calls at replay time — bound by the same exported `flowCallBindings`/
+`bindFlowStep` the generator uses, cycle-guarded the same way, repeats
+UNROLLED (a variable count resolves against the session's variables and
+degrades to once) — and every inlined entry reports against its call row's
+index, the same rule the generator's line map follows, so the highlight and
+`cursorPastReplayed` land on rows the user can see. An inlined step resolves
+its `${name}` references against the FLOW's declarations and secret store
+(`runStep` grew a scope parameter), matching what the generated header
+arranges for a real run. A call whose flow is missing or circular stays a bare
+`runFlow` entry and the injected replayer answers with its "not previewable"
+note. Copied steps get suffixed ids so two iterations of one flow cannot
+collide in anything id-keyed.
+
+**One scope at a time.** Entering a nested flow commits the open scope and
+enters the new one; a test cannot open itself as a flow. Matches mabl, and
+keeps the commit/discard matrix a single row.

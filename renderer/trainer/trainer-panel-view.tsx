@@ -47,6 +47,7 @@ import { useRecorder } from "../main/recorder-store";
 import { CursorGap, INSERT_HERE, StepRow } from "../main/step-row";
 import { CreateFlowDialog } from "../main/create-flow-dialog";
 import { FlowStepsPreview } from "../main/flow-steps-preview";
+import { FlowScopeEditor } from "../main/flow-scope-editor";
 import {
   emptySelection,
   extractableRange,
@@ -190,6 +191,10 @@ export function TrainerPanelView() {
     deleteStep,
     insertStep,
     extractFlow,
+    flowScope,
+    enterFlowScope,
+    exitFlowScope,
+    setFlowCursor,
     insertGeneratedSteps,
     reorderStep,
     updateStep,
@@ -439,8 +444,9 @@ export function TrainerPanelView() {
   // The composer, at the cursor rather than over the list (§6.2). Same shape as
   // the main window's — see recording-view.tsx for why it is a function of the
   // gap index rather than one element hoisted out of the list.
-  const composerAt = (index: number) =>
-    addKind !== null && state.cursor === index ? (
+  const composerAt = (index: number, inScope = false) =>
+    addKind !== null &&
+    (inScope ? flowScope?.cursor === index : !flowScope && state.cursor === index) ? (
       <StepComposer
         key={`${addKind}:${contextPick?.picked?.description ?? ""}`}
         kind={addKind}
@@ -659,7 +665,34 @@ export function TrainerPanelView() {
                     }
                   />
                   {s.type === "runFlow" && s.flowId && expandedFlows.has(s.id) ? (
-                    <FlowStepsPreview flowId={s.flowId} indent={stepDepths[i] + 1} />
+                    flowScope && flowScope.callStepId === s.id ? (
+                      <FlowScopeEditor
+                        scope={flowScope}
+                        controlsDisabled={controlsDisabled}
+                        onExit={() => void exitFlowScope()}
+                        composerAt={(index) => composerAt(index, true)}
+                        onDelete={deleteStep}
+                        onEdit={updateStep}
+                        onReplay={replayStep}
+                        onReorder={reorderStep}
+                        onSetCursor={setFlowCursor}
+                        indent={stepDepths[i] + 1}
+                      />
+                    ) : (
+                      <FlowStepsPreview
+                        // Remounted when a scope opens or closes, so the
+                        // read-only view refetches the just-committed steps
+                        // instead of quoting the pre-edit record.
+                        key={`${s.flowId}:${flowScope ? "scoped" : "plain"}`}
+                        flowId={s.flowId}
+                        indent={stepDepths[i] + 1}
+                        onEditFlow={
+                          controlsDisabled || flowScope
+                            ? undefined
+                            : () => void enterFlowScope(s.id)
+                        }
+                      />
+                    )
                   ) : null}
                   <CursorGap
                     active={state.cursor === i + 1}

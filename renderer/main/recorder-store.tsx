@@ -21,6 +21,7 @@ import type {
   Locator,
   PickedElement,
   RawStep,
+  FlowScopePayload,
   RecorderState,
   ReplayLogEvent,
   RunBrowser,
@@ -177,6 +178,17 @@ interface RecorderContextValue {
   /** Extract a contiguous run of session steps into a new flow test,
    *  replacing them with a runFlow call. Rejects with a showable message. */
   extractFlow: (stepIds: string[], name: string) => Promise<void>;
+  /** The open inline-flow scope's working copy of the flow's steps, or null.
+   *  Fed by the `recorder:flowScope` push — never by `recorder:steps`, whose
+   *  payload stays the session's own list. */
+  flowScope: FlowScopePayload | null;
+  /** Open a runFlow row's flow for inline editing. Rejects with a showable
+   *  message (deleted flow, self-call). */
+  enterFlowScope: (stepId: string) => Promise<void>;
+  /** Commit and close the open scope; toasts what happened. */
+  exitFlowScope: () => Promise<void>;
+  /** Move the insert cursor within the open scope. */
+  setFlowCursor: (index: number) => void;
   /** Insert a batch of AI-generated steps and mark what landed as new, so the
    *  step list can glow it. Separate from `insertStep` because only this path
    *  produces steps the user did not write themselves. */
@@ -338,6 +350,7 @@ export function RecorderProvider({
   }, []);
   // Live "Replay from current step" run, streamed from the backend.
   const [replayRun, setReplayRun] = React.useState<ReplayRun | null>(null);
+  const [flowScope, setFlowScope] = React.useState<FlowScopePayload | null>(null);
   // True while any replay (single step / from-current) is in flight — drives
   // the "Running" status and locks step editing.
   const [executing, setExecuting] = React.useState(false);
@@ -352,10 +365,21 @@ export function RecorderProvider({
   const qc = useQueryClient();
 
   React.useEffect(() => {
-    const offState = api.on<RecorderState>("recorder:state", (s) => setState(s));
+    const offState = api.on<RecorderState>("recorder:state", (s) => {
+      setState(s);
+      // The state is the authority on WHETHER a scope is open; the flowScope
+      // push carries its contents. A discard tears the session down without a
+      // dedicated scope push, so the null here is what closes the expansion.
+      if (!s.flowScope) setFlowScope(null);
+    });
     // The backend now owns step ordering (insert/reorder/edit), so it broadcasts
     // the whole list after every change and we replace our copy.
     const offSteps = api.on<Step[]>("recorder:steps", (steps) => receiveSteps(steps ?? []));
+    // The inline-flow scope's working copy, whole, on its own channel — see
+    // the backend's broadcastFlowScope for why it never rides recorder:steps.
+    const offFlowScope = api.on<FlowScopePayload | null>("recorder:flowScope", (scope) =>
+      setFlowScope(scope ?? null),
+    );
     const offPicked = api.on<PickedElement>("recorder:picked", (p) => setPicked(p));
     // The debug-screenshot shortcut fires with no visible effect otherwise —
     // you press a key and nothing happens, which is indistinguishable from the
@@ -625,6 +649,7 @@ export function RecorderProvider({
     return () => {
       offState();
       offSteps();
+      offFlowScope();
       offPicked();
       offCaptured();
       offCtx();
@@ -731,6 +756,35 @@ export function RecorderProvider({
     },
     [clearNewSteps],
   );
+
+  const enterFlowScope = React.useCallback(async (stepId: string) => {
+    try {
+      await api.recorder.enterFlowScope(stepId);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+  const exitFlowScope = React.useCallback(async () => {
+    try {
+      const result = await api.recorder.exitFlowScope();
+      if (!result) return;
+      if (result.orphaned) {
+        toast.error(`“${result.name}” was deleted while you edited it — the edits were dropped.`);
+      } else if (result.committed) {
+        toast.success(
+          `Flow “${result.name}” updated — used by ${result.callers} test${result.callers === 1 ? "" : "s"}.` +
+            (result.conflict
+              ? " It had also been edited elsewhere; this session's version won."
+              : ""),
+        );
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+  const setFlowCursor = React.useCallback((index: number) => {
+    void api.recorder.setFlowCursor(index);
+  }, []);
 
   const insertGeneratedSteps = React.useCallback(async (steps: RawStep[]) => {
     const before = liveStepsRef.current;
@@ -868,6 +922,10 @@ export function RecorderProvider({
     deleteStep,
     insertStep,
     extractFlow,
+    flowScope,
+    enterFlowScope,
+    exitFlowScope,
+    setFlowCursor,
     insertGeneratedSteps,
     reorderStep,
     updateStep,

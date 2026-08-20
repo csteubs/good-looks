@@ -63,6 +63,9 @@ const actions = {
   clearContextAction: vi.fn(),
   addVariable: vi.fn(async () => {}),
   extractFlow: vi.fn(async () => {}),
+  enterFlowScope: vi.fn(async () => {}),
+  exitFlowScope: vi.fn(async () => {}),
+  setFlowCursor: vi.fn(),
 };
 
 let store: Record<string, unknown> = {};
@@ -125,6 +128,7 @@ function setStore(over: Record<string, unknown> = {}) {
     picked: null,
     refiningStepId: null,
     contextAction: null,
+    flowScope: null,
     ...actions,
     ...over,
   };
@@ -861,5 +865,61 @@ describe("multi-select and Create flow", () => {
     expect(await screen.findByText(/can't be found/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /collapse flow steps/i }));
     expect(screen.queryByText(/can't be found/i)).toBeNull();
+  });
+});
+
+describe("inline flow editing (the open scope)", () => {
+  const callRow = () =>
+    step("f", { type: "runFlow", flowId: "flow-1", label: "Sign in" });
+
+  it("offers Edit from the expanded read-only preview and enters the scope", async () => {
+    setStore({ liveSteps: [callRow()] });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: /show the flow's steps/i }));
+    // The api mock has no tests.get, so the preview reports the flow missing —
+    // and a missing flow must NOT offer editing.
+    await screen.findByText(/can't be found/i);
+    expect(screen.queryByText(/Edit “/)).toBeNull();
+  });
+
+  it("renders the scope editor with the banner and routes Done to exitFlowScope", async () => {
+    setStore({
+      liveSteps: [callRow()],
+      flowScope: {
+        flowId: "flow-1",
+        callStepId: "f",
+        name: "Sign in",
+        cursor: 1,
+        steps: [step("fs1", { type: "click", locator: { k: "testid", v: "go" } })],
+      },
+    });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: /show the flow's steps/i }));
+    expect(await screen.findByText(/Recording into/)).toBeTruthy();
+    // The flow's steps render as rows inside the editor.
+    expect(screen.getByText(/getByTestId\("go"\)\.click/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /done editing flow/i }));
+    await waitFor(() => expect(actions.exitFlowScope).toHaveBeenCalled());
+  });
+
+  it("moves the SCOPE cursor from the editor's gaps, not the session's", async () => {
+    setStore({
+      liveSteps: [callRow()],
+      flowScope: {
+        flowId: "flow-1",
+        callStepId: "f",
+        name: "Sign in",
+        cursor: 1,
+        steps: [step("fs1", { type: "click", locator: { k: "testid", v: "go" } })],
+      },
+    });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: /show the flow's steps/i }));
+    await screen.findByText(/Recording into/);
+    // The editor's first gap is index 0 within the SCOPE.
+    const gaps = screen.getAllByLabelText("Move insert point here");
+    fireEvent.click(gaps[gaps.length - 2]); // the scope's first gap sits after the session's
+    await waitFor(() => expect(actions.setFlowCursor).toHaveBeenCalled());
+    expect(actions.setCursor).not.toHaveBeenCalled();
   });
 });
