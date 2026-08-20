@@ -30,7 +30,29 @@ export function reEscape(s: string | null | undefined): string;
 
 /** The RegExp source a `toHaveURL`/`toHaveTitle` call needs for these
  *  semantics, e.g. `new RegExp("/cart\\?step=2", "i")`. */
-export function textMatchExpr(value: string, semantics: MatchSemantics): string;
+export function textMatchExpr(
+  value: string,
+  semantics: MatchSemantics,
+  varNames?: ReadonlySet<string>,
+): string;
+
+/** Escape text for the inside of an emitted template literal. */
+export function escapeForTemplate(s: string): string;
+
+/** The regex-pattern source for a value that may reference `${name}`
+ *  variables. Without a declared reference this is byte-identical to a
+ *  JSON string literal of the reEscape'd value. */
+export function regexPatternExpr(
+  value: string | null | undefined,
+  varNames?: ReadonlySet<string>,
+  prefix?: string,
+  suffix?: string,
+): string;
+
+/** The inverse of `regexPatternExpr`'s template branch — pattern text with
+ *  `${name}` restored, or null when the source is not one this module
+ *  emitted. */
+export function regexPatternFromTemplate(source: string | null | undefined): string | null;
 
 /** Compare what the page reports against what the step expects. */
 export function matchesValue(
@@ -51,7 +73,18 @@ export function urlPathPattern(value: string | null | undefined): string;
 export function urlPathSource(): string;
 
 /** The `toHaveURL` argument for a "URL path is" assertion, as JS source. */
-export function urlPathExpr(value: string | null | undefined): string;
+export function urlPathExpr(
+  value: string | null | undefined,
+  varNames?: ReadonlySet<string>,
+): string;
+
+/** The structural frame `urlPathPattern` wraps a path in — the ends the
+ *  parser recognises a "URL path is" assertion by. */
+export const URL_PATH_PREFIX: string;
+export const URL_PATH_SUFFIX: string;
+
+/** The slash rules a path value carries before it becomes a pattern. */
+export function normalizeUrlPath(value: string | null | undefined): string;
 
 /** Playwright's visibility rule: a non-empty box, not hidden, not display:none.
  *  Opacity is deliberately not consulted — Playwright does not consider it. */

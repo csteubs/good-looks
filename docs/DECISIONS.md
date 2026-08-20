@@ -10,6 +10,80 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-20 — Variables inside a regex-backed assertion, escaped at run time
+
+Seven step kinds embed their expected value in a `RegExp` rather than comparing
+it as a string: the four URL asserts, `titleContains`, `css` with `contains`,
+and the two page-level waits. All of them regex-escaped a `${var}` reference as
+literal text, and the code said so out loud — "a `${var}` reference in these
+kinds stays literal by design", on the grounds that `reEscape` only works on a
+string known at generation time. That reasoning is correct and the conclusion
+was still wrong, because it left the two engines disagreeing.
+
+**The trainer resolves variables before it replays; the run did not.**
+`runStep` calls `resolveStepForReplay` before building the injected script, so
+the preview of `URL path is /order/${orderId}` tested the RESOLVED path and went
+green. The generated spec compared against the fourteen literal characters
+`${orderId}` and could never pass. A user watching the trainer had no way to
+see it — which is exactly the class of failure `e2e/assert-parity.spec.ts`
+exists to catch, and it slipped through because that file had no row whose
+value interpolated anything.
+
+**The fix is a run-time escape, not a run-time interpolation.** `valueExpr`
+cannot be reused here: a value dropped raw into a pattern brings its
+metacharacters with it, so a variable holding `a.b` would match `aXb` too — a
+green assertion that is quietly wider than what the user wrote, which is worse
+than one that fails. `regexPatternExpr` therefore emits a template whose static
+chunks are `reEscape`d now and whose references become
+`glazeReEscape(V.name)`, escaped then. The runtime helper is the SHARED
+`reEscape`, embedded by `toString()` rather than retyped, so the two halves of
+one escape cannot drift.
+
+**`urlPathIs` needs a different shape, and the parity harness is what proved
+it.** The first implementation normalised the path (leading slash added,
+trailing ones dropped) at generation time and then interpolated. That is wrong
+in a way no amount of reading catches: the slash rules read the ENDS of the
+path, and a reference is opaque text until the run supplies it. A value of
+`${path}` does not begin with `/`, so the rule added one — and a variable
+holding `/` then produced a pattern demanding `//` after the host. The run
+failed while the trainer passed, which is the SAME divergence this entry is
+about, reintroduced by the fix for it. `assert-parity` caught it on the first
+run: *"urlPathIs an interpolated path: the run says false, the trainer says
+true."*
+
+So that kind builds its whole pattern at run time instead, through
+`glazeUrlPathPattern` — the shared `urlPathPattern`, which normalises AND
+escapes the finished string. The trainer's replayer calls that same function on
+that same string, so the two now agree **by construction** rather than by a
+rule kept in step in two places. References interpolate raw there, because the
+escaping happens to the whole result.
+
+**Which helper to import is asked of the emitted source, not predicted from the
+steps.** Only `regexPatternExpr` knows whether a value became a template — it
+depends on the kind, the match mode, and on whether the reference names a
+DECLARED variable. Re-deriving that in the preamble would be a second spelling
+of the same rule, and the day a new pattern-built kind is added the two would
+disagree: a missing import throws at load, and so does a spurious one. The
+generator now scans the body it just emitted. That required the preamble to be
+built after the body, so `record1` records a body-RELATIVE line and resolves to
+an absolute one once the preamble's height is known — the alternative, an
+off-by-one, mis-attributes every step's run highlight rather than failing.
+
+**The inverse lives beside the emitter**, in `shared/step-semantics.mjs`, for
+the reason that module exists: a second spelling of the template's shape inside
+`spec-parser.ts` would be right the day it was written, and the direction it
+fails is a hand-edited spec whose assertion silently disappears from the step
+list. It returns null for anything we did not emit, and null means "skip the
+statement", never "half-read it into a step that means something else".
+
+**Without a declared reference every one of these kinds emits exactly what it
+emitted before**, byte for byte — asserted per kind — so the existing library
+regenerates unchanged and no spec on disk is rewritten by this.
+
+The display copy in `renderer/lib/describe-step.ts` deliberately does NOT take
+variables: the step list should show `${orderId}`, the thing the user typed,
+not `${glazeReEscape(V.orderId)}`. Both `describeStep` copies keep agreeing
+because neither is passed any.
 ### 2026-08-20 — The list of interpolatable fields becomes a traversal that writes
 
 `interpolatableFields(step)` returned a `string[]`, and its comment told every

@@ -25,6 +25,7 @@
 //    app's baseline bookkeeping can never disagree about what a key means.
 
 import { gateFailures } from "../../shared/a11y-rollup.mjs";
+import { reEscape, urlPathPattern } from "../../shared/step-semantics.mjs";
 
 import { totpCode } from "../../shared/totp.mjs";
 
@@ -335,4 +336,23 @@ export async function glazeArmDialog(page, action, text) {
     done.catch(() => {});
   });
 }
+
+/** Regex-escape a run-time value before it enters a pattern.
+ *
+ *  This is the SHARED reEscape, embedded by toString() rather than retyped,
+ *  because the escape has to mean exactly what the generator's compile-time
+ *  half meant. A variable holding "a.b" must match the literal text "a.b";
+ *  interpolated raw, its dot would match any character and the assertion
+ *  would quietly pass against a URL nobody asked for.
+ *  Do not edit here — edit shared/step-semantics.mjs. */
+export const glazeReEscape = ${reEscape.toString()};
+
+/** The "URL path is" pattern, built at RUN time for a path that interpolates
+ *  a variable. The SHARED urlPathPattern, embedded — the trainer's replayer
+ *  calls the same function on the same finished string, which is what makes
+ *  the two agree by construction. Normalising the slashes at generation time
+ *  cannot work here: the rules read the ends of the path, and a reference is
+ *  opaque until the run supplies it.
+ *  Do not edit here — edit shared/step-semantics.mjs. */
+export const glazeUrlPathPattern = ${urlPathPattern.toString()};
 `;

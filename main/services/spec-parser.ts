@@ -20,6 +20,7 @@
 
 import { randomUUID } from "crypto";
 
+import { regexPatternFromTemplate } from "../../shared/step-semantics.mjs";
 import { parseTestIdSelector } from "../../shared/testid-attr.mjs";
 import { DEFAULT_WAIT_TIMEOUT_MS } from "./script-generator.js";
 import { fromPlaywrightSameSite, isSafeUploadRelPath } from "../recorder/types.js";
@@ -1416,9 +1417,43 @@ function parseBody(
             // `^…$` exact, `…$` ends-with, bare substring. Both matchers use
             // the shape now — a bare `toHaveURL(string)` is an EXACT whole-URL
             // check, so "URL contains" cannot be written that way.
-            const reM = argStr.match(/^new\s+RegExp\s*\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*(?:,\s*"(?:[^"\\]|\\.)*"\s*)?\)/);
+            // "URL path is" with an interpolated path builds its WHOLE
+            // pattern at run time, so the argument is a call rather than a
+            // literal and the anchor-shape classification below cannot see it.
+            // Matched first, for the same reason the literal path form is:
+            // otherwise it falls through and the assertion vanishes from the
+            // step list on the next hand edit.
+            const pathCallM = argStr.match(
+              /^new\s+RegExp\s*\(\s*glazeUrlPathPattern\s*\(\s*(`(?:[^`\\]|\\.)*`)\s*\)\s*(?:,\s*"(?:[^"\\]|\\.)*"\s*)?\)/,
+            );
+            if (pathCallM && pageAssertM[1] === "toHaveURL") {
+              const pathValue = regexPatternFromTemplate(pathCallM[1]);
+              if (pathValue !== null) {
+                emit("urlPathIs", { ...(soft ? { soft: true } : {}) }, { value: pathValue });
+                i = isWait ? lineEnd : aClose + 1;
+                continue;
+              }
+            }
+            // The first argument is a quoted literal, or — when the value
+            // interpolates a declared variable — a TEMPLATE literal carrying
+            // `${glazeReEscape(V.name)}` calls. Both shapes have to be read,
+            // or a hand-edited spec loses the assertion from its step list.
+            const reM = argStr.match(/^new\s+RegExp\s*\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)\s*(?:,\s*"(?:[^"\\]|\\.)*"\s*)?\)/);
             if (reM) {
-              const pattern = unescapeLit(reM[1].slice(1, -1));
+              // `regexPatternFromTemplate` is the emitter's own inverse, out of
+              // the shared module — a second spelling of the template's shape
+              // here would drift from the half that writes it. Null means the
+              // template is not one we emitted, which is a statement to skip
+              // rather than half-read into a step meaning something else.
+              const pattern =
+                reM[1].charAt(0) === "`"
+                  ? regexPatternFromTemplate(reM[1])
+                  : unescapeLit(reM[1].slice(1, -1));
+              if (pattern === null) {
+                skipped++;
+                i = isWait ? lineEnd : aClose + 1;
+                continue;
+              }
               // "URL path is" first: its pattern is structural — it starts
               // with `^` and ends with `$` INSIDE an alternation, so the
               // anchored-start/anchored-end classification below would file it
@@ -1576,20 +1611,31 @@ function parseBody(
                 // and silently downgrade every `contains` assert to an `is`
                 // against a regex source — which then fails at run time against
                 // a value it looks like it should match.
+                // The pattern literal is captured WITH its delimiters, so a
+                // template literal — the shape a declared `${var}` produces —
+                // can be told from a quoted one and read back through the
+                // emitter's own inverse.
                 const reM = argsStr.match(
-                  /['"`]([^'"`\n]*)['"`]\s*,\s*new\s+RegExp\s*\(\s*['"`]([^'"`\n]*)['"`]/,
+                  /['"`]([^'"`\n]*)['"`]\s*,\s*new\s+RegExp\s*\(\s*(["'][^'"`\n]*["']|`[^`\n]*`)/,
                 );
                 if (reM) {
-                  emit("css", base, {
-                    cssProp: unescapeLit(reM[1]),
-                    cssMatch: "contains",
-                    // Always unescape: the generator regex-escaped this on the
-                    // way out, so leaving it escaped would re-escape it on the
-                    // next regeneration and the pattern would drift a backslash
-                    // further from the value on every round trip.
-                    value: reUnescape(unescapeLit(reM[2])),
-                  });
-                  break;
+                  const lit = reM[2];
+                  const patt =
+                    lit.charAt(0) === "`"
+                      ? regexPatternFromTemplate(lit)
+                      : unescapeLit(lit.slice(1, -1));
+                  if (patt !== null) {
+                    emit("css", base, {
+                      cssProp: unescapeLit(reM[1]),
+                      cssMatch: "contains",
+                      // Always unescape: the generator regex-escaped this on the
+                      // way out, so leaving it escaped would re-escape it on the
+                      // next regeneration and the pattern would drift a backslash
+                      // further from the value on every round trip.
+                      value: reUnescape(patt),
+                    });
+                    break;
+                  }
                 }
                 const m3 = argsStr.match(/['"`]([^'"`\n]*)['"`]\s*,\s*['"`]([^'"`\n]*)['"`]/);
                 emit(

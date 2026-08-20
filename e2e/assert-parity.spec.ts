@@ -30,8 +30,10 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { buildReplayScript } from "../main/services/step-replayer.js";
 import { generateSpec } from "../main/services/script-generator.js";
+import { resolveStepForReplay } from "../main/recorder/types.js";
+import { reEscape, urlPathPattern } from "../shared/step-semantics.mjs";
 import { glazeRuntimeSource } from "../main/services/glaze-runtime-source.js";
-import type { Step } from "../main/recorder/types.js";
+import type { Step, TestVariable } from "../main/recorder/types.js";
 
 const FIXTURE = `<!doctype html>
 <html><head><title>Cart | Acme</title></head>
@@ -91,9 +93,15 @@ test.afterAll(async () => {
   await new Promise<void>((r) => server.close(() => r()));
 });
 
-/** What the TRAINER says about this step on this page. */
-async function replayerVerdict(page: Page, step: Step): Promise<boolean> {
-  const result = (await page.evaluate(buildReplayScript(step))) as { ok: boolean };
+/** What the TRAINER says about this step on this page.
+ *
+ *  `${name}` is resolved BEFORE the script is built, because that is what
+ *  `runStep` does — the injected replayer acts on exactly what it is handed.
+ *  Skipping that here would compare a resolved run against an unresolved
+ *  preview and report a difference this app does not have. */
+async function replayerVerdict(page: Page, step: Step, vars?: TestVariable[]): Promise<boolean> {
+  const resolved = vars && vars.length > 0 ? resolveStepForReplay(step, vars).step : step;
+  const result = (await page.evaluate(buildReplayScript(resolved))) as { ok: boolean };
   return result.ok;
 }
 
@@ -106,14 +114,27 @@ async function replayerVerdict(page: Page, step: Step): Promise<boolean> {
  * itself is untouched, which is the whole point of running it rather than
  * re-deriving what it ought to do.
  */
-async function specVerdict(page: Page, step: Step): Promise<boolean> {
-  const src = generateSpec({ name: "parity", url: base, steps: [step] });
+async function specVerdict(page: Page, step: Step, vars?: TestVariable[]): Promise<boolean> {
+  const src = generateSpec({ name: "parity", url: base, steps: [step], variables: vars });
   const line = src.split("\n").find((l) => l.trim().startsWith("await expect"));
   if (!line) throw new Error("no assertion emitted for step: " + JSON.stringify(step));
   const fast = expect.configure({ timeout: 1500 });
-  const run = new Function("page", "expect", `return (async () => { ${line.trim()} })();`);
+  // The three names a variable-bearing pattern reaches for. Both helpers are
+  // the SHARED functions the emitted runtime module embeds by `toString()`,
+  // so this is the same code and not a second spelling of it. That the
+  // EMITTED file parses and exports them is pinned separately, in
+  // regex-assert-variables.test.ts.
+  const V = Object.fromEntries((vars ?? []).map((v) => [v.name, v.value ?? ""]));
+  const run = new Function(
+    "page",
+    "expect",
+    "V",
+    "glazeReEscape",
+    "glazeUrlPathPattern",
+    `return (async () => { ${line.trim()} })();`,
+  );
   try {
-    await run(page, fast);
+    await run(page, fast, V, reEscape, urlPathPattern);
     return true;
   } catch {
     return false;
@@ -126,6 +147,8 @@ interface Row {
   /** What SHOULD happen on the fixture page. Stated independently of both
    *  engines so a row where they agree and are both wrong still fails. */
   expected: boolean;
+  /** Declared variables, for a row whose value interpolates one. */
+  vars?: TestVariable[];
 }
 
 let n = 0;
@@ -147,6 +170,77 @@ function rows(origin: string): Row[] {
     { label: "urlEndsWith rejects a non-suffix", step: s({ assert: "urlEndsWith", value: "127.0.0.1" }), expected: false },
     { label: "urlPathIs the site root", step: s({ assert: "urlPathIs", value: "/" }), expected: true },
     { label: "urlPathIs rejects a path the page is not at", step: s({ assert: "urlPathIs", value: "/checkout" }), expected: false },
+
+    // ---- a ${var} inside a regex-backed pattern ---------------------------
+    //
+    // These are the rows this file was missing, and their absence is what let
+    // the two engines disagree in production. Every kind here embeds its value
+    // in a RegExp, and the generator used to regex-escape the REFERENCE — so
+    // the run compared against the literal text "${slug}" and could never
+    // pass, while the trainer, which resolves variables before it replays,
+    // showed the same step green. A user watching the preview had no way to
+    // see it.
+    //
+    // The false rows matter as much as the true ones: an interpolated value
+    // that reached the pattern UNescaped would turn a dotted value into a
+    // wildcard, and "matches something it should not" is the failure a green
+    // assertion hides best.
+    {
+      label: "url contains an interpolated path",
+      step: s({ assert: "url", value: "/${slug}" }),
+      vars: [{ name: "slug", kind: "plain", value: "/" }] as TestVariable[],
+      expected: true,
+    },
+    {
+      label: "url contains an interpolated fragment that is absent",
+      step: s({ assert: "url", value: "/${slug}" }),
+      vars: [{ name: "slug", kind: "plain", value: "checkout/9" }] as TestVariable[],
+      expected: false,
+    },
+    {
+      label: "an interpolated dot is escaped, not a wildcard",
+      step: s({ assert: "url", value: "${host}" }),
+      vars: [{ name: "host", kind: "plain", value: "127.0.0.1" }] as TestVariable[],
+      expected: true,
+    },
+    {
+      label: "…and the same value cannot match a host it only resembles",
+      step: s({ assert: "url", value: "${host}" }),
+      vars: [{ name: "host", kind: "plain", value: "127X0.0.1" }] as TestVariable[],
+      expected: false,
+    },
+    {
+      label: "urlPathIs an interpolated path",
+      step: s({ assert: "urlPathIs", value: "${path}" }),
+      vars: [{ name: "path", kind: "plain", value: "/" }] as TestVariable[],
+      expected: true,
+    },
+    {
+      label: "urlPathIs rejects an interpolated path the page is not at",
+      step: s({ assert: "urlPathIs", value: "${path}" }),
+      vars: [{ name: "path", kind: "plain", value: "/checkout" }] as TestVariable[],
+      expected: false,
+    },
+    {
+      label: "titleContains an interpolated word",
+      step: s({ assert: "titleContains", value: "${word}" }),
+      vars: [{ name: "word", kind: "plain", value: "Cart" }] as TestVariable[],
+      expected: true,
+    },
+    {
+      label: "titleContains rejects an interpolated word that is absent",
+      step: s({ assert: "titleContains", value: "${word}" }),
+      vars: [{ name: "word", kind: "plain", value: "Checkout" }] as TestVariable[],
+      expected: false,
+    },
+    // A reference to a name the test does not declare stays literal, in BOTH
+    // engines — the same rule `valueExpr` follows, so a price of ${9.99} or a
+    // pasted shell snippet is never turned into a lookup.
+    {
+      label: "an undeclared reference stays literal text",
+      step: s({ assert: "url", value: "${nope}" }),
+      expected: false,
+    },
 
     // ---- title: exact vs contains ----------------------------------------
     { label: "title is the whole title", step: s({ assert: "title", value: "Cart | Acme" }), expected: true },
@@ -200,8 +294,8 @@ test("every assertion means the same thing to the trainer and to the run", async
   const wrong: string[] = [];
 
   for (const row of rows(base)) {
-    const fromSpec = await specVerdict(page, row.step);
-    const fromTrainer = await replayerVerdict(page, row.step);
+    const fromSpec = await specVerdict(page, row.step, row.vars);
+    const fromTrainer = await replayerVerdict(page, row.step, row.vars);
     if (fromSpec !== fromTrainer) {
       disagreements.push(
         `${row.label}: the run says ${fromSpec}, the trainer says ${fromTrainer}`,
@@ -238,8 +332,8 @@ test("URL path assertions ignore query noise; whole-URL kinds do not", async ({ 
   const disagreements: string[] = [];
   const wrong: string[] = [];
   for (const row of rows) {
-    const fromSpec = await specVerdict(page, row.step);
-    const fromTrainer = await replayerVerdict(page, row.step);
+    const fromSpec = await specVerdict(page, row.step, row.vars);
+    const fromTrainer = await replayerVerdict(page, row.step, row.vars);
     if (fromSpec !== fromTrainer) {
       disagreements.push(`${row.label}: the run says ${fromSpec}, the trainer says ${fromTrainer}`);
     }
