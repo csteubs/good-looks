@@ -367,20 +367,35 @@ const MEASURED_REQUIREMENT = 928;
     "visual-view.tsx: the test name and the run's time sit in the panel header's `id` slot, which truncates by definition — they are the cell that may give",
   );
 
-  // ── And the band carries no run STATE, so its width is one width ────────
+  // ── And the band's WIDTH carries no run state, so it is one width ───────
+  //
+  // The run-wide accepts live here now (they were full-width banners over the
+  // stage), so the band may READ the run's counts — but only to disable. What
+  // it must never do is mount a control conditionally on them: a button that
+  // appears when a run has findings shoves "Re-run" and "Masks & baselines"
+  // sideways exactly when someone is reaching for them, which is the reflow
+  // this whole section exists to prevent.
   const band = visual.match(/\{\/\* The tool band[\s\S]*?\n {6}<\/div>/);
   assert(band !== null, "visual-view.tsx: found the tool band's markup");
   if (band) {
     for (const [what, re] of [
       ["the verdict chip", /<StatusChip/],
-      ["the change count", /changedCount/],
       ["the run's timestamp", /fmtDateTime/],
+      ["a control mounted on the change count", /\{changedCount\s*>\s*0\s*\?/],
     ] as const) {
       assert(
         !re.test(band[0]),
         `visual-view.tsx: the tool band does not carry ${what} — anything that appears on some runs and not others makes the toolbar reflow when a run starts failing`,
       );
     }
+    // The accept is in the band, disabled-gated rather than render-gated —
+    // present on every run at the same width, actionable only when the run has
+    // something to accept. (Accessibility's counterpart left this screen with
+    // the rest of a11y, for the Accessibility view.)
+    assert(
+      /disabled=\{changedCount === 0/.test(band[0]),
+      "visual-view.tsx: the run-wide visual accept is in the band and DISABLED when there is nothing to accept — not unmounted, which changes the band's width",
+    );
   }
 
   const headRule = screens.match(/\.gl-visual-head\s*\{([^}]*)\}/);

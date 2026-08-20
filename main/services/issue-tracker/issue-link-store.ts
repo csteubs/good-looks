@@ -149,6 +149,14 @@ export const issueLinkStore = {
     return readAll().filter((l) => l.testId === testId);
   },
 
+  /** Every a11y link, across tests and rules, in one read. The Accessibility
+   *  view's rule board badges "filed as ENG-42" on every row from this — one
+   *  call, not one per rule — and files a rule ONCE, anchored at a
+   *  representative occurrence, so any occurrence finds the link again. */
+  allA11y(): IssueLink[] {
+    return readAll().filter((l) => l.kind === "a11y");
+  },
+
   /** Record a filed issue. Replaces any existing link for the same defect —
    *  filing again after the first issue was deleted in the tracker should leave
    *  one link, not two. */

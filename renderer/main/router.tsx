@@ -4,6 +4,7 @@ import {
   createRoute,
   createRouter,
 } from "@tanstack/react-router";
+import { A11yView } from "./a11y-view";
 import { BatchView } from "./batch-view";
 import { BranchesView } from "./branches-view";
 import { HomeView } from "./home-view";
@@ -100,6 +101,15 @@ const visualRoute = createRoute({
   },
 });
 
+const a11yRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/a11y",
+  component: A11yView,
+  staticData: {
+    title: "Accessibility",
+  },
+});
+
 const batchRoute = createRoute({
   getParentRoute: () => rootRoute,
   // The path stays `/batch` on purpose — see the rename table in
@@ -148,6 +158,7 @@ const routeTree = rootRoute.addChildren([
   statsCategoryRoute,
   statsFacetRoute,
   visualRoute,
+  a11yRoute,
   batchRoute,
   healsRoute,
   insightsRoute,

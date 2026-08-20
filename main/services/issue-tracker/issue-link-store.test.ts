@@ -169,3 +169,26 @@ describe("an insight report's link", () => {
     expect(store.forTest("t1").map((l) => l.identifier)).toEqual(["ENG-42"]);
   });
 });
+
+describe("allA11y", () => {
+  // The Accessibility view's rule board badges every row from one read, and a
+  // rule filed from ANY occurrence must be found — the filter is by kind, with
+  // no test or step coordinate involved.
+  it("returns a11y links across tests and nothing else", () => {
+    store.save(
+      "linear",
+      { kind: "a11y", testId: "t1", runId: "r1", stepId: "s1", ruleId: "color-contrast" },
+      ISSUE,
+    );
+    store.save(
+      "linear",
+      { kind: "a11y", testId: "t2", runId: "r2", stepId: "s9", ruleId: "image-alt" },
+      { id: "iss-2", identifier: "ENG-43", url: "https://linear.app/x/issue/ENG-43" },
+    );
+    store.save("linear", { kind: "visual", testId: "t1", runId: "r1", stepId: "s1" }, ISSUE);
+
+    const links = store.allA11y();
+    expect(links.map((l) => l.ruleId).sort()).toEqual(["color-contrast", "image-alt"]);
+    expect(links.every((l) => l.kind === "a11y")).toBe(true);
+  });
+});

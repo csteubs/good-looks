@@ -145,6 +145,11 @@ export type DefectSource =
       stepId: string;
       /** axe rule id, e.g. "color-contrast". Identifies one violation on the step. */
       ruleId: string;
+      /** "rule" widens the draft to every current occurrence of the rule across
+       *  the suite (the Accessibility view's batch send). The coordinates above
+       *  still name the ANCHOR occurrence — they are what the link is keyed on
+       *  and where the screenshot comes from; the backend gathers the rest. */
+      scope?: "rule";
     }
   | { kind: "visual"; testId: string; runId: string; stepId: string }
   | { kind: "failure"; testId: string; runId: string; stepId: string | null }

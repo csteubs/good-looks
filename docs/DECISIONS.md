@@ -8758,3 +8758,82 @@ fix (a flow's plain variables bind to the flow's own values; secrets/captured
 surface into the caller's header and env), caller-spec propagation in
 `testStore.save`, the library surface (used-by, guarded delete, unwrap, rail
 section), trainer multi-select and extraction, and inline flow editing.
+
+## 2026-08-19 — The Visual view's findings banners become chips and tool-band accepts
+
+The Visual view stacked up to three full-width notices between the tool band
+and the stage: the failure, the visual changes, and the accessibility
+findings. The last two each restated a count and carried an "Accept all for
+this run" button — on exactly the runs worth looking at, they pushed the
+screenshot (the one thing the screen exists to show) below the fold. They are
+gone. The counts are amber chips in the panel header beside the verdict
+("N visual changes", "N a11y issues" — the a11y count previously existed
+NOWHERE but its banner, so the chip is load-bearing, not decoration), and the
+run-wide accepts are two ghost buttons in the tool band ("Accept visuals",
+"Accept a11y"), each still behind its confirm dialog. The failure keeps its
+banner because it carries what neither a chip nor a button can: which step,
+and the jump to it.
+
+Two decisions inside that:
+
+- **The accepts are disabled when the run has nothing to accept, never
+  unmounted.** The band's standing rule is one width on every run
+  (`check:narrow-layout`): a control that mounts when findings appear shoves
+  "Re-run" and "Masks & baselines" sideways exactly when someone reaches for
+  them. The check now pins the new shape — no conditional mount on
+  `changedCount`/`a11yCount` in the band, and both accepts present and
+  disabled-gated.
+- **Dismissal left this screen with the banners.** Dismiss existed to wave a
+  full-width banner off without accepting what it reported; a chip and a
+  disabled-able button are not noise that needs waving off. The flag and its
+  ops (`run-notice-ops.ts`, `RunReplay.dismissedNotices`) survive — the
+  test's Accessibility tab still writes them — and the visual kind stays
+  valid data on old replays.
+
+The run list's finding marks (the eye / accessibility icons) also moved from
+a strip UNDER the pass/fail chip to the same row, before it: two 11px icons
+right-aligned beneath a bordered label read as misaligned debris, and the
+row's height no longer depends on a reserved strip.
+
+## 2026-08-19 — Accessibility leaves the Visual view for a dedicated, rule-centric view
+
+The morning's change had shrunk the Visual view's a11y banner into a header
+chip and a tool-band accept. This finishes the move: accessibility now has no
+surface on the Visual view at all — no chip, no accept button, no per-step
+badge or violation list, no frame-rail mark, no run-list marker — and a new
+top-level **Accessibility** view (`/a11y`, `renderer/main/a11y-view.tsx`)
+owns the suite-wide picture. Half-moves were the alternative and they are
+worse than either endpoint: a finding surfaced in two places teaches the user
+to check both, and a run-list mark pointing at findings the view no longer
+shows would send them hunting through steps for nothing. The per-test
+Accessibility tab and the Stats severity dashboard stay — "what about this
+test" and "how bad overall" are different questions from "what do I do about
+this rule".
+
+**The view is rule-centric, not run-centric, and that is the decision that
+matters.** An axe finding is not run-shaped: the same `color-contrast` fires
+on five tests and re-presenting it five times is why a11y reports go unread.
+The Triage board lists RULES worst-first (from the existing `a11y:rollup`)
+and gives each one the two decisions a finding admits:
+
+- **Accept everywhere** (`a11y:acceptRule`): pins ONLY the named rule's keys,
+  on every test's latest checked run — the same `selectLatestA11yRuns`
+  selection the board itself is drawn from, so the accept touches exactly
+  what the board shows. Reusing the step/run accepts' key collection here
+  would have silently signed off every other rule sharing a step with the
+  named one; `a11y-baseline-ops.test.ts` pins the narrowing.
+- **Send**: ONE tracker issue per rule, listing every occurrence, instead of
+  one per step per test. Rather than a new defect kind, the a11y source
+  gained an optional `scope: "rule"` — the anchor coordinates stay, so the
+  link store, deep links and recurrence commenting all work unchanged, and
+  the loader widens the body with a capped "Where it occurs" checklist. The
+  board badges "Filed as ENG-42" by rule id across tests (`issues:a11yLinks`,
+  one read for the whole board).
+
+**The Baseline tab exists because "Reset accepted" was the only undo.** One
+mistaken acceptance cost a whole re-triage. `a11y:revokeRule` removes one
+rule's keys from one test's baseline and nothing else; like reset, it changes
+nothing until the next run. The trend strip beside it counts steps with new
+findings per checked run — checked runs only, `baseline-update` events
+excluded, drawn only at two-plus points, all rules the drift strip already
+established.

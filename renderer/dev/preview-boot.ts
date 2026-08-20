@@ -56,7 +56,8 @@ function mountPreviewBanner(): void {
  *  job. So the preview asks the router directly instead of fighting it:
  *
  *      /?view=stats            /?view=visual      /?view=batch
- *      /?view=heals            /?view=insights    /?view=branches
+ *      /?view=a11y             /?view=heals       /?view=insights
+ *      /?view=branches
  *      /?test=t-checkout
  *
  *  `branches` is reachable here even though the branch switcher cannot work in
@@ -77,7 +78,14 @@ async function openRequestedView(): Promise<void> {
     testId
       ? { to: "/test/$id", params: { id: testId } }
       : {
-          to: `/${view}` as "/stats" | "/visual" | "/batch" | "/heals" | "/insights" | "/branches",
+          to: `/${view}` as
+            | "/stats"
+            | "/visual"
+            | "/a11y"
+            | "/batch"
+            | "/heals"
+            | "/insights"
+            | "/branches",
         },
   );
 }

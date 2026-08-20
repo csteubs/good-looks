@@ -257,8 +257,10 @@ listing in the branch switcher.
 (the paper-plane icon in the run output header). A compose dialog opens with a
 title and body already assembled from the failure — the failing step, the error
 line, and screenshots or diffs as attachments you can drop before sending. The
-same button appears on visual diffs and on individual accessibility violations,
-so each violation can become its own assignable issue.
+same button appears on visual diffs and on individual accessibility violations
+in a test's Accessibility tab, so each violation can become its own assignable
+issue — and the Accessibility view's Triage board can send one issue per *rule*
+that lists every place it fires across the suite.
 
 If that same defect already has an issue, the dialog offers to **comment the
 recurrence** on it instead of filing a duplicate.

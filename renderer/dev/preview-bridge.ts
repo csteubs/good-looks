@@ -1058,6 +1058,46 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       }
       return REPLAY;
     },
+    /** The Accessibility view's rule-wide accept. Same shape as the real op:
+     *  only the rule's keys leave `newKeys`, other rules on the step stay
+     *  flagged — which is exactly what the board has to demonstrate. */
+    "a11y:acceptRule": (p): { tests: number; steps: number } => {
+      const ruleId = String((p as { ruleId?: unknown })?.ruleId ?? "");
+      let steps = 0;
+      for (const step of REPLAY.steps) {
+        if (!step.a11y) continue;
+        const ruleKeys = new Set(
+          step.a11y.violations
+            .filter((v) => v.id === ruleId)
+            .flatMap((v) => (v.nodes.length ? v.nodes.map((t) => `${v.id}|${t}`) : [`${v.id}|`])),
+        );
+        if (ruleKeys.size === 0) continue;
+        const remaining = step.a11y.newKeys.filter((k) => !ruleKeys.has(k));
+        if (remaining.length === step.a11y.newKeys.length) continue;
+        steps++;
+        step.a11y = {
+          violations: step.a11y.violations,
+          newKeys: remaining,
+          acceptedCount: step.a11y.acceptedCount + (step.a11y.newKeys.length - remaining.length),
+        };
+      }
+      return { tests: steps > 0 ? 1 : 0, steps };
+    },
+    "a11y:revokeRule": (p): { removed: number } => {
+      const testId = String((p as { testId?: unknown })?.testId ?? "");
+      const ruleId = String((p as { ruleId?: unknown })?.ruleId ?? "");
+      const rec = state.tests.find((t) => t.id === testId);
+      if (!rec?.a11yBaseline) return { removed: 0 };
+      let removed = 0;
+      const next: Record<string, string[]> = {};
+      for (const [stepId, keys] of Object.entries(rec.a11yBaseline)) {
+        const kept = keys.filter((k) => !k.startsWith(`${ruleId}|`));
+        removed += keys.length - kept.length;
+        if (kept.length > 0) next[stepId] = kept;
+      }
+      rec.a11yBaseline = Object.keys(next).length > 0 ? next : undefined;
+      return { removed };
+    },
     "a11y:acceptStep": (p): RunReplay => {
       const step = REPLAY.steps.find((s) => s.stepId === p?.stepId);
       if (step?.a11y) {
@@ -1514,6 +1554,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     },
     "issues:linksForTest": (p): IssueLink[] =>
       state.issues.links.filter((l) => l.testId === p?.testId),
+    "issues:a11yLinks": (): IssueLink[] => state.issues.links.filter((l) => l.kind === "a11y"),
     "issues:commentRecurrence": (p): IssueLink => {
       const source = (p?.source ?? {}) as IssueLink;
       const link = state.issues.links.find(

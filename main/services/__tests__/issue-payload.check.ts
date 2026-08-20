@@ -290,6 +290,41 @@ function draftText(input: BuildInput): string {
 }
 
 {
+  // A rule-scoped draft's occurrence list is built from test names and step
+  // labels — a test name is user text and a step label can carry a recorded
+  // value, so both are bounded, and the list itself is capped: a large suite
+  // must not build an unbounded issue body.
+  const text = draftText({
+    source: A11Y_SOURCE,
+    context: CONTEXT,
+    defect: {
+      kind: "a11y",
+      ruleId: "color-contrast",
+      impact: "serious",
+      help: "help",
+      targets: [],
+      occurrences: Array.from({ length: 60 }, (_, i) => ({
+        testName: i === 0 ? "t".repeat(5000) : `Test ${i}`,
+        stepLabel: i === 1 ? "s`]( https://evil.example.com".repeat(50) : `step ${i}`,
+        nodes: 2,
+      })),
+    },
+  });
+  assert(text.includes("Where it occurs"), "a rule-scoped draft lists where the rule fires");
+  assert(!/t{400}/.test(text), "a runaway test name in an occurrence is bounded");
+  assert(!text.includes("Test 59"), "the occurrence list is capped");
+  assert(text.includes("more"), "…and says it was capped rather than pretending completeness");
+  assert(
+    !text.includes("`]("),
+    "a backtick in an occurrence's step label cannot close its code span and open a link",
+  );
+  assert(
+    /across \d+ tests/.test(text),
+    "a rule-scoped draft titles itself by the RULE and its spread, not the anchor test",
+  );
+}
+
+{
   // Markdown injection: a rule id ending a code span could otherwise close it
   // and let the rest render as structure.
   const text = draftText({

@@ -38,6 +38,8 @@ const MAX_TEXT = 300;
 /** A selector list is evidence; a hundred of them is a page dump. */
 const MAX_TARGETS = 5;
 /** Console errors worth reading before someone opens the app anyway. */
+const MAX_OCCURRENCES = 25;
+
 const MAX_CONSOLE = 10;
 /** Requests around a failure. Past this it stops being a clue. */
 const MAX_NETWORK = 10;
@@ -92,12 +94,25 @@ export interface DraftContext {
   browser?: string;
 }
 
+/** One place a rule fires, for a rule-scoped draft. Strings are untrusted like
+ *  everything else here — they pass through `line`/`code` on the way out. */
+export interface A11yOccurrence {
+  testName: string;
+  stepLabel: string | null;
+  /** offending elements at this site */
+  nodes: number;
+}
+
 export interface A11yDefect {
   kind: "a11y";
   ruleId: string;
   impact: string;
   help: string;
   targets: string[];
+  /** Present on a rule-scoped draft (the Accessibility view's batch send):
+   *  every current occurrence of the rule across the suite, the anchor
+   *  included. Absent on the ordinary per-step send. */
+  occurrences?: A11yOccurrence[];
 }
 
 export interface VisualDefect {
@@ -154,6 +169,15 @@ export function buildTitle(input: BuildInput): string {
   const test = line(context.testName, 80) || "Untitled test";
   const step = line(context.stepLabel, 60);
   if (defect.kind === "a11y") {
+    // A rule-scoped draft is about the RULE, not the anchor test — titling it
+    // "on Checkout" would read as one test's problem when the body lists five.
+    if (defect.occurrences && defect.occurrences.length > 0) {
+      const tests = new Set(defect.occurrences.map((o) => line(o.testName, 80))).size;
+      return line(
+        `a11y: ${line(defect.ruleId, 60) || "violation"} across ${tests} test${tests === 1 ? "" : "s"}`,
+        200,
+      );
+    }
     return line(`a11y: ${line(defect.ruleId, 60) || "violation"} on ${test}`, 200);
   }
   if (defect.kind === "visual") {
@@ -189,6 +213,27 @@ function a11yBody(d: A11yDefect): string[] {
     for (const t of targets) out.push(`- ${code(t)}`);
     if (d.targets.length > targets.length) {
       out.push(`- …and ${d.targets.length - targets.length} more`);
+    }
+  }
+  // The rule-scoped section: where the rule fires, one line per site, so the
+  // issue is the checklist a fix can be worked through. Capped like every list
+  // that leaves this file — an unbounded suite must not build an unbounded
+  // issue body.
+  if (d.occurrences && d.occurrences.length > 0) {
+    const shown = d.occurrences.slice(0, MAX_OCCURRENCES);
+    out.push("", "**Where it occurs**", "");
+    for (const o of shown) {
+      const test = line(o.testName, 80) || "Untitled test";
+      const step = line(o.stepLabel, 60);
+      const nodes = Number.isFinite(o.nodes) && o.nodes > 0 ? o.nodes : 0;
+      out.push(
+        `- ${test}${step ? ` · ${code(step)}` : ""}${
+          nodes ? ` — ${nodes} element${nodes === 1 ? "" : "s"}` : ""
+        }`,
+      );
+    }
+    if (d.occurrences.length > shown.length) {
+      out.push(`- …and ${d.occurrences.length - shown.length} more`);
     }
   }
   return out;

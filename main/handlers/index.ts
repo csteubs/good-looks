@@ -32,7 +32,13 @@ import { emitReport } from "../services/report-emitter.js";
 import { artifactStore } from "../services/artifact-store.js";
 import { baselineStore } from "../services/baseline-store.js";
 import { acceptRunBaseline, acceptStepBaseline } from "../services/visual-baseline-ops.js";
-import { acceptRunA11y, acceptStepA11y, resetA11yBaseline } from "../services/a11y-baseline-ops.js";
+import {
+  acceptRuleA11y,
+  acceptRunA11y,
+  acceptStepA11y,
+  resetA11yBaseline,
+  revokeA11yRule,
+} from "../services/a11y-baseline-ops.js";
 import { rollupA11y, selectLatestA11yRuns } from "../../shared/a11y-rollup.mjs";
 import {
   dismissRunNotice,
@@ -1670,6 +1676,7 @@ export function registerHandlers(): void {
   ipcMain.handle("issues:linksForTest", async (_e, params: { testId?: unknown }) =>
     typeof params?.testId === "string" ? issueTrackerService.linksForTest(params.testId) : [],
   );
+  ipcMain.handle("issues:a11yLinks", async () => issueTrackerService.a11yLinks());
   ipcMain.handle(
     "issues:commentRecurrence",
     async (_e, params: { source?: unknown; attachmentFiles?: unknown }) => {
@@ -2254,6 +2261,27 @@ export function registerHandlers(): void {
     if (result) sendToMain("runs:changed", {});
     return result;
   });
+  /** The Accessibility view's triage verb: accept one rule everywhere it
+   *  currently fires (the same latest-checked-run selection the rollup reads).
+   *  Emits `runs:changed` because it rewrites replays across tests — the
+   *  rollup, the Visual replays and the run list all derive from them. */
+  ipcMain.handle("a11y:acceptRule", async (_e, params: { ruleId?: unknown }) => {
+    if (typeof params?.ruleId !== "string" || !params.ruleId) return { tests: 0, steps: 0 };
+    const result = acceptRuleA11y(params.ruleId);
+    if (result.tests > 0) sendToMain("runs:changed", {});
+    return result;
+  });
+  /** Per-item revoke for the baseline browser — un-accept one rule for one
+   *  test, where `a11y:resetBaseline` would throw away everything. */
+  ipcMain.handle(
+    "a11y:revokeRule",
+    async (_e, params: { testId?: unknown; ruleId?: unknown }) => {
+      if (typeof params?.testId !== "string" || typeof params?.ruleId !== "string") {
+        return { removed: 0 };
+      }
+      return revokeA11yRule(params.testId, params.ruleId);
+    },
+  );
   // ── Findings banners: dismiss / restore ──────────────────────────────────
   //
   // The counterpart to the two accept handlers above. Accepting resolves a

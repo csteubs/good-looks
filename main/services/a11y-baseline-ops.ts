@@ -15,8 +15,10 @@ import { logger } from "@shell/backend";
 
 import { artifactStore } from "./artifact-store.js";
 import type { RunReplay } from "./artifact-store.js";
+import { runHistoryStore } from "./run-history-store.js";
 import { testStore } from "./test-store.js";
 import { acceptKeysFor } from "./a11y-diff.js";
+import { keysOf, selectLatestA11yRuns } from "../../shared/a11y-rollup.mjs";
 
 /** Merge accepted keys into a test's baseline and persist. Returns the number
  *  of steps whose acceptance changed. */
@@ -92,6 +94,85 @@ export function acceptRunA11y(testId: string, runId: string): RunReplay | null {
   clearFlags(replay, touched);
   artifactStore.writeReplay(testId, runId, replay);
   return replay;
+}
+
+/**
+ * Accept ONE RULE everywhere it currently fires — the Accessibility view's
+ * triage verb. "Everywhere" is defined the same way the rollup defines it
+ * (`selectLatestA11yRuns`): each test's most recent run that completed checks.
+ * Using any other selection would let the view offer an accept that touches a
+ * different set of steps than the board it sits on shows.
+ *
+ * Only that rule's keys are pinned — accepting `color-contrast` across the
+ * suite must not quietly sign off an `image-alt` violation that happens to
+ * share a step. The replays are patched the same way the step/run accepts
+ * patch them, narrowed to the rule's keys, and written back so the Visual
+ * replay and the rollup agree without a re-run.
+ */
+export function acceptRuleA11y(ruleId: string): { tests: number; steps: number } {
+  const chosen = selectLatestA11yRuns(runHistoryStore.list());
+  let tests = 0;
+  let steps = 0;
+  for (const run of chosen) {
+    const replay = artifactStore.readReplay(run.testId, run.id);
+    if (!replay) continue;
+    const perStep: Record<string, string[]> = {};
+    let stepsHere = 0;
+    for (const step of replay.steps) {
+      if (!step.a11y) continue;
+      const ruleKeys = step.a11y.violations
+        .filter((v) => v.id === ruleId)
+        .flatMap((v) => keysOf(v));
+      if (ruleKeys.length === 0) continue;
+      perStep[step.stepId] = ruleKeys;
+      const accepted = new Set(ruleKeys);
+      const remaining = step.a11y.newKeys.filter((k) => !accepted.has(k));
+      if (remaining.length !== step.a11y.newKeys.length) stepsHere++;
+      step.a11y = {
+        violations: step.a11y.violations,
+        newKeys: remaining,
+        // Recomputed from the violations rather than incremented: keys can be
+        // pinned twice (a step accept followed by a rule accept), and a count
+        // that double-adds reads as more accepted issues than the step has.
+        acceptedCount: acceptKeysFor(step.a11y.violations).filter((k) => !remaining.includes(k))
+          .length,
+      };
+    }
+    if (Object.keys(perStep).length === 0) continue;
+    const pinned = pin(run.testId, perStep);
+    if (pinned > 0 || stepsHere > 0) {
+      tests++;
+      steps += stepsHere;
+      artifactStore.writeReplay(run.testId, run.id, replay);
+    }
+  }
+  return { tests, steps };
+}
+
+/**
+ * Un-accept ONE RULE for ONE TEST — the Accessibility view's per-item revoke.
+ * `resetA11yBaseline` below is all-or-nothing, which makes one mistaken
+ * acceptance cost a whole re-triage; this removes only the keys spelled
+ * `<ruleId>|…`. Like reset, it changes nothing until the next run, which then
+ * reports the rule's violations again.
+ */
+export function revokeA11yRule(testId: string, ruleId: string): { removed: number } {
+  const rec = testStore.get(testId);
+  if (!rec?.a11yBaseline) return { removed: 0 };
+  const prefix = `${ruleId}|`;
+  let removed = 0;
+  const next: Record<string, string[]> = {};
+  for (const [stepId, keys] of Object.entries(rec.a11yBaseline)) {
+    const kept = keys.filter((k) => !k.startsWith(prefix));
+    removed += keys.length - kept.length;
+    if (kept.length > 0) next[stepId] = kept;
+  }
+  if (removed === 0) return { removed: 0 };
+  if (Object.keys(next).length === 0) delete rec.a11yBaseline;
+  else rec.a11yBaseline = next;
+  rec.updatedAt = Date.now();
+  testStore.save(rec);
+  return { removed };
 }
 
 /** Forget a test's accepted violations, so the next run reports everything
