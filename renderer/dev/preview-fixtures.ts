@@ -816,6 +816,7 @@ export const VISUAL_FRAMES = {
 
 export const SETTINGS: RecorderSettings = {
   showUrlBar: true,
+  extraTestIdAttributes: [],
   trainerPanelEnabled: false,
   defaultRunSpeed: "medium",
   defaultWindowSize: { width: 1280, height: 800 },

@@ -9151,3 +9151,41 @@ the same reason: with everything off the fixture otherwise never extends at
 all. Both are pinned source-level (the fixture only exists inside a
 Playwright worker), alongside store unit tests with the freshness rule
 revert-verified.
+## 2026-08-20 — Configurable test-id attributes: the feature half of the #181 fix
+
+Settings → Recording gains **Extra test-id attributes** (data-cy, data-qa,
+…): the recorder probes them after data-testid and before the always-on
+legacy pair, and a step recorded off one carries `attr` and emits an
+attribute selector — the exact machinery #181 built for data-test-id, now
+open to the team's own convention.
+
+**The default is immutable, deliberately.** `data-testid` stays what an
+absent `attr` means and what getByTestId resolves. Making the DEFAULT
+configurable (Playwright's testIdAttribute) was rejected: absent-attr
+locators on existing steps would silently change meaning, and every heal-map
+key derived from them would stop matching. Extras ADD; nothing re-spells
+what was already recorded.
+
+**The allowlist became a grammar, and that is the security story.** The
+fixed pair in `testIdOverride` widened to "any lowercase data-* name within
+the conservative grammar, bounded, never the default" — spelled ONCE in
+shared/testid-attr.mjs, used by ingest (normalizeLocator), emission, the
+heal key, the parser's inverse, and the injected oracle (embedded by
+toString, the heal fixture's idiom — the dom test pins the embedded copy
+against isTestIdAttributeName). A step recorded off an extra stays valid
+after the setting changes, because validity is the grammar, not the list.
+The parser's inverse widened the same way, so `locator('[data-cy="v"]')`
+reads back as the testid it is; a hand-written `[data-testid="v"]` stays
+css, as before.
+
+**The list reaches the page as data.** The capture and count scripts get
+`TID_ATTRS` interpolated as JSON after normalizeTestIdAttributes — grammar,
+dedupe, cap — and the helper consts bake the built-in list so every script
+embedding them works alone. The right-click pick-at-point script keeps the
+built-in list in phase 1 (it is a const, not a builder); an element whose
+ONLY test id is an extra falls back to its other candidates there —
+recording and counting, the load-bearing paths, honor the configuration.
+
+The settings row drafts locally and saves on blur/Enter: the store
+normalizes hard, and per-keystroke saves would delete a half-typed
+"data-c" out from under the user — the variables panel's lesson.

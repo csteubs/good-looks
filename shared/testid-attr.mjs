@@ -34,11 +34,56 @@
  *  spellings and two heal-map keys. */
 export const DEFAULT_TESTID_ATTRIBUTE = "data-testid";
 
-/** The test-id attributes a Locator's `attr` field may name — the ones that
- *  need spelling out because `getByTestId` cannot resolve them. The default
- *  attribute is deliberately NOT in this list; `normalizeLocator` drops it to
- *  absent. */
+/** The test-id attributes the recorder ALWAYS probes beyond the default —
+ *  the ones that need spelling out because `getByTestId` cannot resolve
+ *  them. The default attribute is deliberately NOT in this list;
+ *  `normalizeLocator` drops it to absent. User-configured extras (Settings →
+ *  Recording) extend this set at capture time; `testIdOverride` below admits
+ *  any grammar-valid data-* attribute so a step recorded off an extra stays
+ *  valid even after the setting changes. */
 export const TESTID_ATTRIBUTE_OVERRIDES = ["data-test-id", "data-test"];
+
+/**
+ * Whether a string may serve as a test-id attribute at all: lowercase
+ * `data-*`, the conservative HTML data-attribute grammar, bounded — and
+ * never the default (absent and default must stay the same spelling). The
+ * name lands inside an attribute SELECTOR in executed source, so this is a
+ * boundary rule, not a style preference.
+ *
+ * @param {unknown} v
+ * @returns {v is string}
+ */
+export function isTestIdAttributeName(v) {
+  return (
+    typeof v === "string" &&
+    v.length <= 50 &&
+    v !== DEFAULT_TESTID_ATTRIBUTE &&
+    /^data-[a-z][a-z0-9-]*$/.test(v)
+  );
+}
+
+/**
+ * Canonicalize the user-configured EXTRA attributes (Settings → Recording):
+ * grammar-checked, deduped, the default and the always-on pair filtered out,
+ * capped. Both the settings store and the capture-script injection go
+ * through this — the list is interpolated into an injected script, so
+ * nothing unvalidated may ride it.
+ *
+ * @param {unknown} input
+ * @returns {string[]}
+ */
+export function normalizeTestIdAttributes(input) {
+  if (!Array.isArray(input)) return [];
+  const out = [];
+  for (const raw of input) {
+    if (!isTestIdAttributeName(raw)) continue;
+    if (TESTID_ATTRIBUTE_OVERRIDES.indexOf(raw) >= 0) continue;
+    if (out.indexOf(raw) >= 0) continue;
+    out.push(raw);
+    if (out.length >= 4) break;
+  }
+  return out;
+}
 
 /**
  * The validated override attribute, or null.
@@ -49,11 +94,20 @@ export const TESTID_ATTRIBUTE_OVERRIDES = ["data-test-id", "data-test"];
  * evaluation — so "the type says so" is not a reason here any more than it was
  * for `nth`.
  *
+ * Self-contained (embedded by `testIdSelectorSource`), so the grammar is a
+ * literal here rather than a call to `isTestIdAttributeName` — the two must
+ * agree, and testid-attributes.dom.test.ts pins that they do.
+ *
  * @param {unknown} attr
- * @returns {"data-test-id" | "data-test" | null}
+ * @returns {string | null}
  */
 export function testIdOverride(attr) {
-  return attr === "data-test-id" || attr === "data-test" ? attr : null;
+  return typeof attr === "string" &&
+    attr !== "data-testid" &&
+    attr.length <= 50 &&
+    /^data-[a-z][a-z0-9-]*$/.test(attr)
+    ? attr
+    : null;
 }
 
 /**
@@ -92,11 +146,14 @@ export function testIdSelector(attr, value) {
  * means; the next regeneration normalizes the spelling.
  *
  * @param {string} selector
- * @returns {{ attr: "data-test-id" | "data-test", value: string } | null}
+ * @returns {{ attr: string, value: string } | null}
  */
 export function parseTestIdSelector(selector) {
-  var m = /^\[(data-test-id|data-test)="((?:[^"\\]|\\[\s\S])*)"\]$/.exec(String(selector));
+  var m = /^\[(data-[a-z][a-z0-9-]*)="((?:[^"\\]|\\[\s\S])*)"\]$/.exec(String(selector));
   if (!m) return null;
+  // The default stays a css locator (see the doc above), and the grammar's
+  // length bound applies on the way back in too.
+  if (m[1] === "data-testid" || m[1].length > 50) return null;
   var value = m[2].replace(/\\([0-9a-fA-F]{1,6}) ?|\\([\s\S])/g, function (_all, hex, ch) {
     return hex ? String.fromCodePoint(parseInt(hex, 16)) : ch;
   });

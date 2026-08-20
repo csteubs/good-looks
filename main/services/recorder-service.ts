@@ -1258,7 +1258,9 @@ async function injectCapture(): Promise<void> {
   if (!page || !session) return;
   const wc = pageExecutor(page);
   try {
-    await wc.executeJavaScript(buildCaptureScript(session.captureNonce));
+    await wc.executeJavaScript(
+      buildCaptureScript(session.captureNonce, recorderSettingsStore.get().extraTestIdAttributes),
+    );
     await applyStateAttributes();
   } catch (err) {
     logger.warn("recorder", "Failed to inject capture script", { err: String(err) });
@@ -2564,7 +2566,7 @@ export const recorderService = {
     try {
       const n = await execWithTimeout(
         pageExecutor(page),
-        buildCountScript(loc),
+        buildCountScript(loc, recorderSettingsStore.get().extraTestIdAttributes),
         COUNT_TIMEOUT_MS,
       );
       return typeof n === "number" && Number.isFinite(n) ? Math.trunc(n) : -1;

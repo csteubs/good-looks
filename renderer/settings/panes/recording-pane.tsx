@@ -6,7 +6,8 @@
 // above "Capture screenshots by default" with nothing marking the change of
 // subject.
 
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch } from "@ui";
+import * as React from "react";
+import { Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch, Text } from "@ui";
 
 import {
   DEFAULT_VIEWPORT_PRESET_ID,
@@ -20,6 +21,25 @@ import { PaneSection } from "../pane-section";
 
 export function RecordingPane() {
   const { settings, save } = useSettingsController();
+
+  // Draft-local, saved on blur/Enter: the store normalizes hard (grammar,
+  // dedupe, cap), and saving per keystroke would delete a half-typed
+  // "data-c" out from under the user — the variables panel's lesson.
+  const [tidDraft, setTidDraft] = React.useState(
+    (settings.extraTestIdAttributes ?? []).join(", "),
+  );
+  const [tidSeeded, setTidSeeded] = React.useState(settings.extraTestIdAttributes);
+  if (tidSeeded !== settings.extraTestIdAttributes) {
+    setTidSeeded(settings.extraTestIdAttributes);
+    setTidDraft((settings.extraTestIdAttributes ?? []).join(", "));
+  }
+  const commitTid = () =>
+    void save({
+      extraTestIdAttributes: tidDraft
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t !== ""),
+    });
 
   return (
     <PaneSection>
@@ -70,6 +90,30 @@ export function RecordingPane() {
             ))}
           </SelectContent>
         </Select>
+      </SettingRow>
+      <SettingRow
+        id="extra-testid-attributes"
+        label="Extra test-id attributes"
+        summary="Attribute names the recorder treats as test ids, beyond data-testid — your team's own convention."
+        details="Comma-separated, lowercase data-* names (data-cy, data-qa). data-testid, data-test-id and data-test are always probed. A step recorded off an extra attribute keeps working if the list changes later — the attribute is stored on the step. Names outside the data-* grammar are dropped on save, because they end up inside selectors in the generated spec."
+      >
+        <div className="flex flex-col items-end gap-1">
+          <Input
+            id="extra-testid-attributes"
+            aria-label="Extra test-id attributes"
+            value={tidDraft}
+            placeholder="data-cy, data-qa"
+            className="w-64 font-mono"
+            onChange={(e) => setTidDraft(e.target.value)}
+            onBlur={commitTid}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitTid();
+            }}
+          />
+          <Text size="small" className="text-tertiary">
+            Saved: {(settings.extraTestIdAttributes ?? []).join(", ") || "none"}
+          </Text>
+        </div>
       </SettingRow>
     </PaneSection>
   );
