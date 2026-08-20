@@ -152,6 +152,25 @@ describe("the generated kind", () => {
   });
 });
 
+describe("the totp flag", () => {
+  it("rides along on a secret create", async () => {
+    const onCreate = vi.fn(async () => {});
+    render(<NewVariableForm onCreate={onCreate} onCancel={() => {}} existingNames={[]} />);
+    type(/new variable name/i, "mfa");
+    type(/new variable value/i, "GEZDGNBVGY3TQOJQ");
+    fireEvent.click(screen.getByLabelText("TOTP setup key"));
+    fireEvent.click(screen.getByRole("button", { name: /create variable/i }));
+    await waitFor(() =>
+      expect(onCreate).toHaveBeenCalledWith({
+        name: "mfa",
+        kind: "secret",
+        value: "GEZDGNBVGY3TQOJQ",
+        totp: true,
+      }),
+    );
+  });
+});
+
 describe("creating", () => {
   it("submits the name, kind and value", async () => {
     const onCreate = vi.fn(async () => {});

@@ -148,6 +148,7 @@ function VariableRow({
       ) : null}
 
       {variable.kind === "secret" ? (
+        <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
           <KeyRound className="size-4 text-tertiary" />
           {hasSecret ? (
@@ -183,6 +184,20 @@ function VariableRow({
               </Button>
             </>
           )}
+        </div>
+        <label className="flex cursor-pointer items-center gap-2">
+          <Checkbox
+            checked={!!variable.totp}
+            onCheckedChange={(v: boolean | "indeterminate") =>
+              onChange({ ...variable, totp: v === true })
+            }
+            aria-label={`TOTP key for ${variable.name || "variable"}`}
+          />
+          <Text size="small" className="text-secondary">
+            TOTP setup key — steps that reference this type the CURRENT 6-digit code, freshly
+            derived at each read. Store the base32 key from MFA setup, not a one-time code.
+          </Text>
+        </label>
         </div>
       ) : variable.kind === "generated" ? (
         <div className="flex items-center gap-2">

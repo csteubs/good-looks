@@ -19,7 +19,7 @@
 // is choosing Secret BEFORE typing.
 
 import * as React from "react";
-import { Badge, Button, Callout, Field, Input, SegmentedControl, SegmentedControlItem, Text } from "@ui";
+import { Badge, Button, Callout, Checkbox, Field, Input, SegmentedControl, SegmentedControlItem, Text } from "@ui";
 import { KeyRound, Plus, TriangleAlert, Variable } from "lucide-react";
 
 import { GEN_SPECS, type GenSpec, type TestVariable, type VariableKind } from "../lib/recorder-types";
@@ -181,7 +181,13 @@ export function NewVariableForm({
   onCancel,
   existingNames,
 }: {
-  onCreate: (v: { name: string; kind: VariableKind; value: string; genSpec?: GenSpec }) => Promise<void>;
+  onCreate: (v: {
+    name: string;
+    kind: VariableKind;
+    value: string;
+    genSpec?: GenSpec;
+    totp?: boolean;
+  }) => Promise<void>;
   onCancel: () => void;
   existingNames: string[];
 }) {
@@ -189,6 +195,7 @@ export function NewVariableForm({
   const [kind, setKind] = React.useState<VariableKind>("secret");
   const [value, setValue] = React.useState("");
   const [genSpec, setGenSpec] = React.useState<GenSpec>("string");
+  const [totp, setTotp] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -202,7 +209,13 @@ export function NewVariableForm({
     setBusy(true);
     setError(null);
     try {
-      await onCreate({ name: trimmed, kind, value, ...(kind === "generated" ? { genSpec } : {}) });
+      await onCreate({
+        name: trimmed,
+        kind,
+        value,
+        ...(kind === "generated" ? { genSpec } : {}),
+        ...(kind === "secret" && totp ? { totp: true } : {}),
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -287,6 +300,17 @@ export function NewVariableForm({
       )}
 
       {kind === "secret" ? (
+        <>
+        <label className="flex cursor-pointer items-center gap-2">
+          <Checkbox
+            checked={totp}
+            onCheckedChange={(v: boolean | "indeterminate") => setTotp(v === true)}
+            aria-label="TOTP setup key"
+          />
+          <Text variant="small" color="secondary">
+            TOTP setup key — references type the current 6-digit code, not the key.
+          </Text>
+        </label>
         <Text variant="small" color="secondary">
           Encrypted on this Mac and never shown again — here or anywhere else in the trainer. The
           real value IS typed into the page when a step replays or the test runs; what the trainer
@@ -294,6 +318,7 @@ export function NewVariableForm({
           environment reference, not the value, and it is stripped from run logs and anything sent
           to a hosted model.
         </Text>
+        </>
       ) : kind === "generated" ? (
         <Text variant="small" color="secondary">
           A fresh value on every run (this session keeps one sample so steps can use it now).
