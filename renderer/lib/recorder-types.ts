@@ -254,6 +254,7 @@ export interface Step {
   downloadMatch?: DownloadMatch;
   text?: string;
   soft?: boolean;
+  force?: boolean;
   attr?: string;
   /** KEBAB-case CSS property for a "css" assertion, the match mode, and the
    *  pseudo-state a `state` step applies (mirror of main types). */
@@ -341,6 +342,7 @@ export interface RawStep {
   downloadMatch?: DownloadMatch;
   text?: string;
   soft?: boolean;
+  force?: boolean;
   attr?: string;
   cssProp?: string;
   cssMatch?: CssMatch;

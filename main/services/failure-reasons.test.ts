@@ -134,3 +134,27 @@ describe("suggestFailureReason", () => {
     expect(suggestFailureReason(triageWith("some-future-signal"))).toBeNull();
   });
 });
+
+describe("the not-actionable reason", () => {
+  it("maps Playwright's actionability wording onto it", () => {
+    for (const line of [
+      'locator.click: Timeout 5000ms exceeded … <div class="cookie-bar"> intercepts pointer events',
+      "element is outside of the viewport",
+      "waiting for element to be visible, enabled and stable",
+    ]) {
+      expect(suggestFailureReason(null, line)).toEqual({
+        reasonId: "not-actionable",
+        signal: "actionability-error",
+      });
+    }
+  });
+
+  it("does NOT claim a plain resolve failure — a vanished element is not an overlay problem", () => {
+    const res = suggestFailureReason(null, "Timeout 5000ms exceeded waiting for locator to be visible");
+    expect(res?.reasonId).not.toBe("not-actionable");
+  });
+
+  it("resolves the new id like any built-in", () => {
+    expect(resolveFailureReason("not-actionable")?.name).toBe("Target not actionable");
+  });
+});

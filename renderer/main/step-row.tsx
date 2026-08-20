@@ -843,6 +843,18 @@ export function StepRow({
                       Disable Step
                     </DropdownMenuCheckboxItem>
                   ) : null}
+                  {/* Click steps only, and off by default on purpose: the
+                      strict check catches real bugs (a button no user could
+                      press), and this is the escape for targets covered or
+                      animating BY DESIGN. */}
+                  {onEdit && step.type === "click" ? (
+                    <DropdownMenuCheckboxItem
+                      checked={!!step.force}
+                      onCheckedChange={(checked) => onEdit?.({ force: checked })}
+                    >
+                      Ignore Actionability (force)
+                    </DropdownMenuCheckboxItem>
+                  ) : null}
                 </DropdownMenuContent>
               </DropdownMenu>
             );

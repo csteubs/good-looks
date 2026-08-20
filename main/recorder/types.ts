@@ -281,6 +281,10 @@ export interface Step {
   text?: string;
   /** soft assertion — reports a failure but doesn't stop the test (expect.soft) */
   soft?: boolean;
+  /** click ignores actionability checks (.click({ force: true })) — the escape
+   *  for targets that are covered or animating BY DESIGN. Off by default:
+   *  strictness catches real bugs. */
+  force?: boolean;
   /** attribute name for an "attribute" assertion */
   attr?: string;
   /** CSS property for a "css" assertion, as a KEBAB-case name
@@ -417,6 +421,7 @@ export interface RawStep {
   cond?: ConditionKind;
   text?: string;
   soft?: boolean;
+  force?: boolean;
   attr?: string;
   cssProp?: string;
   cssMatch?: CssMatch;
@@ -1204,6 +1209,7 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   if (cond) out.cond = cond;
   if (waitUntil) out.waitUntil = waitUntil;
   if (bool(s.soft)) out.soft = true;
+  if (bool(s.force)) out.force = true;
 
   // A CSS property name is checked for SHAPE, not merely length-capped like the
   // other free strings: it is the one string field whose grammar is known, and

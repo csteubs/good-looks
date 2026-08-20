@@ -63,6 +63,12 @@ export const DEFAULT_FAILURE_REASONS = [
     description: "The page was slower than the test's budget — a timeout, not an error.",
   },
   {
+    id: "not-actionable",
+    name: "Target not actionable",
+    description:
+      "The element was there but could not be acted on — covered, hidden, disabled, or still moving. If the overlay is by design, the click step's kebab offers Ignore Actionability (force).",
+  },
+  {
     id: "other",
     name: "Other issue",
     description: "Anything the reasons above don't cover.",
@@ -103,6 +109,14 @@ export function resolveFailureReason(id, custom = []) {
  */
 const NETWORK_FAILURE =
   /net::ERR_(CONNECTION|NAME_NOT_RESOLVED|INTERNET_DISCONNECTED|ADDRESS_UNREACHABLE|NETWORK|TUNNEL|PROXY|TIMED_OUT|EMPTY_RESPONSE|SSL|CERT)|ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/;
+
+/** Playwright's actionability wording — the element was found and still could
+ *  not be acted on. Deliberately NOT "element is not visible" alone: that
+ *  phrase also appears in plain resolve failures, and mislabelling a vanished
+ *  element as "not actionable" would send the user to the force toggle when
+ *  the element is simply gone. */
+const ACTIONABILITY_FAILURE =
+  /intercepts pointer events|element is outside of the viewport|element is not stable|element is not enabled|waiting for element to be visible, enabled and stable/;
 
 /**
  * Which built-in reason each triage signal argues for.
@@ -148,6 +162,9 @@ const SIGNAL_REASON = {
 export function suggestFailureReason(triage, errorLine = "") {
   if (NETWORK_FAILURE.test(errorLine)) {
     return { reasonId: "network", signal: "network-error" };
+  }
+  if (ACTIONABILITY_FAILURE.test(errorLine)) {
+    return { reasonId: "not-actionable", signal: "actionability-error" };
   }
   const strongest = triage && Array.isArray(triage.evidence) ? triage.evidence[0] : null;
   if (!strongest) return null;

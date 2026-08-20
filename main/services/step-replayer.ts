@@ -639,8 +639,15 @@ export function buildReplayScript(step: Step): string {
         var over = occludedBy(el);
         if (over) {
           var what = describeOccluder(over);
-          log("error", "another element (" + what + ") is on top of this one — a real run fails here with \\"element intercepts pointer events\\"");
-          return { ok: false, error: "Element is covered by " + what };
+          // A force click skips this check on RUNS ({ force: true }), so the
+          // preview must skip it too — failing here while the run passes is the
+          // pessimistic lie, and this step opted out of the check on purpose.
+          if (step.force === true) {
+            log("info", "another element (" + what + ") is on top — ignored, this click has Ignore Actionability (force)");
+          } else {
+            log("error", "another element (" + what + ") is on top of this one — a real run fails here with \\"element intercepts pointer events\\"");
+            return { ok: false, error: "Element is covered by " + what };
+          }
         }
         el.click();
         log("info", "clicked");
