@@ -139,6 +139,25 @@ and the replayer now fails one with "nothing will be generated for it" instead
 of letting `matchesValue`'s empty-substring true paint it green. The
 generator's UNGENERATABLE comment stays as the backstop for steps already on
 disk.
+### 2026-08-19 — Locator fragility becomes visible, and health earns silence
+
+A per-step locator grade (`renderer/lib/locator-grade.ts`), pure over the
+stored locator: `positional` for the recorder's generated-path fallbacks
+(`xpathFor`'s `/html[1]/…` walk, `cssPath`'s `:nth-of-type` chains — the
+shapes that are unique today and wrong after the next deploy), `indexed` for
+an `nth`, and null for everything else. Risky rows get a small glyph — a
+button straight into Refine where refining is wired, plain information in
+read-only lists — and the detail view rolls positional counts into one
+callout. Modeled on mabl's confidence rating, inverted: they score every
+step, this flags only the two tiers with a real failure mode, because a badge
+on every row stops meaning anything. An index is phrased neutrally ("acts on
+match N in page order") — since ordinal selection shipped, an `nth` can be
+the user's stated intent, and the glyph informs rather than scolds; `-1` is
+called out as the stable case. The full sentence rides the accessible name
+(the hover-only-copy trap), and the detail-view callout is the hover-free
+surface. Closes the QA-KNOWN-GAPS "locator uniqueness feedback" line that had
+stood since the file was written.
+
 ### 2026-08-19 — Download steps: the order is the feature
 
 A `download` step — "expect the previous step to start a file download" —

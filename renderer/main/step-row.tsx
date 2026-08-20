@@ -12,11 +12,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@ui";
-import { Check, ChevronDown, ChevronRight, GripVertical, Loader2, MoreHorizontal, Pencil, Play, Variable, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, GripVertical, Loader2, MoreHorizontal, Pencil, Play, TriangleAlert, Variable, X } from "lucide-react";
 import type { RunStepStatus } from "./recorder-store";
 
 import { SEL_BG, SEL_RING, TONE, Temp, TypeChip, formatDuration, insetRail } from "../theme";
 import { describeStep } from "../lib/describe-step";
+import { gradeLocator } from "../lib/locator-grade";
 import { DEFAULT_WAIT_TIMEOUT_MS } from "../lib/recorder-types";
 import { clampViewportAxis } from "../lib/viewport-presets";
 import type { Step, TestVariable } from "../lib/recorder-types";
@@ -642,6 +643,35 @@ export function StepRow({
           {describeStep(step)}
         </span>
       )}
+
+      {/* Locator fragility, the quiet way: only the two risky tiers render
+          anything, and the full sentence rides the accessible name (the
+          Radix-tooltip trap — hover-only copy is copy jsdom and keyboards
+          never reach). With Refine wired it is a button straight into the
+          fix; read-only lists get the same glyph as information. */}
+      {(() => {
+        const grade = gradeLocator(step.locator);
+        if (!grade || editing) return null;
+        const cls =
+          grade.tier === "positional"
+            ? "gl-icon-btn shrink-0 text-support-yellow-orange"
+            : "gl-icon-btn shrink-0 text-tertiary";
+        return onRefine ? (
+          <button
+            type="button"
+            className={cls}
+            onClick={onRefine}
+            aria-label={`${grade.detail} Opens Refine Selection.`}
+            title={grade.detail}
+          >
+            <TriangleAlert aria-hidden="true" />
+          </button>
+        ) : (
+          <span role="img" className={cls} aria-label={grade.detail} title={grade.detail}>
+            <TriangleAlert aria-hidden="true" />
+          </span>
+        );
+      })()}
 
       {!editing ? (
         // `gl-step-row-actions` is what keeps this cluster reachable once a

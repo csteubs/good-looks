@@ -869,3 +869,34 @@ describe("download rows", () => {
     expect(onEdit).toHaveBeenCalledWith({ value: "b.csv" });
   });
 });
+
+// ── Locator fragility indicator ────────────────────────────────────────────
+
+describe("the locator fragility indicator", () => {
+  it("marks a positional-path locator and routes into Refine", () => {
+    const onRefine = vi.fn();
+    render(
+      <StepRow
+        index={0}
+        step={step({ type: "click", locator: { k: "xpath", v: "/html[1]/body[1]/div[3]" } })}
+        onRefine={onRefine}
+      />,
+    );
+    const glyph = screen.getByRole("button", { name: /positional locator/i });
+    fireEvent.click(glyph);
+    expect(onRefine).toHaveBeenCalled();
+  });
+
+  it("marks an indexed locator as information in a read-only list", () => {
+    render(
+      <StepRow index={0} step={step({ type: "click", locator: { k: "text", v: "Save", nth: 1 } })} />,
+    );
+    expect(screen.getByRole("img", { name: /indexed locator/i })).toBeTruthy();
+  });
+
+  it("stays silent for a healthy locator — a badge on every row means nothing", () => {
+    render(<StepRow index={0} step={step({ type: "click", locator: LOCATOR })} />);
+    expect(screen.queryByRole("img", { name: /locator/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /locator/i })).toBeNull();
+  });
+});

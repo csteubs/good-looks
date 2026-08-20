@@ -165,6 +165,9 @@ export const TESTS: TestRecord[] = [
       // "download" chip and the worded description with its capture note.
       { type: "click", locator: { k: "role", role: "button", name: "Export results" } },
       { type: "download", value: "results.csv", captureVar: "exportName" },
+      // A positional-path locator — the recorder's last-resort shape — so the
+      // fragility glyph and the detail view's rollup callout render.
+      { type: "click", locator: { k: "xpath", v: "/html[1]/body[1]/div[3]/button[2]" } },
       // Long enough to overflow the pane in both directions, which is the
       // state the step list's scrolling exists for and the one nothing in the
       // preview showed: 43 steps outrun the viewport vertically, and the fill
