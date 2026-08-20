@@ -64,6 +64,13 @@ export const DUPLICATED_FIELDS = [
   "datasets",
   "isFlow",
   "flowParams",
+  // Login-session settings describe HOW the test runs, like runBrowser. The
+  // copy consumes the same source's session (`useSessionFrom` points at an id
+  // the duplicate does not change), and a duplicated login test keeps saving —
+  // into its OWN state file, keyed by the copy's fresh id, so the original's
+  // saved session is never overwritten by the copy.
+  "saveSession",
+  "useSessionFrom",
 ] as const satisfies readonly (keyof TestRecord)[];
 
 /**

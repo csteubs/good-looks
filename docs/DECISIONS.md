@@ -9113,3 +9113,41 @@ than `>>=`.
 A setup key that doesn't decode reports like a missing secret — the trainer
 refuses to type rather than typing a wrong code, and the runtime throws
 naming the fix ("paste the setup key, not a one-time code").
+## 2026-08-20 — Login sessions: pass-gated saves, loud staleness, and no auto-chaining
+
+mabl's login sessions, in this app's shape: a test with **Save signed-in
+state** on writes its context's storageState after a run — and only a
+PASSING run, because a failed login saves a half-signed-in state that
+poisons every test starting from it. Another test picks **Start runs from
+the saved session of …** and its runs launch with that state; the suite logs
+in once, not once per test.
+
+The decisions:
+
+**Consuming is explicit; nothing auto-runs the login test.** A cache miss
+does not trigger a hidden run of the source test — the run output says "no
+fresh saved session — run that test first" and proceeds signed out. An
+invisible auto-chain would couple every consumer's runtime and failure modes
+to a test the user didn't ask to run; the message names the fix instead.
+
+**Stale state is refused out loud (24h cap).** Auth cookies rot, and a
+half-valid state fails inside the CONSUMING test with errors that read as
+flake and point nowhere near the cause. The Variables tab's status line
+distinguishes "saved and fresh", "saved but stale", and "never saved" — the
+three states a user has to tell apart to act.
+
+**Plaintext in userData, deliberately.** The state holds the same cookies
+the run's own network.json already records; the writer is a Playwright child
+process with no reach into safeStorage, and encrypt-after/decrypt-before
+would add a decrypt-to-disk window without changing the threat model.
+Parity with run artifacts, not with the secrets store — a password or setup
+key never lands here, only the session it bought. Deleting the test deletes
+its state (same bounded-path drill as the uploads dir).
+
+The save lives in the capture fixture's teardown — BOTH teardown paths,
+because a login test with every capture toggle off takes the early-return
+path, and that is the common case. The extension gate gained SAVE_STATE for
+the same reason: with everything off the fixture otherwise never extends at
+all. Both are pinned source-level (the fixture only exists inside a
+Playwright worker), alongside store unit tests with the freshness rule
+revert-verified.

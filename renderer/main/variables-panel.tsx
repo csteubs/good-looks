@@ -26,6 +26,7 @@ import {
   Button,
   Callout,
   Checkbox,
+  Field,
   Input,
   ScrollArea,
   Select,
@@ -332,6 +333,30 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
     onError: (err: unknown) => toast.error(String(err)),
   });
 
+  // ── Login session ─────────────────────────────────────────────────
+  const sessionInfo = useQuery({
+    queryKey: ["sessionState", test.id],
+    queryFn: () => api.tests.sessionState(test.id),
+  });
+  const allTests = useQuery({ queryKey: ["tests"], queryFn: () => api.tests.list() });
+  const setSession = useMutation({
+    mutationFn: (patch: { saveSession?: boolean; useSessionFrom?: string | null }) =>
+      api.tests.setSession(test.id, patch),
+    onSuccess: invalidate,
+    onError: (err: unknown) => toast.error(String(err)),
+  });
+  const clearSession = useMutation({
+    mutationFn: () => api.tests.clearSessionState(test.id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["sessionState", test.id] }),
+    onError: (err: unknown) => toast.error(String(err)),
+  });
+  /** Tests whose sessions can be started from: they save one, and are not
+   *  this test. */
+  const sessionSources = React.useMemo(
+    () => (allTests.data ?? []).filter((t) => t.saveSession && t.id !== test.id),
+    [allTests.data, test.id],
+  );
+
   const runSweep = useMutation({
     mutationFn: () => api.batch.run([test.id], { allDatasets: true }),
     onSuccess: () => toast.success("Sweep started — watch it in the Batch view"),
@@ -562,6 +587,65 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
               Off — this test is not offered in the trainer&apos;s Add-step flow list.
             </Text>
           )}
+        </section>
+
+        {/* ── Login session ─────────────────────────────────────────── */}
+        <section className="flex flex-col gap-3">
+          <div className="flex items-center gap-2">
+            <KeyRound className="size-4 text-secondary" />
+            <Text weight="medium">Login session</Text>
+          </div>
+          <label className="flex cursor-pointer items-center gap-2">
+            <Switch
+              checked={!!test.saveSession}
+              onCheckedChange={(v: boolean) => setSession.mutate({ saveSession: v })}
+              aria-label="Save signed-in state after passing runs"
+            />
+            <Text size="small" className="text-secondary">
+              Save this test&apos;s signed-in state after a PASSING run, so other tests can start
+              from it instead of logging in again. A failed run never saves.
+            </Text>
+          </label>
+          {test.saveSession ? (
+            <div className="flex items-center gap-2">
+              <Text size="small" className="text-tertiary">
+                {sessionInfo.data
+                  ? sessionInfo.data.fresh
+                    ? "A signed-in state is saved and fresh."
+                    : "A state is saved but STALE — runs ignore it until this test passes again."
+                  : "No state saved yet — run this test (and pass) to save one."}
+              </Text>
+              {sessionInfo.data ? (
+                <Button size="small" variant="ghost" onClick={() => clearSession.mutate()}>
+                  Clear
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+          <Field label="Start runs from the saved session of" orientation="vertical">
+            <Select
+              value={test.useSessionFrom ?? "none"}
+              onValueChange={(v) =>
+                setSession.mutate({ useSessionFrom: v === "none" ? null : v })
+              }
+            >
+              <SelectTrigger aria-label="Session source" className="w-96">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None — start signed out</SelectItem>
+                {sessionSources.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Text size="small" className="text-secondary">
+            Only tests that save a session are offered. A stale or missing state is reported in
+            the run output and the run proceeds signed out — it never fails the run by itself.
+          </Text>
         </section>
 
         {/* ── Datasets ──────────────────────────────────────────────── */}

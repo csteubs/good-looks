@@ -87,6 +87,10 @@ export const playwrightConfigSource =
   // which always navigates to an absolute URL — is unaffected, and a hand-run
   // outside the app behaves exactly as it does today.
   "    baseURL: process.env.PW_BASE_URL || undefined,\n" +
+  // A saved login session to start from (login-session tests). Per-RUN via
+  // the environment like everything else here; unset means a fresh context,
+  // byte-for-byte the behaviour this file always had.
+  "    storageState: process.env.GLAZE_STORAGE_STATE || undefined,\n" +
   // For a HAND-RUN, which is the same reason `timeout` is read from the env
   // here rather than left to Playwright's 30s default: this file is also what
   // somebody gets when they run the spec themselves outside the app, and a
