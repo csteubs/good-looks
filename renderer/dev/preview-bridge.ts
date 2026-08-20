@@ -710,6 +710,35 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       }
       return test;
     },
+    "tests:setDatasets": (p) => {
+      const test = findTest(p?.id);
+      if (test && Array.isArray(p?.datasets)) {
+        test.datasets = p.datasets as NonNullable<TestRecord["datasets"]>;
+      }
+      return test;
+    },
+    /** No file dialog exists in a browser tab, so the import is CANNED: two
+     *  demo rows appended, with the same summary shape the real handler
+     *  returns — which is what lets the toasts be seen at all in preview. */
+    "tests:importDatasetCsv": (p) => {
+      const test = findTest(p?.id);
+      if (!test) {
+        return { ok: false, imported: 0, problem: "Test not found.", createdVariables: [], skippedColumns: [], raggedRows: 0, truncated: false };
+      }
+      const existing = test.datasets ?? [];
+      const rows = [
+        { id: `d-demo-${existing.length + 1}`, name: `Row ${existing.length + 1}`, values: { user: "alice", city: "Berlin" } },
+        { id: `d-demo-${existing.length + 2}`, name: `Row ${existing.length + 2}`, values: { user: "bob", city: "Lyon" } },
+      ];
+      test.datasets = [...existing, ...rows];
+      const declared = new Set((test.variables ?? []).map((v) => v.name));
+      const created = ["user", "city"].filter((n) => !declared.has(n));
+      test.variables = [
+        ...(test.variables ?? []),
+        ...created.map((name) => ({ name, kind: "plain" as const, value: "" })),
+      ];
+      return { ok: true, imported: rows.length, createdVariables: created, skippedColumns: [], raggedRows: 0, truncated: false };
+    },
     /** One-way, like the real handler: the value crosses and is never read
      *  back. The preview holds only the NAME, which is all `secretStatus`
      *  answers with anyway. */
