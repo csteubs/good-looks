@@ -8837,3 +8837,33 @@ nothing until the next run. The trend strip beside it counts steps with new
 findings per checked run — checked runs only, `baseline-update` events
 excluded, drawn only at two-plus points, all rules the drift strip already
 established.
+
+## 2026-08-19 — The scripted run's pace is an option, not a test timeout
+
+The preview's `startFakeRun` paces a simulated run at 260ms an event so steps
+land one at a time — presentation, and the whole reason the run is scripted
+rather than instant. But every test that awaits `runner:done` was paying that
+presentation in real time: two ticks a step plus one for done makes a run's
+wall-clock a function of the fixture's step count, and t-checkout's twelve
+steps put the pass-path test at 6.5s against vitest's 5s default. It flaked
+once under full-suite load (2026-08-19), and the first workaround — a
+per-test `{ timeout: 15_000 }` — re-coupled on every fixture change: the
+budget needed re-growing whenever t-checkout grew, and during the flows work
+a loop block was routed into t-search purely to keep t-checkout's simulated
+run under it. The problem was the coupling itself, not the size of the
+number.
+
+So the tick is now an `installPreviewBridge` option (`runTickMs`, default
+260). The preview passes nothing and keeps the watchable pace; every bridge
+test that starts a run passes 1ms — same script, same events, and the delays
+still strictly increase, so ordering is preserved. The per-test timeout is
+deleted rather than kept as a belt-and-braces: if the fast tick is ever lost,
+the 5s default is what makes the re-coupling visible as a failure instead of
+seconds quietly returning to the suite.
+
+Fake timers were the rejected alternative. `runToCompletion` interleaves real
+promise resolution with the bridge's timers, so `vi.useFakeTimers` would
+thread advance calls through the helper and change what the tests exercise —
+and the bridge schedules more than the run (the refine pick, the flow-scope
+push), all of which would need advancing too. Shrinking real time keeps the
+tests on exactly the code path the preview runs.

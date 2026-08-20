@@ -159,10 +159,8 @@ export const TESTS: TestRecord[] = [
     stepsDivergedReason: "unapplied",
     steps: steps(
       { type: "goto", url: "https://docs.example.com" },
-      // A repeat block early in the LONG fixture (t-checkout's step count is
-      // budgeted by the bridge's simulated-run test, so the loop rows live
-      // here): renders the "repeat"/"end repeat" chips, the inline count
-      // edit, and the body's indent.
+      // A repeat block early in the LONG fixture: renders the "repeat"/"end
+      // repeat" chips, the inline count edit, and the body's indent.
       { type: "loop", loopCount: 3 },
       { type: "fill", locator: { k: "role", role: "searchbox" }, value: "locator" },
       { type: "press", value: "Enter" },

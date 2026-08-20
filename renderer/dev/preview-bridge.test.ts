@@ -265,7 +265,11 @@ describe("push events", () => {
   }
 
   it("delivers a payload the way api.on unwraps it", async () => {
-    installPreviewBridge();
+    // `runTickMs: 1` in every test that starts a run — see "the scripted run"
+    // below. These three assert on the synchronous first emit and the return
+    // value, but the run they start keeps its timers past the test's end, and
+    // at the preview's pace that is seconds of stray wake-ups per test.
+    installPreviewBridge({ runTickMs: 1 });
     const out = collect("runner:output");
     await ipc().invoke("runner:run", { id: "t-login", headed: false });
     expect(out.length).toBeGreaterThan(0);
@@ -273,7 +277,7 @@ describe("push events", () => {
   });
 
   it("stops delivering after unsubscribe", async () => {
-    installPreviewBridge();
+    installPreviewBridge({ runTickMs: 1 });
     const seen: unknown[] = [];
     const off = ipc().on("runner:output", (...args: unknown[]) => seen.push(args[1]));
     off();
@@ -285,7 +289,7 @@ describe("push events", () => {
     // api.ts sends `{ id }`, not `{ testId }`, and the store keys its run map
     // by the test id. Read the wrong key and the panel watches a run nobody is
     // reporting on — which renders as a run that never finishes.
-    installPreviewBridge();
+    installPreviewBridge({ runTickMs: 1 });
     const { runId } = await ipc().invoke<{ runId: string }>("runner:run", {
       id: "t-login",
       headed: false,
@@ -295,6 +299,14 @@ describe("push events", () => {
 });
 
 describe("the scripted run", () => {
+  // Every test here awaits `runner:done`, and at the preview's 260ms tick that
+  // wall-clock is the fixture's step count in real time — two ticks a step, so
+  // t-checkout's twelve steps held the pass-path test 6.5s against vitest's 5s
+  // default. It wore a per-test timeout for a while, which re-coupled on every
+  // fixture change: growing t-checkout meant growing a number here, and a loop
+  // block was once routed to t-search to duck exactly that. `runTickMs: 1`
+  // ends the coupling — the pacing is presentation, not behaviour, and nothing
+  // asserted here depends on it.
   type Ipc = {
     invoke<T>(c: string, p?: unknown): Promise<T>;
     on(c: string, fn: (...args: unknown[]) => void): () => void;
@@ -322,7 +334,7 @@ describe("the scripted run", () => {
   }
 
   it("finishes, rather than running forever", async () => {
-    installPreviewBridge();
+    installPreviewBridge({ runTickMs: 1 });
     const { code } = await runToCompletion("t-login");
     expect(code).not.toBeNull();
   });
@@ -331,18 +343,12 @@ describe("the scripted run", () => {
     // THE OUTCOME COMES FROM THE FIXTURE, not a coin flip. That is what makes
     // `?test=t-login` a stable address for "show me the failed path" — a
     // random outcome would mean a screenshot nobody can ask for twice.
-    installPreviewBridge();
+    installPreviewBridge({ runTickMs: 1 });
     expect((await runToCompletion("t-login")).code).toBe(1);
   });
 
-  it("passes the test whose fixture history passed", { timeout: 15_000 }, async () => {
-    // Real time, not a guess: the bridge paces a fake run at 260ms a tick, two
-    // ticks a step plus one for done — so this test's wall-clock grows with
-    // t-checkout's step count. The fixture grows a step whenever it gains a
-    // specimen worth showing (urlPathIs tipped it past the 5s default, then
-    // the two scroll rows), so the budget follows the simulation, not the
-    // default.
-    installPreviewBridge();
+  it("passes the test whose fixture history passed", async () => {
+    installPreviewBridge({ runTickMs: 1 });
     expect((await runToCompletion("t-checkout")).code).toBe(0);
   });
 
@@ -350,7 +356,7 @@ describe("the scripted run", () => {
     // Not marked passed, not marked failed — never attempted. A run that
     // greened everything after the failing step would be claiming those steps
     // ran, which is the one thing a step list must not lie about.
-    installPreviewBridge();
+    installPreviewBridge({ runTickMs: 1 });
     const { steps } = await runToCompletion("t-login");
     const failed = steps.filter((s) => s.status === "end" && !s.ok);
     expect(failed).toHaveLength(1);
