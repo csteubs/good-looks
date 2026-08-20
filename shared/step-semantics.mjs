@@ -187,6 +187,166 @@ export function reEscape(s) {
 }
 
 /**
+ * Escape text for the inside of an EMITTED template literal: backslashes
+ * doubled (template cooking halves them again when the spec is parsed as
+ * JavaScript), backticks escaped, and `${` escaped so a literal dollar-brace
+ * in the user's value cannot open an interpolation.
+ *
+ * Applied to the STATIC chunks of a variable-bearing pattern, AFTER reEscape:
+ * reEscape's own backslashes have to survive the template context they are
+ * emitted into, or `example\.com` reaches the RegExp as `example.com` and the
+ * dot goes back to matching any character.
+ *
+ * @param {string} s
+ * @returns {string}
+ */
+export function escapeForTemplate(s) {
+  return String(s).replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
+}
+
+/** A `${name}` reference to a declared variable. Same grammar as the backend's
+ *  VAR_REF_RE — deliberately narrow, so a literal `${9.99}` is left alone. */
+const PATTERN_VAR_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+
+/**
+ * The regex-pattern SOURCE for a value that may reference variables.
+ *
+ * Without a declared reference this is byte-identical to what this module
+ * always emitted — a JSON string literal of the reEscape'd value — so every
+ * spec already on disk regenerates unchanged.
+ *
+ * WITH one, it emits a template literal whose static chunks are reEscape'd
+ * here, at generation time, and whose references become
+ * `${glazeReEscape(V.name)}` — escaped at RUN time, because the value is not
+ * known now. That run-time escape is the whole reason this could not simply
+ * reuse `valueExpr`: a variable holding `a.b` must match the literal text
+ * `a.b`, and interpolating it raw would put an unescaped `.` in a pattern,
+ * where it matches any character and quietly widens the assertion.
+ *
+ * `prefix`/`suffix` are pattern text (anchors, or the URL-path frame), already
+ * regex-safe and never escaped as data.
+ *
+ * @param {string} value
+ * @param {ReadonlySet<string> | undefined} varNames declared variable names
+ * @param {string} [prefix] pattern text before the value
+ * @param {string} [suffix] pattern text after it
+ * @returns {string} JavaScript source for the RegExp's first argument
+ */
+export function regexPatternExpr(value, varNames, prefix, suffix) {
+  const pre = prefix || "";
+  const post = suffix || "";
+  const text = String(value == null ? "" : value);
+  const refs =
+    varNames && varNames.size > 0
+      ? [...text.matchAll(PATTERN_VAR_RE)].filter((m) => varNames.has(m[1]))
+      : [];
+  if (refs.length === 0) return JSON.stringify(pre + reEscape(text) + post);
+  let out = "`" + escapeForTemplate(pre);
+  let last = 0;
+  for (const m of refs) {
+    const at = m.index ?? 0;
+    out += escapeForTemplate(reEscape(text.slice(last, at)));
+    out += "${glazeReEscape(V." + m[1] + ")}";
+    last = at + m[0].length;
+  }
+  return out + escapeForTemplate(reEscape(text.slice(last)) + post) + "`";
+}
+
+/**
+ * A template literal that interpolates variables RAW, with no escaping.
+ *
+ * For the one caller whose pattern is built entirely at run time:
+ * `urlPathExpr` hands the finished path text to `glazeUrlPathPattern`, which
+ * normalises the slashes AND regex-escapes the whole string — so escaping the
+ * references here as well would double-escape them.
+ *
+ * @param {string} value
+ * @param {ReadonlySet<string> | undefined} varNames declared variable names
+ * @returns {string} JavaScript source: a template literal, or a JSON string
+ *                   when nothing is interpolated
+ */
+export function rawTemplateExpr(value, varNames) {
+  const text = String(value == null ? "" : value);
+  const refs =
+    varNames && varNames.size > 0
+      ? [...text.matchAll(PATTERN_VAR_RE)].filter((m) => varNames.has(m[1]))
+      : [];
+  if (refs.length === 0) return JSON.stringify(text);
+  let out = "`";
+  let last = 0;
+  for (const m of refs) {
+    const at = m.index ?? 0;
+    out += escapeForTemplate(text.slice(last, at));
+    out += "${V." + m[1] + "}";
+    last = at + m[0].length;
+  }
+  return out + escapeForTemplate(text.slice(last)) + "`";
+}
+
+/**
+ * The inverse of `regexPatternExpr`'s template branch: read an emitted
+ * template literal back into pattern text with `${name}` restored.
+ *
+ * It lives HERE, next to the emitter, rather than in `spec-parser.ts`, for the
+ * reason this whole module exists — a second spelling of the template's shape
+ * would be right the day it was written and silently wrong afterwards, and the
+ * direction it fails is a hand-edited spec whose assertion silently disappears
+ * from the step list.
+ *
+ * Only the template shape: a plain quoted pattern is an ordinary JS string
+ * literal, which the parser already knows how to read, and duplicating that
+ * here would be the same mistake in the other direction.
+ *
+ * Returns null for anything this module did not emit — a template with no
+ * reference, an interpolation that is not our runtime escape, an unterminated
+ * one. Null means "not ours", and the caller falls back to skipping the
+ * statement rather than half-reading it into a step that means something else.
+ *
+ * @param {string} source the RegExp's first argument, verbatim from the spec
+ * @returns {string | null} pattern text with `${name}` references restored
+ */
+export function regexPatternFromTemplate(source) {
+  const src = String(source == null ? "" : source);
+  if (src.length < 2 || src.charAt(0) !== "`" || src.charAt(src.length - 1) !== "`") return null;
+  const inner = src.slice(1, -1);
+  let out = "";
+  let sawRef = false;
+  let i = 0;
+  while (i < inner.length) {
+    const c = inner.charAt(i);
+    // A backslash escapes exactly one character in a template literal, and
+    // undoing that is what turns the emitted `\\.` back into the pattern's
+    // `\.` — which `reUnescape` then turns back into the user's `.`.
+    if (c === "\\") {
+      if (i + 1 >= inner.length) return null;
+      out += inner.charAt(i + 1);
+      i += 2;
+      continue;
+    }
+    if (c === "$" && inner.charAt(i + 1) === "{") {
+      const close = inner.indexOf("}", i + 2);
+      if (close < 0) return null;
+      // Two emitted forms, one inverse. `glazeReEscape(V.x)` is a value
+      // escaped at run time before it joins a pattern; a bare `V.x` is one
+      // whose pattern is BUILT at run time (urlPathExpr), where the escaping
+      // happens to the finished string instead.
+      const expr = inner.slice(i + 2, close);
+      const m = expr.match(/^(?:glazeReEscape\(V\.([A-Za-z_][A-Za-z0-9_]*)\)|V\.([A-Za-z_][A-Za-z0-9_]*))$/);
+      if (!m) return null;
+      out += "${" + (m[1] || m[2]) + "}";
+      sawRef = true;
+      i = close + 1;
+      continue;
+    }
+    out += c;
+    i += 1;
+  }
+  // No reference means this template is not one of ours: the emitter uses a
+  // quoted literal whenever there is nothing to interpolate.
+  return sawRef ? out : null;
+}
+
+/**
  * The RegExp source a `toHaveURL` / `toHaveTitle` call needs to mean what the
  * step's label says.
  *
@@ -201,11 +361,15 @@ export function reEscape(s) {
  * @param {MatchSemantics} semantics
  * @returns {string} JavaScript source, e.g. `new RegExp("/cart\\?step=2", "i")`
  */
-export function textMatchExpr(value, semantics) {
-  const body = reEscape(value);
-  const pattern =
-    semantics.match === "exact" ? "^" + body + "$" : semantics.match === "endsWith" ? body + "$" : body;
-  return "new RegExp(" + JSON.stringify(pattern) + (semantics.caseSensitive ? "" : ", \"i\"") + ")";
+export function textMatchExpr(value, semantics, varNames) {
+  const pre = semantics.match === "exact" ? "^" : "";
+  const post = semantics.match === "exact" || semantics.match === "endsWith" ? "$" : "";
+  return (
+    "new RegExp(" +
+    regexPatternExpr(value, varNames, pre, post) +
+    (semantics.caseSensitive ? "" : ", \"i\"") +
+    ")"
+  );
 }
 
 /**
@@ -251,6 +415,27 @@ export function urlPathPattern(value) {
   return "^[a-z][a-z0-9+.-]*://[^/?#]*" + body + "/?(?:[?#]|$)";
 }
 
+/** The structural frame `urlPathPattern` wraps a path in. Named because THREE
+ *  readers must agree on it byte for byte: the pattern builder above, the
+ *  var-aware `urlPathExpr`, and the parser, which recognises a "URL path is"
+ *  assertion by exactly these ends. `urlPathPattern` keeps them inline because
+ *  its whole body is `toString()`d into the injected replayer, where a
+ *  module-level const would not be in scope. */
+export const URL_PATH_PREFIX = "^[a-z][a-z0-9+.-]*://[^/?#]*";
+export const URL_PATH_SUFFIX = "/?(?:[?#]|$)";
+
+/** The slash rules a path value carries before it becomes a pattern: a leading
+ *  slash added, trailing ones dropped, and the site root spelled as empty.
+ *  Split out of `urlPathPattern` so the var-aware path can apply the SAME
+ *  rules to text it must not regex-escape wholesale. */
+export function normalizeUrlPath(value) {
+  var v = String(value == null ? "" : value);
+  if (v !== "" && v.charAt(0) !== "/") v = "/" + v;
+  while (v.length > 1 && v.charAt(v.length - 1) === "/") v = v.slice(0, v.length - 1);
+  if (v === "/") v = "";
+  return v;
+}
+
 /** `urlPathPattern` as source text, on the same terms as `matchSource`. */
 export function urlPathSource() {
   return "var urlPathPattern = " + urlPathPattern.toString() + ";";
@@ -259,8 +444,26 @@ export function urlPathSource() {
 /** The `toHaveURL` argument for a "URL path is" assertion, as JavaScript
  *  source — the counterpart of `textMatchExpr` for the one kind whose pattern
  *  is structural rather than a match-mode wrapper around the literal. */
-export function urlPathExpr(value) {
-  return "new RegExp(" + JSON.stringify(urlPathPattern(value)) + ", \"i\")";
+export function urlPathExpr(value, varNames) {
+  const text = String(value == null ? "" : value);
+  const hasRef =
+    varNames && varNames.size > 0
+      ? [...text.matchAll(PATTERN_VAR_RE)].some((m) => varNames.has(m[1]))
+      : false;
+  // Without a reference the pattern is fully known now: unchanged, byte for
+  // byte, from before variables could appear here at all.
+  if (!hasRef) return "new RegExp(" + JSON.stringify(urlPathPattern(text)) + ", \"i\")";
+  // With one, the WHOLE pattern is built at run time by the same function the
+  // trainer's replayer calls, on the same finished string.
+  //
+  // Normalising here instead would be wrong, and subtly: the slash rules read
+  // the ENDS of the path, and a reference is opaque text at generation time.
+  // A value of `${path}` does not start with "/", so the leading-slash rule
+  // added one — and then a variable holding "/" produced a pattern demanding
+  // "//" after the host. The run failed while the trainer, which resolves
+  // first and normalises after, passed. Deferring the whole thing makes the
+  // two agree by construction rather than by a rule kept in step twice.
+  return "new RegExp(glazeUrlPathPattern(" + rawTemplateExpr(text, varNames) + "), \"i\")";
 }
 
 /**

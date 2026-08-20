@@ -1,7 +1,7 @@
 // Convert recorded steps into a @playwright/test spec file.
 
 import { GLAZE_RUNTIME_FILE } from "./glaze-runtime-source.js";
-import { ASSERT_SEMANTICS, reEscape, textMatchExpr, urlPathExpr, WAIT_SEMANTICS } from "../../shared/step-semantics.mjs";
+import { ASSERT_SEMANTICS, regexPatternExpr, textMatchExpr, urlPathExpr, WAIT_SEMANTICS } from "../../shared/step-semantics.mjs";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import {
   cookieScopeIsValid,
@@ -210,12 +210,11 @@ function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>
   const e = step.soft ? "expect.soft" : "expect";
   // Page-level assertions don't need an element locator.
   //
-  // All four embed their expected value INSIDE a pattern, so they take the
-  // literal text rather than an expression: an interpolated value would have to
-  // be regex-escaped at run time and `reEscape` only works on a string known
-  // now. A `${var}` reference in these kinds stays literal by design — the same
-  // trade-off `urlEndsWith` and `urlIs` have always made, now paid by `url` too
-  // in exchange for the assertion being able to pass at all.
+  // All four embed their expected value INSIDE a pattern, so none of them can
+  // use `valueExpr`: a value interpolated raw would reach the RegExp
+  // unescaped, and a variable holding `a.b` would match `aXb` too. They go
+  // through `regexPatternExpr` instead, which reEscapes the static text here
+  // and emits `glazeReEscape(V.name)` for the parts only the run knows.
   if (step.assert === "url" || step.assert === "urlEndsWith" || step.assert === "urlIs") {
     const semantics = ASSERT_SEMANTICS[step.assert];
     if (!semantics) return null;
@@ -225,13 +224,13 @@ function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>
     // looks at it again. `shared/url-assert.mjs` already refuses to SUGGEST a
     // value it cannot stand behind; this refuses to GENERATE one.
     if ((step.value ?? "") === "") return null;
-    return "await " + e + "(page).toHaveURL(" + textMatchExpr(step.value ?? "", semantics) + ");";
+    return "await " + e + "(page).toHaveURL(" + textMatchExpr(step.value ?? "", semantics, vars) + ");";
   }
   if (step.assert === "urlPathIs") {
     // Same empty-value refusal as above: with no path, `urlPathPattern` builds
     // the site-root pattern, which asserts something the user never typed.
     if ((step.value ?? "") === "") return null;
-    return "await " + e + "(page).toHaveURL(" + urlPathExpr(step.value ?? "") + ");";
+    return "await " + e + "(page).toHaveURL(" + urlPathExpr(step.value ?? "", vars) + ");";
   }
   if (step.assert === "title" || step.assert === "titleContains") {
     const semantics = ASSERT_SEMANTICS[step.assert];
@@ -243,7 +242,7 @@ function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>
     // title kind whose semantics do not need a pattern.
     if (step.assert === "title")
       return "await " + e + "(page).toHaveTitle(" + valueExpr(step.value, vars) + ");";
-    return "await " + e + "(page).toHaveTitle(" + textMatchExpr(step.value ?? "", semantics) + ");";
+    return "await " + e + "(page).toHaveTitle(" + textMatchExpr(step.value ?? "", semantics, vars) + ");";
   }
   if (!target) return null;
   const x = e + "(" + target + ")";
@@ -275,13 +274,12 @@ function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>
       // are regenerated from their stored steps. Same argument as `num()`.
       const prop = isCssPropName(step.cssProp) ? step.cssProp : "";
       if (!prop) return null;
-      // `contains` embeds the expected value in a pattern, so — exactly like
-      // urlEndsWith/urlIs — it takes the literal text rather than an
-      // expression: `reEscape` only works on a string known now, so a `${var}`
-      // reference inside a regex assert stays literal by design.
+      // `contains` embeds the expected value in a pattern, so it goes through
+      // `regexPatternExpr` rather than `valueExpr`: a reference has to be
+      // regex-escaped at RUN time, which is what glazeReEscape is for.
       const expected =
         step.cssMatch === "contains"
-          ? "new RegExp(" + q(reEscape(step.value ?? "")) + ", \"i\")"
+          ? "new RegExp(" + regexPatternExpr(step.value ?? "", vars) + ", \"i\")"
           : valueExpr(step.value, vars);
       return "await " + x + ".toHaveCSS(" + q(prop) + ", " + expected + ");";
     }
@@ -444,10 +442,9 @@ function waitLine(step: Step, target: string | null, vars: ReadonlySet<string>):
     case "exists":
       return target ? "await " + target + ".waitFor({ state: \"attached\"" + t + " });" : null;
 
-    // Page-level predicates. Both embed the expected text in a RegExp, so they
-    // take the literal value rather than a variable expression — the same
-    // trade-off `assertLine` makes for the URL kinds, and for the same reason:
-    // `reEscape` can only escape a string known now.
+    // Page-level predicates. Both embed the expected text in a RegExp, so both
+    // carry variables the same way `assertLine`'s URL kinds do — escaped at
+    // run time through glazeReEscape rather than interpolated raw.
     //
     // These go through the SAME `textMatchExpr` as their assert counterparts,
     // reading the same table. "Wait until the URL contains X" and "assert the
@@ -458,7 +455,7 @@ function waitLine(step: Step, target: string | null, vars: ReadonlySet<string>):
       const s = WAIT_SEMANTICS.urlContains;
       if (!s || (step.value ?? "") === "") break;
       return (
-        "await expect(page).toHaveURL(" + textMatchExpr(step.value ?? "", s) + ", " + opts + ");" +
+        "await expect(page).toHaveURL(" + textMatchExpr(step.value ?? "", s, vars) + ", " + opts + ");" +
         WAIT_UNTIL_MARKER
       );
     }
@@ -466,7 +463,7 @@ function waitLine(step: Step, target: string | null, vars: ReadonlySet<string>):
       const s = WAIT_SEMANTICS.titleContains;
       if (!s || (step.value ?? "") === "") break;
       return (
-        "await expect(page).toHaveTitle(" + textMatchExpr(step.value ?? "", s) + ", " + opts + ");" +
+        "await expect(page).toHaveTitle(" + textMatchExpr(step.value ?? "", s, vars) + ", " + opts + ");" +
         WAIT_UNTIL_MARKER
       );
     }
@@ -1301,41 +1298,13 @@ export function generateSpecDetailed(
   const needsTotp = variables.some((v) => v.kind === "secret" && v.totp);
   const needsAiCheck = expanded.some((e) => !e.problem && e.step.type === "aiCheck");
   const needsDialog = expanded.some((e) => !e.problem && e.step.type === "dialog");
-  const preamble = ['import { test, expect } from "@playwright/test";'];
-  const runtimeNames = [
-    ...(needsCapture ? ["glazeCapture"] : []),
-    ...(needsScroll ? ["glazeScrollTo"] : []),
-    ...(needsA11y ? ["glazeA11yGate"] : []),
-    ...(needsGenerate ? ["glazeGenerate"] : []),
-    ...(needsApi ? ["glazeApiRequest"] : []),
-    ...(needsTotp ? ["glazeTotp"] : []),
-    ...(needsAiCheck ? ["glazeAiCheck"] : []),
-    ...(needsDialog ? ["glazeArmDialog"] : []),
-  ];
-  if (runtimeNames.length > 0) {
-    preamble.push(`import { ${runtimeNames.join(", ")} } from "./${GLAZE_RUNTIME_FILE}";`);
-  }
-  preamble.push("");
-  // A download step saving its filename needs the V object to exist, but NOT
-  // the glazeCapture runtime — the write is a plain property assignment. Kept
-  // separate from `needsCapture` so a download-only spec doesn't grow an
-  // import it never calls.
-  // An api step passes V to its helper unconditionally (captures write into
-  // it), so any api step forces the header like a capture does.
-  const needsVarObject =
-    needsCapture ||
-    needsApi ||
-    expanded.some(
-      (e) =>
-        !e.problem && e.step.type === "download" && isValidVariableName(e.step.captureVar),
-    );
-  const header = variableHeader(variables, needsVarObject);
-  // The `test(...)` line sits at `preamble.length + 1`; the variable header
-  // follows it; the first body line is the one after that.
-  const bodyStartLine = preamble.length + 2 + header.length;
-
+  // The preamble is built AFTER the body now — see the note above the
+  // assembly at the end. Emission only needs `record1`, which records a
+  // body-RELATIVE line and is resolved to an absolute one once the preamble's
+  // height is known.
+  const relLines: [number, number][] = [];
   const record1 = (index: number): void => {
-    lineMap[bodyStartLine + body.length] = index;
+    relLines.push([body.length, index]);
   };
 
   // TWO loop bookkeepings, for the two loop constructs. `loopNames` holds the
@@ -1647,6 +1616,56 @@ export function generateSpecDetailed(
     depth = Math.max(1, depth - 1);
     body.push("  ".repeat(depth) + "}");
   }
+
+  const preamble = ['import { test, expect } from "@playwright/test";'];
+  const runtimeNames = [
+    ...(needsCapture ? ["glazeCapture"] : []),
+    ...(needsScroll ? ["glazeScrollTo"] : []),
+    ...(needsA11y ? ["glazeA11yGate"] : []),
+    ...(needsGenerate ? ["glazeGenerate"] : []),
+    ...(needsApi ? ["glazeApiRequest"] : []),
+    ...(needsTotp ? ["glazeTotp"] : []),
+    ...(needsAiCheck ? ["glazeAiCheck"] : []),
+    ...(needsDialog ? ["glazeArmDialog"] : []),
+    // Asked of the EMITTED SOURCE, not predicted from the steps.
+    //
+    // Only `regexPatternExpr` decides whether a value becomes a template with
+    // a run-time escape in it — it depends on the kind, the match mode AND on
+    // whether the reference names a DECLARED variable. Re-deriving that here
+    // would be a second spelling of the same rule, and the two would disagree
+    // the day a new pattern-built assert kind is added: an import that is
+    // missing makes the spec throw at load, and one that is spurious makes it
+    // throw too, since the runtime only exports what it exports.
+    ...(body.some((l) => l.includes("glazeReEscape(")) ? ["glazeReEscape"] : []),
+    ...(body.some((l) => l.includes("glazeUrlPathPattern(")) ? ["glazeUrlPathPattern"] : []),
+  ];
+  if (runtimeNames.length > 0) {
+    preamble.push(`import { ${runtimeNames.join(", ")} } from "./${GLAZE_RUNTIME_FILE}";`);
+  }
+  preamble.push("");
+  // A download step saving its filename needs the V object to exist, but NOT
+  // the glazeCapture runtime — the write is a plain property assignment. Kept
+  // separate from `needsCapture` so a download-only spec doesn't grow an
+  // import it never calls.
+  // An api step passes V to its helper unconditionally (captures write into
+  // it), so any api step forces the header like a capture does.
+  const needsVarObject =
+    needsCapture ||
+    needsApi ||
+    expanded.some(
+      (e) =>
+        !e.problem && e.step.type === "download" && isValidVariableName(e.step.captureVar),
+    );
+  const header = variableHeader(variables, needsVarObject);
+  // The `test(...)` line sits at `preamble.length + 1`; the variable header
+  // follows it; the first body line is the one after that.
+  const bodyStartLine = preamble.length + 2 + header.length;
+
+  // Absolute line numbers, now that the preamble's height is known. Recorded
+  // relative during emission because the preamble depends on what the body
+  // turned out to contain, and an off-by-one here mis-attributes EVERY step's
+  // run highlight rather than failing loudly.
+  for (const [rel, index] of relLines) lineMap[bodyStartLine + rel] = index;
 
   const title = record.name && record.name.trim() ? record.name.trim() : "recorded test";
   const source =
