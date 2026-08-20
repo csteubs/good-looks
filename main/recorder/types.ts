@@ -1834,15 +1834,72 @@ export function varRefsIn(text: unknown): string[] {
   return out;
 }
 
-/** The interpolatable fields of a step, in a fixed order. Every site that
- *  scans or substitutes must use this list, so a new interpolatable field can't
- *  be added to one and forgotten in the other. */
+/**
+ * Rewrite every interpolatable field of a step through `fn`, returning a new
+ * step — or the same one, when `fn` changed nothing.
+ *
+ * **This traversal is the single definition of which fields interpolate**, and
+ * it both reads and writes deliberately. The shape before it was a
+ * `string[]`-returning `interpolatableFields`, whose comment already told
+ * callers it was the one list they must use — but a list you can only READ
+ * cannot substitute, so the two writers (`resolveStepForReplay` and
+ * `bindFlowStep`) each hand-wrote the same four assignments beside it. That is
+ * a rule a comment asks for and the types cannot enforce, and it drifted the
+ * moment `api` steps landed: the generator learned to interpolate `apiBody`
+ * and the values of `apiHeaders`, and none of the other three sites did.
+ *
+ * Two silent failures came out of that, both landing far from the edit that
+ * caused them. The Variables tab counts usage from `varRefs` (derived by
+ * `collectVarRefs`), so a token referenced only by an `Authorization` header
+ * counted as UNUSED — the panel then offers to delete a variable the run still
+ * needs, and the API step afterwards sends the literal text `Bearer ${token}`.
+ * And `bindFlowStep` binds a caller's arguments textually, so a flow parameter
+ * never reached an API step inside the flow body: a parameterised login flow
+ * posted `${password}` verbatim.
+ *
+ * A field added to this traversal is therefore scanned by `collectVarRefs`,
+ * substituted by `resolveStepForReplay` and bound by `bindFlowStep` with no
+ * second edit. `check:variables` pins the other half of the invariant — that
+ * every field the GENERATOR interpolates is reachable from here.
+ */
+export function mapInterpolatable(step: Step, fn: (text: string) => string): Step {
+  let changed = false;
+  const one = (text: string): string => {
+    const out = fn(text);
+    if (out !== text) changed = true;
+    return out;
+  };
+  const next: Step = { ...step };
+  if (typeof next.value === "string") next.value = one(next.value);
+  if (typeof next.text === "string") next.text = one(next.text);
+  if (typeof next.url === "string") next.url = one(next.url);
+  if (typeof next.apiBody === "string") next.apiBody = one(next.apiBody);
+  // Header NAMES are not interpolated: the name carries the token grammar and
+  // is re-checked at emission, so a `${var}` in one could only ever produce a
+  // header the generator then drops. Values are interpolated, which is what an
+  // `Authorization: Bearer ${token}` needs.
+  if (next.apiHeaders) {
+    next.apiHeaders = Object.fromEntries(
+      Object.entries(next.apiHeaders).map(([k, v]) => [k, typeof v === "string" ? one(v) : v]),
+    );
+  }
+  if (next.flowArgs) {
+    next.flowArgs = Object.fromEntries(
+      Object.entries(next.flowArgs).map(([k, v]) => [k, typeof v === "string" ? one(v) : v]),
+    );
+  }
+  return changed ? next : step;
+}
+
+/** The interpolatable fields of a step, in a fixed order — read through the
+ *  same traversal that writes them, so a scan and a substitution can never
+ *  disagree about which fields exist. */
 export function interpolatableFields(step: Step): string[] {
   const parts: string[] = [];
-  if (typeof step.value === "string") parts.push(step.value);
-  if (typeof step.text === "string") parts.push(step.text);
-  if (typeof step.url === "string") parts.push(step.url);
-  if (step.flowArgs) parts.push(...Object.values(step.flowArgs));
+  mapInterpolatable(step, (text) => {
+    parts.push(text);
+    return text;
+  });
   return parts;
 }
 
@@ -1938,16 +1995,7 @@ export function resolveStepForReplay(
       return value;
     });
 
-  const next: Step = { ...step };
-  if (typeof next.value === "string") next.value = sub(next.value);
-  if (typeof next.text === "string") next.text = sub(next.text);
-  if (typeof next.url === "string") next.url = sub(next.url);
-  if (next.flowArgs) {
-    next.flowArgs = Object.fromEntries(
-      Object.entries(next.flowArgs).map(([k, val]) => [k, sub(val)]),
-    );
-  }
-  return { step: next, usedValues, missingSecrets };
+  return { step: mapInterpolatable(step, sub), usedValues, missingSecrets };
 }
 
 /** Bounds for `TestRecord.tags`. Generous enough to never bite in practice,
