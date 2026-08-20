@@ -8909,3 +8909,39 @@ the standing foreign-wrapper philosophy) rather than half-read into a
 recorded block. `main/services/else-emission.test.ts` pins emission shape,
 all three refusals, round-trips at every nesting, the fixed point, and both
 parser-guard cases; both guards were revert-verified.
+
+## 2026-08-19 — Dataset CSV import: columns refused out loud, rows counted honestly
+
+The dataset feature (rows over a test's variables, one run per row) predates
+this change; what was missing was mabl's entry path — a CSV export dropped
+onto the panel. The import is deliberately a SEPARATE pure module
+(`dataset-csv.ts`) rather than more code in the panel or the handler, because
+every rule in it is a meaning question a disk never touches: what a header
+cell is allowed to name, what happens to a ragged row, who gets told when a
+column is dropped.
+
+Three rules were decided here rather than inherited:
+
+**A secret column is refused at the door, with its reason in the toast.** The
+run-time half already held — GLAZE_VARS is spread before secrets in the
+generated header, so a row can never substitute plaintext for the encrypted
+value — but importing a "password" column would have STORED the plaintext in
+tests.json and then silently ignored it at run time, the worst of both.
+The refusal names the column and says "secret variable".
+
+**Columns create variables; rows never do.** A kept column the test doesn't
+declare becomes a plain variable with an empty default, because the
+alternative — importing values the sweep then ignores — reads as "the import
+ate my data". The panel's existing rule that only declared variables get
+dataset columns is unchanged; import just widens the declarations first.
+
+**Excel's locales are real.** The delimiter is sniffed from the header line
+among comma/semicolon/tab (quoted cells excluded from the count, so a cell
+full of semicolons cannot outvote the commas). Refusing semicolon CSVs would
+read as "import is broken" to everyone whose Excel writes them.
+
+The parse itself is RFC 4180 (quoted cells, embedded delimiters and newlines,
+doubled-quote escapes, BOM, CRLF) — hand-rolled here rather than a dependency
+because the app has no other CSV need and the whole dialect fits in fifty
+lines with a test battery pinning each clause. Cancelling the picker says
+nothing at all, the same rule the folder importer follows.

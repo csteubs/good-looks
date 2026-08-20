@@ -52,6 +52,7 @@ import { testStore } from "../services/test-store.js";
 import { bindFlowStep, flowCallBindings } from "../services/script-generator.js";
 import { duplicateTest } from "../services/duplicate-test.js";
 import { importService } from "../services/import-service.js";
+import { importDatasetCsvFile } from "../services/dataset-csv.js";
 import { normalizeBaseUrl } from "../services/imported-config.js";
 import { testSecretsStore } from "../services/test-secrets-store.js";
 import { healJournalStore } from "../services/heal-journal-store.js";
@@ -738,6 +739,10 @@ export function registerHandlers(): void {
     testStore.save(rec);
     return rec;
   });
+
+  ipcMain.handle("tests:importDatasetCsv", async (_e, params: { id: string }) =>
+    importDatasetCsvFile(params.id),
+  );
 
   /** Mark a test as a reusable flow, and declare the parameters it accepts. */
   ipcMain.handle(

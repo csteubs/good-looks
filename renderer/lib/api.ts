@@ -334,6 +334,19 @@ export const api = {
     secretStatus: (id: string) => ipc().invoke<SecretStatus[]>("tests:secretStatus", { id }),
     setDatasets: (id: string, datasets: Dataset[]) =>
       ipc().invoke<TestRecord>("tests:setDatasets", { id, datasets }),
+    /** Native file picker → CSV rows appended as datasets. The result carries
+     *  everything the toasts need: what imported, what was skipped and why. */
+    importDatasetCsv: (id: string) =>
+      ipc().invoke<{
+        ok: boolean;
+        canceled?: boolean;
+        imported: number;
+        problem?: string;
+        createdVariables: string[];
+        skippedColumns: { name: string; reason: string }[];
+        raggedRows: number;
+        truncated: boolean;
+      }>("tests:importDatasetCsv", { id }),
     setFlow: (id: string, isFlow: boolean, flowParams: string[]) =>
       ipc().invoke<TestRecord>("tests:setFlow", { id, isFlow, flowParams }),
     listFlows: (fromId?: string) => ipc().invoke<FlowInfo[]>("tests:listFlows", { fromId }),

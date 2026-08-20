@@ -34,7 +34,7 @@ import {
   Text,
   toast,
 } from "@ui";
-import { KeyRound, Play, Plus, Trash2, TriangleAlert, Variable, Workflow } from "lucide-react";
+import { FileUp, KeyRound, Play, Plus, Trash2, TriangleAlert, Variable, Workflow } from "lucide-react";
 
 import { api } from "../lib/api";
 import {
@@ -295,6 +295,50 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
     onError: (err: unknown) => toast.error(String(err)),
   });
 
+  const importCsv = useMutation({
+    mutationFn: () => api.tests.importDatasetCsv(test.id),
+    onSuccess: (res) => {
+      if (res.canceled) return;
+      if (!res.ok) {
+        toast.error(res.problem ?? "Nothing was imported.");
+        return;
+      }
+      invalidate();
+      toast.success(
+        res.imported === 1 ? "Imported 1 row." : `Imported ${res.imported} rows.`,
+      );
+      if (res.createdVariables.length > 0) {
+        // The list renders from the LOCAL draft (see `vars` above), which only
+        // reseeds when the test changes — so variables the import just created
+        // on the record are appended here too, or the list would sit empty
+        // under a toast announcing them.
+        setVars((prev) => [
+          ...prev,
+          ...res.createdVariables
+            .filter((name) => !prev.some((v) => v.name === name))
+            .map((name) => ({ name, kind: "plain" as const, value: "" })),
+        ]);
+        toast.success(`New variables from columns: ${res.createdVariables.join(", ")}`);
+      }
+      // Everything refused or reshaped is said out loud — a silently dropped
+      // password column would read as "the import ate my data".
+      for (const col of res.skippedColumns) {
+        toast.warning(`Skipped column "${col.name}" — ${col.reason}.`);
+      }
+      if (res.raggedRows > 0) {
+        toast.warning(
+          res.raggedRows === 1
+            ? "1 row didn't match the header's column count and was padded or trimmed."
+            : `${res.raggedRows} rows didn't match the header's column count and were padded or trimmed.`,
+        );
+      }
+      if (res.truncated) {
+        toast.warning("The file has more rows than a test can hold — the rest were dropped.");
+      }
+    },
+    onError: (err: unknown) => toast.error(String(err)),
+  });
+
   // ── Reusable flow ─────────────────────────────────────────────────
   const flowParams = React.useMemo(() => test.flowParams ?? [], [test.flowParams]);
   const setFlowState = useMutation({
@@ -482,6 +526,15 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
           <div className="flex items-center gap-2">
             <Text weight="medium">Datasets</Text>
             <div className="flex-1" />
+            <Button
+              size="small"
+              variant="secondary"
+              disabled={importCsv.isPending}
+              onClick={() => importCsv.mutate()}
+            >
+              <FileUp className="size-4" />
+              Import CSV…
+            </Button>
             <Button
               size="small"
               variant="secondary"

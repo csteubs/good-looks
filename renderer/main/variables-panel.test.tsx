@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { clearToastCalls, toastTexts } from "../__tests__/sonner-stub";
 import type { SecretStatus, TestRecord } from "../lib/recorder-types";
 import { VariablesPanel } from "./variables-panel";
 
@@ -29,6 +30,27 @@ const batchRun = vi.fn(async (_ids: string[], _opts: unknown) => ({
   alreadyRunning: false,
 }));
 const setFlow = vi.fn(async (_id: string, _isFlow: boolean, _params: string[]) => ({}) as TestRecord);
+interface ImportCsvResult {
+  ok: boolean;
+  canceled?: boolean;
+  imported: number;
+  problem?: string;
+  createdVariables: string[];
+  skippedColumns: { name: string; reason: string }[];
+  raggedRows: number;
+  truncated: boolean;
+}
+const importDatasetCsv = vi.fn(
+  async (_id: string): Promise<ImportCsvResult> => ({
+    ok: false,
+    canceled: true,
+    imported: 0,
+    createdVariables: [],
+    skippedColumns: [],
+    raggedRows: 0,
+    truncated: false,
+  }),
+);
 let secretStatus: SecretStatus[] = [];
 
 vi.mock("../lib/api", () => ({
@@ -40,6 +62,7 @@ vi.mock("../lib/api", () => ({
       clearSecret: (id: string, name: string) => clearSecret(id, name),
       secretStatus: async () => secretStatus,
       setFlow: (id: string, isFlow: boolean, params: string[]) => setFlow(id, isFlow, params),
+      importDatasetCsv: (id: string) => importDatasetCsv(id),
     },
     batch: { run: (ids: string[], opts: unknown) => batchRun(ids, opts) },
   },
@@ -69,6 +92,7 @@ function renderPanel(test: TestRecord) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clearToastCalls();
   secretStatus = [];
 });
 
@@ -193,6 +217,69 @@ describe("VariablesPanel", () => {
     renderPanel(makeTest({ variables: [{ name: "currency", kind: "plain" }] }));
     const sweep = (await screen.findByRole("button", { name: /run sweep/i })) as HTMLButtonElement;
     expect(sweep.disabled).toBe(true);
+  });
+
+  it("imports a CSV and reports what happened — including every refused column", async () => {
+    importDatasetCsv.mockResolvedValueOnce({
+      ok: true,
+      imported: 2,
+      createdVariables: ["city"],
+      skippedColumns: [{ name: "password", reason: "secret variable" }],
+      raggedRows: 1,
+      truncated: false,
+    });
+    renderPanel(makeTest({ variables: [{ name: "user", kind: "plain" }] }));
+    fireEvent.click(await screen.findByRole("button", { name: /import csv/i }));
+    await waitFor(() => expect(importDatasetCsv).toHaveBeenCalledWith("t1"));
+    const texts = toastTexts().map((t) => t.title);
+    expect(texts.some((t) => /Imported 2 rows/.test(t))).toBe(true);
+    expect(texts.some((t) => /New variables from columns: city/.test(t))).toBe(true);
+    expect(texts.some((t) => /Skipped column "password" — secret variable/.test(t))).toBe(true);
+    expect(texts.some((t) => /didn't match the header/.test(t))).toBe(true);
+    // The created variable appears in the LIST, not just the toast — the list
+    // renders from a local draft that import must append to.
+    expect(await screen.findByLabelText("Default value for city")).toBeTruthy();
+  });
+
+  it("says nothing at all when the picker was cancelled", async () => {
+    // "Imported 0 rows" to somebody who pressed Cancel reports on a thing
+    // they did not do — the same rule the folder importer follows.
+    importDatasetCsv.mockResolvedValueOnce({
+      ok: false,
+      canceled: true,
+      imported: 0,
+      createdVariables: [],
+      skippedColumns: [],
+      raggedRows: 0,
+      truncated: false,
+    });
+    renderPanel(makeTest());
+    fireEvent.click(await screen.findByRole("button", { name: /import csv/i }));
+    await waitFor(() => expect(importDatasetCsv).toHaveBeenCalled());
+    expect(toastTexts()).toEqual([]);
+  });
+
+  it("surfaces the parser's reason when nothing could be imported", async () => {
+    importDatasetCsv.mockResolvedValueOnce({
+      ok: false,
+      imported: 0,
+      problem: "The file has a header but no data rows.",
+      createdVariables: [],
+      skippedColumns: [],
+      raggedRows: 0,
+      truncated: false,
+    });
+    renderPanel(makeTest());
+    fireEvent.click(await screen.findByRole("button", { name: /import csv/i }));
+    await waitFor(() =>
+      expect(toastTexts().some((t) => /header but no data rows/.test(t.title))).toBe(true),
+    );
+  });
+
+  it("offers Import CSV even before any variable exists — columns create them", async () => {
+    renderPanel(makeTest());
+    const btn = (await screen.findByRole("button", { name: /import csv/i })) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
   });
 });
 
