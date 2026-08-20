@@ -218,6 +218,13 @@ export const testStore = {
       if (isInsideScripts(sandbox)) {
         try { fs.rmSync(sandbox, { recursive: true, force: true }); } catch { /* ignore */ }
       }
+      // Staged upload fixtures are the test's too — same reasoning, same
+      // containment check. (Inline rather than calling upload-store, which
+      // imports this module for the scripts dir — a cycle waiting to bite.)
+      const uploads = path.join(scriptsDir(), "uploads", id);
+      if (isInsideScripts(uploads)) {
+        try { fs.rmSync(uploads, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
     }
     writeAll(all.filter((t) => t.id !== id));
   },

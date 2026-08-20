@@ -22,7 +22,7 @@ import { randomUUID } from "crypto";
 
 import { parseTestIdSelector } from "../../shared/testid-attr.mjs";
 import { DEFAULT_WAIT_TIMEOUT_MS } from "./script-generator.js";
-import { fromPlaywrightSameSite } from "../recorder/types.js";
+import { fromPlaywrightSameSite, isSafeUploadRelPath } from "../recorder/types.js";
 import type {
   AssertKind,
   ConditionKind,
@@ -470,6 +470,7 @@ const LOCATOR_ACTIONS = [
   "hover",
   "focus",
   "scrollIntoViewIfNeeded",
+  "setInputFiles",
 ] as const;
 
 const LOCATOR_ACTION_RE = LOCATOR_ACTIONS.join("|");
@@ -489,6 +490,17 @@ function locatorActionStep(locator: Locator, action: string, argsStr: string): S
   }
   if (action === "scrollIntoViewIfNeeded") {
     return makeStep("scroll", { locator });
+  }
+  if (action === "setInputFiles") {
+    // Only the shape the generator emits reads back — a single staged-path
+    // string literal that passes the SAME guard emission applies. Arrays,
+    // buffers, and paths outside uploads/ are foreign refinements and count
+    // skipped, rather than round-tripping into a value the generator would
+    // then refuse (which would silently DROP the step on regeneration).
+    const arg = parseValueArg(argsStr);
+    const value = arg !== null ? unescapeLit(arg) : null;
+    if (value === null || !isSafeUploadRelPath(value)) return null;
+    return makeStep("upload", { locator, value });
   }
   if (action === "waitFor") {
     // `.waitFor({ state: … })` is a conditional wait with a native API, so it

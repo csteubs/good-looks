@@ -534,6 +534,10 @@ export function buildReplayScript(step: Step): string {
     // The preview cannot receive a download event — transfers are cancelled
     // during recording on purpose. Said out loud so a green row here is never
     // read as "the download was verified"; the RUN is what verifies it.
+    if (t === "upload") {
+      log("info", "file uploads run on RUNS - the preview does not touch the input");
+      return { ok: true };
+    }
     if (t === "download") {
       log("info", "download expectations are verified on runs — the training browser cancels transfers");
       return { ok: true };

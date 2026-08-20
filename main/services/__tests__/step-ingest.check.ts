@@ -295,6 +295,16 @@ function main(): void {
       "critical",
       "a legitimate a11y impact survives ingest",
     );
+    // An upload step's value is a PATH headed for setInputFiles in executed
+    // source. The boundary treats it as an ordinary capped string; the SHAPE
+    // is enforced independently at emission (isSafeUploadRelPath, pinned in
+    // upload-emission.test.ts) — this row pins that the pair exists, so
+    // neither half gets "simplified" away on the strength of the other.
+    assertEqual(
+      normalizeRawStep({ type: "upload", value: "uploads/../x" })?.value,
+      "uploads/../x",
+      "the boundary passes an upload path through as a string (emission is the shape gate)",
+    );
     // `nth` admits exactly one negative: -1, Playwright's "last match". The
     // bound is the boundary half of the pair; the generator independently
     // floors anything deeper to 0 (see locatorExpr), because a forged index

@@ -61,6 +61,12 @@ export type StepType =
   // and content a page renders lazily (virtualized lists, IntersectionObserver
   // gates) is not in the DOM at all until the scroll that reveals it happens.
   | "scroll"
+  // Set a file input's files. `value` holds the STAGED path relative to the
+  // scripts dir ("uploads/<testId>/<name>") — the app copies the picked file
+  // there so the test still runs when the original moves. The generator
+  // refuses any value not matching that exact shape: the string lands in
+  // executed source, and "uploads/../../x" would read an arbitrary file.
+  | "upload"
   // Expect the PREVIOUS step to start a file download. Emitted as Playwright's
   // blessed pattern — the waitForEvent promise armed BEFORE the triggering
   // step's line, awaited after — because a listener attached after the click
@@ -770,6 +776,20 @@ export function isValidVariableName(name: unknown): name is string {
   );
 }
 
+/** The emission-side shape guard for an `upload` step's staged path: what
+ *  `value` must look like before it may be interpolated (via q()) into
+ *  generated source. One segment per level, each starting alphanumeric (that
+ *  alone rules out "." and ".."), our safe alphabet only — and an explicit
+ *  ".." refusal as the second, dumber belt. The generator refuses anything
+ *  else: "uploads/../../x" would hand setInputFiles an arbitrary file. */
+export function isSafeUploadRelPath(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^uploads\/[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) &&
+    !value.includes("..")
+  );
+}
+
 /**
  * Canonicalize a set of variables: drop invalid names, dedupe by name
  * (case-SENSITIVE — `user` and `User` are different JS properties, so folding
@@ -893,7 +913,7 @@ export function normalizeDatasets(input: unknown): Dataset[] {
 export const STEP_TYPES: StepType[] = [
   "goto", "click", "fill", "press", "select", "check", "uncheck", "assert",
   "wait", "viewport", "if", "else", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
-  "scroll", "download", "a11y",
+  "scroll", "download", "a11y", "upload",
 ];
 
 export type DownloadMatch = "contains" | "exact";

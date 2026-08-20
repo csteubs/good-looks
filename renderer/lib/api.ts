@@ -194,6 +194,12 @@ export const api = {
     /** Move the insert cursor within the open scope's working copy. */
     setFlowCursor: (index: number) =>
       ipc().invoke<RecorderState>("recorder:setFlowCursor", { index }),
+    /** Native picker → the picked file is COPIED into the session test's
+     *  uploads dir; the result's relPath is what an upload step stores. */
+    stageUpload: () =>
+      ipc().invoke<{ canceled?: boolean; relPath?: string; name?: string; problem?: string }>(
+        "recorder:stageUpload",
+      ),
     replayStep: (stepId: string) =>
       ipc().invoke<DebugEntry>("recorder:replayStep", { stepId }),
     replayFromStart: () =>

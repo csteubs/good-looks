@@ -2847,6 +2847,13 @@ export const recorderService = {
     return currentState();
   },
 
+  /** The live session's test id, or null. A session has an id from the
+   *  moment it starts (secrets and staged uploads key off it before the
+   *  record exists), which is what lets an unsaved recording stage files. */
+  sessionTestId(): string | null {
+    return session ? session.testId : null;
+  },
+
   /** Move a step to a new index (drag-to-reorder). */
   reorderStep(stepId: string, toIndex: number): RecorderState {
     if (session) {

@@ -53,6 +53,7 @@ import { bindFlowStep, flowCallBindings } from "../services/script-generator.js"
 import { duplicateTest } from "../services/duplicate-test.js";
 import { importService } from "../services/import-service.js";
 import { importDatasetCsvFile } from "../services/dataset-csv.js";
+import { stageUploadFile } from "../services/upload-store.js";
 import { normalizeBaseUrl } from "../services/imported-config.js";
 import { testSecretsStore } from "../services/test-secrets-store.js";
 import { healJournalStore } from "../services/heal-journal-store.js";
@@ -743,6 +744,16 @@ export function registerHandlers(): void {
   ipcMain.handle("tests:importDatasetCsv", async (_e, params: { id: string }) =>
     importDatasetCsvFile(params.id),
   );
+
+  /** Stage a file for an upload step: picker → copy into the live session's
+   *  uploads dir → the scripts-relative path the step stores. Session-scoped
+   *  because the composer only exists inside one, and the session has a test
+   *  id from the moment it starts — an unsaved recording can stage too. */
+  ipcMain.handle("recorder:stageUpload", async () => {
+    const id = recorderService.sessionTestId();
+    if (!id) throw new Error("No recording session is running.");
+    return stageUploadFile(id);
+  });
 
   /** Mark a test as a reusable flow, and declare the parameters it accepts. */
   ipcMain.handle(

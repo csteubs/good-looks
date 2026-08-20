@@ -178,6 +178,13 @@ export const TESTS: TestRecord[] = [
       { type: "download", value: "results.csv", captureVar: "exportName" },
       // An accessibility gate — renders the "a11y" chip and the worded floor.
       { type: "a11y", a11yImpact: "serious" },
+      // An upload against a staged fixture — renders the chip and the worded
+      // filename.
+      {
+        type: "upload",
+        locator: { k: "label", v: "Import a saved search" },
+        value: "uploads/t-search/saved-search.json",
+      },
       // A positional-path locator — the recorder's last-resort shape — so the
       // fragility glyph and the detail view's rollup callout render.
       { type: "click", locator: { k: "xpath", v: "/html[1]/body[1]/div[3]/button[2]" } },

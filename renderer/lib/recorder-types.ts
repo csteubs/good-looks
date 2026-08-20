@@ -37,6 +37,7 @@ export type StepType =
   | "runFlow"
   | "state"
   | "scroll"
+  | "upload"
   | "download"
   | "a11y";
 

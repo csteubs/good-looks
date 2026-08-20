@@ -404,6 +404,14 @@ describe("a11y gates in the preview", () => {
   });
 });
 
+describe("upload steps in the preview", () => {
+  it("is a narrated no-op — the run performs the upload", () => {
+    const r = run(step({ type: "upload", locator: { k: "testid", v: "f" }, value: "uploads/t/a.csv" }));
+    expect(r.ok).toBe(true);
+    expect(why(r)).toMatch(/run/i);
+  });
+});
+
 describe("download steps in the preview", () => {
   it("is a narrated no-op that never claims verification", () => {
     // The training browser cancels transfers, so no download event can reach
