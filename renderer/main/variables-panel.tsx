@@ -129,14 +129,14 @@ function VariableRow({
       </div>
 
       {!nameOk && variable.name !== "" ? (
-        <Text size="small" className="text-danger">
+        <Text size="small" className="text-support-red">
           Use letters, numbers and underscores, starting with a letter — the name becomes a
           property in the generated spec.
         </Text>
       ) : null}
 
       {nameOk && duplicate ? (
-        <Text size="small" className="text-danger">
+        <Text size="small" className="text-support-red">
           Already declared above — rename this one, or it won&apos;t be saved.
         </Text>
       ) : null}
