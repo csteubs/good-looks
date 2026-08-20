@@ -608,6 +608,9 @@ export interface TestRecord {
   testTimeoutMs?: number;
   /** Per-test accessibility-check preference (mirrors main TestRecord). */
   a11yChecks?: boolean;
+  /** login sessions (mirror of main types) */
+  saveSession?: boolean;
+  useSessionFrom?: string;
   /** Violations accepted for this test, keyed by step id. */
   a11yBaseline?: Record<string, string[]>;
   /** Free-form grouping labels (mirrors main TestRecord). Normalized backend-

@@ -345,6 +345,13 @@ export const api = {
     clearSecret: (id: string, name: string) =>
       ipc().invoke<SecretStatus>("tests:clearSecret", { id, name }),
     secretStatus: (id: string) => ipc().invoke<SecretStatus[]>("tests:secretStatus", { id }),
+    /** Login-session settings + the saved-state status line. */
+    setSession: (id: string, patch: { saveSession?: boolean; useSessionFrom?: string | null }) =>
+      ipc().invoke<TestRecord>("tests:setSession", { id, ...patch }),
+    sessionState: (id: string) =>
+      ipc().invoke<{ savedAt: number; fresh: boolean } | null>("tests:sessionState", { id }),
+    clearSessionState: (id: string) =>
+      ipc().invoke<{ savedAt: number; fresh: boolean } | null>("tests:clearSessionState", { id }),
     setDatasets: (id: string, datasets: Dataset[]) =>
       ipc().invoke<TestRecord>("tests:setDatasets", { id, datasets }),
     /** Native file picker → CSV rows appended as datasets. The result carries

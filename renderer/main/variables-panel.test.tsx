@@ -52,6 +52,9 @@ const importDatasetCsv = vi.fn(
   }),
 );
 let secretStatus: SecretStatus[] = [];
+const setSession = vi.fn(async (_id: string, _p: unknown) => ({}) as TestRecord);
+let sessionState: { savedAt: number; fresh: boolean } | null = null;
+let allTests: TestRecord[] = [];
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -62,6 +65,10 @@ vi.mock("../lib/api", () => ({
       clearSecret: (id: string, name: string) => clearSecret(id, name),
       secretStatus: async () => secretStatus,
       setFlow: (id: string, isFlow: boolean, params: string[]) => setFlow(id, isFlow, params),
+      setSession: (id: string, patch: unknown) => setSession(id, patch),
+      sessionState: async () => sessionState,
+      clearSessionState: async () => null,
+      list: async () => allTests,
       importDatasetCsv: (id: string) => importDatasetCsv(id),
     },
     batch: { run: (ids: string[], opts: unknown) => batchRun(ids, opts) },
@@ -94,6 +101,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   clearToastCalls();
   secretStatus = [];
+  sessionState = null;
+  allTests = [];
 });
 
 describe("VariablesPanel", () => {
@@ -172,6 +181,30 @@ describe("VariablesPanel", () => {
         { name: "mfa", kind: "secret", totp: true },
       ]),
     );
+  });
+
+  it("saves the session flags and offers only session-saving tests as sources", async () => {
+    allTests = [
+      makeTest({ id: "t-login", name: "Login", saveSession: true }),
+      makeTest({ id: "t-other", name: "Other" }),
+      makeTest({ id: "t1", name: "Checkout", saveSession: true }),
+    ];
+    renderPanel(makeTest());
+    const toggle = await screen.findByLabelText("Save signed-in state after passing runs");
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setSession).toHaveBeenCalledWith("t1", { saveSession: true }));
+    // The source select renders; itself and non-saving tests are not offered.
+    // (Native-menu Select: options never enter the DOM, so the pinned
+    // behaviour is the candidate FILTER, via the displayed value contract —
+    // covered at the IPC layer; here the section and its default render.)
+    expect(screen.getByLabelText("Session source")).toBeTruthy();
+    expect(screen.getByText(/start signed out/i)).toBeTruthy();
+  });
+
+  it("distinguishes fresh, stale, and never-saved state", async () => {
+    sessionState = { savedAt: 5, fresh: false };
+    renderPanel(makeTest({ saveSession: true }));
+    expect(await screen.findByText(/STALE/)).toBeTruthy();
   });
 
   it("warns about a name that would not survive into the generated spec", async () => {

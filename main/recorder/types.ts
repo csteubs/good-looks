@@ -653,6 +653,14 @@ export interface TestRecord {
    *  rectangle) instead of page-wide. Absent/empty → every step is page-level,
    *  which stays the default. */
   visualElementSteps?: string[];
+  /** Save this test's signed-in storage state after a PASSING run, for
+   *  other tests to start from (`useSessionFrom`). The fixture refuses to
+   *  save on failure — a half-signed-in state poisons every consumer. */
+  saveSession?: boolean;
+  /** Start runs from the saved storage state of this test id, when it exists
+   *  and is fresh (see MAX_SESSION_AGE_MS). Stale or missing state is
+   *  reported and the run proceeds without — never a hard failure. */
+  useSessionFrom?: string;
   /** Per-test accessibility-check preference, remembered between sessions.
    *  When absent, the global `RecorderSettings.defaultA11yChecks` applies.
    *  Independent of `captureArtifacts`: axe costs far more than a screenshot,

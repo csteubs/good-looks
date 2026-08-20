@@ -76,6 +76,9 @@ const MAX_NODES = 5;
 const DIR = process.env.GLAZE_ARTIFACT_DIR || "";
 const TEST_ID = process.env.GLAZE_TEST_ID || "";
 const RUN_ID = process.env.GLAZE_RUN_ID || "";
+// Where to save this run's signed-in storage state (login-session tests).
+// Empty means the test doesn't save one.
+const SAVE_STATE = process.env.GLAZE_SAVE_STATE || "";
 const SHOT_TIMEOUT_MS = 5000;
 
 // page/locator methods that mutate or navigate the page — the meaningful set for
@@ -421,7 +424,27 @@ function patchOnce(page) {
   }
 }
 
-export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON || SIG_ON) ? base.extend({
+
+/**
+ * Save the run's signed-in storage state for other tests to start from.
+ * Only a PASSING run saves — a failed login would write a half-signed-in
+ * state that poisons every test starting from it. Never fails the run.
+ */
+async function saveSessionState(page, testInfo) {
+  if (!SAVE_STATE) return;
+  if (testInfo.status !== "passed") {
+    process.stdout.write("[glaze-session] run did not pass - signed-in state NOT saved\\n");
+    return;
+  }
+  try {
+    await page.context().storageState({ path: SAVE_STATE });
+    process.stdout.write("[glaze-session] signed-in state saved for reuse\\n");
+  } catch (err) {
+    process.stderr.write("[glaze-session] state save failed: " + String(err) + "\\n");
+  }
+}
+
+export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON || SIG_ON || SAVE_STATE) ? base.extend({
   page: async ({ page }, use, testInfo) => {
     // The signature goes on FIRST, and is the only one of these that is not an
     // action patch — it routes the network. Installed ahead of the three
@@ -480,6 +503,7 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
       try {
         await use(page);
       } finally {
+        await saveSessionState(page, testInfo);
         reportSignedRequests();
       }
       return;
@@ -494,6 +518,7 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
     try {
       await use(page);
     } finally {
+      await saveSessionState(page, testInfo);
       reportSignedRequests();
       // Persist the manifest: the per-step artifact + outcome model for this run.
       try {

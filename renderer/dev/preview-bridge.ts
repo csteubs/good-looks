@@ -33,6 +33,7 @@ import { rollupA11y } from "../../shared/a11y-rollup.mjs";
 import { DEFAULT_FAILURE_REASONS } from "../../shared/failure-reasons.mjs";
 import {
   BATCHES,
+  NOW,
   ROUTINES,
   HEALS,
   AI_DEBUG_HISTORY,
@@ -710,6 +711,21 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       }
       return test;
     },
+    "tests:setSession": (p) => {
+      const test = findTest(p?.id);
+      if (!test) return undefined;
+      if (p?.saveSession !== undefined) test.saveSession = p.saveSession === true ? true : undefined;
+      if (p?.useSessionFrom !== undefined) {
+        test.useSessionFrom =
+          p.useSessionFrom === null || p.useSessionFrom === "" ? undefined : String(p.useSessionFrom);
+      }
+      return test;
+    },
+    /** The login fixture "has" a fresh saved session, so the status line's
+     *  interesting arm renders; everything else has none. */
+    "tests:sessionState": (p) =>
+      p?.id === "t-login" ? { savedAt: NOW - 2 * 60 * 60 * 1000, fresh: true } : null,
+    "tests:clearSessionState": () => null,
     "tests:setDatasets": (p) => {
       const test = findTest(p?.id);
       if (test && Array.isArray(p?.datasets)) {

@@ -4,6 +4,8 @@
 import * as fs from "fs";
 import * as path from "path";
 
+import { clearSessionState } from "./session-state-store.js";
+
 import { app, logger } from "@shell/backend";
 
 import { generateSpec } from "./script-generator.js";
@@ -225,6 +227,9 @@ export const testStore = {
       if (isInsideScripts(uploads)) {
         try { fs.rmSync(uploads, { recursive: true, force: true }); } catch { /* ignore */ }
       }
+      // A saved login session is the test's too. The store bounds the path
+      // itself (hostile ids are flattened and re-checked there).
+      try { clearSessionState(id); } catch { /* ignore */ }
     }
     writeAll(all.filter((t) => t.id !== id));
   },

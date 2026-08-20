@@ -54,6 +54,7 @@ import { duplicateTest } from "../services/duplicate-test.js";
 import { importService } from "../services/import-service.js";
 import { importDatasetCsvFile } from "../services/dataset-csv.js";
 import { stageUploadFile } from "../services/upload-store.js";
+import { clearSessionState, sessionStateInfo } from "../services/session-state-store.js";
 import { normalizeBaseUrl } from "../services/imported-config.js";
 import { testSecretsStore } from "../services/test-secrets-store.js";
 import { healJournalStore } from "../services/heal-journal-store.js";
@@ -730,6 +731,47 @@ export function registerHandlers(): void {
     return (rec?.variables ?? [])
       .filter((v) => v.kind === "secret")
       .map((v) => ({ name: v.name, hasValue: stored.has(v.name) }));
+  });
+
+  /** Login-session settings. `useSessionFrom` must name a real, different
+   *  test — a self-reference would deadlock the mental model (run me to get
+   *  the state I need to run). Clearing either is passing null. */
+  ipcMain.handle(
+    "tests:setSession",
+    async (_e, params: { id: string; saveSession?: unknown; useSessionFrom?: unknown }) => {
+      const rec = testStore.get(params.id);
+      if (!rec) throw new Error("Test not found: " + params.id);
+      if (params.saveSession !== undefined) {
+        rec.saveSession = params.saveSession === true ? true : undefined;
+      }
+      if (params.useSessionFrom !== undefined) {
+        if (params.useSessionFrom === null || params.useSessionFrom === "") {
+          rec.useSessionFrom = undefined;
+        } else if (
+          typeof params.useSessionFrom === "string" &&
+          params.useSessionFrom !== params.id &&
+          testStore.get(params.useSessionFrom)
+        ) {
+          rec.useSessionFrom = params.useSessionFrom;
+        } else {
+          throw new Error("Pick a different, existing test to start from.");
+        }
+      }
+      rec.updatedAt = Date.now();
+      testStore.save(rec);
+      return rec;
+    },
+  );
+
+  /** The saved-state status line: when it was saved and whether it is still
+   *  fresh enough to be used. Null = never saved. */
+  ipcMain.handle("tests:sessionState", async (_e, params: { id: string }) =>
+    sessionStateInfo(params.id),
+  );
+
+  ipcMain.handle("tests:clearSessionState", async (_e, params: { id: string }) => {
+    clearSessionState(params.id);
+    return sessionStateInfo(params.id);
   });
 
   ipcMain.handle("tests:setDatasets", async (_e, params: { id: string; datasets: unknown }) => {

@@ -42,6 +42,7 @@ import { describeA11yOutcome } from "./a11y-diff.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import { generateSpec, generateSpecDetailed, secretEnvName } from "./script-generator.js";
 import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "./glaze-runtime-source.js";
+import { ensureSessionsDir, freshSessionState, sessionStatePath } from "./session-state-store.js";
 import { HEAL_FIXTURE_FILE, healFixtureSource } from "./heal-fixture-source.js";
 import { SETTLE_FIXTURE_FILE, settleFixtureSource } from "./settle-fixture-source.js";
 import { buildHealProbeScript } from "./auto-heal.js";
@@ -1214,6 +1215,34 @@ export const playwrightRunner = {
         // reason: an imported spec never gets the fixture that does the
         // recording.
         const recordLogs = (rec.recordLogs ?? healSettings.defaultRecordLogs) && !rec.sourceDir;
+        // Login sessions: where this run SAVES its signed-in state (a passing
+        // run of a saveSession test), and which saved state it STARTS from.
+        // Stale or missing state is said out loud and the run proceeds fresh —
+        // an invisible fallback here would read as auth flake in the consumer.
+        const sessionEnv: NodeJS.ProcessEnv = {};
+        if (rec.saveSession && !rec.sourceDir) {
+          ensureSessionsDir();
+          sessionEnv.GLAZE_SAVE_STATE = sessionStatePath(rec.id);
+        }
+        if (rec.useSessionFrom) {
+          const fresh = freshSessionState(rec.useSessionFrom);
+          if (fresh) {
+            sessionEnv.GLAZE_STORAGE_STATE = fresh.path;
+            const from = testStore.get(rec.useSessionFrom);
+            emitOutput(
+              runId,
+              "system",
+              `Starting from the saved login session of "${from?.name ?? rec.useSessionFrom}".\n`,
+            );
+          } else {
+            const from = testStore.get(rec.useSessionFrom);
+            emitOutput(
+              runId,
+              "system",
+              `No fresh saved session from "${from?.name ?? rec.useSessionFrom}" — running without. Run that test (with session saving on) first.\n`,
+            );
+          }
+        }
         const axeFile = axePath(nodeModules);
         const a11y = wantA11y && fs.existsSync(axeFile);
         checkedAccessibility = a11y;
@@ -1525,6 +1554,7 @@ export const playwrightRunner = {
             // and empty is falsy, so the config then declares no baseURL at all
             // and behaves exactly as it did before this existed.
             PW_BASE_URL: rec.baseUrl ?? "",
+            ...sessionEnv,
             GLAZE_CAPTURE_ARTIFACTS: capturing ? "1" : "0",
             GLAZE_RECORD_LOGS: recordLogs ? "1" : "0",
             GLAZE_RECORD_ALL_HEADERS: healSettings.recordAllHeaders ? "1" : "0",
