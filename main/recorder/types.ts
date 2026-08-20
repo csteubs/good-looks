@@ -13,7 +13,7 @@ import type { ProxySource, ProxyTraffic } from "../../shared/proxy-config.mjs";
 // produces is spelled identically by the generator, the runner's heal key,
 // the heal fixture and the renderer's locator renderings — see the header of
 // `shared/testid-attr.mjs`.
-import { TESTID_ATTRIBUTE_OVERRIDES, type TestIdAttributeOverride } from "../../shared/testid-attr.mjs";
+import { testIdOverride, type TestIdAttributeOverride } from "../../shared/testid-attr.mjs";
 
 export type { CostCurrency };
 export type { ProxySource, ProxyTraffic };
@@ -1164,14 +1164,15 @@ export function normalizeLocator(input: unknown, allowContext = true): Locator |
   if (v !== undefined) out.v = v;
   if (role !== undefined) out.role = role;
   if (name !== undefined) out.name = name;
-  // Allowlisted, not merely length-capped: the attribute is interpolated into
-  // an attribute SELECTOR by the generator, and only the two names in
-  // TESTID_ATTRIBUTE_OVERRIDES mean anything there. data-testid itself is
-  // deliberately not accepted — absent already means it, and a second spelling
-  // of the same locator would be a second heal-map key.
+  // Grammar-gated, not merely length-capped: the attribute is interpolated
+  // into an attribute SELECTOR by the generator, so only a lowercase data-*
+  // name within the shared grammar survives (testIdOverride — one rule for
+  // ingest, emission, the heal key and the parser's inverse). data-testid
+  // itself is deliberately not accepted — absent already means it, and a
+  // second spelling of the same locator would be a second heal-map key.
   if (k === "testid") {
-    const attr = oneOf(l.attr, TESTID_ATTRIBUTE_OVERRIDES);
-    if (attr !== undefined) out.attr = attr;
+    const attr = testIdOverride(l.attr);
+    if (attr !== null) out.attr = attr;
   }
   // `int`, not a typeof check. This field reaches the generator as a BARE
   // NUMERAL — `.nth(<here>)` — which is the exact shape that was remote code
@@ -2308,6 +2309,12 @@ export const DELETED_TEST_NAME = "(deleted test)";
 
 /** Global trainer preferences, independent of any recording session. */
 export interface RecorderSettings {
+  /** EXTRA test-id attributes the recorder probes beyond data-testid and the
+   *  always-on pair — the team's own convention (data-cy, data-qa, …).
+   *  Grammar-gated by normalizeTestIdAttributes: the names are interpolated
+   *  into the injected capture script and land in attribute selectors in
+   *  generated source. */
+  extraTestIdAttributes: string[];
   /** show the current page's URL in the training window's title bar (default true) */
   showUrlBar: boolean;
   /** Open the trainer panel docked beside the training browser (default false).

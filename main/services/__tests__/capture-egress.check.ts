@@ -68,7 +68,8 @@ const service = read("services/recorder-service.ts");
     "the nonce is generated per session, not a constant",
   );
   assert(
-    /buildCaptureScript\(session\.captureNonce\)/.test(service),
+    // The nonce must be the FIRST argument; the attribute list rides second.
+    /buildCaptureScript\(\s*session\.captureNonce[,)]/.test(service),
     "the injected script carries that session's nonce",
   );
 }

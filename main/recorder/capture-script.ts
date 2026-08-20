@@ -42,6 +42,7 @@
 //     the click is destroying, and reading it is a race the recorder was
 //     losing.
 
+import { normalizeTestIdAttributes, testIdOverride, TESTID_ATTRIBUTE_OVERRIDES } from "../../shared/testid-attr.mjs";
 import { CAPTURE_MESSAGE_PREFIX } from "./capture-channel.js";
 import { CSS_ASSERT_PROPS } from "./types.js";
 import type { Locator } from "./types.js";
@@ -236,6 +237,9 @@ export const CONTEXT_HELPERS = `
 `;
 
 export const UNIQUENESS_HELPERS = `
+  // The shared attribute grammar, embedded as source (the heal fixture's
+  // idiom) — a transcribed copy here would be a second spelling of one rule.
+  var glazeTestIdOverride = ${testIdOverride.toString()};
   function pwNorm(s) {
     return String(s == null ? "" : s).replace(/\\s+/g, " ").trim().toLowerCase();
   }
@@ -279,8 +283,7 @@ export const UNIQUENESS_HELPERS = `
         // "unique" here while getByTestId found nothing on a run, and how a
         // unique data-testid could be rejected because another attribute held
         // the same value.
-        var tidAttr = (loc.attr === "data-test-id" || loc.attr === "data-test")
-          ? loc.attr : "data-testid";
+        var tidAttr = glazeTestIdOverride(loc.attr) || "data-testid";
         return scanAll("[" + tidAttr + '="' + cssEscape(loc.v) + '"]');
       }
       if (loc.k === "css") return scanAll(loc.v);
@@ -743,14 +746,22 @@ export const DOM_HELPERS = `
    *  the trainer counts a match. data-testid wins when an element carries more
    *  than one, and carries no \`attr\` — absent means the default, so one
    *  locator never has two spellings. */
+  // Probe order: the default first (it needs no attr and getByTestId
+  // resolves it), then any configured extras, then the always-on pair. The
+  // DEFAULT list is baked here so every script embedding these helpers
+  // works alone; buildCaptureScript REASSIGNS it with the user's extras
+  // (grammar-gated before interpolation).
+  var TID_ATTRS = ["data-testid", "data-test-id", "data-test"];
   function testIdLocatorOf(el) {
     if (!el || !el.getAttribute) return null;
-    var v = el.getAttribute("data-testid");
-    if (v) return { k: "testid", v: v };
-    v = el.getAttribute("data-test-id");
-    if (v) return { k: "testid", attr: "data-test-id", v: v };
-    v = el.getAttribute("data-test");
-    if (v) return { k: "testid", attr: "data-test", v: v };
+    for (var ti = 0; ti < TID_ATTRS.length; ti++) {
+      var v = el.getAttribute(TID_ATTRS[ti]);
+      if (v) {
+        return TID_ATTRS[ti] === "data-testid"
+          ? { k: "testid", v: v }
+          : { k: "testid", attr: TID_ATTRS[ti], v: v };
+      }
+    }
     return null;
   }
 
@@ -900,7 +911,16 @@ export const DOM_HELPERS = `
  * Plain string (not type-checked against the Node backend lib). No backticks or
  * ${…} inside except the interpolations spelled out here.
  */
-export function buildCaptureScript(nonce: string): string {
+export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[] = []): string {
+  // Interpolated into an INJECTED script, so the list is re-normalized here
+  // regardless of what the caller read from settings — one grammar, spelled
+  // in shared/testid-attr.mjs, gates every path an attribute name takes into
+  // executed or injected source.
+  const tidAttrs = JSON.stringify([
+    "data-testid",
+    ...normalizeTestIdAttributes(extraTestIdAttributes),
+    ...TESTID_ATTRIBUTE_OVERRIDES,
+  ]);
   return `
 (function () {
   var root = document.documentElement;
@@ -1019,6 +1039,7 @@ export function buildCaptureScript(nonce: string): string {
 
   ${DOM_HELPERS}
   ${UNIQUENESS_HELPERS}
+  TID_ATTRS = ${tidAttrs};
 
   // ----- One dispatch, one step -----
   //
@@ -1573,10 +1594,11 @@ export const PICK_AT_POINT_SCRIPT = `
  * claims: 0 means "nothing on this page matches", which would send the user
  * looking for a mistake that is not there.
  */
-export function buildCountScript(loc: Locator): string {
+export function buildCountScript(loc: Locator, extraTestIdAttributes: string[] = []): string {
   return `(function () {
   ${DOM_HELPERS}
   ${UNIQUENESS_HELPERS}
+  TID_ATTRS = ${JSON.stringify(["data-testid", ...normalizeTestIdAttributes(extraTestIdAttributes), ...TESTID_ATTRIBUTE_OVERRIDES])};
   // Not the click path — a user is waiting on this readout, and a wrong count
   // is worse than a slow one. See UNCAPPED_SCAN.
   GL_SCAN_LIMIT = ${UNCAPPED_SCAN};

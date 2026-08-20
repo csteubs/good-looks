@@ -18,6 +18,7 @@ import {
 } from "../recorder/types.js";
 import type { BatchRowOptions, RecorderSettings } from "../recorder/types.js";
 import { normalizeViewport } from "../recorder/window-size.js";
+import { normalizeTestIdAttributes } from "../../shared/testid-attr.mjs";
 import {
   clampCostPerCiMinute,
   clampHourlyRate,
@@ -147,6 +148,7 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   // Opt-in: the panel moves and resizes real windows, so it stays off until
   // the user asks for it. The in-window trainer is unchanged either way.
   trainerPanelEnabled: false,
+  extraTestIdAttributes: [],
   defaultRunSpeed: "slow",
   defaultWindowSize: null,
   autoHealEnabled: true,
@@ -283,6 +285,7 @@ function read(): RecorderSettings {
         typeof parsed.defaultA11yChecks === "boolean"
           ? parsed.defaultA11yChecks
           : DEFAULT_SETTINGS.defaultA11yChecks,
+      extraTestIdAttributes: normalizeTestIdAttributes(parsed.extraTestIdAttributes),
       defaultRecordLogs:
         typeof parsed.defaultRecordLogs === "boolean"
           ? parsed.defaultRecordLogs
@@ -450,6 +453,10 @@ export const recorderSettingsStore = {
     const current = read();
     const next: RecorderSettings = {
       showUrlBar: update.showUrlBar !== undefined ? update.showUrlBar : current.showUrlBar,
+      extraTestIdAttributes:
+        update.extraTestIdAttributes !== undefined
+          ? normalizeTestIdAttributes(update.extraTestIdAttributes)
+          : current.extraTestIdAttributes,
       trainerPanelEnabled:
         update.trainerPanelEnabled !== undefined
           ? update.trainerPanelEnabled

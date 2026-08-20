@@ -1187,6 +1187,8 @@ export interface BatchRowOptions {
 export const MAX_BATCH_TEST_OPTIONS = 1000;
 
 export interface RecorderSettings {
+  /** extra test-id attributes (mirror of main types) */
+  extraTestIdAttributes: string[];
   showUrlBar: boolean;
   /** Open the trainer panel docked beside the training browser (default false). */
   trainerPanelEnabled: boolean;
