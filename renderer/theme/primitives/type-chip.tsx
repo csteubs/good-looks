@@ -54,6 +54,8 @@ const SYNTAX: Record<SyntaxTheme, Record<StepType, string>> = {
     loop: "#b9a6e0",
     endLoop: "#b9a6e0",
     runFlow: "#b9a6e0",
+    group: "#b9a6e0",
+    endGroup: "#b9a6e0",
     wait: "#9aa3a8",
   },
 };
@@ -65,6 +67,8 @@ const LABEL: Partial<Record<StepType, string>> = {
   endif: "end if",
   loop: "repeat",
   endLoop: "end repeat",
+  group: "group",
+  endGroup: "end group",
   runFlow: "flow",
   viewport: "size",
   aiCheck: "ai check",

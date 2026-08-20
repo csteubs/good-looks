@@ -144,6 +144,15 @@ function stripComments(src: string): string {
         i += 2;
         continue;
       }
+      // Preserve group markers, same mechanism: they are the ONLY comments
+      // that round-trip into steps of their own.
+      // Preserve group markers, same mechanism: they are the ONLY comments
+      // that round-trip into steps of their own.
+      if (after.match(/^\s*── (?:group:|end group)/)) {
+        out += "//";
+        i += 2;
+        continue;
+      }
       const nl = src.indexOf("\n", i);
       if (nl < 0) break;
       i = nl;
@@ -1179,6 +1188,23 @@ function parseBody(
         skipped++;
       }
       i = close + 1;
+      continue;
+    }
+
+    // ── group: <label> ── / ── end group ── — the organizational markers.
+    // Comments in the spec, steps in the list; the label is everything
+    // between the head and the LAST trailing separator, so a label
+    // containing the separator still reads back whole.
+    const groupM = rest.match(/^[\s;]*\/\/\s*── group: (.*) ──\s*(?:\r?\n|$)/);
+    if (groupM) {
+      steps.push(makeStep("group", { label: groupM[1] }));
+      i += groupM[0].length;
+      continue;
+    }
+    const endGroupM = rest.match(/^[\s;]*\/\/\s*── end group ──\s*(?:\r?\n|$)/);
+    if (endGroupM) {
+      steps.push(makeStep("endGroup", {}));
+      i += endGroupM[0].length;
       continue;
     }
 

@@ -25,6 +25,11 @@ describe("computeStepDepths", () => {
     expect(t(["loop", "if", "else", "click", "endif", "endLoop"])).toEqual([0, 1, 1, 2, 1, 0]);
   });
 
+  it("nests group members like a block body", () => {
+    expect(t(["group", "click", "endGroup", "click"])).toEqual([0, 1, 0, 0]);
+    expect(t(["if", "group", "click", "endGroup", "endif"])).toEqual([0, 1, 2, 1, 0]);
+  });
+
   it("floors at zero on a stray closer", () => {
     expect(t(["endLoop", "click"])).toEqual([0, 0]);
     expect(t(["else", "click"])).toEqual([0, 1]);

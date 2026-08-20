@@ -48,6 +48,9 @@ const cases: { label: string; step: Step }[] = [
   { label: "endLoop", step: step({ type: "endLoop" }) },
   { label: "ai check", step: step({ type: "aiCheck", text: "the cart badge shows 3" }) },
   { label: "ai check with no claim", step: step({ type: "aiCheck" }) },
+  { label: "group", step: step({ type: "group", label: "Log in" }) },
+  { label: "group with no label", step: step({ type: "group" }) },
+  { label: "endGroup", step: step({ type: "endGroup" }) },
   { label: "a11y gate", step: step({ type: "a11y", a11yImpact: "critical" }) },
   { label: "a11y gate default impact", step: step({ type: "a11y" }) },
   // Malformed on purpose: both sides must fall back to "serious" identically.

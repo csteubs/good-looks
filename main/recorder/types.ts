@@ -93,7 +93,13 @@ export type StepType =
   // AFTER the run. Never blocks or fails the Playwright run itself — the
   // verdicts attach to the run record, and a failed claim is a run notice.
   // The claim travels in `text`.
-  | "aiCheck";
+  | "aiCheck"
+  // Organizational grouping: `group` opens a named section, `endGroup` closes
+  // it. UI-only nesting — the pair emits as comment markers, never code, so a
+  // stray half can't break the spec. Same pair-insertion discipline as
+  // loop/endLoop; the label rides `label`.
+  | "group"
+  | "endGroup";
 
 /** axe's impact scale, weakest first. An `a11y` gate step fails on violations
  *  AT OR ABOVE its `a11yImpact`; the order here is the comparison. */
@@ -958,7 +964,7 @@ export function normalizeDatasets(input: unknown): Dataset[] {
 export const STEP_TYPES: StepType[] = [
   "goto", "click", "fill", "press", "select", "check", "uncheck", "assert",
   "wait", "viewport", "if", "else", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
-  "scroll", "download", "a11y", "upload", "api", "aiCheck",
+  "scroll", "download", "a11y", "upload", "api", "aiCheck", "group", "endGroup",
 ];
 
 export type DownloadMatch = "contains" | "exact";

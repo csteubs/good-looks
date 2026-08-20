@@ -67,7 +67,7 @@ export function parseScrollDraft(draft: string): { scrollX: number; scrollY: num
 /** The single field a step exposes for quick inline editing, if any. */
 function editableField(
   step: Step,
-): { key: "value" | "text" | "url" | "waitMs" | "timeoutMs" | "loopCount" | "size" | "scrollPos"; label: string; value: string } | null {
+): { key: "value" | "text" | "url" | "label" | "waitMs" | "timeoutMs" | "loopCount" | "size" | "scrollPos"; label: string; value: string } | null {
   switch (step.type) {
     case "goto":
       return { key: "url", label: "URL", value: step.url ?? "" };
@@ -130,6 +130,9 @@ function editableField(
     case "loop":
       // The count is the loop step's whole content — same rule as waitMs.
       return { key: "loopCount", label: "Times", value: String(step.loopCount ?? 1) };
+    case "group":
+      // The name is the group's whole content, same rule again.
+      return { key: "label", label: "Group name", value: step.label ?? "" };
     case "download":
       return { key: "value", label: "Filename", value: step.value ?? "" };
     default:
@@ -737,6 +740,8 @@ export function StepRow({
           step.type !== "endif" &&
           step.type !== "loop" &&
           step.type !== "endLoop" &&
+          step.type !== "group" &&
+          step.type !== "endGroup" &&
           !(step.type === "state" && step.elementState === "press") ? (
             <button
               type="button"
@@ -790,7 +795,9 @@ export function StepRow({
               // be a wrapper around nothing — and the generator emits the
               // plain line regardless, which would silently drop the flag on
               // the next round-trip.
-              step.type !== "aiCheck";
+              step.type !== "aiCheck" &&
+              step.type !== "group" &&
+              step.type !== "endGroup";
             const isFlowCall = step.type === "runFlow" && !!step.flowId;
             const canFlowArgs = onEdit && isFlowCall;
             const canOpenFlow = onOpenFlow && isFlowCall;

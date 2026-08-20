@@ -44,7 +44,9 @@ export type StepType =
   | "download"
   | "a11y"
   | "api"
-  | "aiCheck";
+  | "aiCheck"
+  | "group"
+  | "endGroup";
 
 /** Predicate for an `if` step. Element conditions use `Step.locator`; page
  *  conditions (urlContains/titleContains) use `Step.value` as the substring. */
