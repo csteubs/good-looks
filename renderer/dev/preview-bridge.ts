@@ -1912,6 +1912,7 @@ function startFakeRun(
   payload: Payload,
   state: ReturnType<typeof seed>,
   emit: (channel: string, value: unknown) => void,
+  tickMs: number,
 ): { runId: string } {
   // `api.ts` sends `{ id, headed, ... }` — the key is `id`, not `testId`, and
   // the store keys its run map by the TEST id, so the two have to agree or the
@@ -1925,10 +1926,9 @@ function startFakeRun(
   const failAt =
     stored && stored.status !== "passed" ? Math.min(steps.length - 1, Math.max(0, steps.length - 2)) : -1;
 
-  const TICK = 260;
   let at = 0;
   const later = (fn: () => void) => {
-    at += TICK;
+    at += tickMs;
     setTimeout(fn, at);
   };
 
@@ -2005,7 +2005,21 @@ function startFakeChat(emit: (channel: string, value: unknown) => void): { reque
   return { requestId };
 }
 
-export function installPreviewBridge(): PreviewDiagnostics {
+export interface PreviewBridgeOptions {
+  /** Pace of the scripted run, in ms per event — two per step, one for done.
+   *  260 by default, and the default is presentation: steps going cyan one at
+   *  a time is the whole reason the run is scripted rather than instant. It is
+   *  injectable because that same pacing makes a run's wall-clock a function
+   *  of the fixture's STEP COUNT — so a test awaiting `runner:done` at the
+   *  preview's pace inherits every step the fixture grows as real seconds
+   *  against its own timeout. Those tests pass 1: same script, same events,
+   *  same order (the delays still strictly increase), just not paced for
+   *  human eyes. See "the scripted run" in preview-bridge.test.ts. */
+  runTickMs?: number;
+}
+
+export function installPreviewBridge(options: PreviewBridgeOptions = {}): PreviewDiagnostics {
+  const { runTickMs = 260 } = options;
   const state = seed();
   const handlers = { ...buildHandlers(state), ...SDK_CHANNELS };
   const diagnostics: PreviewDiagnostics = { misses: {}, calls: [] };
@@ -2046,7 +2060,7 @@ export function installPreviewBridge(): PreviewDiagnostics {
 
   const invoke = async (channel: string, ...args: unknown[]): Promise<unknown> => {
     diagnostics.calls.push(channel);
-    if (channel === "runner:run") return startFakeRun(args[0] as Payload, state, emit);
+    if (channel === "runner:run") return startFakeRun(args[0] as Payload, state, emit, runTickMs);
     if (channel === "llm:chat") return startFakeChat(emit);
     // Refine mode, which in the real app pauses the session and waits for the
     // user to click an element in the training browser. There is no training
