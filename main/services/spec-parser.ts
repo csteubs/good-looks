@@ -548,6 +548,107 @@ function locatorActionStep(locator: Locator, action: string, argsStr: string): S
   });
 }
 
+
+
+/** Read glazeApiRequest's options object back into an `api` step. Key by
+ *  key with scanOptionValue; every vocabulary is re-validated on the way in
+ *  (the same guards emission applied), and ANY unrecognized key makes the
+ *  whole call foreign — null, counted as skipped by the caller. */
+function parseApiOptions(inner: string): Step | null {
+  const fields: Record<string, string> = {};
+  let i = 0;
+  while (i < inner.length) {
+    const keyM = inner.slice(i).match(/^[\s,]*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*/);
+    if (!keyM) {
+      if (inner.slice(i).trim() === "") break;
+      return null;
+    }
+    const at = i + keyM[0].length;
+    const end = scanOptionValue(inner, at);
+    if (end < 0) return null;
+    fields[keyM[1]] = inner.slice(at, end);
+    i = end;
+  }
+  const KNOWN = new Set(["method", "url", "headers", "body", "expectStatus", "captureVar", "capturePath"]);
+  for (const k of Object.keys(fields)) {
+    if (!KNOWN.has(k)) return null;
+  }
+  const methodM = (fields.method ?? "").match(/^"(GET|POST|PUT|PATCH|DELETE|HEAD)"$/);
+  if (!methodM || fields.url === undefined) return null;
+  const url = parseValueArg(fields.url);
+  if (url === null) return null;
+
+  // GET is the emission default, so it reads back as ABSENT — a minimal
+  // step must round-trip shape-equal, not grow an explicit default.
+  const extra: Record<string, unknown> =
+    methodM[1] === "GET" ? { url } : { apiMethod: methodM[1], url };
+  if (fields.headers !== undefined) {
+    const headers: Record<string, string> = {};
+    const innerH = fields.headers.trim().replace(/^\{/, "").replace(/\}$/, "");
+    let j = 0;
+    while (j < innerH.length) {
+      const nameM = innerH.slice(j).match(/^[\s,]*"((?:[^"\\]|\\.)*)"\s*:\s*/);
+      if (!nameM) {
+        if (innerH.slice(j).trim() === "") break;
+        return null;
+      }
+      const vAt = j + nameM[0].length;
+      const vEnd = scanOptionValue(innerH, vAt);
+      if (vEnd < 0) return null;
+      const value = parseValueArg(innerH.slice(vAt, vEnd));
+      if (value === null) return null;
+      headers[unescapeLit(nameM[1])] = value;
+      j = vEnd;
+    }
+    if (Object.keys(headers).length > 0) extra.apiHeaders = headers;
+  }
+  if (fields.body !== undefined) {
+    const body = parseValueArg(fields.body);
+    if (body === null) return null;
+    extra.apiBody = body;
+  }
+  if (fields.expectStatus !== undefined) {
+    if (!/^\d+$/.test(fields.expectStatus)) return null;
+    extra.expectStatus = parseInt(fields.expectStatus, 10);
+  }
+  if (fields.captureVar !== undefined) {
+    const cv = fields.captureVar.match(/^"([A-Za-z_][A-Za-z0-9_]*)"$/);
+    if (!cv) return null;
+    extra.captureVar = cv[1];
+    if (fields.capturePath !== undefined) {
+      const cp = fields.capturePath.match(/^"((?:[^"\\]|\\.)*)"$/);
+      if (!cp) return null;
+      extra.capturePath = unescapeLit(cp[1]);
+    }
+  }
+  return makeStep("api", extra);
+}
+
+/** Scan ONE value expression inside glazeApiRequest's options object,
+ *  starting at `at`: a quoted string, a template literal, a bare V.name, a
+ *  number, or a braced sub-object. Returns the expression's END (exclusive),
+ *  or -1 when the shape is foreign. Strings honour escapes — an indexOf
+ *  would stop at a \" inside the value and split it. */
+function scanOptionValue(src: string, at: number): number {
+  const ch = src[at];
+  if (ch === '"' || ch === "'" || ch === "`") {
+    for (let k = at + 1; k < src.length; k++) {
+      if (src[k] === "\\") {
+        k++;
+        continue;
+      }
+      if (src[k] === ch) return k + 1;
+    }
+    return -1;
+  }
+  if (ch === "{") {
+    const close = matchBrace(src, at);
+    return close < 0 ? -1 : close + 1;
+  }
+  const m = src.slice(at).match(/^(?:V\.[A-Za-z_][A-Za-z0-9_]*|\d+)/);
+  return m ? at + m[0].length : -1;
+}
+
 /**
  * Find the index of the matching close paren for the open paren at `openIdx`,
  * skipping nested parens. Returns -1 if unbalanced.
@@ -1040,6 +1141,24 @@ function parseBody(
         skipped++;
       }
       i = close + 1;
+      continue;
+    }
+
+    // glazeApiRequest(page, V, { … }) — the api step. Fixed key order from
+    // the generator; each value reads back through the same string shapes
+    // parseValueArg models. Anything else in the object is a hand-edit and
+    // the whole call counts skipped, rather than half-reading a request the
+    // regeneration would then rewrite.
+    const apiM = rest.match(/^[\s;]*(?:await\s+|return\s+)?glazeApiRequest\s*\(\s*page\s*,\s*V\s*,\s*\{/);
+    if (apiM) {
+      const braceIdx = i + apiM[0].length - 1;
+      const braceClose = matchBrace(src, braceIdx);
+      const callClose = matchParen(src, src.lastIndexOf("(", braceIdx));
+      if (braceClose < 0 || callClose < 0) break;
+      const step = parseApiOptions(src.slice(braceIdx + 1, braceClose));
+      if (step) steps.push(step);
+      else skipped++;
+      i = callClose + 1;
       continue;
     }
 

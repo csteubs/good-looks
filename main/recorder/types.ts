@@ -80,7 +80,14 @@ export type StepType =
   // placed. "New" means not in the test's accepted baseline, which reaches
   // the spec as GLAZE_A11Y_BASELINE env (never baked into source, so an
   // accept takes effect without regenerating).
-  | "a11y";
+  | "a11y"
+  // One HTTP request as a step, via Playwright's request context: method +
+  // URL (+ headers/body), an optional exact-status assertion, an optional
+  // JSON-path capture into a variable. Emitted as ONE awaited
+  // glazeApiRequest(...) line; with no expectStatus the step still FAILS on
+  // any 4xx/5xx — a request step that silently accepts 500 hides exactly
+  // what it exists to catch.
+  | "api";
 
 /** axe's impact scale, weakest first. An `a11y` gate step fails on violations
  *  AT OR ABOVE its `a11yImpact`; the order here is the comparison. */
@@ -307,6 +314,18 @@ export interface Step {
    *  reported the real name; hand-authored ones default to the looser match
    *  because generated filenames carry dates and ids. */
   downloadMatch?: DownloadMatch;
+  /** `api` step: the request method, from API_METHODS only. */
+  apiMethod?: ApiMethod;
+  /** `api` step: header name → value. Names carry the token grammar, values
+   *  refuse CR/LF — both re-checked at emission. */
+  apiHeaders?: Record<string, string>;
+  /** `api` step: request body, sent verbatim (interpolatable). */
+  apiBody?: string;
+  /** `api` step: exact status the response must have. Absent still fails
+   *  4xx/5xx at run time. */
+  expectStatus?: number;
+  /** `api` step: dot/bracket path into the JSON response for captureVar. */
+  capturePath?: string;
   /** assertion text / extra description */
   text?: string;
   /** soft assertion — reports a failure but doesn't stop the test (expect.soft) */
@@ -467,6 +486,11 @@ export interface RawStep {
   loopCount?: number;
   a11yImpact?: A11yImpact;
   downloadMatch?: DownloadMatch;
+  apiMethod?: ApiMethod;
+  apiHeaders?: Record<string, string>;
+  apiBody?: string;
+  expectStatus?: number;
+  capturePath?: string;
   /** cookie fields, so a cookie step can be inserted via insertStep */
   cookieAction?: CookieAction;
   cookie?: CookieSpec;
@@ -913,10 +937,43 @@ export function normalizeDatasets(input: unknown): Dataset[] {
 export const STEP_TYPES: StepType[] = [
   "goto", "click", "fill", "press", "select", "check", "uncheck", "assert",
   "wait", "viewport", "if", "else", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
-  "scroll", "download", "a11y", "upload",
+  "scroll", "download", "a11y", "upload", "api",
 ];
 
 export type DownloadMatch = "contains" | "exact";
+
+/** HTTP methods an `api` step may use. Interpolated into generated source as
+ *  a literal, so the vocabulary is closed and double-guarded like every
+ *  emitted enum. */
+export const API_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"] as const;
+export type ApiMethod = (typeof API_METHODS)[number];
+
+export function isApiMethod(v: unknown): v is ApiMethod {
+  return typeof v === "string" && (API_METHODS as readonly string[]).includes(v);
+}
+
+/** Header-name grammar (RFC 7230 token, conservatively): what an `api` step's
+ *  header names must satisfy at the boundary AND at emission. Values get the
+ *  narrower check that matters — no CR/LF, so a stored header can never
+ *  smuggle a second one. */
+export function isValidHeaderName(v: unknown): v is string {
+  return typeof v === "string" && v.length > 0 && v.length <= 100 && /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(v);
+}
+
+export const MAX_API_HEADERS = 20;
+
+/** A capture path for an `api` step: dots, brackets, identifiers and array
+ *  indexes only ("data.items[0].id"). It travels as a quoted string and is
+ *  WALKED at run time, never evaluated — the grammar exists so a step reads
+ *  as what it does, not to stop code execution (q() does that). */
+export function isValidCapturePath(v: unknown): v is string {
+  return (
+    typeof v === "string" &&
+    v.length > 0 &&
+    v.length <= 200 &&
+    /^[A-Za-z_$][A-Za-z0-9_$]*(?:(?:\.[A-Za-z_$][A-Za-z0-9_$]*)|(?:\[\d+\]))*$/.test(v)
+  );
+}
 export const DOWNLOAD_MATCHES: DownloadMatch[] = ["contains", "exact"];
 
 export const ASSERT_KINDS: AssertKind[] = [
@@ -1307,6 +1364,31 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   if (downloadMatch) out.downloadMatch = downloadMatch;
   const a11yImpact = oneOf(s.a11yImpact, A11Y_IMPACTS);
   if (a11yImpact) out.a11yImpact = a11yImpact;
+
+  // `api` step fields. Method and status are closed vocabularies; headers are
+  // REBUILT pair by pair (never spread) — the name must be a token and the
+  // value must carry no CR/LF, because a stored header that could smuggle a
+  // newline is a request-splitting primitive waiting for a runtime that
+  // forgets to check.
+  const apiMethod = oneOf(s.apiMethod, API_METHODS);
+  if (apiMethod) out.apiMethod = apiMethod;
+  if (s.apiHeaders && typeof s.apiHeaders === "object" && !Array.isArray(s.apiHeaders)) {
+    const headers: Record<string, string> = {};
+    let n = 0;
+    for (const [k, v] of Object.entries(s.apiHeaders as Record<string, unknown>)) {
+      if (n >= MAX_API_HEADERS) break;
+      if (!isValidHeaderName(k)) continue;
+      if (typeof v !== "string" || /[\r\n]/.test(v)) continue;
+      headers[k] = v.slice(0, 2000);
+      n++;
+    }
+    if (Object.keys(headers).length > 0) out.apiHeaders = headers;
+  }
+  const apiBody = str(s.apiBody);
+  if (apiBody !== undefined && apiBody !== "") out.apiBody = apiBody;
+  const expectStatus = int(s.expectStatus, 100, 599);
+  if (expectStatus !== undefined) out.expectStatus = expectStatus;
+  if (isValidCapturePath(s.capturePath)) out.capturePath = s.capturePath;
 
   const cookieAction = oneOf(s.cookieAction, COOKIE_ACTIONS);
   if (cookieAction) out.cookieAction = cookieAction;

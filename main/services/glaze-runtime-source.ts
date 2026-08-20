@@ -214,4 +214,60 @@ export function glazeGenerate(spec, name) {
   console.log("[glaze-generate] " + name + " = " + value);
   return value;
 }
+
+/**
+ * One HTTP request as a step, through Playwright's request context (shares
+ * cookies/storage with the page, so an authed session carries over).
+ *
+ * Fails the step when the status misses opts.expectStatus — or, with no
+ * expected status declared, on any 4xx/5xx: a request step that silently
+ * accepts a 500 hides exactly what it exists to catch. The error carries the
+ * status line and the first bytes of the body, which is usually the whole
+ * diagnosis.
+ *
+ * opts.captureVar stores the response into the run's variable scope —
+ * opts.capturePath walks that far into the parsed JSON first (dot and
+ * [index] segments only; the path is DATA walked here, never evaluated).
+ */
+export async function glazeApiRequest(page, vars, opts) {
+  const method = opts.method || "GET";
+  const res = await page.request.fetch(opts.url, {
+    method: method,
+    ...(opts.headers ? { headers: opts.headers } : {}),
+    ...(opts.body !== undefined ? { data: opts.body } : {}),
+  });
+  const status = res.status();
+  const describe = method + " " + opts.url;
+  if (typeof opts.expectStatus === "number") {
+    if (status !== opts.expectStatus) {
+      const body = (await res.text()).slice(0, 300);
+      throw new Error("API " + describe + " answered " + status + ", expected " + opts.expectStatus + (body ? " - body: " + body : ""));
+    }
+  } else if (status >= 400) {
+    const body = (await res.text()).slice(0, 300);
+    throw new Error("API " + describe + " failed with " + status + (body ? " - body: " + body : ""));
+  }
+  if (opts.captureVar) {
+    const text = await res.text();
+    let value = text;
+    if (opts.capturePath) {
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (err) {
+        throw new Error("API " + describe + ": the response is not JSON, so \\"" + opts.capturePath + "\\" cannot be read from it.");
+      }
+      const segs = String(opts.capturePath).split(/[.[\\]]+/).filter((p2) => p2 !== "");
+      for (const seg of segs) {
+        if (data == null) break;
+        data = data[/^\\d+$/.test(seg) ? Number(seg) : seg];
+      }
+      if (data === undefined) {
+        throw new Error("API " + describe + ": nothing at \\"" + opts.capturePath + "\\" in the response.");
+      }
+      value = typeof data === "string" ? data : JSON.stringify(data);
+    }
+    vars[opts.captureVar] = value == null ? "" : String(value);
+  }
+}
 `;

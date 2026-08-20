@@ -9048,3 +9048,38 @@ already wraps setInputFiles, so upload steps get screenshots and step
 progress for free. Staging is session-scoped (`recorder:stageUpload`): the
 composer only exists inside a session, and a session has its test id from
 the moment it starts, so an unsaved recording can stage too.
+
+## 2026-08-19 — API request steps: one helper line, and failure is the default on 4xx/5xx
+
+An `api` step makes one HTTP request through Playwright's request context
+(cookies carry over from the page's session, so an authed UI flow can call
+the API it just logged into). Emitted as ONE awaited glazeApiRequest(...)
+line with a fixed key order — the one-line rule every runtime helper exists
+for, and what lets the parser read the call back key by key and count
+anything foreign as skipped WHOLE (a request half-read is a request
+rewritten on the next regeneration).
+
+**With no expected status, the step still fails on any 4xx/5xx.** The
+alternative — a request step that silently accepts a 500 unless the user
+remembered to assert — hides exactly the failures the step exists to catch.
+An exact `expectStatus` narrows it; nothing widens it.
+
+**Header values refuse CR/LF at the boundary AND at emission.** A stored
+header value that could carry a newline is a request-splitting primitive
+waiting for a runtime that forgets to check; the name side carries the RFC
+7230 token grammar. Every other vocabulary is double-guarded the same way
+(method allowlist, status bounds, capture-name identifier, capture-path
+grammar) because updateStep copies raw and a forged field must not reach
+source. URL, body and header values run through valueExpr, so ${variable}
+references — secrets included — work everywhere a value does.
+
+**The capture path is data, never code.** `data.items[0].id` is split and
+walked at run time; a JSON body that fails to parse, or a path that reaches
+nothing, throws with the path named — a silent empty capture would surface
+three steps later as a fill typing "undefined".
+
+The runtime's semantics are pinned by importing the EMITTED glaze-runtime.mjs
+and driving glazeApiRequest against a fake page — "fails on 500 by default"
+is a meaning claim, and only executing the helper can hold it. The parity
+guard also caught the renderer's describe printing a forged method raw while
+the backend fell back to GET; both now validate against the same allowlist.

@@ -538,6 +538,10 @@ export function buildReplayScript(step: Step): string {
       log("info", "file uploads run on RUNS - the preview does not touch the input");
       return { ok: true };
     }
+    if (t === "api") {
+      log("info", "API request steps run on RUNS - the preview does not send requests");
+      return { ok: true };
+    }
     if (t === "download") {
       log("info", "download expectations are verified on runs — the training browser cancels transfers");
       return { ok: true };

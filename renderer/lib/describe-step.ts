@@ -2,7 +2,7 @@
 // leading `await`/trailing `;`), for display in the UI. Mirrors the backend
 // script generator so what the user sees matches the generated script.
 
-import { DEFAULT_WAIT_TIMEOUT_MS, ELEMENT_STATES, isCssPropName } from "./recorder-types";
+import { API_METHODS, DEFAULT_WAIT_TIMEOUT_MS, ELEMENT_STATES, isCssPropName } from "./recorder-types";
 import { ASSERT_SEMANTICS, reEscape, textMatchExpr, urlPathExpr } from "../../shared/step-semantics.mjs";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import type { Locator, Step, StepType } from "./recorder-types";
@@ -303,6 +303,22 @@ export function describeStep(step: Step): string {
   if (step.type === "upload") {
     const name = typeof step.value === "string" ? step.value.split("/").pop() ?? "" : "";
     return name ? `upload ${JSON.stringify(name)}` : "upload a file";
+  }
+  if (step.type === "api") {
+    // Validated against the mirror allowlist, not printed raw — the backend
+    // falls back to GET for a forged method and this copy must agree.
+    const m =
+      step.apiMethod && (API_METHODS as readonly string[]).includes(step.apiMethod)
+        ? step.apiMethod
+        : "GET";
+    const base = `${m} ${step.url ?? ""}`.trim();
+    const status = typeof step.expectStatus === "number" ? ` expecting ${Math.trunc(step.expectStatus)}` : "";
+    const varOk =
+      !!step.captureVar &&
+      step.captureVar.length <= 40 &&
+      /^[A-Za-z_][A-Za-z0-9_]*$/.test(step.captureVar);
+    const cap = varOk ? ` (response → ${step.captureVar})` : "";
+    return "API " + base + status + cap;
   }
   if (step.type === "download") {
     const name = step.value ?? "";

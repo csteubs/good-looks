@@ -412,6 +412,14 @@ describe("upload steps in the preview", () => {
   });
 });
 
+describe("api steps in the preview", () => {
+  it("is a narrated no-op — requests are sent on runs only", () => {
+    const r = run(step({ type: "api", url: "https://x.test/health" }));
+    expect(r.ok).toBe(true);
+    expect(why(r)).toMatch(/run/i);
+  });
+});
+
 describe("download steps in the preview", () => {
   it("is a narrated no-op that never claims verification", () => {
     // The training browser cancels transfers, so no download event can reach

@@ -15,6 +15,9 @@ export const DOWNLOAD_MATCHES: DownloadMatch[] = ["contains", "exact"];
 /** axe impact scale, weakest first — mirror of main/recorder/types.ts. */
 export const A11Y_IMPACTS = ["minor", "moderate", "serious", "critical"] as const;
 export type A11yImpact = (typeof A11Y_IMPACTS)[number];
+/** Mirror of main/recorder/types.ts. */
+export const API_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"] as const;
+export type ApiMethod = (typeof API_METHODS)[number];
 
 export type StepType =
   | "goto"
@@ -39,7 +42,8 @@ export type StepType =
   | "scroll"
   | "upload"
   | "download"
-  | "a11y";
+  | "a11y"
+  | "api";
 
 /** Predicate for an `if` step. Element conditions use `Step.locator`; page
  *  conditions (urlContains/titleContains) use `Step.value` as the substring. */
@@ -260,6 +264,11 @@ export interface Step {
   loopCount?: number;
   downloadMatch?: DownloadMatch;
   a11yImpact?: A11yImpact;
+  apiMethod?: ApiMethod;
+  apiHeaders?: Record<string, string>;
+  apiBody?: string;
+  expectStatus?: number;
+  capturePath?: string;
   text?: string;
   soft?: boolean;
   force?: boolean;
@@ -350,6 +359,11 @@ export interface RawStep {
   loopCount?: number;
   downloadMatch?: DownloadMatch;
   a11yImpact?: A11yImpact;
+  apiMethod?: ApiMethod;
+  apiHeaders?: Record<string, string>;
+  apiBody?: string;
+  expectStatus?: number;
+  capturePath?: string;
   text?: string;
   soft?: boolean;
   force?: boolean;
