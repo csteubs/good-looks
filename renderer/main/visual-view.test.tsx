@@ -31,17 +31,12 @@ let shot: string | null = null;
 let baselineShot: string | null = null;
 let baselines: unknown[] = [];
 
-// The two run-wide accepts. Each returns the replay the way the real handler
+// The run-wide visual accept. Returns the replay the way the real handler
 // does — patched, so the view re-renders from the same object the backend
 // would hand back rather than from a local guess.
 const acceptVisualRun = vi.fn(async () => {
   const r = replayDetail as { steps: { screenshot?: string | null; diff?: unknown }[] };
   for (const s of r.steps) if (s.screenshot) s.diff = { state: "match", ratio: 0, threshold: 0.2 };
-  return replayDetail;
-});
-const acceptA11yRun = vi.fn(async () => {
-  const r = replayDetail as { steps: { a11y?: { violations: unknown[]; newKeys: string[]; acceptedCount: number } }[] };
-  for (const s of r.steps) if (s.a11y) s.a11y = { ...s.a11y, newKeys: [], acceptedCount: 1 };
   return replayDetail;
 });
 vi.mock("../lib/api", () => ({
@@ -65,10 +60,6 @@ vi.mock("../lib/api", () => ({
       acceptRun: (...a: unknown[]) => acceptVisualRun(...(a as [])),
       getElementSteps: async () => [],
       setElementStep: async () => [],
-    },
-    a11y: {
-      acceptStep: async () => null,
-      acceptRun: (...a: unknown[]) => acceptA11yRun(...(a as [])),
     },
     annotations: { list: async () => [], upsert: async () => ({}) },
     runner: { compareRuns: async () => null, replayRun: async () => ({ runId: "r" }) },
@@ -206,16 +197,14 @@ describe("VisualView run selection", () => {
     expect(document.body.textContent).toMatch(/3/);
   });
 
-  it("marks a run whose only finding was an accessibility one", async () => {
-    // `a11yNewSteps` was carried in the summary from the day the feature landed
-    // and read by nothing, so a run that was visually identical but newly
-    // inaccessible looked exactly like a clean one in this list.
+  it("leaves accessibility findings to the Accessibility view", async () => {
+    // The a11y mark used to live on these rows. It left with the rest of
+    // accessibility: this view no longer shows a11y findings anywhere, so a
+    // mark here would send the user hunting through steps for nothing.
     replays = [summary({ runId: "r1", changedSteps: 0, a11yNewSteps: 2 })];
     renderVisual();
     await screen.findByText("Checkout");
-    expect(screen.getByLabelText("accessibility issues")).toBeTruthy();
-    // Its own marker: it must not borrow the visual-change one, which sends the
-    // user to a pixel diff that shows nothing.
+    expect(screen.queryByLabelText("accessibility issues")).toBeNull();
     expect(screen.queryByLabelText("visual change")).toBeNull();
   });
 
@@ -223,17 +212,17 @@ describe("VisualView run selection", () => {
     replays = [summary({ runId: "r1" })];
     renderVisual();
     await screen.findByText("Checkout");
-    expect(screen.queryByLabelText("accessibility issues")).toBeNull();
+    expect(screen.queryByLabelText("visual change")).toBeNull();
   });
 });
 
-// The run-wide accepts live in the tool band and the counts in the panel
-// header — the full-width findings banners are GONE, deliberately. Each banner
-// restated a count with a run-wide accept riding on it, and together they
-// pushed the screenshot below the fold on exactly the runs worth looking at.
-// What these tests pin: the accepts still work from their smaller home, the
-// counts survive as chips (a11y's count lived ONLY in its banner before), and
-// the banners stay gone.
+// The run-wide visual accept lives in the tool band and the count in the
+// panel header — the full-width findings banners are GONE, deliberately. Each
+// banner restated a count with a run-wide accept riding on it, and together
+// they pushed the screenshot below the fold on exactly the runs worth looking
+// at. Accessibility is not merely smaller here: it LEFT this screen for the
+// Accessibility view, and these tests pin its absence as much as the visual
+// accept's presence.
 describe("run-wide accepts in the tool band", () => {
   beforeEach(() => {
     // Not optional here: half these tests assert a mock was NOT called, and
@@ -309,21 +298,23 @@ describe("run-wide accepts in the tool band", () => {
     );
   });
 
-  it("accepts every accessibility issue from the tool band", async () => {
+  it("offers no accessibility surface at all", async () => {
+    // The run seeded here HAS an unaccepted a11y finding. Nothing on this
+    // screen may mention it — no accept button, no chip, no per-step badge —
+    // because a surface that only sometimes shows a11y teaches the user to
+    // check two places for one kind of finding.
     renderVisual();
-    await confirmFrom(/^Accept a11y$/);
-    await waitFor(() => expect(acceptA11yRun).toHaveBeenCalledWith("t1", "r1"));
-    expect(acceptVisualRun).not.toHaveBeenCalled();
-    await waitFor(() =>
-      expect(
-        (screen.getByRole("button", { name: /^Accept a11y$/ }) as HTMLButtonElement).disabled,
-      ).toBe(true),
-    );
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="crt"]')) throw new Error("not ready");
+    });
+    expect(screen.queryByRole("button", { name: /Accept a11y/ })).toBeNull();
+    expect(screen.queryByText(/a11y issue/)).toBeNull();
+    expect(screen.queryByText(/accessibility/i)).toBeNull();
   });
 
-  it("asks before either run-wide accept fires", async () => {
-    // Both accepts change what every LATER run compares against or reports.
-    // A single misclick in a toolbar must not re-pin twenty baselines.
+  it("asks before the run-wide accept fires", async () => {
+    // The accept changes what every LATER run compares against. A single
+    // misclick in a toolbar must not re-pin twenty baselines.
     renderVisual();
     const trigger = (await screen.findAllByRole("button", { name: /^Accept visuals$/ }))[0];
     fireEvent.click(trigger);
@@ -331,19 +322,15 @@ describe("run-wide accepts in the tool band", () => {
     expect(acceptVisualRun).not.toHaveBeenCalled();
   });
 
-  it("carries both counts as header chips, not banners", async () => {
-    // The a11y count lived ONLY in its banner before; without this chip a run
-    // whose findings were accessibility ones would read as clean.
+  it("carries the change count as a header chip, not a banner", async () => {
     renderVisual();
     expect(await screen.findByText("1 visual change")).toBeTruthy();
-    expect(screen.getByText("1 a11y issue")).toBeTruthy();
-    // The banners themselves stay gone — they pushed the screenshot below the
-    // fold on exactly the runs worth looking at.
+    // The banner itself stays gone — it pushed the screenshot below the fold
+    // on exactly the runs worth looking at.
     expect(screen.queryByText(/Visual change detected/)).toBeNull();
-    expect(screen.queryByText(/accessibility issues that/)).toBeNull();
   });
 
-  it("disables the run-wide accepts when the run has nothing to accept", async () => {
+  it("disables the run-wide accept when the run has nothing to accept", async () => {
     // Disabled, not unmounted: a control that appears only on runs with
     // findings changes the tool band's width exactly when someone is reaching
     // for the buttons beside it (`check:narrow-layout`).
@@ -358,9 +345,7 @@ describe("run-wide accepts in the tool band", () => {
       if (!document.querySelector('[data-gl="crt"]')) throw new Error("not ready");
     });
     const visuals = screen.getByRole("button", { name: /^Accept visuals$/ }) as HTMLButtonElement;
-    const a11y = screen.getByRole("button", { name: /^Accept a11y$/ }) as HTMLButtonElement;
     expect(visuals.disabled).toBe(true);
-    expect(a11y.disabled).toBe(true);
   });
 });
 

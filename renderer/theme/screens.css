@@ -5416,3 +5416,225 @@
   margin: 0;
   padding-left: 16px;
 }
+
+/* ── The Accessibility view (/a11y) ───────────────────────────────────── */
+
+/* Column: the tab strip, then the two panes. The strip is view chrome rather
+   than a panel header because it switches WHICH panels exist below it. */
+.gl-axe {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  padding: 10px;
+}
+
+.gl-axe-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.gl-axe-tabs-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--gl-tx-3);
+}
+
+.gl-axe-panes {
+  display: flex;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Master/detail, the Heals split: a fixed-width list, the rest is detail. */
+.gl-axe-rules {
+  flex: 0 0 320px;
+  min-width: 0;
+}
+
+.gl-axe-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* One rule (or one test, on the Baseline tab) in the list. */
+.gl-axe-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--gl-line-2);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+
+.gl-axe-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* SELECTION IS NEUTRAL — the row already carries an impact chip, which is a
+   real claim; a hued selection would be a second one arguing with it. */
+.gl-axe-row[data-selected] {
+  background: var(--gl-sel-bg);
+  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-axe-row:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-axe-row-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.gl-axe-row-id {
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-axe-row-help {
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  color: var(--gl-tx-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-axe-row-meta {
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  color: var(--gl-tx-3);
+}
+
+.gl-axe-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.gl-axe-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.gl-axe-where {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gl-axe-where-test {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gl-axe-where-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 2px;
+}
+
+.gl-axe-where-name {
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One site (Triage) or one accepted rule (Baseline): label left, count and
+   controls trailing. */
+.gl-axe-where-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 4px 12px;
+  border-bottom: 1px solid var(--gl-line-2);
+}
+
+.gl-axe-where-row > code {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-axe-where-nodes {
+  flex: 0 0 auto;
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  color: var(--gl-tx-3);
+}
+
+.gl-axe-posture {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* The trend strip — the drift strip's shape at suite scale. Height means
+   magnitude; the hue only marks runs that found something NEW. */
+.gl-axe-trend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gl-axe-trend-strip {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 22px;
+}
+
+.gl-axe-trend-slot {
+  display: flex;
+  align-items: flex-end;
+  width: 6px;
+  height: 100%;
+}
+
+.gl-axe-trend-bar {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.gl-axe-trend-bar[data-new] {
+  background: var(--gl-amber);
+}
+
+.gl-axe-baseline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}

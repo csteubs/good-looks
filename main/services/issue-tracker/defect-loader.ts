@@ -21,6 +21,7 @@ import { logger } from "@shell/backend";
 import { artifactStore, type ReplayStep } from "../artifact-store.js";
 import { baselineStore } from "../baseline-store.js";
 import { firstErrorLine } from "../../../shared/error-signature.mjs";
+import { keysOf, selectLatestA11yRuns } from "../../../shared/a11y-rollup.mjs";
 import { runHistoryStore } from "../run-history-store.js";
 import { testStore } from "../test-store.js";
 import { insightReportStore } from "../insight-report-store.js";
@@ -196,6 +197,34 @@ function buildInsightReport(
   };
 }
 
+/**
+ * Every current occurrence of one rule, for a rule-scoped draft.
+ *
+ * The SAME selection the Accessibility view's board is drawn from
+ * (`selectLatestA11yRuns`), and the same "only new" filter the rollup applies —
+ * a site whose violations are all accepted is not something to file. Counts
+ * only; node selectors from OTHER steps stay out of the body, which keeps a
+ * rule-scoped issue's element list scoped to the frame its screenshot shows.
+ */
+function ruleOccurrences(ruleId: string): { testName: string; stepLabel: string | null; nodes: number }[] {
+  const out: { testName: string; stepLabel: string | null; nodes: number }[] = [];
+  for (const run of selectLatestA11yRuns(runHistoryStore.list())) {
+    const replay = artifactStore.readReplay(run.testId, run.id);
+    if (!replay) continue;
+    for (const step of replay.steps) {
+      if (!step.a11y) continue;
+      const newKeys = new Set(step.a11y.newKeys);
+      for (const v of step.a11y.violations) {
+        if (v.id !== ruleId) continue;
+        const hits = keysOf(v).filter((k) => newKeys.has(k)).length;
+        if (hits === 0) continue;
+        out.push({ testName: replay.testName, stepLabel: step.label ?? null, nodes: hits });
+      }
+    }
+  }
+  return out;
+}
+
 function buildA11y(source: Extract<DefectSource, { kind: "a11y" }>): IssueDraft | null {
   const step = stepOf(source.testId, source.runId, source.stepId);
   const violation = step?.a11y?.violations.find((v) => v.id === source.ruleId);
@@ -210,9 +239,18 @@ function buildA11y(source: Extract<DefectSource, { kind: "a11y" }>): IssueDraft 
       impact: violation.impact,
       help: violation.help,
       targets: violation.nodes ?? [],
+      ...(source.scope === "rule" ? { occurrences: ruleOccurrences(source.ruleId) } : {}),
     },
   };
-  return buildIssueDraft(input);
+  const draft = buildIssueDraft(input);
+  // The anchor step's screenshot, when one was captured: a rule-scoped issue
+  // still benefits from one concrete picture, and the anchor is the site the
+  // view chose to represent the rule.
+  const shot =
+    source.scope === "rule"
+      ? attachmentFor(source.testId, source.runId, step.screenshot, "Example")
+      : null;
+  return shot ? { ...draft, attachments: [shot] } : draft;
 }
 
 function buildVisual(source: Extract<DefectSource, { kind: "visual" }>): IssueDraft | null {

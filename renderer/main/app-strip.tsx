@@ -35,6 +35,7 @@ import { useCommandPalette } from "./command-palette";
 const VIEW_LABEL: Record<string, string> = {
   "/stats": "Stats",
   "/visual": "Visual",
+  "/a11y": "Accessibility",
   // The WORD changes, the route does not. ROUTINES.md's rename table: the UI
   // is where "Routine" is worth having; `batch:*` channels, batch-history.json
   // and `RunRecord.batchId` stay, because renaming them costs a migration and

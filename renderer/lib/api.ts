@@ -361,6 +361,14 @@ export const api = {
       ipc().invoke<RunReplay | null>("a11y:acceptStep", { testId, runId, stepId }),
     acceptRun: (testId: string, runId: string) =>
       ipc().invoke<RunReplay | null>("a11y:acceptRun", { testId, runId }),
+    /** Accept one rule everywhere it currently fires — the Accessibility
+     *  view's triage verb, over the same run selection the rollup reads. */
+    acceptRule: (ruleId: string) =>
+      ipc().invoke<{ tests: number; steps: number }>("a11y:acceptRule", { ruleId }),
+    /** Un-accept one rule for one test. Takes effect on the next run, like
+     *  resetBaseline — but without discarding every other acceptance. */
+    revokeRule: (testId: string, ruleId: string) =>
+      ipc().invoke<{ removed: number }>("a11y:revokeRule", { testId, ruleId }),
     resetBaseline: (testId: string) =>
       ipc().invoke<{ cleared: number }>("a11y:resetBaseline", { testId }),
     /** The suite-wide picture: which rules are failing, how badly, and where.
@@ -569,6 +577,9 @@ export const api = {
     /** Every issue already filed against a test, so a list badges itself in one
      *  read rather than one call per row. */
     linksForTest: (testId: string) => ipc().invoke<IssueLink[]>("issues:linksForTest", { testId }),
+    /** Every a11y link across tests and rules — the Accessibility view's rule
+     *  board badges every row from one read. */
+    a11yLinks: () => ipc().invoke<IssueLink[]>("issues:a11yLinks"),
     /** Report a recurrence onto the existing issue instead of filing a second. */
     commentRecurrence: (source: DefectSource, attachmentFiles: string[]) =>
       ipc().invoke<IssueLink>("issues:commentRecurrence", { source, attachmentFiles }),

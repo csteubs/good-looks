@@ -252,7 +252,13 @@ export const issueTrackerService = {
     if (r.kind === "a11y") {
       const stepId = id(r.stepId);
       const ruleId = id(r.ruleId);
-      return stepId && ruleId ? { kind: "a11y", testId, runId, stepId, ruleId } : null;
+      if (!stepId || !ruleId) return null;
+      // `scope` widens the DRAFT (the loader gathers every occurrence), never
+      // the identity — the link key ignores it. Anything but the one known
+      // value is dropped, like every other field here.
+      return r.scope === "rule"
+        ? { kind: "a11y", testId, runId, stepId, ruleId, scope: "rule" }
+        : { kind: "a11y", testId, runId, stepId, ruleId };
     }
     if (r.kind === "visual") {
       const stepId = id(r.stepId);
@@ -311,6 +317,12 @@ export const issueTrackerService = {
   /** Every link on a test, so a list badges itself in one read. */
   linksForTest(testId: string): IssueLink[] {
     return issueLinkStore.forTest(testId);
+  },
+
+  /** Every a11y link, so the Accessibility view's rule board badges every
+   *  row in one read — regardless of which occurrence anchored each issue. */
+  a11yLinks(): IssueLink[] {
+    return issueLinkStore.allA11y();
   },
 
   /**

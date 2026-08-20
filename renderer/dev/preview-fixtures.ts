@@ -66,6 +66,12 @@ export const TESTS: TestRecord[] = [
     runBrowser: "chromium",
     captureArtifacts: true,
     a11yChecks: true,
+    // A seeded acceptance, so the Accessibility view's Baseline tab has a test
+    // to list and a rule to revoke without running anything first.
+    a11yBaseline: {
+      s2: ["image-alt|.hero-banner img", "link-name|.footer-social a"],
+      s3: ["image-alt|.product-thumb img"],
+    },
     steps: steps(
       { type: "goto", url: "https://shop.example.com" },
       { type: "click", locator: { k: "role", role: "button", name: "Add to cart" } },

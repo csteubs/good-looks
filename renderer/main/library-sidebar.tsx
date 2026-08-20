@@ -15,7 +15,7 @@ import {
   Text,
   toast,
 } from "@ui";
-import { Plus, ChevronDown, ChevronRight, Folder, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy, Workflow } from "lucide-react";
+import { Accessibility, Plus, ChevronDown, ChevronRight, Folder, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy, Workflow } from "lucide-react";
 
 import { ChromeButton, Rail, RailEmpty, RailGroup, RailRow, SiteIcon } from "../theme";
 import { RoutinesRail, useCreateRoutine } from "./routines-rail";
@@ -726,6 +726,13 @@ export function LibrarySidebar() {
             subtitle="Screenshot replay"
             selected={pathname === "/visual"}
             onClick={() => navigate({ to: "/visual" })}
+          />
+          <RailRow
+            icon={<Accessibility aria-hidden="true" />}
+            title="Accessibility"
+            subtitle="axe findings & baseline"
+            selected={pathname === "/a11y"}
+            onClick={() => navigate({ to: "/a11y" })}
           />
           <RailRow
             icon={<ListChecks aria-hidden="true" />}

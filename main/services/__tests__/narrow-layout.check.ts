@@ -382,23 +382,19 @@ const MEASURED_REQUIREMENT = 928;
       ["the verdict chip", /<StatusChip/],
       ["the run's timestamp", /fmtDateTime/],
       ["a control mounted on the change count", /\{changedCount\s*>\s*0\s*\?/],
-      ["a control mounted on the a11y count", /\{a11yCount\s*>\s*0\s*\?/],
     ] as const) {
       assert(
         !re.test(band[0]),
         `visual-view.tsx: the tool band does not carry ${what} — anything that appears on some runs and not others makes the toolbar reflow when a run starts failing`,
       );
     }
-    // The accepts are in the band, disabled-gated rather than render-gated —
+    // The accept is in the band, disabled-gated rather than render-gated —
     // present on every run at the same width, actionable only when the run has
-    // something to accept.
+    // something to accept. (Accessibility's counterpart left this screen with
+    // the rest of a11y, for the Accessibility view.)
     assert(
       /disabled=\{changedCount === 0/.test(band[0]),
       "visual-view.tsx: the run-wide visual accept is in the band and DISABLED when there is nothing to accept — not unmounted, which changes the band's width",
-    );
-    assert(
-      /disabled=\{a11yCount === 0/.test(band[0]),
-      "visual-view.tsx: the run-wide a11y accept is in the band and DISABLED when there is nothing to accept — not unmounted, which changes the band's width",
     );
   }
 
