@@ -76,6 +76,48 @@ and the replayer now fails one with "nothing will be generated for it" instead
 of letting `matchesValue`'s empty-substring true paint it green. The
 generator's UNGENERATABLE comment stays as the backstop for steps already on
 disk.
+### 2026-08-19 — Repeat blocks: the first loop, and why balance is the design center
+
+A `loop`/`endLoop` step pair — "repeat N times" — compiled to a real `for`
+around the enclosed steps. Modeled on mabl's loops (their modes: fixed count,
+variable, per-element, per-array-item); this ships the fixed count alone,
+because the CONSTRUCT is the expensive part — block model, generation,
+round-trip, nesting, UI — and the other modes need designs this one does not
+(a per-element loop needs a way for inner steps to reference the loop's
+cursor, which is a locator-model question, not a loop question). The pair
+idiom is the conditional's: one insert produces both halves, steps are
+dragged between them, the body indents in the list.
+
+**Balance is a hard property, not a preference.** An `if` block that loses a
+half emits an unbalanced brace today, and the spec degrades to a SyntaxError —
+a latent repair debt this feature declined to inherit. The generator repairs
+loops instead of trusting them: a stray `endLoop` (its opener deleted) becomes
+a comment rather than an unbalanced `}`; an unclosed `loop` is closed at the
+body's end with a PLAIN `}`, chosen precisely so the parser reads it back as
+an `endLoop` and the next round-trip restores the pair instead of losing it.
+Neither half can be disabled or wrapped (generator refuses, kebab doesn't
+offer), because half a disabled loop is the same broken shape.
+
+**Nested loops name themselves by depth.** `for (let i …)` inside
+`for (let i …)` is itself a SyntaxError, so the generator names `i`, `i2`,
+`i3` by open-loop count — emission-order state, which is why the loop lines
+are emitted by the body walk rather than the per-step `stepLine`.
+
+**The parser got a stack where it had a counter.** One `ifDepth` counter
+cannot tell `if { for {` from `for { if {` — a `}` must close back into the
+step kind that opened it. The block stack does, and the near-miss rule
+guards the vocabulary boundary: the counting SHAPE (`for (let x = 0; y < N;
+z++)`) with names that are not the generator's own (`i\d*`, all three
+positions agreeing) is skipped WHOLE and counted, because half-reading it
+into a `loop` step would regenerate as a repeat the original never was.
+A fully foreign loop (`for (const row of rows)`) keeps the parser's standing
+behaviour — unknown text passed over, known calls inside still harvested —
+pinned now so the contract is explicit.
+
+**The preview walks the body once, and says so.** The trainer's replayer is
+a linear walk; repetition is the run's behaviour. Both halves are narrated
+no-ops there, with the count in the log — a preview that silently added one
+item where the run adds five would read as a broken run.
 
 ### 2026-08-19 — Position becomes something the user can say, and the step list stops hiding the chain
 

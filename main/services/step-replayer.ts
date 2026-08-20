@@ -521,6 +521,15 @@ export function buildReplayScript(step: Step): string {
       return { ok: true, met: met };
     }
     if (t === "endif") { log("info", "end of conditional block"); return { ok: true }; }
+    // The preview walks the list ONCE, so a loop's body runs a single time
+    // here. Said out loud rather than silently: a user watching the preview
+    // add one item while the run adds five would otherwise read the run as
+    // broken.
+    if (t === "loop") {
+      log("info", "repeat ×" + (step.loopCount || 1) + " — the preview runs the body once; the real run repeats it");
+      return { ok: true };
+    }
+    if (t === "endLoop") { log("info", "end of repeat block"); return { ok: true }; }
     if (t === "goto") { log("info", "goto runs at test start; skipped in preview"); return { ok: true, error: "goto runs at test start; skipped in preview" }; }
     // Unreachable in the trainer: runStep dispatches viewport steps to
     // resize-service, which resizes the native window (a page cannot resize the

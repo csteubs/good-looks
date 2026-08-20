@@ -53,7 +53,7 @@ export function parseSizeDraft(draft: string): { width: number; height: number }
 /** The single field a step exposes for quick inline editing, if any. */
 function editableField(
   step: Step,
-): { key: "value" | "text" | "url" | "waitMs" | "timeoutMs" | "size"; label: string; value: string } | null {
+): { key: "value" | "text" | "url" | "waitMs" | "timeoutMs" | "loopCount" | "size"; label: string; value: string } | null {
   switch (step.type) {
     case "goto":
       return { key: "url", label: "URL", value: step.url ?? "" };
@@ -103,6 +103,9 @@ function editableField(
       if (step.cond === "urlContains" || step.cond === "titleContains")
         return { key: "value", label: "Contains", value: step.value ?? "" };
       return null;
+    case "loop":
+      // The count is the loop step's whole content — same rule as waitMs.
+      return { key: "loopCount", label: "Times", value: String(step.loopCount ?? 1) };
     default:
       return null;
   }
@@ -317,7 +320,9 @@ export function StepRow({
         ? { waitMs: Number(draft) || 0 }
         : field.key === "timeoutMs"
           ? { timeoutMs: Number(draft) || DEFAULT_WAIT_TIMEOUT_MS }
-          : { [field.key]: draft };
+          : field.key === "loopCount"
+            ? { loopCount: Math.min(500, Math.max(1, Math.trunc(Number(draft) || 1))) }
+            : { [field.key]: draft };
     onEdit(patch);
     setEditing(false);
   }
@@ -634,6 +639,8 @@ export function StepRow({
           {onReplay &&
           step.type !== "goto" &&
           step.type !== "endif" &&
+          step.type !== "loop" &&
+          step.type !== "endLoop" &&
           !(step.type === "state" && step.elementState === "press") ? (
             <button
               type="button"
@@ -676,7 +683,12 @@ export function StepRow({
             // on Failure" (a toggle for action/assert steps). The kebab trigger
             // only renders when at least one utility applies to this step.
             const canRefine = onRefine && step.locator;
-            const canContinue = onEdit && step.type !== "if" && step.type !== "endif";
+            const canContinue =
+              onEdit &&
+              step.type !== "if" &&
+              step.type !== "endif" &&
+              step.type !== "loop" &&
+              step.type !== "endLoop";
             const canFlowArgs = onEdit && step.type === "runFlow";
             if (!canRefine && !canContinue && !canFlowArgs) return null;
             return (

@@ -78,6 +78,7 @@ import { formatLocator, KIND_LABEL } from "./refine-selector-dialog";
 export type AddStepKind =
   | "assertion"
   | "condition"
+  | "loop"
   | "wait"
   | "goto"
   | "press"
@@ -91,6 +92,7 @@ export type AddStepKind =
 export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   assertion: "Add assertion",
   condition: "Add condition (if)",
+  loop: "Repeat steps (loop)",
   wait: "Add wait",
   goto: "Go to URL",
   press: "Press key",
@@ -695,6 +697,9 @@ export function StepComposer({
   const [captureFrom, setCaptureFrom] = React.useState<CaptureSource>("text");
   const [captureAttr, setCaptureAttr] = React.useState("");
   const [flowId, setFlowId] = React.useState("");
+  // Iterations for the `loop` kind, held as text so a half-typed number
+  // doesn't fight the input (same rule as the step row's numeric drafts).
+  const [loopTimes, setLoopTimes] = React.useState("2");
   // Draft values for the selected flow's parameters, keyed by parameter name.
   // Reset when the flow changes: two flows sharing a parameter name is a
   // coincidence, not a reason to carry a value across.
@@ -881,6 +886,14 @@ export function StepComposer({
             ...(Object.keys(args).length > 0 ? { flowArgs: args } : {}),
           },
         ];
+      }
+      case "loop": {
+        // Insert an empty REPEAT/END-REPEAT pair, same idiom as the condition:
+        // the user drags steps between the halves. The count is clamped here
+        // AND at the boundary AND in the generator — three independent guards
+        // for a numeral that lands in the spec bare.
+        const n = Math.min(500, Math.max(1, Math.trunc(Number(loopTimes) || 1)));
+        return [{ type: "loop", loopCount: n }, { type: "endLoop" }];
       }
       case "condition": {
         // Insert an empty IF/END-IF pair; the user drags steps between them.
@@ -1284,6 +1297,26 @@ export function StepComposer({
                 />
               </Field>
             ) : null}
+          </>
+        ) : null}
+
+        {kind === "loop" ? (
+          <>
+            <Field label="Times" orientation="vertical">
+              <Input
+                size="small"
+                inputMode="numeric"
+                value={loopTimes}
+                onChange={(e) => setLoopTimes(e.target.value)}
+                aria-label="Loop count"
+                className="w-20"
+              />
+            </Field>
+            <Text size="small" className="text-secondary">
+              Inserts a repeat block. Drag the steps to run between the two halves — they run in
+              order, that many times. The trainer&apos;s preview walks the body once; the real run
+              repeats it.
+            </Text>
           </>
         ) : null}
 

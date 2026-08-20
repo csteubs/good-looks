@@ -22,6 +22,8 @@ export type StepType =
   | "viewport"
   | "if"
   | "endif"
+  | "loop"
+  | "endLoop"
   | "cookie"
   | "capture"
   | "runFlow"
@@ -243,6 +245,7 @@ export interface Step {
   url?: string;
   assert?: AssertKind;
   cond?: ConditionKind;
+  loopCount?: number;
   text?: string;
   soft?: boolean;
   attr?: string;
@@ -320,6 +323,7 @@ export interface RawStep {
   url?: string;
   assert?: AssertKind;
   cond?: ConditionKind;
+  loopCount?: number;
   text?: string;
   soft?: boolean;
   attr?: string;

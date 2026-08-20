@@ -373,3 +373,15 @@ describe("the scan cap belongs to capture, not to preview", () => {
     expect(r.ok, why(r)).toBe(true);
   });
 });
+
+describe("loop halves in the preview", () => {
+  it("treats both halves as narrated no-ops — the body previews once", () => {
+    // The preview walks the list linearly; repetition is the RUN's behaviour.
+    // What matters here is honesty (the log says so) and that neither half
+    // fails, which would block replay-from-step across any loop.
+    const open = run(step({ type: "loop", loopCount: 4 }));
+    expect(open.ok).toBe(true);
+    const close = run(step({ type: "endLoop" }));
+    expect(close.ok).toBe(true);
+  });
+});

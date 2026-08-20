@@ -792,3 +792,54 @@ describe("the flow-arguments editor", () => {
     expect(labels).not.toContain("Edit Flow Arguments…");
   });
 });
+
+// ── Loop rows ──────────────────────────────────────────────────────────────
+
+describe("loop rows", () => {
+  it("renders the halves as words, not raw type names", () => {
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "loop", loopCount: 3 })} />,
+    );
+    expect(container.textContent).toContain("repeat 3 times");
+    const end = render(<StepRow index={1} step={step({ type: "endLoop" })} />);
+    expect(end.container.textContent).toContain("end repeat");
+    expect(end.container.textContent).not.toContain("endLoop");
+  });
+
+  it("edits the count inline, clamped, through the loopCount patch", () => {
+    const onEdit = vi.fn();
+    render(
+      <StepRow index={0} step={step({ type: "loop", loopCount: 3 })} onEdit={onEdit} />,
+    );
+    fireEvent.click(screen.getByLabelText(/edit step/i));
+    const input = screen.getByLabelText(/edit times/i);
+    fireEvent.change(input, { target: { value: "9999" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onEdit).toHaveBeenCalledWith({ loopCount: 500 });
+  });
+
+  it("offers neither disable nor continue-on-failure on the halves", () => {
+    // Half a disabled loop is an unbalanced block; the generator refuses to
+    // wrap them, and the kebab must not offer what the generator refuses.
+    for (const type of ["loop", "endLoop"] as const) {
+      const { container, unmount } = render(
+        <StepRow index={0} step={step({ type })} onEdit={vi.fn()} />,
+      );
+      expect(container.querySelector('[aria-label="Step utilities"]'), type).toBeNull();
+      unmount();
+    }
+  });
+
+  it("offers no lone replay for the halves", () => {
+    for (const type of ["loop", "endLoop"] as const) {
+      const { container, unmount } = render(
+        <StepRow index={0} step={step({ type })} onReplay={async () => ({ ok: true })} />,
+      );
+      const labels = [...container.querySelectorAll("button")].map(
+        (b) => b.getAttribute("aria-label") ?? "",
+      );
+      expect(labels.some((l) => l.toLowerCase().includes("replay")), type).toBe(false);
+      unmount();
+    }
+  });
+});
