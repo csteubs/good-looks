@@ -9,6 +9,9 @@ import type { TestIdAttributeOverride } from "../../shared/testid-attr.mjs";
 export type { CostCurrency };
 export type { ProxySource, ProxyTraffic };
 
+export type DownloadMatch = "contains" | "exact";
+export const DOWNLOAD_MATCHES: DownloadMatch[] = ["contains", "exact"];
+
 export type StepType =
   | "goto"
   | "click"
@@ -28,7 +31,8 @@ export type StepType =
   | "capture"
   | "runFlow"
   | "state"
-  | "scroll";
+  | "scroll"
+  | "download";
 
 /** Predicate for an `if` step. Element conditions use `Step.locator`; page
  *  conditions (urlContains/titleContains) use `Step.value` as the substring. */
@@ -247,6 +251,7 @@ export interface Step {
   assert?: AssertKind;
   cond?: ConditionKind;
   loopCount?: number;
+  downloadMatch?: DownloadMatch;
   text?: string;
   soft?: boolean;
   attr?: string;
@@ -333,6 +338,7 @@ export interface RawStep {
   assert?: AssertKind;
   cond?: ConditionKind;
   loopCount?: number;
+  downloadMatch?: DownloadMatch;
   text?: string;
   soft?: boolean;
   attr?: string;

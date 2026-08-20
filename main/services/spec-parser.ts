@@ -21,6 +21,7 @@
 import { randomUUID } from "crypto";
 
 import { parseTestIdSelector } from "../../shared/testid-attr.mjs";
+import { DEFAULT_WAIT_TIMEOUT_MS } from "./script-generator.js";
 import { fromPlaywrightSameSite } from "../recorder/types.js";
 import type {
   AssertKind,
@@ -607,6 +608,11 @@ function parseCondition(raw: string): Partial<Step> | null {
 function parseBody(
   body: string,
   vars: Map<string, Locator> = new Map(),
+  // Armed download promises awaiting their `{ const dN = await downloadN; … }`
+  // — threaded like `vars` because the awaiting line can sit inside a
+  // continue-on-failure try-block, which parses by RECURSION: a map local to
+  // one call would make every wrapped download read as skipped.
+  pendingDownloads: Map<string, { timeoutMs: number }> = new Map(),
 ): { steps: Step[]; skipped: number } {
   const steps: Step[] = [];
   let skipped = 0;
@@ -659,6 +665,91 @@ function parseBody(
       const blockClose = matchBrace(src, braceIdx);
       skipped++;
       i = blockClose >= 0 ? blockClose + 1 : braceIdx + 1;
+      continue;
+    }
+
+    // const downloadN = page.waitForEvent("download", { timeout: T }); — a
+    // download step's ARMING half. No step yet: the step materializes at the
+    // awaiting block below, which carries the assertion. An arming nothing
+    // awaits is counted as skipped at end-of-parse via the map it leaves
+    // behind? No — it simply never becomes a step, which regenerates as
+    // nothing: the harmless direction, since an un-awaited promise asserted
+    // nothing in the original either.
+    const armM = rest.match(
+      /^[\s;]*const (download\d+) = page\.waitForEvent\("download", \{ timeout: (\d+) \}\);/,
+    );
+    if (armM) {
+      pendingDownloads.set(armM[1], { timeoutMs: parseInt(armM[2], 10) });
+      i += armM[0].length;
+      continue;
+    }
+
+    // { const dN = await downloadN; [expect(dN.suggestedFilename()).toBe|
+    // toContain(<value>);] [V.name = dN.suggestedFilename();] } — the
+    // awaiting half. Consumed as one balanced block so a filename containing
+    // `}` cannot end it early. Pairing is by the download variable's name;
+    // an await with no recorded arming is a foreign block and counts skipped.
+    // Two spellings of the same half. Standalone, the generator wraps it in
+    // its own block; under continue-on-failure the wrapper's braces BECOME the
+    // try's braces, and the try-recursion hands this scanner the braceless
+    // body. Both must parse, or every wrapped download reads as skipped.
+    const dlM = rest.match(/^[\s;]*(\{\s*)?const (d\d+) = await (download\d+);/);
+    if (dlM) {
+      const braced = !!dlM[1];
+      const dName = dlM[2];
+      const armed = pendingDownloads.get(dlM[3]);
+      // The tail the optional parts are scanned from — AFTER the matched
+      // const-await head in both spellings; bounded by the closing brace in
+      // the braced one so a following statement can't be swallowed.
+      let closeIdx = -1;
+      if (braced) {
+        const openIdx = i + rest.match(/^[\s;]*/)![0].length;
+        closeIdx = matchBrace(src, openIdx);
+        if (closeIdx < 0) {
+          skipped++;
+          i = i + dlM[0].length;
+          continue;
+        }
+      }
+      const inner = src.slice(i + dlM[0].length, braced ? closeIdx : src.length);
+      const after = braced ? closeIdx + 1 : -1; // braceless advances piecewise
+      if (!armed) {
+        skipped++;
+        i = braced ? after : i + dlM[0].length;
+        continue;
+      }
+      pendingDownloads.delete(dlM[3]);
+      const st: Partial<Step> = {};
+      // Only a non-default timeout round-trips onto the step, so a step
+      // authored without one stays without one (regeneration fixed point).
+      if (armed.timeoutMs !== DEFAULT_WAIT_TIMEOUT_MS) st.timeoutMs = armed.timeoutMs;
+      let consumed = 0;
+      const expectM = inner.match(
+        new RegExp(`^\\s*expect\\(${dName}\\.suggestedFilename\\(\\)\\)\\.(toBe|toContain)\\(`),
+      );
+      if (expectM) {
+        const argOpen = inner.indexOf("(", expectM[0].length - 1);
+        const argClose = matchParen(inner, argOpen);
+        const value = argClose > argOpen ? parseValueArg(inner.slice(argOpen + 1, argClose)) : null;
+        if (value === null) {
+          skipped++;
+          i = braced ? after : i + dlM[0].length;
+          continue;
+        }
+        st.value = value;
+        if (expectM[1] === "toBe") st.downloadMatch = "exact";
+        const semi = inner.indexOf(";", argClose);
+        consumed = semi >= 0 ? semi + 1 : argClose + 1;
+      }
+      const capM = inner
+        .slice(consumed)
+        .match(new RegExp(`^\\s*V\\.([A-Za-z_][A-Za-z0-9_]*) = ${dName}\\.suggestedFilename\\(\\);`));
+      if (capM) {
+        st.captureVar = capM[1];
+        consumed += capM[0].length;
+      }
+      steps.push(makeStep("download", st));
+      i = braced ? after : i + dlM[0].length + consumed;
       continue;
     }
 
@@ -735,7 +826,7 @@ function parseBody(
         continue;
       }
       const inner = src.slice(braceOpen + 1, braceClose);
-      const innerResult = parseBody(inner, vars);
+      const innerResult = parseBody(inner, vars, pendingDownloads);
       if (innerResult.steps.length > 0) {
         // The wrapper always encloses a single statement; tag it and push.
         const s = innerResult.steps[0];

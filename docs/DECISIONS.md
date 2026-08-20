@@ -139,6 +139,49 @@ and the replayer now fails one with "nothing will be generated for it" instead
 of letting `matchesValue`'s empty-substring true paint it green. The
 generator's UNGENERATABLE comment stays as the backstop for steps already on
 disk.
+### 2026-08-19 — Download steps: the order is the feature
+
+A `download` step — "expect the previous step to start a file download" —
+modeled on mabl's download assertions (auto-detected on the triggering click,
+filename assertions, save-to-variable for later reuse). Three decisions carry
+it.
+
+**Arm before the trigger, always.** Playwright's one blessed download idiom
+arms the `waitForEvent` promise BEFORE the triggering action; a listener
+attached after the click races the event it exists to catch — winning on slow
+servers, losing on fast ones, which is flake by construction and flake that
+would be blamed on the app under test. So the step emits in two halves around
+its trigger: an arming pre-pass finds each download's nearest preceding plain
+step and emits `const downloadN = page.waitForEvent(...)` there; the step's
+own line awaits and asserts after. Structural neighbours (if/endif, loop
+halves, flow-loop markers) are refused as triggers — arming before an `endif`
+puts the const in a scope the await cannot see — and fall back to arming in
+place. Inside a loop the arming line sits in the body, so every iteration
+arms its own promise. The parser pairs the halves by the promise's name, and
+threads its pending map through the try/catch recursion, because a
+continue-on-failure download's braces BECOME the try's braces and arrive
+braceless.
+
+**The trainer cancels the transfer and records the fact.** `will-download`
+fires in the native layer — the capture script cannot see it — so the
+recorder listens on the session (filtered to the training webContents,
+unhooked through `stopPolling` like everything else), cancels the item, and
+inserts a `download` step expecting the exact filename the browser reported.
+A save dialog over the training window mid-recording is the same class of
+surprise the window-open handler exists to prevent; and the filename is
+page-controlled input on its way into a generated spec, so it enters through
+`insertStep`'s normalize funnel and emits through `valueExpr`/`q` like every
+other string. The preview replays the step as a narrated no-op ("verified on
+runs") — a green row must never read as "the download was checked".
+
+**Save-to-filename writes V directly, gated twice.** `captureVar` is reused
+for "save the filename to a variable", but unlike capture steps it needs no
+runtime helper — a plain `V.name = d1.suggestedFilename()` — so the variable
+NAME lands in source as an identifier and carries the same
+`isValidVariableName` gate `repeatVar` does, independently of the boundary.
+A download-with-capture forces the V header without dragging in the
+glazeCapture import it never calls.
+
 ### 2026-08-19 — Repeat blocks: the first loop, and why balance is the design center
 
 A `loop`/`endLoop` step pair — "repeat N times" — compiled to a real `for`

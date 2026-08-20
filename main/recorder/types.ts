@@ -56,7 +56,14 @@ export type StepType =
   // capture, because Playwright actions auto-scroll but ASSERTIONS do not —
   // and content a page renders lazily (virtualized lists, IntersectionObserver
   // gates) is not in the DOM at all until the scroll that reveals it happens.
-  | "scroll";
+  | "scroll"
+  // Expect the PREVIOUS step to start a file download. Emitted as Playwright's
+  // blessed pattern — the waitForEvent promise armed BEFORE the triggering
+  // step's line, awaited after — because a listener attached after the click
+  // races the event it exists to catch. Recorded automatically when the
+  // training browser sees `will-download` (the transfer itself is cancelled;
+  // a recording session is for looking).
+  | "download";
 
 /**
  * Predicate for an `if` step. Element conditions resolve `Step.locator`; page
@@ -265,6 +272,11 @@ export interface Step {
   /** iterations for a `loop` step. Reaches the generator as a BARE NUMERAL —
    *  see normalizeRawStep's `int` note — bounded [1, MAX_LOOP_COUNT]. */
   loopCount?: number;
+  /** how a `download` step compares the suggested filename against `value`
+   *  (default "contains"). Auto-recorded steps use "exact" — the browser just
+   *  reported the real name; hand-authored ones default to the looser match
+   *  because generated filenames carry dates and ids. */
+  downloadMatch?: DownloadMatch;
   /** assertion text / extra description */
   text?: string;
   /** soft assertion — reports a failure but doesn't stop the test (expect.soft) */
@@ -418,6 +430,7 @@ export interface RawStep {
   waitUntil?: WaitUntilKind;
   timeoutMs?: number;
   loopCount?: number;
+  downloadMatch?: DownloadMatch;
   /** cookie fields, so a cookie step can be inserted via insertStep */
   cookieAction?: CookieAction;
   cookie?: CookieSpec;
@@ -830,8 +843,11 @@ export function normalizeDatasets(input: unknown): Dataset[] {
 export const STEP_TYPES: StepType[] = [
   "goto", "click", "fill", "press", "select", "check", "uncheck", "assert",
   "wait", "viewport", "if", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
-  "scroll",
+  "scroll", "download",
 ];
+
+export type DownloadMatch = "contains" | "exact";
+export const DOWNLOAD_MATCHES: DownloadMatch[] = ["contains", "exact"];
 
 export const ASSERT_KINDS: AssertKind[] = [
   "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked",
@@ -1216,6 +1232,8 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   if (timeoutMs !== undefined) out.timeoutMs = timeoutMs;
   const loopCount = int(s.loopCount, 1, MAX_LOOP_COUNT);
   if (loopCount !== undefined) out.loopCount = loopCount;
+  const downloadMatch = oneOf(s.downloadMatch, DOWNLOAD_MATCHES);
+  if (downloadMatch) out.downloadMatch = downloadMatch;
 
   const cookieAction = oneOf(s.cookieAction, COOKIE_ACTIONS);
   if (cookieAction) out.cookieAction = cookieAction;

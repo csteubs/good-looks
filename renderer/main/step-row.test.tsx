@@ -843,3 +843,29 @@ describe("loop rows", () => {
     }
   });
 });
+
+// ── Download rows ──────────────────────────────────────────────────────────
+
+describe("download rows", () => {
+  it("describes the expectation in words, with the capture noted", () => {
+    const { container } = render(
+      <StepRow
+        index={0}
+        step={step({ type: "download", value: "a.pdf", downloadMatch: "exact", captureVar: "got" })}
+      />,
+    );
+    expect(container.textContent).toContain('expect download named "a.pdf" (filename → got)');
+  });
+
+  it("inline-edits the expected filename", () => {
+    const onEdit = vi.fn();
+    render(
+      <StepRow index={0} step={step({ type: "download", value: "a.csv" })} onEdit={onEdit} />,
+    );
+    fireEvent.click(screen.getByLabelText(/edit step/i));
+    const input = screen.getByLabelText(/edit filename/i);
+    fireEvent.change(input, { target: { value: "b.csv" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onEdit).toHaveBeenCalledWith({ value: "b.csv" });
+  });
+});

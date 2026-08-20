@@ -530,6 +530,13 @@ export function buildReplayScript(step: Step): string {
       return { ok: true };
     }
     if (t === "endLoop") { log("info", "end of repeat block"); return { ok: true }; }
+    // The preview cannot receive a download event — transfers are cancelled
+    // during recording on purpose. Said out loud so a green row here is never
+    // read as "the download was verified"; the RUN is what verifies it.
+    if (t === "download") {
+      log("info", "download expectations are verified on runs — the training browser cancels transfers");
+      return { ok: true };
+    }
     if (t === "goto") { log("info", "goto runs at test start; skipped in preview"); return { ok: true, error: "goto runs at test start; skipped in preview" }; }
     // Unreachable in the trainer: runStep dispatches viewport steps to
     // resize-service, which resizes the native window (a page cannot resize the

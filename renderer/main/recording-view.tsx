@@ -108,6 +108,7 @@ const ADD_STEP_KINDS: AddStepKind[] = [
   "viewport",
   "scroll",
   "capture",
+  "download",
   "runFlow",
   // Last, and deliberately: the discoverable route to it is the training
   // browser's right-click menu on the field being filled, which arrives here

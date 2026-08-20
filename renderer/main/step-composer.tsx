@@ -86,6 +86,7 @@ export type AddStepKind =
   | "viewport"
   | "scroll"
   | "capture"
+  | "download"
   | "runFlow"
   | "elementState"
   | "fill";
@@ -101,6 +102,7 @@ export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   viewport: "Set viewport",
   scroll: "Scroll",
   capture: "Capture a value",
+  download: "Expect a download",
   runFlow: "Run a flow",
   elementState: "Set element state",
   fill: "Fill with a variable",
@@ -707,6 +709,11 @@ export function StepComposer({
   // Iterations for the `loop` kind, held as text so a half-typed number
   // doesn't fight the input (same rule as the step row's numeric drafts).
   const [loopTimes, setLoopTimes] = React.useState("2");
+  // The `download` kind's three fields. Filename empty = "any download" —
+  // the await itself is the assertion then, which is a real one.
+  const [dlName, setDlName] = React.useState("");
+  const [dlExact, setDlExact] = React.useState(false);
+  const [dlVar, setDlVar] = React.useState("");
   // Draft values for the selected flow's parameters, keyed by parameter name.
   // Reset when the flow changes: two flows sharing a parameter name is a
   // coincidence, not a reason to carry a value across.
@@ -926,6 +933,19 @@ export function StepComposer({
             ...(flowRepeatMode === "variable" ? { repeatVar: flowRepeatName } : {}),
           },
         ];
+      }
+      case "download": {
+        const name = dlName.trim();
+        const varName = dlVar.trim();
+        const s: RawStep = { type: "download" };
+        if (name !== "") {
+          s.value = name;
+          if (dlExact) s.downloadMatch = "exact";
+        }
+        if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(varName) && varName.length <= 40) {
+          s.captureVar = varName;
+        }
+        return [s];
       }
       case "loop": {
         // Insert an empty REPEAT/END-REPEAT pair, same idiom as the condition:
@@ -1388,6 +1408,44 @@ export function StepComposer({
                 />
               </Field>
             ) : null}
+          </>
+        ) : null}
+
+        {kind === "download" ? (
+          <>
+            <Field label="Filename" orientation="vertical">
+              <Input
+                size="small"
+                value={dlName}
+                onChange={(e) => setDlName(e.target.value)}
+                placeholder="report.csv — blank expects any download"
+                aria-label="Expected filename"
+              />
+            </Field>
+            {dlName.trim() !== "" ? (
+              <SegmentedControl
+                size="small"
+                value={dlExact ? "exact" : "contains"}
+                onValueChange={(v) => v && setDlExact(v === "exact")}
+              >
+                <SegmentedControlItem value="contains">Contains</SegmentedControlItem>
+                <SegmentedControlItem value="exact">Exact name</SegmentedControlItem>
+              </SegmentedControl>
+            ) : null}
+            <Field label="Save filename to variable (optional)" orientation="vertical">
+              <Input
+                size="small"
+                value={dlVar}
+                onChange={(e) => setDlVar(e.target.value)}
+                placeholder="exportName"
+                aria-label="Download filename variable"
+              />
+            </Field>
+            <Text size="small" className="text-secondary">
+              Expects the PREVIOUS step to start a file download — the run arms the listener
+              before that step, then verifies the filename. In the trainer, transfers are
+              cancelled and this records what to expect.
+            </Text>
           </>
         ) : null}
 

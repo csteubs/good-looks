@@ -733,6 +733,10 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
  * drop it. Reset by `stopPolling`, which every teardown path goes through.
  */
 const captureLedger = new CaptureLedger();
+/** Detaches the current session's `will-download` listener. Module-level for
+ *  the same reason the ledger is: the listener sits on the SESSION object,
+ *  which outlives any one training webContents. */
+let downloadUnhook: (() => void) | null = null;
 /** Per-session tally of where steps actually came from. The console channel is
  *  the one that fixes the navigation bug, so "how many arrived that way" is the
  *  number that says whether it is working — logged when the session ends,
@@ -1529,6 +1533,7 @@ function stopPolling(): void {
     clearInterval(pollTimer);
     pollTimer = null;
   }
+  downloadUnhook?.();
   // Anything still held behind a gap belongs to a session that is ending, and
   // there is no list left to append it to — but a step that was captured and
   // never recorded is the whole bug this machinery exists for, so it is logged
@@ -1966,6 +1971,54 @@ export const recorderService = {
     });
 
     wc.on("dom-ready", () => void injectCapture());
+
+    // ── Downloads become steps ───────────────────────────────────────────
+    //
+    // A click that starts a file download is a captured click PLUS a fact the
+    // capture script cannot see: `will-download` fires in the native layer.
+    // The transfer is CANCELLED — a recording session is for looking, and a
+    // save dialog over the training window mid-recording is exactly the kind
+    // of surprise the window-open handler above exists to prevent — and a
+    // `download` step is inserted at the cursor instead, expecting the exact
+    // filename the browser just reported. The listener lives on the SESSION,
+    // which outlives this webContents, so it filters to this `wc` and is
+    // unhooked by `stopPolling`, the funnel every teardown path goes through.
+    // The filename is page-controlled input on its way into a generated spec:
+    // it enters through `insertStep`, which re-normalizes, and is emitted
+    // through `valueExpr`/`q` like every other string.
+    const wcSession = (wc as unknown as { session?: NodeJS.EventEmitter }).session;
+    if (wcSession) {
+      const onWillDownload = (
+        _event: unknown,
+        item: { getFilename?: () => string; cancel?: () => void },
+        contents: unknown,
+      ): void => {
+        if (contents !== wc || !session) return;
+        const filename = String(item.getFilename?.() ?? "");
+        try {
+          item.cancel?.();
+        } catch {
+          /* the item may already be gone */
+        }
+        logger.info("recorder", "Recorded a download expectation and cancelled the transfer", {
+          filename,
+        });
+        recorderService.insertStep({
+          type: "download",
+          value: filename,
+          downloadMatch: "exact",
+        });
+      };
+      wcSession.on("will-download", onWillDownload as (...args: unknown[]) => void);
+      downloadUnhook = () => {
+        try {
+          wcSession.removeListener("will-download", onWillDownload as (...args: unknown[]) => void);
+        } catch {
+          /* session already gone */
+        }
+        downloadUnhook = null;
+      };
+    }
 
     // ── The capture channel ──────────────────────────────────────────────
     //

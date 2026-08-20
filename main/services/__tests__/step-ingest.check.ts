@@ -266,6 +266,20 @@ function main(): void {
       { k: "testid", v: "x" },
       "a test-id attribute outside the allowlist is dropped",
     );
+    // A download step's match mode is an enum on its way into `.toBe`/
+    // `.toContain` selection, and its captureVar becomes a V-property write —
+    // the enum is allowlisted at the boundary, the identifier is gated in the
+    // generator (pinned in download-emission.test.ts).
+    assertEqual(
+      normalizeRawStep({ type: "download", downloadMatch: "toBe); evil(); (" })?.downloadMatch,
+      undefined,
+      "a forged download match mode is dropped",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "download", downloadMatch: "exact" })?.downloadMatch,
+      "exact",
+      "a legitimate download match mode survives ingest",
+    );
     // `nth` admits exactly one negative: -1, Playwright's "last match". The
     // bound is the boundary half of the pair; the generator independently
     // floors anything deeper to 0 (see locatorExpr), because a forged index
