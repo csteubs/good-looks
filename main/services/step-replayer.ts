@@ -537,6 +537,28 @@ export function buildReplayScript(step: Step): string {
     // so a future caller that bypasses that dispatch gets a clear reason
     // instead of "Element not found" from the resolver below.
     if (t === "viewport") { log("info", "a resize is applied to the window, not from the page"); return { ok: true, error: "a resize is applied to the window, not from the page" }; }
+    if (t === "scroll") {
+      // Element mode mirrors the emitted scrollIntoViewIfNeeded, strict-mode
+      // included — a multi-match locator fails the run's scroll, so it must
+      // fail here too rather than scrolling to whichever matched first.
+      if (step.locator) {
+        var scRes = resolveOne(step.locator);
+        var scStrict = strictError(scRes);
+        if (scStrict) return { ok: false, error: scStrict };
+        if (!scRes.el) { log("error", "Element not found — cannot scroll to it"); return { ok: false, error: "Element not found" }; }
+        try { scRes.el.scrollIntoView({ block: "center", inline: "center" }); } catch (e) {}
+        log("info", "scrolled the element into view");
+        return { ok: true };
+      }
+      // Position mode: one jump rather than the run's incremental walk. The
+      // preview page is live and already lazily-loaded as far as the user
+      // scrolled it, so the jump lands where the run's walk would.
+      var scX = typeof step.scrollX === "number" ? step.scrollX : 0;
+      var scY = typeof step.scrollY === "number" ? step.scrollY : 0;
+      try { window.scrollTo(scX, scY); } catch (e) {}
+      log("info", "scrolled to (" + scX + ", " + scY + ") — page is at (" + Math.round(window.scrollX || 0) + ", " + Math.round(window.scrollY || 0) + ")");
+      return { ok: true };
+    }
     if (t === "state") {
       var es = step.elementState || "hover";
       // press/release carry no locator: page.mouse.down acts wherever the

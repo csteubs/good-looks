@@ -968,6 +968,39 @@ for (const c of WAIT_UNTIL_CASES) {
   assertEqual(twice, once, "a spec with .nth() locators regenerates byte-identically");
 }
 
+// ── Scroll steps round-trip in BOTH forms ──────────────────────────────────
+//
+// The element form is a native locator call; the position form is a
+// glazeScrollTo(page, x, y) helper call. Each must parse back as a scroll
+// step, or an imported/LLM-resynced test silently loses the scroll that its
+// following assertion depends on — the lazy-render content is then never on
+// the page and the assert fails for a reason nothing in the step list shows.
+{
+  const scrollSteps: Step[] = [
+    step({ type: "goto", url: "https://example.com" }),
+    step({ type: "scroll", scrollX: 0, scrollY: 1240 }),
+    step({ type: "scroll", locator: { k: "testid", v: "reviews" } }),
+    step({ type: "assert", assert: "visible", locator: { k: "testid", v: "reviews" } }),
+  ];
+  const src = generateSpec({ name: "scrolls", url: "https://example.com", steps: scrollSteps });
+  const parsed = parseSpecDetailed(src);
+  assertEqual(parsed.skipped, 0, "scroll steps are not counted as unclassified");
+  assertEqual(parsed.steps.length, 4, "both scroll forms round-trip in step count");
+  assertEqual(parsed.steps[1]?.type, "scroll", "the position scroll parses as a scroll step");
+  assertEqual(parsed.steps[1]?.scrollX, 0, "…and keeps its X");
+  assertEqual(parsed.steps[1]?.scrollY, 1240, "…and keeps its Y");
+  assertEqual(parsed.steps[2]?.type, "scroll", "the element scroll parses as a scroll step");
+  assertEqual(parsed.steps[2]?.locator?.v, "reviews", "…and keeps its locator");
+
+  // Byte-identical regeneration — what makes an edit-then-resync safe.
+  const twice = generateSpec({
+    name: "scrolls",
+    url: "https://example.com",
+    steps: parseSpecDetailed(src).steps,
+  });
+  assertEqual(twice, src, "a spec with scroll steps regenerates byte-identically");
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

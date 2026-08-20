@@ -105,6 +105,12 @@ export const TESTS: TestRecord[] = [
         // controls in the args dialog — are visible in the preview.
         repeat: 2,
       },
+      // Both scroll forms, LAST for the same id-stability reason. The position
+      // form is the one the capture script auto-records; its row is also the
+      // only inline-editable scroll (the element form edits via Refine), so
+      // this is where that field can be SEEN.
+      { type: "scroll", scrollX: 0, scrollY: 1240 },
+      { type: "scroll", locator: { k: "testid", v: "reviews" } },
     ),
   },
   {

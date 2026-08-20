@@ -19,13 +19,18 @@
 // emitting `toHaveURL(<string>)`, every url row reports the spec failing where
 // the trainer passes — which is precisely the bug, stated as a test.
 
+import * as fs from "node:fs";
 import * as http from "node:http";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { AddressInfo } from "node:net";
+import { pathToFileURL } from "node:url";
 
 import { expect, test, type Page } from "@playwright/test";
 
 import { buildReplayScript } from "../main/services/step-replayer.js";
 import { generateSpec } from "../main/services/script-generator.js";
+import { glazeRuntimeSource } from "../main/services/glaze-runtime-source.js";
 import type { Step } from "../main/recorder/types.js";
 
 const FIXTURE = `<!doctype html>
@@ -52,6 +57,22 @@ const FIXTURE = `<!doctype html>
   <div data-testid="attr-present" data-state="">has empty attr</div>
   <div data-testid="attr-absent">no attr</div>
   <button data-testid="bump" onclick="this.textContent = String(Number(this.textContent) + 1)">0</button>
+  <!-- Lazy-render fixture for scroll steps: the reviews block is NOT in the
+       DOM until the page scrolls past 600px — the shape of a virtualized list
+       or an IntersectionObserver gate, and the reason assertions against such
+       content fail in a run that never scrolls. -->
+  <div style="height:2400px"></div>
+  <button data-testid="deep">Deep button</button>
+  <script>
+    addEventListener("scroll", function () {
+      if (window.scrollY > 600 && !document.querySelector('[data-testid="lazy-review"]')) {
+        var d = document.createElement("div");
+        d.setAttribute("data-testid", "lazy-review");
+        d.textContent = "Great product";
+        document.body.appendChild(d);
+      }
+    });
+  </script>
 </body></html>`;
 
 let server: http.Server;
@@ -319,4 +340,60 @@ test("a select step refuses an option that does not exist, in both engines", asy
   const step2 = { id: "sel2", type: "select", value: "us", locator: { k: "testid", v: "country" } } as Step;
   expect(await replayerVerdict(page, step), "the trainer must refuse the missing option").toBe(false);
   expect(await replayerVerdict(page, step2), "…and still accept one that exists").toBe(true);
+});
+
+test("a scroll step materializes lazily-rendered content for the assertion after it, in both engines", async ({ page }) => {
+  // The failure this feature exists for: content a page renders only on
+  // scroll is not in the DOM until the scroll happens, Playwright assertions
+  // do not scroll, and the trainer page — already scrolled by the user's own
+  // hand — passed the assert that then failed every run. A recorded scroll
+  // step must make both engines see the same page.
+  const scrollStep = { id: "sc", type: "scroll", scrollX: 0, scrollY: 800 } as Step;
+  const lazyAssert = {
+    id: "la",
+    type: "assert",
+    assert: "visible",
+    locator: { k: "testid", v: "lazy-review" },
+  } as Step;
+
+  await page.goto(base);
+
+  // Before any scroll, the content is absent to BOTH engines.
+  expect(await replayerVerdict(page, lazyAssert), "trainer: absent before scrolling").toBe(false);
+  expect(await specVerdict(page, lazyAssert), "run: absent before scrolling").toBe(false);
+
+  // Trainer half: the scroll step reveals it.
+  expect(await replayerVerdict(page, scrollStep), "trainer: the scroll step succeeds").toBe(true);
+  expect(await replayerVerdict(page, lazyAssert), "trainer: present after its scroll step").toBe(true);
+
+  // Run half, on a fresh unscrolled document: the emitted glazeScrollTo walks
+  // the REAL runtime helper (written to disk and imported, not re-derived).
+  await page.goto(base);
+  const src = generateSpec({ name: "lazy", url: base, steps: [scrollStep, lazyAssert] });
+  expect(src).toContain("await glazeScrollTo(page, 0, 800);");
+  const runtimePath = path.join(os.tmpdir(), `glaze-runtime-parity-${Date.now()}.mjs`);
+  fs.writeFileSync(runtimePath, glazeRuntimeSource);
+  try {
+    const runtime = (await import(pathToFileURL(runtimePath).href)) as {
+      glazeScrollTo: (p: Page, x: number, y: number) => Promise<void>;
+    };
+    await runtime.glazeScrollTo(page, 0, 800);
+    expect(await specVerdict(page, lazyAssert), "run: present after the emitted scroll").toBe(true);
+  } finally {
+    fs.unlinkSync(runtimePath);
+  }
+});
+
+test("an element scroll step emits a native call that reaches the element", async ({ page }) => {
+  await page.goto(base);
+  const step = { id: "el", type: "scroll", locator: { k: "testid", v: "deep" } } as Step;
+  const src = generateSpec({ name: "deep", url: base, steps: [step] });
+  const line = src.split("\n").find((l) => l.trim().startsWith("await"))!.trim();
+  expect(line).toBe('await page.getByTestId("deep").scrollIntoViewIfNeeded();');
+  const run = new Function("page", `return (async () => { ${line} })();`);
+  await run(page);
+  expect(await page.evaluate(() => window.scrollY), "the page actually scrolled").toBeGreaterThan(0);
+
+  // And the trainer agrees the step succeeds.
+  expect(await replayerVerdict(page, step)).toBe(true);
 });

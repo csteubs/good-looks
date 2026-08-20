@@ -101,6 +101,18 @@ function main(): void {
     const vp = normalizeRawStep({ type: "viewport", width: "1); evil(); (", height: 800 });
     assertEqual(vp?.width, undefined, "a forged viewport width is dropped");
     assertEqual(vp?.height, 800, "…while the legitimate height beside it survives");
+
+    // Scroll offsets are the newest numeral fields on this channel — the
+    // capture script emits a scroll step on the page's OWN scroll position,
+    // which the page controls completely.
+    const sc = normalizeRawStep({ type: "scroll", scrollX: NODE_CODE, scrollY: 1240 });
+    assertEqual(sc?.scrollX, undefined, "a forged scrollX is dropped");
+    assertEqual(sc?.scrollY, 1240, "…while the legitimate scrollY beside it survives");
+    assertEqual(
+      normalizeRawStep({ type: "scroll", scrollX: 0, scrollY: -50 })?.scrollY,
+      undefined,
+      "a negative scroll offset is dropped",
+    );
   }
 
   // ── 1b. The loop fields on a runFlow step ────────────────────────────────
@@ -593,6 +605,30 @@ function main(): void {
     ] as unknown as Step[];
     const spec = specFor(poisoned);
     assert(!spec.includes("evil("), "a poisoned timeout on the native waitFor form is inert too");
+  }
+  // Scroll offsets: emitted by the capture script from the page's OWN scroll
+  // position, and editable later through `recorder:updateStep`'s raw copy — so
+  // the generator's num() is the guard that has to hold on its own.
+  {
+    const poisoned = [
+      { id: "s1", timestamp: 0, type: "scroll", scrollX: NODE_CODE, scrollY: 1240 },
+    ] as unknown as Step[];
+    const line = lineWith(specFor(poisoned), "await glazeScrollTo");
+    assertEqual(
+      line,
+      "await glazeScrollTo(page, 0, 1240);",
+      "a poisoned scroll offset emits the fallback numeral, not code",
+    );
+    assert(!line.includes("require("), "…and no injected call survives into the spec");
+
+    // BOTH offsets forged: the step has no usable numeral left, so it emits
+    // nothing at all rather than a call built from two fallbacks.
+    const bothPoisoned = [
+      { id: "s1", timestamp: 0, type: "scroll", scrollX: NODE_CODE, scrollY: "10); evil(); (" },
+    ] as unknown as Step[];
+    const spec = specFor(bothPoisoned);
+    assert(!spec.includes("require(") && !spec.includes("evil("), "a fully-forged scroll step emits no code at all");
+    assert(spec.includes("UNGENERATABLE STEP"), "…and says so in the spec rather than vanishing");
   }
   // `cssProp` is the newest string field concatenated into a call ARGUMENT, and
   // like `timeoutMs` it arrives via `recorder:updateStep`, which copies its

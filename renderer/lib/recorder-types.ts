@@ -27,7 +27,8 @@ export type StepType =
   | "cookie"
   | "capture"
   | "runFlow"
-  | "state";
+  | "state"
+  | "scroll";
 
 /** Predicate for an `if` step. Element conditions use `Step.locator`; page
  *  conditions (urlContains/titleContains) use `Step.value` as the substring. */
@@ -257,6 +258,10 @@ export interface Step {
   count?: number;
   width?: number;
   height?: number;
+  /** absolute page position a `scroll` step scrolls to, when it carries no
+   *  locator (mirror of main types). */
+  scrollX?: number;
+  scrollY?: number;
   waitMs?: number;
   /** predicate a `wait` step blocks on, and how long it waits before failing
    *  (mirror of main types). */
@@ -337,6 +342,8 @@ export interface RawStep {
   count?: number;
   width?: number;
   height?: number;
+  scrollX?: number;
+  scrollY?: number;
   waitMs?: number;
   waitUntil?: WaitUntilKind;
   timeoutMs?: number;

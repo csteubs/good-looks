@@ -121,6 +121,7 @@ const ADD_STEP_KINDS: AddStepKind[] = [
   "press",
   "find",
   "viewport",
+  "scroll",
   "capture",
   "runFlow",
   // Last, and deliberately: the discoverable route to it is the training

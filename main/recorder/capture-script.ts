@@ -58,6 +58,16 @@ import type { Locator } from "./types.js";
  * listeners would double every step from then on.
  */
 export const WORLD_STATE_KEY = "__glCapture";
+
+/** How far (CSS px, either axis) the page must have scrolled since the last
+ *  recorded position before a captured step gets a `scroll` step inserted
+ *  ahead of it. Playwright ACTIONS auto-scroll, so a click after a scroll
+ *  replays fine without one — but an assertion does not scroll, and content a
+ *  page renders lazily is not in the DOM until the scroll happens. Recording
+ *  the scroll as its own visible step is what makes the run see the page the
+ *  way the user did. The threshold keeps sub-viewport jitter (smooth-scroll
+ *  settling, anchor adjustments) from spraying scroll steps between rows. */
+export const SCROLL_CAPTURE_MIN_PX = 100;
 export const ATTR_PAUSED = "data-pw-paused";
 export const ATTR_ASSERT = "data-pw-assert";
 export const ATTR_ASSERT_SOFT = "data-pw-assert-soft";
@@ -907,6 +917,13 @@ export function buildCaptureScript(nonce: string): string {
     doc: "d" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36),
     seq: 0,
     queue: [],
+    // The last scroll position a step was recorded AT, seeded from wherever
+    // this document starts (an anchor navigation lands mid-page, and the run's
+    // goto will land there too — no scroll step is owed for it).
+    lastScroll: {
+      x: Math.max(0, Math.round(window.scrollX || 0)),
+      y: Math.max(0, Math.round(window.scrollY || 0)),
+    },
   };
   window.${WORLD_STATE_KEY} = gl;
 
@@ -976,6 +993,24 @@ export function buildCaptureScript(nonce: string): string {
   // step exactly once and in the order it was captured, however the two
   // deliveries interleave — see CaptureLedger.
   function push(step) {
+    // A scroll the user performed since the last recorded position becomes an
+    // explicit step BEFORE the step that needed it. Only element-bearing steps
+    // owe one: a goto or keyboard press does not depend on where the page is
+    // scrolled to, and the scroll step itself must not recurse. Window scroll
+    // only — an inner container's offset is not recorded (v1; see DECISIONS).
+    if (step.type !== "scroll" && step.locator) {
+      try {
+        var sx = Math.max(0, Math.round(window.scrollX || 0));
+        var sy = Math.max(0, Math.round(window.scrollY || 0));
+        if (
+          Math.abs(sx - gl.lastScroll.x) >= ${SCROLL_CAPTURE_MIN_PX} ||
+          Math.abs(sy - gl.lastScroll.y) >= ${SCROLL_CAPTURE_MIN_PX}
+        ) {
+          gl.lastScroll = { x: sx, y: sy };
+          push({ type: "scroll", scrollX: sx, scrollY: sy });
+        }
+      } catch (er) {}
+    }
     gl.seq++;
     var entry = { i: gl.seq, s: step };
     emit(entry);

@@ -10,6 +10,69 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-19 — Scroll depth becomes an explicit step, not a hidden modifier
+
+The failure this fixes: a test whose assertion targets content the page
+renders only on scroll — a virtualized list, an infinite feed, an
+IntersectionObserver gate — failed on every run, while the same assertion
+previewed green in the trainer. Playwright's ACTIONS auto-scroll, so recorded
+clicks replayed fine; its assertions do not scroll, and the lazily-rendered
+element was not merely off-screen at run time, it was not in the DOM at all.
+The trainer masked it rather than reproducing it, because the user's own hand
+had already scrolled the live page before they clicked the assert crosshair.
+
+**The scroll is recorded as a visible `scroll` step, not applied invisibly
+before the assertion.** The tempting alternative — stamp scroll context on
+every captured step and have the generator scroll before each element assert —
+was rejected for three reasons that all come back to the one-line-per-step
+contract. A hidden pre-assert scroll is either a second spec line (which
+shifts `buildStepLineMap`'s counting for hand-edited specs and desyncs the
+step reporter) or a wrapper around the `expect` (which `spec-parser.ts` could
+not read back, so an import or LLM resync would lose the assertion). And an
+UNCONDITIONAL scroll before asserts would change what existing green tests
+measure — `toHaveCSS` on a sticky header reads a different state at depth
+1240 than at depth 0. A step the user can see, reorder, edit and delete has
+none of those problems, and it round-trips.
+
+**Capture inserts it automatically, at one point.** `push()` in
+`capture-script.ts` compares the window's scroll position against the last
+recorded one whenever a locator-bearing step is captured, and pushes a
+`scroll` step first when it drifted ≥ `SCROLL_CAPTURE_MIN_PX` (100px, either
+axis). The threshold exists because smooth-scroll settling and anchor
+adjustments would otherwise spray sub-viewport scroll steps between rows.
+Locator-bearing steps only: a goto or bare keyboard press does not depend on
+where the page is scrolled to. Window scroll only, deliberately — recording
+inner scroll-container offsets means identifying WHICH container, keyed by a
+locator of its own that can go stale; that is a real feature with a real
+cost, deferred until a page that needs it shows up.
+
+**The position form scrolls incrementally at run time.** `glazeScrollTo` (in
+`glaze-runtime-source.ts`, one awaited line per step — the same rule that
+created `glazeCapture`) walks toward the recorded offset in viewport-sized
+increments with a beat between rounds, because a single `scrollTo` jump
+clamps at the CURRENT document height, and on a lazy page that is far short
+of where the user actually was. It stops after several no-progress rounds
+rather than failing: a page now shorter than at record time has been scrolled
+as far as it goes, and what is missing is the following assertion's news to
+report. The element form is native `scrollIntoViewIfNeeded()` — Playwright's
+own retrying, strict-mode-checked call — and is the composer's default, since
+it self-corrects when the page reflows.
+
+**What the offsets are is a security fact, not a detail:** they arrive from
+`window.scrollX/Y` in a page that controls both values completely, on the
+same channel as every other captured field, and they land in generated source
+as bare numerals. They go through `int()` at the boundary and `num()` in the
+generator (both pinned by `check:step-ingest`), and the description string is
+`num()`-guarded too, because a scroll step with no usable fields embeds its
+description in the spec as an UNGENERATABLE comment.
+
+Parity is pinned where it can actually fail: `e2e/assert-parity.spec.ts`
+gained a lazy-render fixture (the reviews block attaches only past 600px) and
+asserts absent-before/present-after through BOTH engines, running the real
+`glazeScrollTo` from disk. The AI-steps vocabulary deliberately does not gain
+`scroll` — the model has no way to know a depth, and the capture script
+records the real one.
+
 ### 2026-08-19 — "URL path is": the URL assertion that survives real URLs
 
 The report was "the URL assertion has never passed as a test step", and the
