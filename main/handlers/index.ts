@@ -961,7 +961,24 @@ export function registerHandlers(): void {
     // edited spec (e.g. after applying an AI-suggested fix). Imported tests
     // (sourceDir set) stay script-only and keep their verbatim file as the
     // source of truth, so we don't overwrite their parsed steps.
-    if (!rec.sourceDir) {
+    //
+    // A record whose steps CALL FLOWS is the other exception: the spec-parser
+    // has no runFlow vocabulary (the call is inlined at generation time, so
+    // the file holds the flow's steps, not the call), and re-parsing would
+    // silently replace the reference with a flattened copy — every later flow
+    // edit then stops reaching this test, with nothing on screen saying so.
+    // The steps are kept and marked diverged instead; regenerating from steps
+    // is the way back into agreement.
+    const callsFlows = rec.steps.some((s) => s.type === "runFlow");
+    if (callsFlows && !rec.sourceDir) {
+      rec.stepsDiverged = true;
+      rec.stepsDivergedReason = "parse";
+      rec.stepsDivergedDismissed = undefined;
+      logger.warn("handlers", "Script edited on a test that calls flows — steps kept, not re-parsed", {
+        id: rec.id,
+      });
+    }
+    if (!rec.sourceDir && !callsFlows) {
       try {
         const { steps, skipped } = parseSpecDetailed(source);
         rec.steps = steps;

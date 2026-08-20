@@ -1087,6 +1087,32 @@ describe("tests:setFlow / tests:listFlows — the flow product surface", () => {
     expect(regenerated).not.toContain("old@example.com");
   });
 
+  it("never re-parses a flow-calling test's steps from a script edit — kept and flagged", async () => {
+    // The spec-parser has no runFlow vocabulary: the file holds the flow's
+    // INLINED steps, so a re-parse would replace the reference with a
+    // flattened copy and every later flow edit would silently stop reaching
+    // this test.
+    seedTest("t-flow-i", { isFlow: true, steps: [
+      { id: "s1", type: "press", value: "Enter", timestamp: 1 },
+    ] as Step[] });
+    const caller = seedTest("t-flow-j", {
+      steps: [
+        { id: "s1", type: "runFlow", flowId: "t-flow-i", label: "Poke", timestamp: 1 },
+      ] as Step[],
+    });
+    caller.scriptPath = testStore.regenerateScript(caller);
+    testStore.save(caller);
+    const rec = await invokeHandler<TestRecord>("tests:updateScript", {
+      id: "t-flow-j",
+      source:
+        'import { test, expect } from "@playwright/test";\n' +
+        'test("x", async ({ page }) => {\n  await page.goto("https://example.com");\n});\n',
+    });
+    expect(rec.steps.map((s) => s.type)).toEqual(["runFlow"]);
+    expect(rec.stepsDiverged).toBe(true);
+    expect(rec.scriptEdited).toBe(true);
+  });
+
   it("leaves a hand-edited caller's spec alone when its flow changes", async () => {
     seedTest("t-flow-g", {
       isFlow: true,
