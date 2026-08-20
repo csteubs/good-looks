@@ -165,6 +165,13 @@ export const TESTS: TestRecord[] = [
       { type: "fill", locator: { k: "role", role: "searchbox" }, value: "locator" },
       { type: "press", value: "Enter" },
       { type: "endLoop" },
+      // An elsed conditional — renders the "else" chip at its if's depth with
+      // both bodies indented one deeper.
+      { type: "if", cond: "visible", locator: { k: "testid", v: "no-results" } },
+      { type: "click", locator: { k: "role", role: "button", name: "Clear filters" } },
+      { type: "else" },
+      { type: "click", locator: { k: "role", role: "link", name: "First result" } },
+      { type: "endif" },
       // A download expectation right after its trigger — renders the
       // "download" chip and the worded description with its capture note.
       { type: "click", locator: { k: "role", role: "button", name: "Export results" } },

@@ -384,6 +384,14 @@ describe("loop halves in the preview", () => {
     const close = run(step({ type: "endLoop" }));
     expect(close.ok).toBe(true);
   });
+
+  it("treats an else marker the same way", () => {
+    // In a live session the recorder JUMPS over whichever half is inactive;
+    // the linear preview instead narrates the marker and walks on. A failure
+    // here would block replay-from-step across any elsed conditional.
+    const r = run(step({ type: "else" }));
+    expect(r.ok).toBe(true);
+  });
 });
 
 describe("download steps in the preview", () => {

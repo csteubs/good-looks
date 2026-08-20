@@ -821,7 +821,8 @@ describe("loop rows", () => {
   it("offers neither disable nor continue-on-failure on the halves", () => {
     // Half a disabled loop is an unbalanced block; the generator refuses to
     // wrap them, and the kebab must not offer what the generator refuses.
-    for (const type of ["loop", "endLoop"] as const) {
+    // `else` is a block half by the same rule.
+    for (const type of ["loop", "endLoop", "else"] as const) {
       const { container, unmount } = render(
         <StepRow index={0} step={step({ type })} onEdit={vi.fn()} />,
       );
@@ -831,7 +832,7 @@ describe("loop rows", () => {
   });
 
   it("offers no lone replay for the halves", () => {
-    for (const type of ["loop", "endLoop"] as const) {
+    for (const type of ["loop", "endLoop", "else"] as const) {
       const { container, unmount } = render(
         <StepRow index={0} step={step({ type })} onReplay={async () => ({ ok: true })} />,
       );

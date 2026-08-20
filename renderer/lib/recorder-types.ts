@@ -24,6 +24,7 @@ export type StepType =
   | "wait"
   | "viewport"
   | "if"
+  | "else"
   | "endif"
   | "loop"
   | "endLoop"

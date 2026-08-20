@@ -20,7 +20,13 @@ describe("computeStepDepths", () => {
     expect(t(["loop", "if", "click", "endif", "endLoop"])).toEqual([0, 1, 2, 1, 0]);
   });
 
+  it("sits an else at its if's depth, with both bodies one deeper", () => {
+    expect(t(["if", "click", "else", "click", "endif"])).toEqual([0, 1, 0, 1, 0]);
+    expect(t(["loop", "if", "else", "click", "endif", "endLoop"])).toEqual([0, 1, 1, 2, 1, 0]);
+  });
+
   it("floors at zero on a stray closer", () => {
     expect(t(["endLoop", "click"])).toEqual([0, 0]);
+    expect(t(["else", "click"])).toEqual([0, 1]);
   });
 });

@@ -42,6 +42,7 @@ const cases: { label: string; step: Step }[] = [
   { label: "wait for locator", step: step({ type: "wait", locator: LOCATOR }) },
   { label: "viewport", step: step({ type: "viewport", width: 1024, height: 768 }) },
   { label: "endif", step: step({ type: "endif" }) },
+  { label: "else", step: step({ type: "else" }) },
   { label: "loop", step: step({ type: "loop", loopCount: 4 }) },
   { label: "loop with no count", step: step({ type: "loop" }) },
   { label: "endLoop", step: step({ type: "endLoop" }) },

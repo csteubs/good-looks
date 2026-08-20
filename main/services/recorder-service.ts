@@ -1055,10 +1055,31 @@ function cursorPastReplayed(index: number): void {
  * (respecting nested blocks), or -1 if the step isn't a block delimiter or the
  * block is unbalanced.
  */
-function matchingBlockIndex(steps: Step[], index: number): number {
+/** The matching `else` of the `if` at `index`, or -1 when the block has none.
+ *  Depth-aware for the same reason `matchingBlockIndex` is: an inner if's
+ *  else must not read as the outer one's. */
+export function matchingElseIndex(steps: Step[], index: number): number {
+  if (steps[index]?.type !== "if") return -1;
+  let depth = 0;
+  for (let i = index + 1; i < steps.length; i++) {
+    const t = steps[i].type;
+    if (t === "if") depth++;
+    else if (t === "endif") {
+      if (depth === 0) return -1;
+      depth--;
+    } else if (t === "else" && depth === 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+export function matchingBlockIndex(steps: Step[], index: number): number {
   const s = steps[index];
   if (!s) return -1;
-  if (s.type === "if") {
+  // From an `else`, the block's end is the same scan an `if` does — the else
+  // belongs to its if, and both close at the one endif.
+  if (s.type === "if" || s.type === "else") {
     let depth = 0;
     for (let i = index + 1; i < steps.length; i++) {
       if (steps[i].type === "if") depth++;
@@ -3127,9 +3148,22 @@ export const recorderService = {
             // list — an `if` inside an inlined flow pairs with its own `endif`.
             if (step.type === "if") {
               if (result?.met === false) {
-                const end = matchingBlockIndex(entries.map((e) => e.step), i);
+                // Land ON the else when the block has one — the loop's own
+                // increment then starts the else-body, which is exactly the
+                // branch a real run takes. No else: skip to the endif as ever.
+                const stepList = entries.map((e) => e.step);
+                const elseAt = matchingElseIndex(stepList, i);
+                const end = elseAt > i ? elseAt : matchingBlockIndex(stepList, i);
                 if (end > i) i = end;
               }
+              cursorPastReplayed(entries[i].sourceIndex);
+              continue;
+            }
+            // Reaching an `else` by EXECUTION means the condition held and the
+            // if-body ran — the else-body is the branch a real run skips.
+            if (step.type === "else") {
+              const end = matchingBlockIndex(entries.map((e) => e.step), i);
+              if (end > i) i = end;
               cursorPastReplayed(entries[i].sourceIndex);
               continue;
             }
@@ -3238,6 +3272,15 @@ export const recorderService = {
           // the skipped steps are left un-highlighted (never begun), matching a
           // real run that branches past them. Matched over the EXPANDED list.
           if (step.type === "if" && met === false) {
+            // Same else-aware landing as the slow replay above.
+            const stepList = entries.map((e) => e.step);
+            const elseAt = matchingElseIndex(stepList, i);
+            const end = elseAt > i ? elseAt : matchingBlockIndex(stepList, i);
+            if (end > i) i = end;
+            cursorPastReplayed(entries[i].sourceIndex);
+            continue;
+          }
+          if (step.type === "else") {
             const end = matchingBlockIndex(entries.map((e) => e.step), i);
             if (end > i) i = end;
             cursorPastReplayed(entries[i].sourceIndex);

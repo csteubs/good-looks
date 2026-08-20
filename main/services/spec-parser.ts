@@ -625,7 +625,7 @@ function parseBody(
   // STACK of kinds rather than the old single counter, because a `}` must
   // close back into the step that opened it: `endif` for an `if`, `endLoop`
   // for a `for` — one counter cannot tell `if { for {` from `for { if {`.
-  const blockStack: ("if" | "loop")[] = [];
+  const blockStack: { kind: "if" | "loop"; elsed?: boolean }[] = [];
   const src = stripComments(body);
 
   // A single forward scan. At each position we test the known call shapes;
@@ -637,8 +637,21 @@ function parseBody(
 
     // Closing brace of a recognized block → the closer for whatever opened it.
     const braceM = rest.match(/^[\s;]*\}/);
+    // `} else {` re-opens the SAME if rather than closing it - matched before
+    // the bare closer, and only for an if that has not spent its else, so a
+    // foreign else never half-reads into ours.
+    const elseM = rest.match(/^[\s;]*\}\s*else\s*\{/);
+    if (elseM) {
+      const top = blockStack[blockStack.length - 1];
+      if (top && top.kind === "if" && !top.elsed) {
+        top.elsed = true;
+        steps.push(makeStep("else", {}));
+        i += elseM[0].length;
+        continue;
+      }
+    }
     if (braceM && blockStack.length > 0) {
-      const kind = blockStack.pop();
+      const kind = blockStack.pop()?.kind;
       steps.push(makeStep(kind === "loop" ? "endLoop" : "endif", {}));
       i += braceM[0].length;
       continue;
@@ -658,7 +671,7 @@ function parseBody(
         forM[1] === forM[2] && forM[1] === forM[4] && /^i\d*$/.test(forM[1]);
       if (ours) {
         steps.push(makeStep("loop", { loopCount: parseInt(forM[3], 10) }));
-        blockStack.push("loop");
+        blockStack.push({ kind: "loop" });
         i += forM[0].length;
         continue;
       }
@@ -769,7 +782,7 @@ function parseBody(
       const parsed = parseCondition(src.slice(openIdx + 1, close));
       if (parsed && braceIdx >= 0 && afterCond.slice(0, braceIdx).trim() === "") {
         steps.push(makeStep("if", parsed));
-        blockStack.push("if");
+        blockStack.push({ kind: "if" });
         i = close + 1 + braceIdx + 1; // resume just past the opening brace
         continue;
       }

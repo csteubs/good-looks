@@ -521,6 +521,7 @@ export function buildReplayScript(step: Step): string {
       return { ok: true, met: met };
     }
     if (t === "endif") { log("info", "end of conditional block"); return { ok: true }; }
+    if (t === "else") { log("info", "else branch — runs when the condition above did not hold"); return { ok: true }; }
     // The preview walks the list ONCE, so a loop's body runs a single time
     // here. Said out loud rather than silently: a user watching the preview
     // add one item while the run adds five would otherwise read the run as
