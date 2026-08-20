@@ -87,7 +87,24 @@ export const TESTS: TestRecord[] = [
       // `toHaveURL("/order/confirmed")` — an exact whole-URL match, which is
       // not what the label says and could never pass.
       { type: "assert", assert: "url", value: "/order/confirmed" },
+      // The robust default: path-only, so the step list shows the structural
+      // pattern (`^scheme://host` + path + `/?(?:[?#]|$)`) a run executes.
+      { type: "assert", assert: "urlPathIs", value: "/order/confirmed" },
       { type: "assert", assert: "titleContains", value: "Order" },
+      // LAST, so the s1–s8 ids above keep meaning what the visual baselines,
+      // drift ratios and the s4 heal say they mean. A parameterized flow call:
+      // the recorder preview serves THIS test's steps as its live session, so
+      // this is what renders the `name=value` runFlow row and the kebab's
+      // "Edit Flow Arguments…" dialog.
+      {
+        type: "runFlow",
+        flowId: "t-login",
+        label: "Login — wrong password shows an error",
+        flowArgs: { email: "buyer@example.com" },
+        // Repeated, so the call-site loop's ×N suffix — and its Repeat
+        // controls in the args dialog — are visible in the preview.
+        repeat: 2,
+      },
     ),
   },
   {
@@ -100,9 +117,16 @@ export const TESTS: TestRecord[] = [
     tags: ["smoke", "auth"],
     group: "Storefront",
     runBrowser: "webkit",
+    // The preview's one reusable flow: what the Variables tab's "Reusable
+    // flow" section, the composer's argument fields, and the rail glyph render
+    // against. The email fill references the parameter the way a real flow
+    // would, so the argument form's default placeholder shows a true value.
+    isFlow: true,
+    flowParams: ["email"],
+    variables: [{ name: "email", kind: "plain", value: "nobody@example.com" }],
     steps: steps(
       { type: "goto", url: "https://app.example.com/login" },
-      { type: "fill", locator: { k: "label", v: "Email" }, value: "nobody@example.com" },
+      { type: "fill", locator: { k: "label", v: "Email" }, value: "${email}" },
       { type: "fill", locator: { k: "label", v: "Password" }, value: "hunter2" },
       { type: "click", locator: { k: "role", role: "button", name: "Sign in" } },
       { type: "assert", assert: "visible", locator: { k: "testid", v: "login-error" } },
@@ -123,20 +147,14 @@ export const TESTS: TestRecord[] = [
     stepsDivergedReason: "unapplied",
     steps: steps(
       { type: "goto", url: "https://docs.example.com" },
-      // A flow call with an override, so the caller side of flows — the
-      // runFlow row, its `name=value` description and the parameter dialog —
-      // is visible from `?test=t-search`. This test's step ids are not
-      // referenced by any run fixture, so inserting here shifts nothing.
-      {
-        type: "runFlow",
-        flowId: "t-flow-signin",
-        label: "Sign in",
-        flowArgs: { email: "docs-reader@example.com" },
-        // Repeated, so the ×N suffix in the step description is visible here.
-        repeat: 2,
-      },
+      // A repeat block early in the LONG fixture (t-checkout's step count is
+      // budgeted by the bridge's simulated-run test, so the loop rows live
+      // here): renders the "repeat"/"end repeat" chips, the inline count
+      // edit, and the body's indent.
+      { type: "loop", loopCount: 3 },
       { type: "fill", locator: { k: "role", role: "searchbox" }, value: "locator" },
       { type: "press", value: "Enter" },
+      { type: "endLoop" },
       // Long enough to overflow the pane in both directions, which is the
       // state the step list's scrolling exists for and the one nothing in the
       // preview showed: 43 steps outrun the viewport vertically, and the fill
@@ -178,32 +196,6 @@ export const TESTS: TestRecord[] = [
     // An imported spec is never regenerated from steps, and the parser only
     // recovers what it recognises — a helper-wrapped navigation is not one.
     steps: steps(),
-  },
-  {
-    // A REUSABLE FLOW, which is its own screen state: the `flow` badge in the
-    // detail header, the Workflow glyph on the sidebar row, and the Variables
-    // tab's "Reusable flow" section with a parameter manager. `t-checkout`
-    // calls it, so the caller side (the runFlow row and its parameter dialog)
-    // is one click away.
-    id: "t-flow-signin",
-    name: "Sign in",
-    url: "https://shop.example.com/login",
-    createdAt: NOW - 8 * DAY,
-    updatedAt: NOW - 1 * DAY,
-    scriptPath: "/preview/scripts/flow-signin.spec.ts",
-    group: "Storefront",
-    isFlow: true,
-    flowParams: ["email"],
-    variables: [
-      { name: "email", kind: "plain", value: "default@example.com" },
-      { name: "password", kind: "secret" },
-    ],
-    steps: steps(
-      { type: "goto", url: "https://shop.example.com/login" },
-      { type: "fill", locator: { k: "label", v: "Email" }, value: "${email}" },
-      { type: "fill", locator: { k: "label", v: "Password" }, value: "${password}" },
-      { type: "click", locator: { k: "role", role: "button", name: "Sign in" } },
-    ),
   },
   {
     id: "t-archived",

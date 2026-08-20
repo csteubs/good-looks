@@ -35,6 +35,12 @@ export type StepType =
   // and the test continues gracefully.
   | "if"
   | "endif"
+  // `loop` opens a repeat-N-times block, `endLoop` closes it. Same pairing
+  // discipline as if/endif: the pair is inserted together, neither half can be
+  // disabled or wrapped, and the generator emits a real `for` whose body is
+  // the steps between them.
+  | "loop"
+  | "endLoop"
   // Cookie state. Applied through the browser session rather than injected JS,
   // because an httpOnly cookie is invisible to document.cookie by definition.
   | "cookie"
@@ -193,6 +199,12 @@ export type AssertKind =
   | "url"
   | "urlEndsWith"
   | "urlIs"
+  // The URL's PATH alone, exactly — query string and #fragment ignored, one
+  // trailing slash tolerated. The robust default for "did the navigation land
+  // where I meant": the three kinds above compare the FULL URL, and every URL
+  // assertion recorded in this app's own store had failed on query noise
+  // (`?variant=`, `utm_*`) that differed between the recording and the run.
+  | "urlPathIs"
   // `title` is an EXACT whole-title match, which is what its "Page title is"
   // label has always promised and what the generator has always emitted. The
   // trainer's replayer read it as a case-insensitive substring, so "Cart"
@@ -244,6 +256,9 @@ export interface Step {
   assert?: AssertKind;
   /** condition predicate when type === "if" */
   cond?: ConditionKind;
+  /** iterations for a `loop` step. Reaches the generator as a BARE NUMERAL —
+   *  see normalizeRawStep's `int` note — bounded [1, MAX_LOOP_COUNT]. */
+  loopCount?: number;
   /** assertion text / extra description */
   text?: string;
   /** soft assertion — reports a failure but doesn't stop the test (expect.soft) */
@@ -389,6 +404,7 @@ export interface RawStep {
   waitMs?: number;
   waitUntil?: WaitUntilKind;
   timeoutMs?: number;
+  loopCount?: number;
   /** cookie fields, so a cookie step can be inserted via insertStep */
   cookieAction?: CookieAction;
   cookie?: CookieSpec;
@@ -800,13 +816,13 @@ export function normalizeDatasets(input: unknown): Dataset[] {
 
 export const STEP_TYPES: StepType[] = [
   "goto", "click", "fill", "press", "select", "check", "uncheck", "assert",
-  "wait", "viewport", "if", "endif", "cookie", "capture", "runFlow", "state",
+  "wait", "viewport", "if", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
 ];
 
 export const ASSERT_KINDS: AssertKind[] = [
   "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked",
-  "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs", "title",
-  "titleContains", "css",
+  "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs",
+  "urlPathIs", "title", "titleContains", "css",
 ];
 
 export const ELEMENT_STATES: ElementState[] = ["hover", "focus", "press", "release"];
@@ -896,10 +912,17 @@ export const MAX_FINGERPRINT_CANDIDATES = 40;
 export const MAX_FINGERPRINT_ATTRIBUTES = 40;
 export const MAX_FLOW_ARGS = 50;
 
-/** Most times a `runFlow` step may repeat its flow. Clamped at the boundary,
+/** Most times a `runFlow` step may repeat its flow (the CALL-SITE loop, which
+ *  is the one that can be variable-driven). Clamped at the boundary,
  *  re-clamped in the EMITTED count expression — the second clamp is the one
  *  that bounds a variable-driven count, whose value only exists at run time. */
 export const MAX_FLOW_REPEAT = 100;
+/** Upper bound on a `loop` step's iterations — matches the ceiling mabl gives
+ *  its loops, and past it a "test" is a load generator. Reaches the spec as a
+ *  bare numeral, so it carries the same double-guard as every numeric field:
+ *  this bound at the boundary, and a clamp in the generator for steps that
+ *  arrive around it. */
+export const MAX_LOOP_COUNT = 500;
 /** Upper bound on `Locator.nth`. The recorder only ever writes this when no
  *  candidate locator was unique, and it caps its own scan well below here
  *  (`MAX_UNIQUENESS_SCAN` in capture-script.ts) — so a value near this one did
@@ -984,8 +1007,10 @@ export function normalizeLocator(input: unknown, allowContext = true): Locator |
   // right TypeScript type (see `num` in script-generator.ts). The upper bound is
   // MAX_MATCH_INDEX rather than something enormous because a page with more
   // than that many matches for one locator is not a page anyone is indexing
-  // into on purpose.
-  const nth = int(l.nth, 0, MAX_MATCH_INDEX);
+  // into on purpose. -1 is the one negative Playwright honours — `.nth(-1)` is
+  // "the last match", the stable way to index a set whose size changes between
+  // runs — so the bound admits exactly it and nothing below.
+  const nth = int(l.nth, -1, MAX_MATCH_INDEX);
   if (nth !== undefined) out.nth = nth;
   if (allowContext) {
     const ctx = normalizeLocatorContext(l.ctx);
@@ -1095,10 +1120,9 @@ function normalizeCookieSpec(input: unknown): CookieSpec | undefined {
   return out;
 }
 
-/** Exported for `recorder-service.updateStep`, which copies its allowlisted
- *  keys without re-normalizing — flowArgs is the one map-shaped field there,
- *  and an un-checked map from the renderer is exactly the shape the boundary
- *  exists to refuse. */
+/** Exported for `recorder-service.updateStep`: `flowArgs` is the one map-valued
+ *  field a step patch can carry, so it gets the same rebuild `insertStep` gives
+ *  it rather than the allowlist's raw copy. */
 export function normalizeFlowArgs(input: unknown): Record<string, string> | undefined {
   if (!input || typeof input !== "object") return undefined;
   const out: Record<string, string> = {};
@@ -1172,6 +1196,8 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   if (height !== undefined) out.height = height;
   if (waitMs !== undefined) out.waitMs = waitMs;
   if (timeoutMs !== undefined) out.timeoutMs = timeoutMs;
+  const loopCount = int(s.loopCount, 1, MAX_LOOP_COUNT);
+  if (loopCount !== undefined) out.loopCount = loopCount;
 
   const cookieAction = oneOf(s.cookieAction, COOKIE_ACTIONS);
   if (cookieAction) out.cookieAction = cookieAction;

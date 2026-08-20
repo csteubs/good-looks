@@ -335,7 +335,12 @@ describe("the scripted run", () => {
     expect((await runToCompletion("t-login")).code).toBe(1);
   });
 
-  it("passes the test whose fixture history passed", async () => {
+  it("passes the test whose fixture history passed", { timeout: 10_000 }, async () => {
+    // Real time, not a guess: the bridge paces a fake run at 260ms a tick, two
+    // ticks a step plus one for done — t-checkout's 9 steps are 4.94s, which
+    // brushes the 5s default this test used to run under. The fixture grows a
+    // step whenever it gains a specimen worth showing (urlPathIs was the one
+    // that tipped it), so the budget follows the simulation, not the default.
     installPreviewBridge();
     expect((await runToCompletion("t-checkout")).code).toBe(0);
   });

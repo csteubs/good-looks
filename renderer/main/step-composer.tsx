@@ -49,21 +49,24 @@ import {
 import type {
   AssertKind,
   CaptureSource,
-  FlowSummary,
   TestVariable,
   VariableKind,
   ConditionKind,
   CssMatch,
   Locator,
+  LocatorContext,
   PickedElement,
   RawStep,
   WaitDialogMode,
   WaitUntilKind,
 } from "../lib/recorder-types";
-import { api } from "../lib/api";
+import { api, type FlowInfo } from "../lib/api";
 import { buildStateSteps, type StatePick } from "../lib/element-states";
+import { collectFlowArgs, FlowArgsFields } from "./flow-args-fields";
 import { clampViewportAxis, RESIZE_PRESETS } from "../lib/viewport-presets";
+import { CustomLocatorField } from "./custom-locator-field";
 import { ElementContextPicker } from "./element-context-picker";
+import { PositionField } from "./position-field";
 import {
   NewVariableButton,
   NewVariableForm,
@@ -75,6 +78,7 @@ import { formatLocator, KIND_LABEL } from "./refine-selector-dialog";
 export type AddStepKind =
   | "assertion"
   | "condition"
+  | "loop"
   | "wait"
   | "goto"
   | "press"
@@ -88,6 +92,7 @@ export type AddStepKind =
 export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   assertion: "Add assertion",
   condition: "Add condition (if)",
+  loop: "Repeat steps (loop)",
   wait: "Add wait",
   goto: "Go to URL",
   press: "Press key",
@@ -212,6 +217,11 @@ export const ASSERT_OPTIONS: {
   { value: "attribute", label: "Has attribute", need: "attr" },
   { value: "count", label: "Has count", need: "count" },
   { value: "css", label: "Has CSS property", need: "css" },
+  // "URL path is" first among the URL kinds: it is the robust default. The
+  // other three compare the FULL URL, so query-string noise the site appends
+  // between the recording and the run (`?variant=`, `utm_*`) fails them for a
+  // reason that has nothing to do with the product.
+  { value: "urlPathIs", label: "URL path is", need: "value", pageLevel: true },
   { value: "url", label: "URL contains", need: "value", pageLevel: true },
   { value: "urlEndsWith", label: "URL ends with", need: "value", pageLevel: true },
   { value: "urlIs", label: "URL is", need: "value", pageLevel: true },
@@ -367,32 +377,70 @@ function TargetElementPicker({
   onClearPick,
 }: {
   picked: PickedElement | null;
-  onChange: (loc: Locator) => void;
+  /** null when the current choice is a custom draft that isn't valid (yet) —
+   *  the composer's Add button keys off it. */
+  onChange: (loc: Locator | null) => void;
   onStartPick: () => void;
   onClearPick: () => void;
 }) {
-  const [selected, setSelected] = React.useState(0);
+  const [selected, setSelected] = React.useState<number | "custom">(0);
+  const [customLoc, setCustomLoc] = React.useState<Locator | null>(null);
+  const [ctx, setCtx] = React.useState<LocatorContext | null>(null);
+  const [nth, setNth] = React.useState<number | null>(null);
   const candidates = picked?.candidates ?? [];
+
+  /** One exit for every path, so context and position always ride the emitted
+   *  locator — including across candidate switches, where the old inline
+   *  composition silently dropped a configured context until it was next
+   *  edited. `nth` composes last, matching the emitted chain's order. */
+  const emit = React.useCallback(
+    (base: Locator | null, c: LocatorContext | null, n: number | null) => {
+      if (!base) {
+        onChange(null);
+        return;
+      }
+      const next: Locator = { ...base };
+      if (c) next.ctx = c;
+      else delete next.ctx;
+      if (n !== null) next.nth = n;
+      else delete next.nth;
+      onChange(next);
+    },
+    [onChange],
+  );
 
   // Seed the locator from the best candidate when a fresh element arrives.
   React.useEffect(() => {
     setSelected(0);
+    setCustomLoc(null);
+    setCtx(null);
+    setNth(null);
     if (candidates[0]) onChange(candidates[0]);
     // onChange/candidates derive from picked; re-seed only on a new pick.
   }, [picked]);
 
   if (!picked || candidates.length === 0) {
+    // No element picked (or none derivable): the crosshair is the first ask,
+    // and the custom field is the standing alternative — it is also the ONLY
+    // route to an element the picker cannot reach, like one that is hidden
+    // until a hover the pick mode itself disturbs.
     return (
       <Field label="Target element" orientation="vertical">
-        <Button variant="secondary" size="small" onClick={onStartPick} className="w-fit">
-          <Crosshair className="size-3.5" />
-          {picked ? "No locator found — pick another" : "Pick element in browser"}
-        </Button>
-        {picked ? (
+        <div className="flex min-w-0 flex-col gap-2">
+          <Button variant="secondary" size="small" onClick={onStartPick} className="w-fit">
+            <Crosshair className="size-3.5" />
+            {picked ? "No locator found — pick another" : "Pick element in browser"}
+          </Button>
+          {picked ? (
+            <Text variant="small" color="tertiary">
+              No locator could be derived for the picked element. Try another element.
+            </Text>
+          ) : null}
           <Text variant="small" color="tertiary">
-            No locator could be derived for the picked element. Try another element.
+            Or write a locator by hand:
           </Text>
-        ) : null}
+          <CustomLocatorField ctx={null} onLocator={(l) => onChange(l)} />
+        </div>
       </Field>
     );
   }
@@ -444,7 +492,7 @@ function TargetElementPicker({
                 type="button"
                 onClick={() => {
                   setSelected(i);
-                  onChange(l);
+                  emit(l, ctx, nth);
                 }}
                 className={`flex min-w-0 items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
                   active ? "border-accent bg-accent/10" : "border-separator hover:bg-background-secondary"
@@ -464,21 +512,60 @@ function TargetElementPicker({
               </button>
             );
           })}
+          {/* The escape hatch, LAST — same placement and same reasoning as the
+              Refine dialog's row: picked candidates first, a hand-written
+              locator when they can't express the intent. */}
+          <button
+            type="button"
+            onClick={() => {
+              setSelected("custom");
+              emit(customLoc, ctx, nth);
+            }}
+            className={`flex min-w-0 items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
+              selected === "custom"
+                ? "border-accent bg-accent/10"
+                : "border-separator hover:bg-background-secondary"
+            }`}
+          >
+            <span
+              className={`size-3.5 shrink-0 rounded-full border ${
+                selected === "custom" ? "border-accent bg-accent" : "border-separator"
+              }`}
+            />
+            <Badge color={selected === "custom" ? "blue" : "secondary"} className="shrink-0">
+              Custom
+            </Badge>
+            <Text variant="small" color="secondary" className="min-w-0 flex-1 truncate">
+              Write a CSS selector or XPath by hand
+            </Text>
+          </button>
+          {selected === "custom" ? (
+            <CustomLocatorField
+              ctx={ctx}
+              onLocator={(l) => {
+                setCustomLoc(l);
+                emit(l, ctx, nth);
+              }}
+            />
+          ) : null}
         </div>
         {/* The context picker sits UNDER the candidate list, because it answers
             the next question rather than the same one: the list is "how should
             this element be addressed", this is "which of the several it matches
-            did you mean". It re-applies the current candidate with the new
-            context so the caller only ever sees one locator. */}
+            did you mean". It re-applies the current base with the new context
+            so the caller only ever sees one locator. */}
         <ElementContextPicker
           picked={picked}
-          onChange={(ctx) => {
-            const base = candidates[selected];
-            if (!base) return;
-            const next: Locator = { ...base };
-            if (ctx) next.ctx = ctx;
-            else delete next.ctx;
-            onChange(next);
+          onChange={(c) => {
+            setCtx(c);
+            emit(selected === "custom" ? customLoc : (candidates[selected] ?? null), c, nth);
+          }}
+        />
+        <PositionField
+          value={nth}
+          onChange={(n) => {
+            setNth(n);
+            emit(selected === "custom" ? customLoc : (candidates[selected] ?? null), ctx, n);
           }}
         />
         <Button variant="ghost" size="small" onClick={onStartPick} className="w-fit">
@@ -610,6 +697,13 @@ export function StepComposer({
   const [captureFrom, setCaptureFrom] = React.useState<CaptureSource>("text");
   const [captureAttr, setCaptureAttr] = React.useState("");
   const [flowId, setFlowId] = React.useState("");
+  // Iterations for the `loop` kind, held as text so a half-typed number
+  // doesn't fight the input (same rule as the step row's numeric drafts).
+  const [loopTimes, setLoopTimes] = React.useState("2");
+  // Draft values for the selected flow's parameters, keyed by parameter name.
+  // Reset when the flow changes: two flows sharing a parameter name is a
+  // coincidence, not a reason to carry a value across.
+  const [flowArgVals, setFlowArgVals] = React.useState<Record<string, string>>({});
   // Which declared variable a `fill` step will use, and whether the inline
   // "declare one" form is open. The name rather than an index: the list can
   // gain an entry while this panel is open (that is the whole point of the
@@ -664,7 +758,7 @@ export function StepComposer({
       setCaptureFrom("text");
       setCaptureAttr("");
       setFlowId("");
-      setFlowArgDrafts({});
+      setFlowArgVals({});
       setFlowRepeatMode("once");
       setFlowRepeatCount("2");
       setFlowRepeatName("");
@@ -675,13 +769,9 @@ export function StepComposer({
 
   // Flows available to call from here. Fetched on mount rather than held by the
   // parent, so a flow created in another window shows up without a reload.
-  const [flows, setFlows] = React.useState<FlowSummary[]>([]);
-  // Per-parameter override drafts for the chosen flow. Keyed by name and reset
-  // when the flow changes — two flows sharing a parameter name is common
-  // ("email"), and a draft carried across would silently pre-fill the new call.
-  const [flowArgDrafts, setFlowArgDrafts] = React.useState<Record<string, string>>({});
+  const [flows, setFlows] = React.useState<FlowInfo[]>([]);
   // The call's loop: once, a fixed count, or driven by a variable's run-time
-  // value. Mirrors flow-call-editor.tsx, which edits the same fields later.
+  // value. Mirrors the args dialog, which edits the same fields later.
   const [flowRepeatMode, setFlowRepeatMode] = React.useState<"once" | "count" | "variable">("once");
   const [flowRepeatCount, setFlowRepeatCount] = React.useState("2");
   const [flowRepeatName, setFlowRepeatName] = React.useState("");
@@ -791,14 +881,10 @@ export function StepComposer({
       case "runFlow": {
         if (!flowId) return null;
         const flow = flows.find((f) => f.id === flowId);
-        // Only non-empty drafts become overrides: an empty field means "follow
-        // the flow's default", and storing it as "" would pin this call to an
-        // empty string instead.
-        const flowArgs: Record<string, string> = {};
-        for (const param of flow?.flowParams ?? []) {
-          const draft = flowArgDrafts[param];
-          if (typeof draft === "string" && draft !== "") flowArgs[param] = draft;
-        }
+        // Only filled-in arguments are stored: a blank field means "use the
+        // flow's default", which requires the KEY to be absent — an empty
+        // string would override the default (see collectFlowArgs).
+        const args = collectFlowArgs(flow?.flowParams ?? [], flowArgVals);
         // A variable-driven repeat needs a usable name; refuse the submit
         // rather than silently adding a call that runs once.
         if (flowRepeatMode === "variable" && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(flowRepeatName)) {
@@ -812,11 +898,19 @@ export function StepComposer({
             // The name is stored on the step so the list stays readable even if
             // the flow is later renamed or deleted.
             label: flow?.name ?? flowId,
-            ...(Object.keys(flowArgs).length > 0 ? { flowArgs } : {}),
+            ...(Object.keys(args).length > 0 ? { flowArgs: args } : {}),
             ...(flowRepeatMode === "count" ? { repeat: repeatCount } : {}),
             ...(flowRepeatMode === "variable" ? { repeatVar: flowRepeatName } : {}),
           },
         ];
+      }
+      case "loop": {
+        // Insert an empty REPEAT/END-REPEAT pair, same idiom as the condition:
+        // the user drags steps between the halves. The count is clamped here
+        // AND at the boundary AND in the generator — three independent guards
+        // for a numeral that lands in the spec bare.
+        const n = Math.min(500, Math.max(1, Math.trunc(Number(loopTimes) || 1)));
+        return [{ type: "loop", loopCount: n }, { type: "endLoop" }];
       }
       case "condition": {
         // Insert an empty IF/END-IF pair; the user drags steps between them.
@@ -835,6 +929,13 @@ export function StepComposer({
           if (!locator) return null;
           step.locator = locator;
         }
+        // A page-level assert with an empty value refuses the WHOLE submit,
+        // the same rule the css case applies below: the generator refuses to
+        // emit it (an empty "contains" matches every page), so accepting it
+        // here plants a step that looks added and asserts nothing. Element
+        // `value` asserts stay submittable empty — asserting an input is
+        // blank is a real assertion.
+        if (opt.pageLevel && opt.need === "value" && value === "") return null;
         if (opt.need === "text") step.text = text;
         if (opt.need === "value") step.value = value;
         if (opt.need === "attr") {
@@ -1216,14 +1317,34 @@ export function StepComposer({
           </>
         ) : null}
 
+        {kind === "loop" ? (
+          <>
+            <Field label="Times" orientation="vertical">
+              <Input
+                size="small"
+                inputMode="numeric"
+                value={loopTimes}
+                onChange={(e) => setLoopTimes(e.target.value)}
+                aria-label="Loop count"
+                className="w-20"
+              />
+            </Field>
+            <Text size="small" className="text-secondary">
+              Inserts a repeat block. Drag the steps to run between the two halves — they run in
+              order, that many times. The trainer&apos;s preview walks the body once; the real run
+              repeats it.
+            </Text>
+          </>
+        ) : null}
+
         {kind === "runFlow" ? (
           <>
             <Field label="Flow" orientation="vertical">
               <Select
                 value={flowId}
-                onValueChange={(v) => {
-                  setFlowId(v);
-                  setFlowArgDrafts({});
+                onValueChange={(id) => {
+                  setFlowId(id);
+                  setFlowArgVals({});
                 }}
               >
                 <SelectTrigger size="small">
@@ -1238,6 +1359,18 @@ export function StepComposer({
                 </SelectContent>
               </Select>
             </Field>
+            {(() => {
+              const selected = flows.find((f) => f.id === flowId);
+              if (!selected || selected.flowParams.length === 0) return null;
+              return (
+                <FlowArgsFields
+                  params={selected.flowParams}
+                  defaults={selected.paramDefaults}
+                  values={flowArgVals}
+                  onChange={setFlowArgVals}
+                />
+              );
+            })()}
             {flows.length === 0 ? (
               <Text size="small" className="text-tertiary">
                 No flows yet. Mark a test as a reusable flow on its Variables tab to call it from
@@ -1248,42 +1381,6 @@ export function StepComposer({
                 The flow's steps are inlined into this test's script when it runs.
               </Text>
             )}
-            {(() => {
-              const flow = flows.find((f) => f.id === flowId);
-              if (!flow || flow.flowParams.length === 0) return null;
-              return (
-                <>
-                  <Text size="small" className="text-secondary">
-                    Parameters — leave one empty to use the flow&apos;s default. A value may
-                    reference this test&apos;s variables with{" "}
-                    <code className="font-mono">{"${name}"}</code>.
-                  </Text>
-                  {flow.flowParams.map((param) => {
-                    const fallback = flow.defaults[param];
-                    return (
-                      <Field key={param} label={param} orientation="vertical">
-                        {fallback === undefined ? (
-                          <Text size="small" className="text-tertiary">
-                            Resolved at run time (secret or captured) — not overridable.
-                          </Text>
-                        ) : (
-                          <Input
-                            size="small"
-                            className="font-mono"
-                            value={flowArgDrafts[param] ?? ""}
-                            placeholder={fallback === "" ? "default: (empty)" : `default: ${fallback}`}
-                            aria-label={`Value for ${param}`}
-                            onChange={(e) =>
-                              setFlowArgDrafts((prev) => ({ ...prev, [param]: e.target.value }))
-                            }
-                          />
-                        )}
-                      </Field>
-                    );
-                  })}
-                </>
-              );
-            })()}
             {flowId ? (
               <>
                 <Field label="Repeat" orientation="vertical">
@@ -1377,7 +1474,18 @@ export function StepComposer({
               </Field>
             ) : null}
             {opt.need === "value" ? (
-              <Field label={opt.pageLevel ? "Expected (substring or regex)" : "Expected value"} orientation="vertical">
+              // The label carries the kind's own contract, because the values
+              // are LITERAL — the old copy said "substring or regex", and a
+              // user who took it at its word got an assertion that matched
+              // their pattern characters, not their pattern.
+              <Field
+                label={
+                  assert === "urlPathIs"
+                    ? "Expected path (query string and #fragment ignored)"
+                    : "Expected value"
+                }
+                orientation="vertical"
+              >
                 <Input size="small" value={value} onChange={(e) => setValue(e.target.value)} />
               </Field>
             ) : null}

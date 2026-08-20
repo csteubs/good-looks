@@ -3,7 +3,7 @@
 // script generator so what the user sees matches the generated script.
 
 import { DEFAULT_WAIT_TIMEOUT_MS, ELEMENT_STATES, isCssPropName } from "./recorder-types";
-import { ASSERT_SEMANTICS, reEscape, textMatchExpr } from "../../shared/step-semantics.mjs";
+import { ASSERT_SEMANTICS, reEscape, textMatchExpr, urlPathExpr } from "../../shared/step-semantics.mjs";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import type { Locator, Step, StepType } from "./recorder-types";
 
@@ -11,7 +11,35 @@ function q(s: string): string {
   return JSON.stringify(s ?? "");
 }
 
-function locatorExpr(loc: Locator): string {
+/** Mirror of `locatorExpr` in main/services/script-generator.ts — keep in
+ *  sync, and mechanically so: `describe-mirror.test.ts` runs both over a
+ *  battery of locators and diffs the strings.
+ *
+ *  The chain is the point. This file's header promises the step list shows
+ *  the call the generated script contains, and until 2026-08-19 the mirror
+ *  stopped at the base builder — a step pinned "inside billing-card" with
+ *  `.nth(2)` displayed as a bare `getByRole(...)`, hiding exactly the
+ *  disambiguation the user added and the run enforces. */
+export function locatorExpr(loc: Locator): string {
+  let base = locatorBaseExpr(loc);
+  const ctx = loc.ctx;
+  if (ctx?.within) {
+    let scope = locatorBaseExpr(ctx.within);
+    if (ctx.withinHasText !== undefined) {
+      scope += ".filter({ hasText: " + q(ctx.withinHasText) + " })";
+    }
+    base = scope + "." + base;
+  }
+  if (ctx?.and) {
+    for (const pred of ctx.and) base += ".and(page." + locatorBaseExpr(pred) + ")";
+  }
+  if (typeof loc.nth === "number") {
+    base += ".nth(" + (loc.nth >= -1 ? Math.trunc(loc.nth) : 0) + ")";
+  }
+  return base;
+}
+
+function locatorBaseExpr(loc: Locator): string {
   switch (loc.k) {
     case "testid": {
       // Mirrors locatorBase in script-generator.ts: a testid on a non-default
@@ -51,6 +79,10 @@ function describeAssert(step: Step, target: string | null): string {
     const s = ASSERT_SEMANTICS[step.assert];
     if (!s || (step.value ?? "") === "") return "assert";
     return e + "(page).toHaveURL(" + textMatchExpr(step.value ?? "", s) + ")";
+  }
+  if (step.assert === "urlPathIs") {
+    if ((step.value ?? "") === "") return "assert";
+    return e + "(page).toHaveURL(" + urlPathExpr(step.value ?? "") + ")";
   }
   if (step.assert === "title") {
     if ((step.value ?? "") === "") return "assert";
@@ -134,9 +166,9 @@ export function computeStepDepths(steps: { type: StepType }[]): number[] {
   const depths: number[] = [];
   let d = 0;
   for (const s of steps) {
-    if (s.type === "endif") d = Math.max(0, d - 1);
+    if (s.type === "endif" || s.type === "endLoop") d = Math.max(0, d - 1);
     depths.push(d);
-    if (s.type === "if") d += 1;
+    if (s.type === "if" || s.type === "loop") d += 1;
   }
   return depths;
 }
@@ -181,11 +213,10 @@ export function describeCapture(step: Step): string {
 /** Mirror of describeFlow in main/services/script-generator.ts — keep in sync. */
 export function describeFlow(step: Step): string {
   const name = step.label || step.flowId || "flow";
-  const args = Object.entries(step.flowArgs ?? {}).map(([k, v]) => {
-    const val = v.length > 24 ? v.slice(0, 24) + "…" : v;
-    return `${k}=${val}`;
-  });
-  const base = args.length > 0 ? `run flow ${name} (${args.join(", ")})` : `run flow ${name}`;
+  const entries = Object.entries(step.flowArgs ?? {});
+  const args = entries.map(([k, v]) => `${k}=${v.length > 18 ? v.slice(0, 17) + "…" : v}`);
+  const base =
+    entries.length === 0 ? `run flow ${name}` : `run flow ${name} (${args.join(", ")})`;
   if (step.repeatVar) return `${base} ×\${${step.repeatVar}}`;
   return typeof step.repeat === "number" && step.repeat > 1 ? `${base} ×${step.repeat}` : base;
 }
@@ -254,6 +285,8 @@ function describeState(step: Step, target: string | null): string {
 export function describeStep(step: Step): string {
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
+  if (step.type === "loop") return "repeat " + (step.loopCount ?? 1) + " times";
+  if (step.type === "endLoop") return "end repeat";
   if (step.type === "wait" && step.waitUntil) return describeWait(step);
   if (step.type === "cookie") return describeCookie(step);
   if (step.type === "capture") return describeCapture(step);

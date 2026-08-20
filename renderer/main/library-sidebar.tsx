@@ -262,8 +262,9 @@ function RowIndicators({
 }: {
   sessions: SessionLike[];
   verdict: RunVerdictTone | undefined;
-  /** Reusable flow — drawn in the type-chip palette's flow hue, not a status
-   *  colour, because being a flow is what the test IS rather than how it ran. */
+  /** Marked as a reusable flow — worth a glyph because a flow behaves oddly as
+   *  a plain test (hidden from the Batch checklist, callable from the
+   *  composer), and nothing else in the rail says why. */
   isFlow?: boolean;
 }) {
   const agg = aggregateStatus(sessions);
@@ -272,12 +273,9 @@ function RowIndicators({
   return (
     <span className="flex shrink-0 items-center gap-1.5">
       {isFlow ? (
-        <Workflow
-          role="img"
-          aria-label="Reusable flow"
-          className="size-3.5"
-          style={{ color: "#b9a6e0" }}
-        />
+        <span role="img" aria-label="Reusable flow" title="Reusable flow">
+          <Workflow aria-hidden="true" className="size-3.5 text-tertiary" />
+        </span>
       ) : null}
       {tone ? (
         <Sparkles

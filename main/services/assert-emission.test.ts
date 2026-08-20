@@ -21,7 +21,7 @@
 import { describe, expect, it } from "vitest";
 
 import { generateSpec } from "./script-generator.js";
-import { ASSERT_SEMANTICS, matchesValue } from "../../shared/step-semantics.mjs";
+import { ASSERT_SEMANTICS, matchesValue, reEscape, urlPathPattern } from "../../shared/step-semantics.mjs";
 import type { AssertKind, Step } from "../recorder/types.js";
 
 let seq = 0;
@@ -119,6 +119,98 @@ describe("URL assertions: what runs must be what the label promises", () => {
   });
 });
 
+describe("'URL path is': the query-immune kind", () => {
+  // WHY THIS KIND EXISTS. Every URL assertion recorded in this app's own store
+  // had failed the same way: the value was a path, the kind compared the FULL
+  // URL, and the run-time URL carried a `?variant=` or `utm_*` the recording
+  // did not. These rows are that history, stated as the fix.
+  it("passes against the same path with any query string or fragment", () => {
+    const arg = matcherArg(emit(assertStep({ assert: "urlPathIs", value: "/products/synbiotic" })));
+    expect(playwrightWouldPass(arg, "https://s.test/products/synbiotic")).toBe(true);
+    expect(playwrightWouldPass(arg, "https://s.test/products/synbiotic?variant=42283")).toBe(true);
+    expect(playwrightWouldPass(arg, "https://s.test/products/synbiotic?utm_source=email&v=2")).toBe(true);
+    expect(playwrightWouldPass(arg, "https://s.test/products/synbiotic#reviews")).toBe(true);
+  });
+
+  it("rejects a different path, a prefix, and a subpath", () => {
+    const arg = matcherArg(emit(assertStep({ assert: "urlPathIs", value: "/cart" })));
+    expect(playwrightWouldPass(arg, "https://s.test/checkout")).toBe(false);
+    // A prefix: the pattern must consume the WHOLE path.
+    expect(playwrightWouldPass(arg, "https://s.test/cart/2")).toBe(false);
+    // A subpath: the host class must stop at the first slash, so a path that
+    // merely ENDS with the value cannot pass.
+    expect(playwrightWouldPass(arg, "https://s.test/en/cart")).toBe(false);
+  });
+
+  it("tolerates one trailing slash in either direction", () => {
+    // /cart and /cart/ are the same resource on every server this app has met,
+    // and servers canonicalize in both directions — a spurious failure either
+    // way would be the old fragility back under a new name.
+    const bare = matcherArg(emit(assertStep({ assert: "urlPathIs", value: "/cart" })));
+    expect(playwrightWouldPass(bare, "https://s.test/cart/")).toBe(true);
+    const slashed = matcherArg(emit(assertStep({ assert: "urlPathIs", value: "/cart/" })));
+    expect(playwrightWouldPass(slashed, "https://s.test/cart")).toBe(true);
+    expect(playwrightWouldPass(slashed, "https://s.test/cart/?x=1")).toBe(true);
+  });
+
+  it("supplies the leading slash a hand-typed path may drop", () => {
+    const arg = matcherArg(emit(assertStep({ assert: "urlPathIs", value: "cart" })));
+    expect(playwrightWouldPass(arg, "https://s.test/cart")).toBe(true);
+    expect(playwrightWouldPass(arg, "https://s.test/mycart")).toBe(false);
+  });
+
+  it("the site root matches with or without its slash, and nothing deeper", () => {
+    const arg = matcherArg(emit(assertStep({ assert: "urlPathIs", value: "/" })));
+    expect(playwrightWouldPass(arg, "https://s.test/")).toBe(true);
+    expect(playwrightWouldPass(arg, "https://s.test/?utm_source=x")).toBe(true);
+    expect(playwrightWouldPass(arg, "https://s.test/cart")).toBe(false);
+  });
+
+  it("ignores case, same as the other URL kinds", () => {
+    const arg = matcherArg(emit(assertStep({ assert: "urlPathIs", value: "/Cart" })));
+    expect(playwrightWouldPass(arg, "https://s.test/cart")).toBe(true);
+  });
+
+  it("escapes exactly what reEscape escapes", () => {
+    // `urlPathPattern` inlines the escape rule because it is serialized into
+    // the injected replayer and cannot reference module scope. This pins the
+    // inlined spelling to the shared one, so they cannot drift apart.
+    const META = "/a.b*c+d?e^f$g{h}i(j)k|l[m]n\\o";
+    expect(urlPathPattern(META)).toBe("^[a-z][a-z0-9+.-]*://[^/?#]*" + reEscape(META) + "/?(?:[?#]|$)");
+  });
+
+  it("refuses an empty value, like every page-level kind", () => {
+    const line = emit(assertStep({ assert: "urlPathIs", value: "" }));
+    expect(line).toContain("UNGENERATABLE");
+    expect(line).not.toContain("toHaveURL");
+  });
+
+  it("generated code and the replayer pattern return the same verdict", () => {
+    // `urlPathIs` compares via `urlPathPattern`, not `matchesValue`, so it gets
+    // its own parity check against the same actuals shape the shared table's
+    // kinds use below.
+    const expected = "/cart";
+    const actuals = [
+      "https://s.test/cart",
+      "https://s.test/cart/",
+      "https://s.test/cart?x=1",
+      "https://s.test/cart#top",
+      "https://s.test/cart/2",
+      "https://s.test/en/cart",
+      "HTTPS://S.TEST/CART",
+    ];
+    const arg = matcherArg(emit(assertStep({ assert: "urlPathIs", value: expected })));
+    for (const actual of actuals) {
+      const viaPlaywright = playwrightWouldPass(arg, actual);
+      const viaReplayer = new RegExp(urlPathPattern(expected), "i").test(actual);
+      expect(
+        viaPlaywright,
+        `urlPathIs against ${JSON.stringify(actual)}: spec says ${viaPlaywright}, trainer says ${viaReplayer}`,
+      ).toBe(viaReplayer);
+    }
+  });
+});
+
 describe("title assertions", () => {
   it("'Page title is' is exact — the label is the contract", () => {
     const arg = matcherArg(emit(assertStep({ assert: "title", value: "Cart" })));
@@ -203,6 +295,10 @@ describe("the UNGENERATABLE comment is not a code sink", () => {
     return [
       { id: "c1", type: "capture", captureVar: "v" + payload, captureFrom: "attribute", captureAttr: "href" + payload },
       { id: "k1", type: "cookie", cookieAction: "set", cookie: { name: "sid" + payload, value: "1" + payload } },
+      // A runFlow step nobody can resolve emits its `problem` comment, which
+      // embeds the LABEL — user text, reachable from the capture channel, and
+      // the one comment that was written raw until 2026-08-19.
+      { id: "f1", type: "runFlow", flowId: "missing", label: "Login" + payload },
     ] as unknown as Step[];
   }
 

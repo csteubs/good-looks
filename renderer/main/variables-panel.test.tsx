@@ -322,61 +322,67 @@ describe("the plaintext warning", () => {
 });
 
 describe("the Reusable flow section", () => {
-  it("turns a test into a flow with no parameters", async () => {
-    renderPanel(makeTest());
-    const toggle = await screen.findByLabelText("Use this test as a reusable flow");
-    fireEvent.click(toggle);
-    await waitFor(() => expect(setFlow).toHaveBeenCalledWith("t1", true, []));
+  it("turns a test into a flow, preserving its declared parameters", async () => {
+    renderPanel(makeTest({ flowParams: ["email"] }));
+    fireEvent.click(await screen.findByRole("switch", { name: /reusable flow/i }));
+    await waitFor(() => expect(setFlow).toHaveBeenCalledWith("t1", true, ["email"]));
   });
 
-  it("offers a plain variable as a parameter and persists the tick", async () => {
+  it("offers plain variables as parameters and persists a tick", async () => {
     renderPanel(
       makeTest({
         isFlow: true,
-        flowParams: [],
         variables: [{ name: "email", kind: "plain", value: "a@b.com" }],
       }),
     );
-    const box = await screen.findByLabelText("Offer email as a flow parameter");
-    fireEvent.click(box);
+    fireEvent.click(await screen.findByLabelText("Parameter email"));
     await waitFor(() => expect(setFlow).toHaveBeenCalledWith("t1", true, ["email"]));
   });
 
   it("never offers a secret as a parameter", async () => {
-    // A parameter's default is a value on the record and its override is a
-    // value on a step — both plaintext sinks, so a secret must not be routable
-    // through either.
+    // An argument is stored as plain text on the CALLING test's record, so a
+    // secret parameter would route its value around the encrypted store —
+    // the same rule that keeps secrets out of dataset columns.
     renderPanel(
       makeTest({
         isFlow: true,
-        flowParams: [],
         variables: [
           { name: "email", kind: "plain", value: "a@b.com" },
           { name: "password", kind: "secret" },
         ],
       }),
     );
-    await screen.findByLabelText("Offer email as a flow parameter");
-    expect(screen.queryByLabelText("Offer password as a flow parameter")).toBeNull();
+    await screen.findByLabelText("Parameter email");
+    expect(screen.queryByLabelText("Parameter password")).toBeNull();
   });
 
-  it("drops a parameter whose variable was deleted rather than resurrecting it", async () => {
-    // The backend auto-declares a variable for any parameter without one, so a
-    // stale name sent back would bring the deleted row back as an empty
-    // variable.
+  it("unticking removes just that parameter", async () => {
     renderPanel(
       makeTest({
         isFlow: true,
-        flowParams: ["gone", "email"],
-        variables: [{ name: "email", kind: "plain", value: "a@b.com" }],
+        flowParams: ["email", "user"],
+        variables: [
+          { name: "email", kind: "plain", value: "" },
+          { name: "user", kind: "plain", value: "" },
+        ],
       }),
     );
-    const toggle = await screen.findByLabelText("Use this test as a reusable flow");
-    // Any flow write goes through the same filter; toggling off is the
-    // simplest one to drive.
-    fireEvent.click(toggle);
-    await waitFor(() => expect(setFlow).toHaveBeenCalled());
-    const params = setFlow.mock.calls[0][2];
-    expect(params).not.toContain("gone");
+    fireEvent.click(await screen.findByLabelText("Parameter email"));
+    await waitFor(() => expect(setFlow).toHaveBeenCalledWith("t1", true, ["user"]));
+  });
+
+  it("surfaces parameters that no longer match a variable, with a way out", async () => {
+    // A parameter whose variable was renamed, deleted, or made secret still
+    // binds (callers fall back to ""), but it is probably stale — so it is
+    // shown as removable instead of silently kept or silently dropped.
+    renderPanel(makeTest({ isFlow: true, flowParams: ["ghost"] }));
+    await screen.findByText(/no matching variable/i);
+    fireEvent.click(screen.getByRole("button", { name: /remove parameter ghost/i }));
+    await waitFor(() => expect(setFlow).toHaveBeenCalledWith("t1", true, []));
+  });
+
+  it("says what off means while the toggle is off", async () => {
+    renderPanel(makeTest());
+    expect(await screen.findByText(/not offered in the trainer/i)).toBeTruthy();
   });
 });

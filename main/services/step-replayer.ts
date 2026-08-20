@@ -14,6 +14,7 @@ import { DEFAULT_WAIT_TIMEOUT_MS } from "./script-generator.js";
 import {
   ASSERT_SEMANTICS,
   matchSource,
+  urlPathSource,
   visibilitySource,
   WAIT_SEMANTICS,
 } from "../../shared/step-semantics.mjs";
@@ -48,6 +49,7 @@ export function buildReplayScript(step: Step): string {
   ${DOM_HELPERS}
   ${UNIQUENESS_HELPERS}
   ${matchSource()}
+  ${urlPathSource()}
   ${visibilitySource()}
 
   // The uniqueness scan's element cap exists because CAPTURE runs it on the
@@ -183,7 +185,10 @@ export function buildReplayScript(step: Step): string {
   function resolveOne(loc) {
     var all = resolveAll(loc);
     if (loc && typeof loc.nth === "number") {
-      var picked = all[loc.nth] || null;
+      // -1 is "the last match", same as the emitted .nth(-1) — resolved off
+      // the end so the trainer's preview and the run agree about which
+      // element an ordinal step means.
+      var picked = (loc.nth === -1 ? all[all.length - 1] : all[loc.nth]) || null;
       log(picked ? "info" : "warn", ".nth(" + loc.nth + ") of " + all.length + " match(es)" + (picked ? "" : " — index out of range"));
       return { el: picked };
     }
@@ -260,10 +265,25 @@ export function buildReplayScript(step: Step): string {
     // It did not: this read a case-insensitive SUBSTRING while the spec
     // asserted exact whole-URL equality against a pre-filled PATH, so the step
     // was green here and impossible to pass there.
+    // Page-level kinds with an EMPTY expected value: the generator refuses to
+    // emit these (an empty "contains" matches every page), so the preview must
+    // refuse them too. matchesValue would answer true for an empty substring —
+    // a green step standing in for a line that will never exist in the spec.
+    if ((a === "url" || a === "urlEndsWith" || a === "urlIs" || a === "urlPathIs" || a === "title" || a === "titleContains") && !(step.value || "")) {
+      log("error", "no expected value set on this assertion — nothing will be generated for it");
+      return { ok: false, error: "No expected value set" };
+    }
     if (a === "url" || a === "urlEndsWith" || a === "urlIs") {
       var ok = matchKind(ASSERT_SEMANTICS, a, location.href, step.value || "");
       log(ok ? "info" : "error", "page URL = \\"" + location.href + "\\"; expected " + (a === "urlEndsWith" ? "to end with" : a === "urlIs" ? "to be" : "to contain") + " \\"" + (step.value || "") + "\\"");
       return { ok: ok, error: ok ? undefined : "URL is " + location.href };
+    }
+    if (a === "urlPathIs") {
+      // The SAME pattern the generated spec embeds in toHaveURL, applied to
+      // the same string — the empty-value case is already refused above.
+      var pathOk = new RegExp(urlPathPattern(step.value || ""), "i").test(location.href);
+      log(pathOk ? "info" : "error", "page URL = \\"" + location.href + "\\"; expected its path to be \\"" + (step.value || "") + "\\" (query and #fragment ignored)");
+      return { ok: pathOk, error: pathOk ? undefined : "URL is " + location.href };
     }
     // \`title\` is EXACT ("Page title is") and \`titleContains\` is the substring
     // kind. This used to read both as a case-insensitive substring, so "Cart"
@@ -501,6 +521,15 @@ export function buildReplayScript(step: Step): string {
       return { ok: true, met: met };
     }
     if (t === "endif") { log("info", "end of conditional block"); return { ok: true }; }
+    // The preview walks the list ONCE, so a loop's body runs a single time
+    // here. Said out loud rather than silently: a user watching the preview
+    // add one item while the run adds five would otherwise read the run as
+    // broken.
+    if (t === "loop") {
+      log("info", "repeat ×" + (step.loopCount || 1) + " — the preview runs the body once; the real run repeats it");
+      return { ok: true };
+    }
+    if (t === "endLoop") { log("info", "end of repeat block"); return { ok: true }; }
     if (t === "goto") { log("info", "goto runs at test start; skipped in preview"); return { ok: true, error: "goto runs at test start; skipped in preview" }; }
     // Unreachable in the trainer: runStep dispatches viewport steps to
     // resize-service, which resizes the native window (a page cannot resize the

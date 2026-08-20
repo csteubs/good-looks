@@ -154,26 +154,6 @@ const previewVariables: TestVariable[] = [
  *  Hoisted out of the handler map because two handlers now answer with it — a
  *  created variable has to come back in the same shape a push would deliver, or
  *  the picker that asked for it would not list what it just made. */
-/** The step list the recorder preview serves: the checkout fixture's steps
- *  plus one flow call appended, so the trainer-only flow surfaces — the
- *  expansion chevron, the read-only preview, Flow Parameters on an editable
- *  row — are reachable from `?view=recorder`. Appended rather than inserted so
- *  the fixture's step ids and indexes (which other fixtures reference) hold. */
-function previewRecorderSteps(): Step[] {
-  return structuredClone([
-    ...TESTS[0].steps,
-    {
-      id: "s-flow-call",
-      type: "runFlow",
-      flowId: "t-flow-signin",
-      label: "Sign in",
-      flowArgs: { email: "buyer@example.com" },
-      repeat: 2,
-      timestamp: Date.now(),
-    } as Step,
-  ]);
-}
-
 /** The preview's open inline-flow scope, so `?view=recorder` can exercise the
  *  whole enter → edit-banner → Done loop without a backend. */
 let previewFlowScope: {
@@ -211,7 +191,7 @@ function recorderState(): RecorderState {
     recording: true,
     paused: false,
     assertMode: null,
-    stepCount: previewRecorderSteps().length,
+    stepCount: TESTS[0].steps.length,
     testId: TESTS[0].id,
     url: TESTS[0].url,
     // Deliberately a DEEPER url than `url` above: the two fields mean different
@@ -537,21 +517,37 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     // invokes, and `preview-bridge.test.ts` fails if this map ever names one
     // that does not exist.
     "tests:list": (): TestRecord[] => state.tests,
-    /** Not `TestRecord[]` — the flow picker takes a narrowed row. `defaults`
-     *  mirrors the real handler: each plain parameter's variable value. */
+    /** Not `TestRecord[]` — the flow picker takes a narrowed row. */
     "tests:listFlows": (
       p,
-    ): { id: string; name: string; flowParams: string[]; defaults: Record<string, string> }[] =>
+    ): { id: string; name: string; flowParams: string[]; paramDefaults: Record<string, string> }[] =>
       state.tests
-        .filter((t) => t.isFlow && t.id !== p?.fromId)
-        .map((t) => {
-          const flowParams = t.flowParams ?? [];
-          const defaults: Record<string, string> = {};
-          for (const v of t.variables ?? []) {
-            if (v.kind === "plain" && flowParams.includes(v.name)) defaults[v.name] = v.value ?? "";
-          }
-          return { id: t.id, name: t.name, flowParams, defaults };
-        }),
+        .filter((t) => t.isFlow && t.id !== (p?.fromId as string | undefined))
+        .map((t) => ({
+          id: t.id,
+          name: t.name,
+          flowParams: t.flowParams ?? [],
+          paramDefaults: Object.fromEntries(
+            (t.flowParams ?? []).map((name) => [
+              name,
+              (t.variables ?? []).find((v) => v.name === name)?.value ?? "",
+            ]),
+          ),
+        })),
+    "tests:setFlow": (p) => {
+      const test = findTest(p?.id);
+      if (!test) return null;
+      test.isFlow = p?.isFlow === true;
+      // Same filter as the backend: parameter names become object keys in the
+      // generated spec, so an invalid one is dropped rather than stored.
+      test.flowParams = Array.isArray(p?.flowParams)
+        ? (p.flowParams as unknown[]).filter(
+            (n): n is string => typeof n === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(n) && n.length <= 40,
+          )
+        : [];
+      test.updatedAt = Date.now();
+      return structuredClone(test);
+    },
     /** The "Used by" list on a flow's detail view. Same scan the real handler
      *  does: direct `runFlow` callers, hidden tests included. */
     "tests:flowUsage": (p): { id: string; name: string }[] =>
@@ -580,25 +576,6 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
         timestamp: Date.now(),
       }));
       test.steps = [...test.steps.slice(0, at), ...inline, ...test.steps.slice(at + 1)];
-      return structuredClone(test);
-    },
-    /** The flow toggle + parameter manager on the Variables tab. Mirrors the
-     *  real handler's auto-declare: a parameter with no variable gets an empty
-     *  plain one, so the manager's checkbox round-trips visibly. */
-    "tests:setFlow": (p): TestRecord | null => {
-      const test = findTest(p?.id);
-      if (!test) return null;
-      test.isFlow = p?.isFlow === true;
-      const names = Array.isArray(p?.flowParams) ? (p.flowParams as string[]) : [];
-      test.flowParams = test.isFlow ? [...new Set(names)] : [];
-      const have = new Set((test.variables ?? []).map((v) => v.name));
-      const missing = test.flowParams.filter((n) => !have.has(n));
-      if (missing.length > 0) {
-        test.variables = [
-          ...(test.variables ?? []),
-          ...missing.map((n) => ({ name: n, kind: "plain" as const, value: "" })),
-        ];
-      }
       return structuredClone(test);
     },
     // CLONED, and that is what makes the preview behave like the app rather
@@ -1670,7 +1647,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     // trainer, which is a fifth of this app's UI, had no address at all. The
     // flag reports a recorder mid-session over a fixture test's steps; it does
     // NOT pretend to capture, and the banner still says so.
-    "recorder:getSteps": () => (recorderPreview() ? previewRecorderSteps() : []),
+    "recorder:getSteps": () => (recorderPreview() ? structuredClone(TESTS[0].steps) : []),
     "recorder:getDebugLogs": () => [],
     // Element context. The picker's live readout asks the page how many
     // elements the CURRENT selection matches; there is no page here, so the
@@ -1718,7 +1695,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     // flow's steps as the working copy; edits are not simulated (there is no
     // capture here), but the banner, the gaps and Done are all drivable.
     "recorder:enterFlowScope": (p: Payload) => {
-      const call = previewRecorderSteps().find((st) => st.id === p?.stepId);
+      const call = TESTS[0].steps.find((st) => st.id === p?.stepId);
       const flow = call?.flowId ? findTest(call.flowId) : null;
       if (!call || !flow) throw new Error("That step is not a flow call.");
       previewFlowScope = {

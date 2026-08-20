@@ -770,21 +770,27 @@ export function registerHandlers(): void {
    *  at generation time too, but keeping a test from listing itself is the
    *  difference between "can't do that" and never offering it.
    *
-   *  `defaults` carries each parameter's default value (its variable's value)
-   *  so the composer can show what an unoverridden call will use — a secret or
-   *  captured parameter has no textual default and is omitted. */
+   *  `paramDefaults` carries each parameter's default value (its variable's
+   *  value) so the composer can show what an unoverridden call will use. */
   ipcMain.handle("tests:listFlows", async (_e, params: { fromId?: string }) => {
     return testStore
       .list()
       .filter((t) => t.isFlow && t.id !== params.fromId)
-      .map((t) => {
-        const flowParams = t.flowParams ?? [];
-        const defaults: Record<string, string> = {};
-        for (const v of t.variables ?? []) {
-          if (v.kind === "plain" && flowParams.includes(v.name)) defaults[v.name] = v.value ?? "";
-        }
-        return { id: t.id, name: t.name, flowParams, defaults };
-      });
+      .map((t) => ({
+        id: t.id,
+        name: t.name,
+        flowParams: t.flowParams ?? [],
+        // The default each parameter falls back to when a caller leaves it
+        // blank — the flow's own variable value. Sent along so the composer can
+        // show it as the placeholder; a secret has no stored value, so its
+        // default reads as empty here without touching the secret store.
+        paramDefaults: Object.fromEntries(
+          (t.flowParams ?? []).map((p) => [
+            p,
+            (t.variables ?? []).find((v) => v.name === p)?.value ?? "",
+          ]),
+        ),
+      }));
   });
 
   /** Which tests call this flow directly — the reverse index the library has

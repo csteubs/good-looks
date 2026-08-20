@@ -359,9 +359,10 @@ function assertKindRules(): string {
     return `${base}, ${s.caseSensitive ? "case-sensitive" : "ignoring case"}`;
   };
   return [
-    `      - "url": ${verb("url")}. Use a path or host fragment, not the whole URL — the origin differs between environments.`,
-    `      - "urlEndsWith": ${verb("urlEndsWith")}.`,
-    `      - "urlIs": ${verb("urlIs")}. Needs the absolute URL; anything shorter can never pass.`,
+    `      - "urlPathIs": the URL's PATH must equal the value exactly, ignoring case, the query string, the #fragment, and a trailing slash. THE DEFAULT for asserting where a navigation landed: query parameters (tracking, variants) change between runs and cannot fail it. Value is a path like "/cart".`,
+    `      - "url": ${verb("url")}. Use a path or host fragment, not the whole URL — the origin differs between environments. Note it also matches against the query string, so prefer "urlPathIs" for "did I land on the right page".`,
+    `      - "urlEndsWith": ${verb("urlEndsWith")}. The whole URL, so a query string or #fragment at run time fails it — prefer "urlPathIs" unless you mean the literal end of the URL.`,
+    `      - "urlIs": ${verb("urlIs")}. Needs the absolute URL; anything shorter can never pass, and any query-parameter drift fails it.`,
     `      - "title": ${verb("title")}. A page titled "Cart | Acme" does NOT satisfy a "title" of "Cart".`,
     `      - "titleContains": ${verb("titleContains")}. This is the one to use when you mean the title merely mentions something.`,
   ].join("\n");
@@ -380,7 +381,7 @@ Output format:
   - press: { "type": "press", "value": "Enter", "locator": {...} }  (locator optional)
   - assert: { "type": "assert", "assert": <kind>, "locator": {...}, "text": "...", "value": "...", "attr": "...", "count": 1, "soft": false }
     assert kinds: ${ASSERT_KINDS.map((k) => JSON.stringify(k)).join(", ")}.
-    "url"/"urlEndsWith"/"urlIs"/"title"/"titleContains" are page-level and need no locator; use "value" for the expected string. Their match rules are exact and differ — pick by what you actually mean:
+    "url"/"urlEndsWith"/"urlIs"/"urlPathIs"/"title"/"titleContains" are page-level and need no locator; use "value" for the expected string. Their match rules are exact and differ — pick by what you actually mean:
 ${assertKindRules()}
     "text"/"exactText" use "text". "value" uses "value". "attribute" uses "attr"+"value". "count" uses "count". "css" uses "cssProp" (kebab-case) + "value", and "cssMatch": "is" | "contains".
     An assert with an EMPTY expected value is refused outright rather than generated — an empty "contains" matches every page, so it would be a green assertion that tests nothing. Always give a value.

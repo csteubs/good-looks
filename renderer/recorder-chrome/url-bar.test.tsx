@@ -80,13 +80,20 @@ describe("UrlBar", () => {
   });
 
   it("opens a URL assertion of the kind the user picked", async () => {
-    // commandId 1 is `urlEndsWith` — the middle item. Picking an index off by
+    // commandId 2 is `urlEndsWith` — a middle item. Picking an index off by
     // one would generate a different assertion than the menu promised, and both
     // are plausible-looking lines of Playwright.
-    popup.mockResolvedValue({ commandId: 1 });
+    popup.mockResolvedValue({ commandId: 2 });
     render(<UrlBar url="https://ritual.com/cart" loading={false} />);
     fireEvent.click(screen.getByText("Assert URL"));
     await waitFor(() => expect(api.recorder.assertUrl).toHaveBeenCalledWith("urlEndsWith"));
+  });
+
+  it("offers 'URL path is' first — the robust default leads the menu", async () => {
+    popup.mockResolvedValue({ commandId: 0 });
+    render(<UrlBar url="https://ritual.com/cart" loading={false} />);
+    fireEvent.click(screen.getByText("Assert URL"));
+    await waitFor(() => expect(api.recorder.assertUrl).toHaveBeenCalledWith("urlPathIs"));
   });
 
   it("does nothing when the menu is dismissed", async () => {

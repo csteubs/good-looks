@@ -16,7 +16,6 @@ import type {
   ScriptChangeSource,
   SecretStatus,
   FlowScopeCommit,
-  FlowSummary,
   TestVariable,
   VariableKind,
   AiDebugHistoryRecord,
@@ -89,6 +88,17 @@ import type {
   LlmProvider,
   LlmProviderStatus,
 } from "./llm-types";
+
+/** One reusable flow as `tests:listFlows` reports it — enough to offer the
+ *  flow and to build its argument form, without shipping whole records. */
+export interface FlowInfo {
+  id: string;
+  name: string;
+  flowParams: string[];
+  /** Per-parameter fallback (the flow's own variable value): what a caller
+   *  gets for any argument it leaves blank. Placeholder text, not data. */
+  paramDefaults: Record<string, string>;
+}
 
 export interface ImportResult {
   imported: number;
@@ -326,10 +336,7 @@ export const api = {
       ipc().invoke<TestRecord>("tests:setDatasets", { id, datasets }),
     setFlow: (id: string, isFlow: boolean, flowParams: string[]) =>
       ipc().invoke<TestRecord>("tests:setFlow", { id, isFlow, flowParams }),
-    listFlows: (fromId?: string) =>
-      ipc().invoke<FlowSummary[]>("tests:listFlows", {
-        fromId,
-      }),
+    listFlows: (fromId?: string) => ipc().invoke<FlowInfo[]>("tests:listFlows", { fromId }),
     /** Which tests call this flow directly — the "Used by" list. */
     flowUsage: (id: string) =>
       ipc().invoke<{ id: string; name: string }[]>("tests:flowUsage", { id }),

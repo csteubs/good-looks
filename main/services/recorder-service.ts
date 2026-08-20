@@ -2137,6 +2137,9 @@ export const recorderService = {
         // location. Right-clicking a filled-in email box and choosing "URL
         // contains…" opened the dialog suggesting the email address.
         const assertPageItems: MenuItemConstructorOptions[] = [
+          // "URL path is" first: the robust default. The other kinds compare
+          // the full URL, which query-string noise fails between runs.
+          { label: "URL path is…", click: () => ctxAction({ kind: "assertion", assert: "urlPathIs", picked: null, prefillText: "", prefillValue: urlAssertPrefill("urlPathIs", currentPageUrl()) }) },
           { label: "URL contains…", click: () => ctxAction({ kind: "assertion", assert: "url", picked: null, prefillText: "", prefillValue: urlAssertPrefill("url", currentPageUrl()) }) },
           { label: "URL ends with…", click: () => ctxAction({ kind: "assertion", assert: "urlEndsWith", picked: null, prefillText: "", prefillValue: urlAssertPrefill("urlEndsWith", currentPageUrl()) }) },
           { label: "URL is…", click: () => ctxAction({ kind: "assertion", assert: "urlIs", picked: null, prefillText: "", prefillValue: urlAssertPrefill("urlIs", currentPageUrl()) }) },
@@ -2791,6 +2794,7 @@ export const recorderService = {
           "waitMs",
           "waitUntil",
           "timeoutMs",
+          "loopCount",
           "soft",
           "assert",
           "locator",
@@ -2804,18 +2808,20 @@ export const recorderService = {
         for (const key of allowed) {
           if (key in patch) target[key] = src[key];
         }
-        // The one map-shaped field, and the one that IS re-normalized here:
-        // its keys become bindings the generator resolves by name, so an
-        // invalid key must be dropped at the boundary rather than carried.
+        // `flowArgs` is not in the plain list above: it is map-valued, so it
+        // gets the same rebuild `insertStep` gives it instead of a raw copy —
+        // its values are what `bindFlowStep` splices into other steps' text.
+        // An empty or invalid map clears the key, which is how the args editor
+        // expresses "use the flow's own defaults for everything".
         if ("flowArgs" in patch) {
-          const args = normalizeFlowArgs(patch.flowArgs);
+          const args = normalizeFlowArgs((patch as Record<string, unknown>).flowArgs);
           if (args && Object.keys(args).length > 0) target.flowArgs = args;
           else delete target.flowArgs;
         }
-        // The loop fields, re-checked like flowArgs: `repeat` bounds a `for`
-        // loop in executed source, and `repeatVar` becomes `Number(V.name)`.
-        // Cleared (not merely ignored) on an invalid value, so the editor's
-        // "Once" choice can actually turn a loop off.
+        // The call-site loop fields, re-checked like flowArgs: `repeat` bounds
+        // a `for` loop in executed source, and `repeatVar` becomes
+        // `Number(V.name)`. Cleared (not merely ignored) on an invalid value,
+        // so the editor's "Once" choice can actually turn a loop off.
         if ("repeat" in patch) {
           const n =
             typeof patch.repeat === "number" && Number.isFinite(patch.repeat)

@@ -16,12 +16,12 @@ import { Check, ChevronDown, ChevronRight, GripVertical, Loader2, MoreHorizontal
 import type { RunStepStatus } from "./recorder-store";
 
 import { SEL_BG, SEL_RING, TONE, Temp, TypeChip, formatDuration, insetRail } from "../theme";
-import { FlowCallDialog } from "./flow-call-editor";
 import { describeStep } from "../lib/describe-step";
 import { DEFAULT_WAIT_TIMEOUT_MS } from "../lib/recorder-types";
 import { clampViewportAxis } from "../lib/viewport-presets";
 import type { Step, TestVariable } from "../lib/recorder-types";
 import { insertAtCaret, varRef } from "../components/variable-picker";
+import { FlowArgsDialog } from "./flow-args-fields";
 
 /* `badgeColor` and `badgeLabel` were here, and `TypeChip` replaces both.
  *
@@ -53,7 +53,7 @@ export function parseSizeDraft(draft: string): { width: number; height: number }
 /** The single field a step exposes for quick inline editing, if any. */
 function editableField(
   step: Step,
-): { key: "value" | "text" | "url" | "waitMs" | "timeoutMs" | "size"; label: string; value: string } | null {
+): { key: "value" | "text" | "url" | "waitMs" | "timeoutMs" | "loopCount" | "size"; label: string; value: string } | null {
   switch (step.type) {
     case "goto":
       return { key: "url", label: "URL", value: step.url ?? "" };
@@ -86,7 +86,7 @@ function editableField(
     case "assert":
       if (step.assert === "text" || step.assert === "exactText")
         return { key: "text", label: "Text", value: step.text ?? "" };
-      if (step.assert === "value" || step.assert === "url" || step.assert === "urlEndsWith" || step.assert === "urlIs" || step.assert === "title" || step.assert === "titleContains")
+      if (step.assert === "value" || step.assert === "url" || step.assert === "urlEndsWith" || step.assert === "urlIs" || step.assert === "urlPathIs" || step.assert === "title" || step.assert === "titleContains")
         return { key: "value", label: "Expected", value: step.value ?? "" };
       if (step.assert === "attribute")
         return { key: "value", label: "Expected", value: step.value ?? "" };
@@ -103,6 +103,9 @@ function editableField(
       if (step.cond === "urlContains" || step.cond === "titleContains")
         return { key: "value", label: "Contains", value: step.value ?? "" };
       return null;
+    case "loop":
+      // The count is the loop step's whole content — same rule as waitMs.
+      return { key: "loopCount", label: "Times", value: String(step.loopCount ?? 1) };
     default:
       return null;
   }
@@ -283,9 +286,10 @@ export function StepRow({
 }) {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState("");
-  // The flow-call parameter dialog, for `runFlow` rows. Held here so every
-  // host with an `onEdit` (trainer rows, Edit Steps) gets it without wiring.
-  const [flowCallOpen, setFlowCallOpen] = React.useState(false);
+  // "Edit Flow Arguments…" dialog for runFlow steps. Local to the row: unlike
+  // Refine (which needs the training browser's pick mode), the args editor is
+  // self-contained, so parents get it for free wherever onEdit is wired.
+  const [flowArgsOpen, setFlowArgsOpen] = React.useState(false);
   const rowRef = React.useRef<HTMLDivElement | null>(null);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   // Where the caret was when the variable menu was opened, and a latch that
@@ -334,7 +338,9 @@ export function StepRow({
         ? { waitMs: Number(draft) || 0 }
         : field.key === "timeoutMs"
           ? { timeoutMs: Number(draft) || DEFAULT_WAIT_TIMEOUT_MS }
-          : { [field.key]: draft };
+          : field.key === "loopCount"
+            ? { loopCount: Math.min(500, Math.max(1, Math.trunc(Number(draft) || 1))) }
+            : { [field.key]: draft };
     onEdit(patch);
     setEditing(false);
   }
@@ -667,6 +673,8 @@ export function StepRow({
           {onReplay &&
           step.type !== "goto" &&
           step.type !== "endif" &&
+          step.type !== "loop" &&
+          step.type !== "endLoop" &&
           !(step.type === "state" && step.elementState === "press") ? (
             <button
               type="button"
@@ -709,12 +717,17 @@ export function StepRow({
             // on Failure" (a toggle for action/assert steps). The kebab trigger
             // only renders when at least one utility applies to this step.
             const canRefine = onRefine && step.locator;
-            const canContinue = onEdit && step.type !== "if" && step.type !== "endif";
+            const canContinue =
+              onEdit &&
+              step.type !== "if" &&
+              step.type !== "endif" &&
+              step.type !== "loop" &&
+              step.type !== "endLoop";
             const isFlowCall = step.type === "runFlow" && !!step.flowId;
-            const canFlowCall = onEdit && isFlowCall;
+            const canFlowArgs = onEdit && isFlowCall;
             const canOpenFlow = onOpenFlow && isFlowCall;
             const canUnwrap = onUnwrapFlow && isFlowCall;
-            if (!canRefine && !canContinue && !canFlowCall && !canOpenFlow && !canUnwrap)
+            if (!canRefine && !canContinue && !canFlowArgs && !canOpenFlow && !canUnwrap)
               return null;
             return (
               <DropdownMenu>
@@ -734,17 +747,12 @@ export function StepRow({
                       Go to Flow
                     </DropdownMenuItem>
                   ) : null}
-                  {canFlowCall ? (
-                    <DropdownMenuItem onSelect={() => setFlowCallOpen(true)}>
-                      Flow Parameters…
-                    </DropdownMenuItem>
-                  ) : null}
                   {canUnwrap ? (
                     <DropdownMenuItem onSelect={onUnwrapFlow}>
                       Unwrap Flow…
                     </DropdownMenuItem>
                   ) : null}
-                  {(canOpenFlow || canFlowCall || canUnwrap) && (canRefine || canContinue) ? (
+                  {(canOpenFlow || canUnwrap) && (canRefine || canContinue || canFlowArgs) ? (
                     <DropdownMenuSeparator />
                   ) : null}
                   {canRefine ? (
@@ -752,7 +760,12 @@ export function StepRow({
                       Refine Selection
                     </DropdownMenuItem>
                   ) : null}
-                  {canRefine && canContinue ? <DropdownMenuSeparator /> : null}
+                  {canFlowArgs ? (
+                    <DropdownMenuItem onSelect={() => setFlowArgsOpen(true)}>
+                      Edit Flow Arguments…
+                    </DropdownMenuItem>
+                  ) : null}
+                  {(canRefine || canFlowArgs) && canContinue ? <DropdownMenuSeparator /> : null}
                   {canContinue ? (
                     <DropdownMenuCheckboxItem
                       checked={!!step.continueOnFailure}
@@ -785,12 +798,12 @@ export function StepRow({
           ) : null}
         </div>
       ) : null}
-      {onEdit && step.type === "runFlow" ? (
-        <FlowCallDialog
+      {flowArgsOpen ? (
+        <FlowArgsDialog
           step={step}
-          open={flowCallOpen}
-          onOpenChange={setFlowCallOpen}
-          onSave={(patch) => onEdit(patch)}
+          open={flowArgsOpen}
+          onOpenChange={setFlowArgsOpen}
+          onSave={(patch) => onEdit?.(patch)}
         />
       ) : null}
     </div>

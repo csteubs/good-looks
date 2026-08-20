@@ -10,6 +10,207 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-19 — "URL path is": the URL assertion that survives real URLs
+
+The report was "the URL assertion has never passed as a test step", and the
+engine turned out to be innocent: the generator, the injected replayer and the
+parity harness all agree, and a true URL assertion passes under real
+Playwright. What the store showed instead was that every URL assertion a user
+had actually recorded was DOA for one of two reasons, neither of which any
+existing guard could see:
+
+- **The value was a path and the kind compared the full URL.** Both real
+  recordings used `urlEndsWith` with a bare path (`/bundle-and-save`,
+  `/collections/all/products/synbiotic-plus-for-gut-health`), and a real
+  site's run-time URL carries a query string the recording did not —
+  `?variant=` on every product card click, `utm_*` after every redirect. "Ends
+  with the path" is false the moment anything follows the path. The parity
+  harness never caught this because its fixture pages have clean URLs; the
+  semantics were right, the VALUES could never survive contact with the site.
+- **Three tests carried `urlIs` steps with no value at all** (arrived through
+  the AI-steps path, which validated the kind but not the value). The
+  generator refuses an empty expected value, so the steps rendered normally in
+  the list and generated nothing — a step that looks added and asserts
+  nothing, for weeks.
+
+**The fix is a fourth URL kind rather than a repaired third.** `urlPathIs`
+("URL path is") compares the URL's PATH alone — query and fragment ignored,
+one trailing slash tolerated, missing leading slash supplied, case-insensitive
+like the other URL kinds. This is mabl's model (their URL assertions target a
+picked component, pathname by default) adopted at the scope that pays: the
+pathname is the one component users actually mean when they assert "the
+navigation landed on the right page", and the query is the part that changes
+under their feet. Changing `urlEndsWith`'s meaning instead was rejected — its
+label promises the literal end of the URL, stored tests rely on that, and a
+kind whose label lies is the exact bug `step-semantics.mjs` exists to end.
+The other mabl components (host, port, protocol, hash, per-param query
+asserts) were deliberately not added: `urlIs`/`url` already cover host
+assertions, and each new kind is another row in every table and menu.
+
+**One pattern, applied to one string, by all three readers.** `urlPathPattern`
+builds `^scheme://host + path + /?(?:[?#]|$)` as RegExp source; the generator
+emits it inside `toHaveURL(new RegExp(…, "i"))`, the replayer tests the same
+pattern against `location.href`, and `describe-step` shows the same
+expression. The alternative — Playwright's predicate form
+`toHaveURL(url => url.pathname === …)` — reads better in a spec but would be a
+new statement grammar for the spec-parser, the step line map and the AI
+prompts, and its page-side twin would be a SECOND spelling of how a path is
+carved out of a URL. A structural pattern keeps the single-spelling property
+the semantics module is built on. It is serialized into the replayer with
+`toString` like `matchesValue`, which is why it inlines its escape rule
+instead of calling `reEscape` — a module-scope reference would be renamed by
+esbuild and throw inside the page; `assert-emission.test.ts` pins the two
+escape spellings together. The spec-parser recognizes the pattern's literal
+prefix/suffix BEFORE the anchor classification, because the pattern ends in
+`$`-inside-an-alternation and would otherwise be filed as `urlIs` carrying the
+raw pattern, re-escaped on every regeneration.
+
+**Robust-by-default, not robust-if-you-know.** `urlPathIs` leads every URL
+assert menu (composer, both panels, the URL bar, the right-click menu) and
+prefills with the live pathname; at a site root it suggests `/`, which is safe
+for an exact path match where it would be vacuous for a contains one. And the
+valueless-step hole is closed at both doors: the composer refuses to submit a
+page-level value assert with an empty value (same rule as its css case), the
+AI-steps validator drops one (the prompt already said it would be refused),
+and the replayer now fails one with "nothing will be generated for it" instead
+of letting `matchesValue`'s empty-substring true paint it green. The
+generator's UNGENERATABLE comment stays as the backstop for steps already on
+disk.
+### 2026-08-19 — Repeat blocks: the first loop, and why balance is the design center
+
+A `loop`/`endLoop` step pair — "repeat N times" — compiled to a real `for`
+around the enclosed steps. Modeled on mabl's loops (their modes: fixed count,
+variable, per-element, per-array-item); this ships the fixed count alone,
+because the CONSTRUCT is the expensive part — block model, generation,
+round-trip, nesting, UI — and the other modes need designs this one does not
+(a per-element loop needs a way for inner steps to reference the loop's
+cursor, which is a locator-model question, not a loop question). The pair
+idiom is the conditional's: one insert produces both halves, steps are
+dragged between them, the body indents in the list.
+
+**Balance is a hard property, not a preference.** An `if` block that loses a
+half emits an unbalanced brace today, and the spec degrades to a SyntaxError —
+a latent repair debt this feature declined to inherit. The generator repairs
+loops instead of trusting them: a stray `endLoop` (its opener deleted) becomes
+a comment rather than an unbalanced `}`; an unclosed `loop` is closed at the
+body's end with a PLAIN `}`, chosen precisely so the parser reads it back as
+an `endLoop` and the next round-trip restores the pair instead of losing it.
+Neither half can be disabled or wrapped (generator refuses, kebab doesn't
+offer), because half a disabled loop is the same broken shape.
+
+**Nested loops name themselves by depth.** `for (let i …)` inside
+`for (let i …)` is itself a SyntaxError, so the generator names `i`, `i2`,
+`i3` by open-loop count — emission-order state, which is why the loop lines
+are emitted by the body walk rather than the per-step `stepLine`.
+
+**The parser got a stack where it had a counter.** One `ifDepth` counter
+cannot tell `if { for {` from `for { if {` — a `}` must close back into the
+step kind that opened it. The block stack does, and the near-miss rule
+guards the vocabulary boundary: the counting SHAPE (`for (let x = 0; y < N;
+z++)`) with names that are not the generator's own (`i\d*`, all three
+positions agreeing) is skipped WHOLE and counted, because half-reading it
+into a `loop` step would regenerate as a repeat the original never was.
+A fully foreign loop (`for (const row of rows)`) keeps the parser's standing
+behaviour — unknown text passed over, known calls inside still harvested —
+pinned now so the contract is explicit.
+
+**The preview walks the body once, and says so.** The trainer's replayer is
+a linear walk; repetition is the run's behaviour. Both halves are narrated
+no-ops there, with the count in the log — a preview that silently added one
+item where the run adds five would read as a broken run.
+
+### 2026-08-19 — Position becomes something the user can say, and the step list stops hiding the chain
+
+`Locator.nth` has existed since `pickLocator`'s ambiguity fallback began
+writing it, and DECISIONS 4208 admits it as the last resort. What never
+existed was the user's side of it: the picker offered container, text,
+attribute and class clauses — never position — so "the fourth row of very
+similar rows" or "the newest entry in this list" had no expressible form
+short of hand-editing the Script tab. Both pick surfaces now carry a
+"Position among matches" row (Auto / First / Last / Nth), composed after
+context because that is the order the emitted chain evaluates: `.nth()`
+indexes what the clauses leave.
+
+**"Last" is `nth: -1`, and -1 is the only negative admitted.** Playwright
+honours exactly one negative index — `.nth(-1)`, the last match — and it is
+the stable ordinal for a set whose size changes between runs, because the
+tail is where appended rows land. `normalizeLocator` bounds the field to
+[-1, MAX_MATCH_INDEX]; the parser's regex names `-1` explicitly so deeper
+negatives stay unclassified rather than round-tripping; and the generator
+floors anything below -1 to 0 on its own, because a forged index can also
+arrive through `recorder:updateStep`'s raw locator copy — the same
+boundary-AND-generator independence `check:step-ingest` pins for every other
+numeric field, now with rows for this one. The trainer's replayer resolves
+-1 off the end of the match list, pinned in `step-replayer-parity.dom.test.ts`
+against the same divergence its header documents for positive indexes.
+
+**Found while wiring it: the step list never showed the chain.** The
+renderer's `locatorExpr` mirror — whose file header promises the list shows
+the call the generated script contains — stopped at the base builder:
+context clauses and `.nth()` were generated, enforced at run time, and
+invisible on screen. A step pinned "inside billing-card, 2nd match" displayed
+as a bare `getByRole("button")`, hiding exactly the disambiguation the user
+added. An ordinal feature is pointless if choosing "Last" changes nothing
+visible, so the mirror now composes the full chain — and the sync is
+mechanical rather than a "keep in sync" comment: `describe-mirror.test.ts`
+diffs the renderer's and the generator's `locatorExpr` (exported for this)
+over every kind × context shape × legal index, 72 combinations, so the next
+clause added to one side fails a test instead of shipping as a step list
+that under-describes.
+
+### 2026-08-19 — The custom locator returns, as the last resort with an honest count
+
+DECISIONS 7491 removed the manual locator input in favour of the picker, and
+the picker was the right default. What the removal also removed was the escape
+hatch: the intents a candidate list cannot express — a non-ancestor relation, a
+negative text match (`//button[not(starts-with(text(),"Submit"))]`), the nth of
+many near-identical rows — had no path left but hand-editing the Script tab,
+which costs `stepsDiverged`. This change brings typing back on both pick
+surfaces (the Refine dialog and the composer's target picker) as a "Custom" row
+placed LAST under the candidates: the order is the recommendation, the same
+hierarchy mabl's own docs teach for the feature this is modelled on. The
+composer's no-picked branch also offers the field outright, because it is the
+only route to an element the crosshair cannot reach — hidden until a hover that
+pick mode itself disturbs.
+
+**The gate refuses what the oracle can't count, with directions.** `css` and
+`xpath` have been first-class locator kinds end to end since the beginning, so
+storing, generating, healing and round-tripping a typed one needed no backend
+change at all. What needed designing was the boundary of the FIELD:
+Playwright's selector language is bigger than the in-page oracle's
+(`querySelectorAll` + `document.evaluate`), and accepting `text=`, `>>` or
+`:has-text(...)` would show a live count that is confidently wrong — the
+oracle-vs-run disagreement this repo documents as its worst failure class,
+arrived at by typing. So `classifyCustomLocator` refuses those inputs by name,
+each with the in-app alternative ("use an Inside clause", "the picker's
+candidates cover those kinds"), rather than accepting-and-miscounting or
+accepting-and-not-counting. Standard CSS pseudo-classes stay accepted; the
+tests pin the refusal set as hard as the acceptance set, because a false
+refusal makes the field useless for exactly the selectors it exists for.
+
+**The count includes the pending context.** The field counts through the same
+`recorder:countMatches` channel as the picker, with the dialog's configured
+context composed in — the number on screen is the number the finished step
+resolves to, not the selector's raw match count. Syntax is validated against
+the renderer's own document first (validity is page-independent), so an
+unparseable draft never reaches the channel, whose in-page try/catch would
+report it as a misleading "0 matches".
+
+**Lint advises, never blocks.** Positional `:nth-child` stacks, build-hashed
+class names, deep descendant paths — the shapes selectors have when copied out
+of DevTools — get a warning under the field and nothing more. The user may
+know something we don't, and a blocked expert reaches for the Script tab,
+which is strictly worse.
+
+**Fixed in passing: the composer dropped context on candidate switch.** The
+target picker composed context inline at context-change time, so configuring
+"inside billing-card" and then clicking a different candidate emitted the bare
+candidate — the pinned container silently fell off until the context was next
+touched. Emission now goes through one `emit(base, ctx)` for every path
+(candidates, custom, context changes), matching the Refine dialog's
+apply-time composition. Pinned by a test that fails against the old inline
+version.
+
 ### 2026-08-19 — AI-proposed steps can carry element context
 
 `extractStepsJson` (renderer/lib/parse-llm-response.ts) rebuilt a proposed
@@ -76,6 +277,66 @@ and it turned out its doc comment claimed `check:step-semantics` pins it
 against the backend's list when nothing did. That check now really does
 (section 5), so the chain is closed at both links: mirror ↔ backend by the
 check, panel ↔ model by the test.
+### 2026-08-19 — The flows UI last mile, and the comment the generator wrote raw
+
+The flow backend (`isFlow`, `flowParams`, `runFlow` inlining with parameter
+binding, `tests:setFlow`) has been complete since it landed — and unreachable:
+`api.tests.setFlow` had zero renderer callers, and the composer never wrote
+`flowArgs`, so no test could become a flow and no flow call could carry an
+argument. The composer's own empty-state copy told the user to do a thing the
+app provided no way to do. This change is deliberately UI-only: the mark-as-flow
+switch and parameter checkboxes on the Variables tab, argument fields on the
+composer's Run-flow panel, an "Edit Flow Arguments…" dialog on the step row's
+kebab, and a rail glyph on flow rows. Modeled on mabl's Flows (their central
+reuse mechanism), which is also where the argument-form conventions come from.
+
+**Parameters are a subset of the declared variables, and secrets are excluded.**
+`tests:setFlow` accepts any valid identifier, but the UI only offers the test's
+own non-secret variables, for two reasons. Binding is textual: an unsupplied
+parameter falls back to the flow's own variable value, so a parameter *not*
+backed by a variable has an empty default and a flow that breaks the moment a
+caller leaves it blank. And a caller's argument is stored in plain text on the
+calling test's record — offering a secret as a parameter would invite its value
+to route around the encrypted store one call site at a time. The same rule that
+keeps secrets out of dataset columns, applied to the same data for the same
+reason. A parameter whose variable was later renamed, deleted, or made secret
+is surfaced as removable rather than silently kept (callers still bind it, so
+dropping it silently would change their behavior) or silently hidden.
+
+**Blank means absent, and one function owns that.** The generator treats any
+supplied argument string — including `""` — as the caller's answer; only an
+absent key falls back to the flow's default. So the UI rule "a blank field
+means use the default" requires *omitting the key*, and an implementation that
+stored `""` instead would override every default invisibly. `collectFlowArgs`
+in `flow-args-fields.tsx` is the one place that rule is spelled; the composer
+and the kebab dialog both call it, `flow-binding.test.ts` pins the generator
+side of the contract (both directions), and the dialog tests pin the UI side.
+`recorder:updateStep` gained `flowArgs` handling for the dialog's patch — not
+in the raw-copy allowlist but re-normalized through `normalizeFlowArgs`,
+because it is the one map-valued field a step patch can carry.
+
+**No flows filter in the library rail — a glyph instead.** mabl gives flows
+their own library page. Here a flow is a test with a flag, groups already
+organize the rail, and a filter would be a second organizing axis for a list
+that fits on screen. What the rail actually lacked was an *explanation*: a flow
+behaves oddly as a plain test (hidden from the Batch checklist, offered in the
+composer), and nothing said why. The glyph answers that; a filter can come back
+if libraries grow enough to need one.
+
+**Found while wiring it: the generator's one raw comment.** Every path that
+writes a step description into a spec comment runs through `commentSafe` —
+except the `problem` path for a `runFlow` that cannot be inlined (no resolver,
+unknown id, cycle, empty flow), which concatenated the step's LABEL raw.
+`str()` length-caps but does not strip line terminators, `normalizeRawStep`
+accepts `runFlow` steps from any channel, and the capture channel is one of
+them — so a page could hand over a label whose embedded newline ended the
+comment and left the remainder as a statement in the spec: page input, compiled
+into code the next run executes. The fix is the missing `commentSafe`; the pin
+is a `runFlow` entry in `assert-emission.test.ts`'s terminator-sink loop, which
+fails eight ways against the raw version. `describeFlow` now also renders
+argument values (`run flow Login (email=…)` — a bound call's meaning is its
+arguments), which is safe for the same reason: both comment emitters are
+`commentSafe`, and the step list is HTML, not source.
 
 ### 2026-08-19 — Proxy settings: two traffic classes, one shared rule, one encrypted half
 
@@ -8284,3 +8545,31 @@ collide in anything id-keyed.
 **One scope at a time.** Entering a nested flow commits the open scope and
 enters the new one; a test cannot open itself as a flow. Matches mabl, and
 keeps the commit/discard matrix a single row.
+
+## 2026-08-19 — Reconciling the flows branch with main's #182 and #187
+
+The flows PR and main briefly built overlapping features in parallel. The
+merge keeps ONE implementation per surface, choosing main's where both existed:
+
+The parameter UI is main's (#182) — `flow-args-fields.tsx` with
+`collectFlowArgs` and the `FlowInfo.paramDefaults` shape, the Variables tab's
+Switch-based section, the "Edit Flow Arguments…" step-row item. The branch's
+duplicate (`flow-call-editor.tsx`, its `FlowSummary` shape, its checkbox
+section) was deleted, and the branch's additions were grafted onto main's
+components instead: the Repeat controls now live in `FlowArgsDialog` (whose
+`onSave` became a step PATCH so "Once" can clear a loop), and Go to Flow /
+Unwrap Flow sit beside Edit Flow Arguments in the row menu.
+
+Two loop constructs now coexist, deliberately: a `loop`/`endLoop` BLOCK (#187)
+repeats any steps a fixed number of times, while a `runFlow` call's
+`repeat`/`repeatVar` is mabl's flow-scoped loop — the call-site form is the
+only one that can be variable-driven, and its `gl_i<k>` counters cannot
+collide with the block's `i`/`i2` names. Wrapping a call in a block covers the
+fixed case twice; that redundancy was accepted over removing either feature in
+a conflict-resolution merge.
+
+Everything the branch added that main lacked survives unchanged: the binding
+fix (a flow's plain variables bind to the flow's own values; secrets/captured
+surface into the caller's header and env), caller-spec propagation in
+`testStore.save`, the library surface (used-by, guarded delete, unwrap, rail
+section), trainer multi-select and extraction, and inline flow editing.

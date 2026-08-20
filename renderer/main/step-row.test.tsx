@@ -724,3 +724,122 @@ describe("inline editing a page-level assert", () => {
     expect((screen.getByLabelText(/edit expected/i) as HTMLInputElement).value).toBe("Dashboard");
   });
 });
+
+// ── The flow-arguments editor ─────────────────────────────────────────────
+//
+// The kebab's "Edit Flow Arguments…" is the only way to change a runFlow
+// step's arguments after insertion. The dialog's own rules are covered in
+// flow-args-fields.test.tsx; what's pinned here is the WIRING — the item is
+// offered for runFlow steps (and only reachable with onEdit), and saving
+// lands on onEdit as a flowArgs patch, which is the shape
+// `recorder:updateStep` re-normalizes.
+
+vi.mock("../lib/api", () => ({
+  api: {
+    tests: {
+      listFlows: async () => [
+        { id: "f1", name: "Login", flowParams: ["email"], paramDefaults: { email: "d@x.com" } },
+      ],
+    },
+  },
+}));
+
+describe("the flow-arguments editor", () => {
+  async function openKebabAnd(label: string): Promise<{ labels: string[] }> {
+    const seen: string[] = [];
+    const popup = vi.fn(
+      async (opts: { items: { label?: string; commandId?: number }[] }) => {
+        const flat = opts.items;
+        for (const i of flat) if (i.label) seen.push(i.label);
+        const hit = flat.find((i) => i.label === label);
+        return hit?.commandId !== undefined ? { commandId: hit.commandId } : {};
+      },
+    );
+    (window as unknown as { glazeAPI: { Menu: unknown } }).glazeAPI = { Menu: { popup } };
+    fireEvent.click(screen.getByLabelText("Step utilities"));
+    await waitFor(() => expect(popup).toHaveBeenCalled());
+    return { labels: seen };
+  }
+
+  it("offers the item for a runFlow step and saves through onEdit", async () => {
+    const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+    const onEdit = vi.fn();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <StepRow
+          index={0}
+          step={step({ type: "runFlow", flowId: "f1", label: "Login" })}
+          onEdit={onEdit}
+        />
+      </QueryClientProvider>,
+    );
+    const { labels } = await openKebabAnd("Edit Flow Arguments…");
+    expect(labels).toContain("Edit Flow Arguments…");
+    const email = await screen.findByLabelText("Flow argument email");
+    fireEvent.change(email, { target: { value: "caller@x.com" } });
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    await waitFor(() =>
+      expect(onEdit).toHaveBeenCalledWith({ flowArgs: { email: "caller@x.com" } }),
+    );
+  });
+
+  it("does not offer the item for other step types", async () => {
+    render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} onEdit={vi.fn()} />,
+    );
+    const { labels } = await openKebabAnd("Continue on Failure");
+    expect(labels).not.toContain("Edit Flow Arguments…");
+  });
+});
+
+// ── Loop rows ──────────────────────────────────────────────────────────────
+
+describe("loop rows", () => {
+  it("renders the halves as words, not raw type names", () => {
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "loop", loopCount: 3 })} />,
+    );
+    expect(container.textContent).toContain("repeat 3 times");
+    const end = render(<StepRow index={1} step={step({ type: "endLoop" })} />);
+    expect(end.container.textContent).toContain("end repeat");
+    expect(end.container.textContent).not.toContain("endLoop");
+  });
+
+  it("edits the count inline, clamped, through the loopCount patch", () => {
+    const onEdit = vi.fn();
+    render(
+      <StepRow index={0} step={step({ type: "loop", loopCount: 3 })} onEdit={onEdit} />,
+    );
+    fireEvent.click(screen.getByLabelText(/edit step/i));
+    const input = screen.getByLabelText(/edit times/i);
+    fireEvent.change(input, { target: { value: "9999" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onEdit).toHaveBeenCalledWith({ loopCount: 500 });
+  });
+
+  it("offers neither disable nor continue-on-failure on the halves", () => {
+    // Half a disabled loop is an unbalanced block; the generator refuses to
+    // wrap them, and the kebab must not offer what the generator refuses.
+    for (const type of ["loop", "endLoop"] as const) {
+      const { container, unmount } = render(
+        <StepRow index={0} step={step({ type })} onEdit={vi.fn()} />,
+      );
+      expect(container.querySelector('[aria-label="Step utilities"]'), type).toBeNull();
+      unmount();
+    }
+  });
+
+  it("offers no lone replay for the halves", () => {
+    for (const type of ["loop", "endLoop"] as const) {
+      const { container, unmount } = render(
+        <StepRow index={0} step={step({ type })} onReplay={async () => ({ ok: true })} />,
+      );
+      const labels = [...container.querySelectorAll("button")].map(
+        (b) => b.getAttribute("aria-label") ?? "",
+      );
+      expect(labels.some((l) => l.toLowerCase().includes("replay")), type).toBe(false);
+      unmount();
+    }
+  });
+});

@@ -114,6 +114,24 @@ describe("nth: the trainer acted on a different element than the spec", () => {
     expect(r.ok).toBe(false);
     expect(why(r)).toMatch(/out of range/i);
   });
+
+  it("previews nth(-1) against the LAST match, same as the emitted .nth(-1)", () => {
+    // "Last" is the stable ordinal for a set whose size changes between runs,
+    // and the trainer previewing it against anything but the tail would be
+    // the same trainer-vs-run divergence the describe above records for
+    // positive indexes.
+    document.body.innerHTML =
+      '<button id="a">Save</button><button id="b">Save</button><button id="c">Save</button>';
+    let clicked = "";
+    for (const id of ["a", "b", "c"]) {
+      document.getElementById(id)!.addEventListener("click", () => {
+        clicked = id;
+      });
+    }
+    const r = run(step({ type: "click", locator: { k: "text", v: "Save", nth: -1 } }));
+    expect(r.ok).toBe(true);
+    expect(clicked).toBe("c");
+  });
 });
 
 describe("URL and title: the assertions that could not pass", () => {
@@ -144,6 +162,33 @@ describe("URL and title: the assertions that could not pass", () => {
   it("title matching is case-sensitive", () => {
     document.title = "Cart | Acme";
     expect(run(step({ type: "assert", assert: "titleContains", value: "cart" })).ok).toBe(false);
+  });
+
+  it("'URL path is' passes under the query noise that fails the whole-URL kinds", () => {
+    // The shape both of this app's real recorded URL assertions died on: the
+    // value is a path, the live URL carries a query string. `urlPathIs` is the
+    // kind that makes that combination pass; `urlEndsWith` correctly still
+    // fails it, because its label promises the literal end of the URL.
+    window.history.pushState({}, "", "/cart/?step=2#top");
+    try {
+      expect(run(step({ type: "assert", assert: "urlPathIs", value: "/cart" })).ok).toBe(true);
+      expect(run(step({ type: "assert", assert: "urlPathIs", value: "/checkout" })).ok).toBe(false);
+      expect(run(step({ type: "assert", assert: "urlEndsWith", value: "/cart" })).ok).toBe(false);
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
+  });
+
+  it("a page-level assert with an empty value fails, because nothing will be generated for it", () => {
+    // The generator refuses these (an empty "contains" matches every page), so
+    // a green preview would stand in for a spec line that will never exist.
+    // matchesValue would answer true for an empty substring — three tests in
+    // the store carried exactly such steps, visible and asserting nothing.
+    for (const assert of ["url", "urlEndsWith", "urlIs", "urlPathIs", "title", "titleContains"] as const) {
+      const r = run(step({ type: "assert", assert }));
+      expect(r.ok, `${assert} with no value must not pass the preview`).toBe(false);
+      expect(why(r)).toMatch(/no expected value/i);
+    }
   });
 });
 
@@ -326,5 +371,17 @@ describe("the scan cap belongs to capture, not to preview", () => {
     document.body.innerHTML = parts.join("");
     const r = run(step({ type: "assert", assert: "count", count: 7000, locator: { k: "css", v: "span" } }));
     expect(r.ok, why(r)).toBe(true);
+  });
+});
+
+describe("loop halves in the preview", () => {
+  it("treats both halves as narrated no-ops — the body previews once", () => {
+    // The preview walks the list linearly; repetition is the RUN's behaviour.
+    // What matters here is honesty (the log says so) and that neither half
+    // fails, which would block replay-from-step across any loop.
+    const open = run(step({ type: "loop", loopCount: 4 }));
+    expect(open.ok).toBe(true);
+    const close = run(step({ type: "endLoop" }));
+    expect(close.ok).toBe(true);
   });
 });

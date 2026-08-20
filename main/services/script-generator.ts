@@ -1,7 +1,7 @@
 // Convert recorded steps into a @playwright/test spec file.
 
 import { GLAZE_RUNTIME_FILE } from "./glaze-runtime-source.js";
-import { ASSERT_SEMANTICS, reEscape, textMatchExpr, WAIT_SEMANTICS } from "../../shared/step-semantics.mjs";
+import { ASSERT_SEMANTICS, reEscape, textMatchExpr, urlPathExpr, WAIT_SEMANTICS } from "../../shared/step-semantics.mjs";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import {
   cookieScopeIsValid,
@@ -9,6 +9,7 @@ import {
   isCssPropName,
   isValidVariableName,
   MAX_FLOW_REPEAT,
+  MAX_LOOP_COUNT,
   toPlaywrightSameSite,
   VAR_REF_RE,
 } from "../recorder/types.js";
@@ -142,7 +143,7 @@ function locatorBase(loc: Locator): string {
  * built below, and `check:locator-roundtrip`, which holds the property that
  * makes emitting one safe: everything written here can be read back.
  */
-function locatorExpr(loc: Locator): string {
+export function locatorExpr(loc: Locator): string {
   let base = locatorBase(loc);
 
   // ── The user's pinned context ────────────────────────────────────────────
@@ -187,7 +188,15 @@ function locatorExpr(loc: Locator): string {
   // follows for every numeric field — this lands in the source as a bare
   // numeral, which is precisely the hole a `count` of `"0); …; ("` went through
   // once.
-  return typeof loc.nth === "number" ? base + ".nth(" + num(loc.nth, 0) + ")" : base;
+  // -1 is Playwright's "last match" and the one negative the model admits
+  // (`normalizeLocator` bounds it). The generator guards independently of the
+  // boundary — the ternary is what stands between a forged deeper negative
+  // (reachable through `updateStep`'s raw copy, which never re-normalizes) and
+  // a `.nth(-7)` Playwright would refuse at run time; anything below -1 falls
+  // back to 0, exactly as a non-numeric always has.
+  return typeof loc.nth === "number"
+    ? base + ".nth(" + num(loc.nth >= -1 ? loc.nth : 0, 0) + ")"
+    : base;
 }
 
 function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>): string | null {
@@ -210,6 +219,12 @@ function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>
     // value it cannot stand behind; this refuses to GENERATE one.
     if ((step.value ?? "") === "") return null;
     return "await " + e + "(page).toHaveURL(" + textMatchExpr(step.value ?? "", semantics) + ");";
+  }
+  if (step.assert === "urlPathIs") {
+    // Same empty-value refusal as above: with no path, `urlPathPattern` builds
+    // the site-root pattern, which asserts something the user never typed.
+    if ((step.value ?? "") === "") return null;
+    return "await " + e + "(page).toHaveURL(" + urlPathExpr(step.value ?? "") + ");";
   }
   if (step.assert === "title" || step.assert === "titleContains") {
     const semantics = ASSERT_SEMANTICS[step.assert];
@@ -589,7 +604,7 @@ function ungeneratableReason(step: Step): string {
   if (needsLocator && !step.locator) return "this step needs an element and none was recorded";
   if (step.type === "assert") {
     const a = step.assert;
-    if (a === "url" || a === "urlEndsWith" || a === "urlIs" || a === "title" || a === "titleContains") {
+    if (a === "url" || a === "urlEndsWith" || a === "urlIs" || a === "urlPathIs" || a === "title" || a === "titleContains") {
       // The only way to reach here for a page-level assert. Said plainly,
       // because the alternative — generating it — is an assertion that either
       // matches every page or no page.
@@ -704,6 +719,8 @@ function stepLogLine(step: Step): string | null {
 export function describeStep(step: Step): string {
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
+  if (step.type === "loop") return "repeat " + (step.loopCount ?? 1) + " times";
+  if (step.type === "endLoop") return "end repeat";
   if (step.type === "wait" && step.waitUntil) return describeWait(step);
   if (step.type === "cookie") return describeCookie(step);
   if (step.type === "capture") return describeCapture(step);
@@ -737,15 +754,16 @@ export function describeCapture(step: Step): string {
  *  renderer/lib/describe-step.ts. */
 export function describeFlow(step: Step): string {
   const name = step.label || step.flowId || "flow";
-  // `name=value` pairs, not bare names: which parameters are overridden is the
-  // whole difference between two calls of the same flow, and a list of keys
-  // reads as if every call were identical. Values are clipped so one long
-  // argument can't turn the row into a paragraph.
-  const args = Object.entries(step.flowArgs ?? {}).map(([k, v]) => {
-    const val = v.length > 24 ? v.slice(0, 24) + "…" : v;
-    return `${k}=${val}`;
-  });
-  const base = args.length > 0 ? `run flow ${name} (${args.join(", ")})` : `run flow ${name}`;
+  // name=value rather than the bare names: a bound flow call's meaning IS its
+  // arguments, and two calls to the same flow differ only here. Values are
+  // clipped for the step list; the only spec-side sink is a comment, and both
+  // comment emitters run through `commentSafe`, so a hostile value cannot
+  // escape (pinned in assert-emission.test.ts). A repeated call carries its
+  // ×N / ×${var} suffix — the loop is part of what the call MEANS.
+  const entries = Object.entries(step.flowArgs ?? {});
+  const args = entries.map(([k, v]) => `${k}=${v.length > 18 ? v.slice(0, 17) + "…" : v}`);
+  const base =
+    entries.length === 0 ? `run flow ${name}` : `run flow ${name} (${args.join(", ")})`;
   const { fixed, variable } = repeatSpec(step);
   if (variable !== undefined) return `${base} ×\${${variable}}`;
   return fixed > 1 ? `${base} ×${fixed}` : base;
@@ -1116,15 +1134,62 @@ export function generateSpecDetailed(
     lineMap[bodyStartLine + body.length] = index;
   };
 
-  // Loop bookkeeping: sequential counter names so nested repeated flows can't
-  // collide, and the set of calls whose loop was refused (repeat variable not
-  // declared) so the matching close marker is skipped too.
+  // TWO loop bookkeepings, for the two loop constructs. `loopNames` holds the
+  // open `loop`/`endLoop` BLOCK variables (`i`, `i2`, …) so nested blocks
+  // don't shadow each other — a second `let i` inside the first is a
+  // SyntaxError. `loopIdx`/`refusedLoops` belong to the runFlow CALL repeat:
+  // sequential `gl_i<k>` counters so nested repeated flows can't collide with
+  // each other or with the block names, and the set of calls whose loop was
+  // refused (repeat variable not declared) so the matching close marker is
+  // skipped too.
+  const loopNames: string[] = [];
   let loopIdx = 0;
   const refusedLoops = new Set<Step>();
 
   for (const { step, sourceIndex, problem, loop } of expanded) {
     if (problem) {
-      body.push("  // " + problem);
+      // Through `commentSafe` like every other comment: `problem` embeds the
+      // step's LABEL, which is user text that `str()` length-caps but does not
+      // strip line terminators from. Raw, a label containing a newline ended
+      // the comment early and its remainder became a statement in the spec —
+      // reachable from the capture channel with an unresolvable flowId, which
+      // made it page input compiled into executed code. Pinned alongside the
+      // other comment sinks in assert-emission.test.ts.
+      body.push(commentSafe("  // " + problem));
+      continue;
+    }
+    // Loop halves are emitted here rather than in `stepLine`: the `for` line
+    // needs a variable name that depends on how many loops are already open,
+    // which is emission-order state a per-step formatter cannot hold. Same
+    // pairing rules as if/endif — never disabled, never wrapped — plus one
+    // repair the spec's parseability demands: a stray `endLoop` (its opening
+    // half was deleted) becomes a comment instead of an unbalanced `}` that
+    // would make the whole file a syntax error.
+    if (step.type === "loop") {
+      const lc = step.loopCount;
+      // The generator clamps independently of `normalizeLocator`-style bounds
+      // at the boundary — same double-guard as every numeral, covering steps
+      // that arrive through `updateStep`'s raw copy.
+      const count =
+        typeof lc === "number" && Number.isFinite(lc)
+          ? Math.min(MAX_LOOP_COUNT, Math.max(1, Math.trunc(lc)))
+          : 1;
+      const nm = loopNames.length === 0 ? "i" : "i" + (loopNames.length + 1);
+      record1(sourceIndex);
+      body.push("  ".repeat(depth) + `for (let ${nm} = 0; ${nm} < ${count}; ${nm}++) {`);
+      loopNames.push(nm);
+      depth += 1;
+      continue;
+    }
+    if (step.type === "endLoop") {
+      if (loopNames.length === 0) {
+        body.push(commentSafe("  ".repeat(depth) + "// end repeat without an open loop — skipped"));
+        continue;
+      }
+      loopNames.pop();
+      depth = Math.max(1, depth - 1);
+      record1(sourceIndex);
+      body.push("  ".repeat(depth) + "}");
       continue;
     }
     if (loop === "open") {
@@ -1207,6 +1272,16 @@ export function generateSpecDetailed(
       if (logLine) body.push(indent + logLine);
     }
     if (step.type === "if") depth += 1;
+  }
+
+  // A `loop` whose closing half was deleted would leave the file with an
+  // unclosed `for {` — a syntax error, a spec that cannot run. Close what
+  // remains open with plain braces: the parser reads each one back as an
+  // `endLoop`, so the next round-trip restores the pair instead of losing it.
+  while (loopNames.length > 0) {
+    loopNames.pop();
+    depth = Math.max(1, depth - 1);
+    body.push("  ".repeat(depth) + "}");
   }
 
   const title = record.name && record.name.trim() ? record.name.trim() : "recorded test";

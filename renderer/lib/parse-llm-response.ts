@@ -5,6 +5,7 @@
 import {
   ASSERT_KINDS as ALL_ASSERT_KINDS,
   LOCATOR_KINDS as ALL_LOCATOR_KINDS,
+  PAGE_VALUE_ASSERT_KINDS,
   WAIT_UNTIL_KINDS as ALL_WAIT_UNTIL_KINDS,
 } from "./recorder-types";
 import { testIdOverride } from "../../shared/testid-attr.mjs";
@@ -226,6 +227,15 @@ function validateStep(raw: unknown): RawStep | null {
 
   // Steps that can't do anything without their key field are dropped.
   if (type === "assert" && !step.assert) return null;
+  // A page-level value assert with no value generates NOTHING — the generator
+  // refuses an assertion that would match every page. The prompt tells the
+  // model an empty expected value is refused outright; this is where that
+  // refusal actually happens. Keeping the step instead would plant one that
+  // looks added and asserts nothing, which is how three tests in the store
+  // came to carry valueless `urlIs` steps.
+  if (type === "assert" && step.assert && PAGE_VALUE_ASSERT_KINDS.includes(step.assert) && !step.value) {
+    return null;
+  }
   if (type === "goto" && !step.url) return null;
   if ((type === "click" || type === "fill" || type === "select" || type === "check" || type === "uncheck") && !step.locator) {
     return null;
