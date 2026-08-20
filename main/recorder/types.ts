@@ -402,9 +402,9 @@ export interface ElementFingerprint {
 }
 
 /** What a `capture` step reads off its resolved element. */
-export type CaptureSource = "text" | "value" | "attribute" | "url" | "title";
+export type CaptureSource = "text" | "value" | "attribute" | "url" | "title" | "count";
 
-export const CAPTURE_SOURCES: CaptureSource[] = ["text", "value", "attribute", "url", "title"];
+export const CAPTURE_SOURCES: CaptureSource[] = ["text", "value", "attribute", "url", "title", "count"];
 
 export function isCaptureSource(v: unknown): v is CaptureSource {
   return typeof v === "string" && (CAPTURE_SOURCES as string[]).includes(v);

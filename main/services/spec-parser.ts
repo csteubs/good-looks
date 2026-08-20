@@ -953,7 +953,7 @@ function parseBody(
       // Args are positional and generator-emitted, so a narrow match is right:
       // anything else is a hand-written call we shouldn't half-parse.
       const argM = argsStr.match(
-        /^\s*V\s*,\s*['"]([^'"]+)['"]\s*,\s*([\s\S]*?),\s*['"](text|value|attribute|url|title)['"]\s*(?:,\s*['"]([^'"]*)['"]\s*)?$/,
+        /^\s*V\s*,\s*['"]([^'"]+)['"]\s*,\s*([\s\S]*?),\s*['"](text|value|attribute|url|title|count)['"]\s*(?:,\s*['"]([^'"]*)['"]\s*)?$/,
       );
       if (argM) {
         const subject = argM[2].trim();

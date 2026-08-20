@@ -204,6 +204,19 @@ matching bare "not visible", which also appears in plain resolve failures —
 mislabelling a vanished element would send the user to the force toggle when
 the element is simply gone). Its description points at the toggle, which is
 the discoverability path: fail for this reason, read why, find the escape.
+### 2026-08-19 — Count as a value, not only an expectation
+
+`captureFrom: "count"` — capture how many elements a locator matches into a
+variable. The count ASSERT has existed for fixed expectations; this is count
+as data: capture a list's size, act, assert the size moved, all through the
+existing capture machinery (one new branch in the emitted runtime, one in the
+preview). The rule that carries it is NON-STRICTNESS, stated in both places:
+counting an ambiguous or absent locator is the whole point, and 0 is an
+answer, not a failure — so the preview's count branch bypasses the strict
+resolve every other capture source goes through, and the runtime reads
+`locator.count()`, which never strict-throws. The runtime test evaluates the
+EMITTED source string (a `data:` import), so it pins what runs, not a
+lookalike.
 
 ### 2026-08-19 — Download steps: the order is the feature
 

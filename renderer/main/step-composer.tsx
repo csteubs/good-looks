@@ -149,6 +149,7 @@ export const CAPTURE_OPTIONS: { value: CaptureSource; label: string; page?: bool
   { value: "text", label: "Element text" },
   { value: "value", label: "Input value" },
   { value: "attribute", label: "Element attribute" },
+  { value: "count", label: "Match count" },
   { value: "url", label: "Page URL", page: true },
   { value: "title", label: "Page title", page: true },
 ];

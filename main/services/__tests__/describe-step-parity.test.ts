@@ -45,6 +45,10 @@ const cases: { label: string; step: Step }[] = [
   { label: "loop", step: step({ type: "loop", loopCount: 4 }) },
   { label: "loop with no count", step: step({ type: "loop" }) },
   { label: "endLoop", step: step({ type: "endLoop" }) },
+  {
+    label: "capture count",
+    step: step({ type: "capture", captureVar: "results", captureFrom: "count", locator: LOCATOR }),
+  },
   { label: "download, any", step: step({ type: "download" }) },
   { label: "download containing", step: step({ type: "download", value: "report.csv" }) },
   {
