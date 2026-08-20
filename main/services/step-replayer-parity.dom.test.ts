@@ -428,6 +428,14 @@ describe("ai checks in the preview", () => {
   });
 });
 
+describe("dialog steps in the preview", () => {
+  it("is a narrated no-op — arming happens on runs", () => {
+    const r = run(step({ type: "dialog", dialogAction: "accept" }));
+    expect(r.ok).toBe(true);
+    expect(why(r)).toMatch(/run/i);
+  });
+});
+
 describe("group markers in the preview", () => {
   it("both halves are narrated no-ops", () => {
     expect(run(step({ type: "group", label: "G" })).ok).toBe(true);

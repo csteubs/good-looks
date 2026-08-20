@@ -741,6 +741,17 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
           "await glazeScrollTo(page, " + num(step.scrollX, 0) + ", " + num(step.scrollY, 0) + ");"
         );
       return null;
+    case "dialog": {
+      // Action from OUR allowlist, never the field raw; the prompt text is a
+      // free string through valueExpr (variables work). Dismiss carries no
+      // second argument at all, so the two forms stay visually distinct.
+      const action = step.dialogAction === "dismiss" ? "dismiss" : "accept";
+      const textArg =
+        action === "accept" && typeof step.value === "string" && step.value !== ""
+          ? ", " + valueExpr(step.value, vars)
+          : "";
+      return 'await glazeArmDialog(page, "' + action + '"' + textArg + ");";
+    }
     case "a11y": {
       // The impact interpolated into source comes from OUR allowlist, never
       // from the step field — same independent-guard rule as num()/q(). An
@@ -809,6 +820,11 @@ export function describeStep(step: Step): string {
   if (step.type === "aiCheck") return `AI check: ${JSON.stringify(step.text ?? "")}`;
   if (step.type === "group") return "group: " + (step.label ?? "");
   if (step.type === "endGroup") return "end group";
+  if (step.type === "dialog") {
+    return step.dialogAction === "dismiss"
+      ? "dismiss the next dialog"
+      : "accept the next dialog" + (step.value ? ` with ${JSON.stringify(step.value)}` : "");
+  }
   // Phrase, not the helper line — glazeA11yGate(...) names the mechanism.
   // Kept in sync with the mirror in renderer/lib/describe-step.ts.
   if (step.type === "a11y")
@@ -1289,6 +1305,7 @@ export function generateSpecDetailed(
   const needsApi = expanded.some((e) => !e.problem && e.step.type === "api");
   const needsTotp = variables.some((v) => v.kind === "secret" && v.totp);
   const needsAiCheck = expanded.some((e) => !e.problem && e.step.type === "aiCheck");
+  const needsDialog = expanded.some((e) => !e.problem && e.step.type === "dialog");
   const preamble = ['import { test, expect } from "@playwright/test";'];
   const runtimeNames = [
     ...(needsCapture ? ["glazeCapture"] : []),
@@ -1298,6 +1315,7 @@ export function generateSpecDetailed(
     ...(needsApi ? ["glazeApiRequest"] : []),
     ...(needsTotp ? ["glazeTotp"] : []),
     ...(needsAiCheck ? ["glazeAiCheck"] : []),
+    ...(needsDialog ? ["glazeArmDialog"] : []),
   ];
   if (runtimeNames.length > 0) {
     preamble.push(`import { ${runtimeNames.join(", ")} } from "./${GLAZE_RUNTIME_FILE}";`);

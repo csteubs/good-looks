@@ -1191,6 +1191,28 @@ function parseBody(
       continue;
     }
 
+    // glazeArmDialog(page, "<action>"[, text]) — the dialog-arming step.
+    const dlgM = rest.match(/^[\s;]*(?:await\s+|return\s+)?glazeArmDialog\s*\(/);
+    if (dlgM) {
+      const openIdx = i + dlgM[0].length - 1;
+      const close = matchParen(src, openIdx);
+      if (close < 0) break;
+      const inner = src.slice(openIdx + 1, close);
+      const headM = inner.match(/^\s*page\s*,\s*"(accept|dismiss)"\s*(,)?/);
+      if (headM) {
+        const extra: Record<string, unknown> = { dialogAction: headM[1] };
+        if (headM[2]) {
+          const text = parseValueArg(inner.slice(inner.indexOf(headM[0]) + headM[0].length));
+          if (text !== null && headM[1] === "accept") extra.value = text;
+        }
+        steps.push(makeStep("dialog", extra));
+      } else {
+        skipped++;
+      }
+      i = close + 1;
+      continue;
+    }
+
     // ── group: <label> ── / ── end group ── — the organizational markers.
     // Comments in the spec, steps in the list; the label is everything
     // between the head and the LAST trailing separator, so a label
