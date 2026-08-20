@@ -542,6 +542,10 @@ export function buildReplayScript(step: Step): string {
       log("info", "API request steps run on RUNS - the preview does not send requests");
       return { ok: true };
     }
+    if (t === "aiCheck") {
+      log("info", "AI checks are evaluated after RUNS by your configured model - the preview does not judge");
+      return { ok: true };
+    }
     if (t === "download") {
       log("info", "download expectations are verified on runs — the training browser cancels transfers");
       return { ok: true };

@@ -97,6 +97,7 @@ export type AddStepKind =
   | "a11y"
   | "upload"
   | "api"
+  | "aiCheck"
   | "fill";
 
 export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
@@ -116,6 +117,7 @@ export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   a11y: "Check accessibility",
   upload: "Upload a file",
   api: "API request",
+  aiCheck: "AI visual check",
   fill: "Fill with a variable",
 };
 
@@ -740,6 +742,8 @@ export function StepComposer({
   // The a11y gate's impact floor. "serious" is axe's second-worst level and
   // the default that makes a first gate useful without drowning in minors.
   const [a11yImpact, setA11yImpact] = React.useState<A11yImpact>("serious");
+  // The AI check's claim about the page at this point.
+  const [aiClaim, setAiClaim] = React.useState("");
   // The `download` kind's three fields. Filename empty = "any download" —
   // the await itself is the assertion then, which is a real one.
   const [dlName, setDlName] = React.useState("");
@@ -1003,6 +1007,11 @@ export function StepComposer({
           if (cp !== "") step.capturePath = cp;
         }
         return [step];
+      }
+      case "aiCheck": {
+        const claim = aiClaim.trim();
+        if (claim === "") return null;
+        return [{ type: "aiCheck", text: claim }];
       }
       case "download": {
         const name = dlName.trim();
@@ -1808,6 +1817,25 @@ export function StepComposer({
                 onClearPick={onClearPick}
               />
             )}
+          </>
+        ) : null}
+        {kind === "aiCheck" ? (
+          <>
+            <Text size="small" className="text-secondary">
+              Screenshots the page at this point; after the run, your configured AI model judges
+              the claim against it. The run itself never fails on the verdict — failed claims are
+              counted on the run and listed in its output.
+            </Text>
+            <Field label="The claim to verify" orientation="vertical">
+              <textarea
+                aria-label="AI check claim"
+                className="gl-textarea"
+                rows={2}
+                placeholder="The cart badge shows 3 items"
+                value={aiClaim}
+                onChange={(e) => setAiClaim(e.target.value)}
+              />
+            </Field>
           </>
         ) : null}
         {kind === "a11y" ? (

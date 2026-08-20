@@ -291,6 +291,8 @@ export function describeStep(step: Step): string {
   if (step.type === "loop") return "repeat " + (step.loopCount ?? 1) + " times";
   if (step.type === "endLoop") return "end repeat";
   // Mirror of the backend phrase — pinned by describe-step-parity.test.ts.
+  if (step.type === "aiCheck") return `AI check: ${JSON.stringify(step.text ?? "")}`;
+  // Mirror of the backend phrase — pinned by describe-step-parity.test.ts.
   if (step.type === "a11y") {
     const impact =
       step.a11yImpact === "minor" ||

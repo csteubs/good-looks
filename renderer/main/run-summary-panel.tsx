@@ -105,6 +105,15 @@ function PassedPanel({ summary }: { summary: PassedSummary }) {
           : `${plural(summary.a11yChecks, "check")} · none new`,
     });
   }
+  {
+    const aiTotal = summary.aiChecksPassed + summary.aiChecksFailed + summary.aiChecksUnevaluated;
+    if (aiTotal > 0) {
+      const parts = [`${summary.aiChecksPassed} passed`];
+      if (summary.aiChecksFailed > 0) parts.push(`${summary.aiChecksFailed} FAILED`);
+      if (summary.aiChecksUnevaluated > 0) parts.push(`${summary.aiChecksUnevaluated} unevaluated`);
+      rows.push({ label: "AI checks", value: parts.join(" · ") });
+    }
+  }
   return (
     <div className="gl-run-summary" data-gl="run-summary" data-state="passed">
       <Verdict

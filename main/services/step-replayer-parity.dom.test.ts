@@ -420,6 +420,14 @@ describe("api steps in the preview", () => {
   });
 });
 
+describe("ai checks in the preview", () => {
+  it("is a narrated no-op — the model judges after runs, never here", () => {
+    const r = run(step({ type: "aiCheck", text: "badge shows 3" }));
+    expect(r.ok).toBe(true);
+    expect(why(r)).toMatch(/run/i);
+  });
+});
+
 describe("download steps in the preview", () => {
   it("is a narrated no-op that never claims verification", () => {
     // The training browser cancels transfers, so no download event can reach

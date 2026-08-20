@@ -43,6 +43,7 @@ import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import { generateSpec, generateSpecDetailed, secretEnvName } from "./script-generator.js";
 import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "./glaze-runtime-source.js";
 import { ensureSessionsDir, freshSessionState, sessionStatePath } from "./session-state-store.js";
+import { evaluateAiChecks } from "./ai-check.js";
 import { HEAL_FIXTURE_FILE, healFixtureSource } from "./heal-fixture-source.js";
 import { SETTLE_FIXTURE_FILE, settleFixtureSource } from "./settle-fixture-source.js";
 import { buildHealProbeScript } from "./auto-heal.js";
@@ -1170,6 +1171,10 @@ export const playwrightRunner = {
       // Declared out here because the finally block reads them: everything
       // below is set inside the try, which the finally cannot see into.
       let checkedAccessibility = false;
+      // Resolved inside the try (the run's steps), read in the finally (the
+      // post-run evaluation) — same seam checkedAccessibility crosses.
+      let hasAiChecks = false;
+      let aiCheckDir = "";
       let healDir = "";
       let healMapPath = "";
       let healApplyMode: HealApplyMode = "suggest";
@@ -1242,6 +1247,14 @@ export const playwrightRunner = {
               `No fresh saved session from "${from?.name ?? rec.useSessionFrom}" — running without. Run that test (with session saving on) first.\n`,
             );
           }
+        }
+        // AI visual checks: the helper screenshots into the run's artifact
+        // dir; the app evaluates them after the run. The dir is created here
+        // because a checks-only run may have every capture toggle off.
+        hasAiChecks = runSteps.some((st) => st.type === "aiCheck" && !st.disabled);
+        aiCheckDir = hasAiChecks ? artifactStore.runDir(rec.id, recordId) : "";
+        if (aiCheckDir) {
+          try { fs.mkdirSync(aiCheckDir, { recursive: true }); } catch { /* fixture reports */ }
         }
         const axeFile = axePath(nodeModules);
         const a11y = wantA11y && fs.existsSync(axeFile);
@@ -1533,6 +1546,7 @@ export const playwrightRunner = {
             ...(await runProxyEnv()),
             GLAZE_HEAL: healing ? "1" : "0",
             GLAZE_SETTLE: settling ? "1" : "0",
+            GLAZE_AI_CHECK_DIR: aiCheckDir,
             GLAZE_A11Y: a11y ? "1" : "0",
             // The path travels whenever the file exists, not only when the CAPTURE
             // toggle is on: an `a11y` GATE step injects axe itself mid-test via
@@ -1686,6 +1700,33 @@ export const playwrightRunner = {
           }
         }
 
+        // AI visual checks: judge each captured screenshot against its claim
+        // with the configured model, AFTER the run — the run's own verdict is
+        // already sealed and is never touched. Provider failures degrade to
+        // UNEVALUATED with the provider's sentence, per check, said in the
+        // output panel; silence is the one outcome this pipeline refuses.
+        let aiChecksPassed = 0;
+        let aiChecksFailed = 0;
+        let aiChecksUnevaluated = 0;
+        if (hasAiChecks) {
+          const results = await evaluateAiChecks({
+            steps: runSteps,
+            dir: aiCheckDir,
+            emit: (line) => emitOutput(runId, "system", line),
+          });
+          aiChecksPassed = results.filter((r) => r.verdict === "pass").length;
+          aiChecksFailed = results.filter((r) => r.verdict === "fail").length;
+          aiChecksUnevaluated = results.filter((r) => r.verdict === "unevaluated").length;
+          try {
+            fs.writeFileSync(
+              path.join(aiCheckDir, "ai-checks.json"),
+              JSON.stringify({ testId: rec.id, runId: recordId, checks: results }, null, 2),
+            );
+          } catch (err) {
+            logger.warn("runner", "Failed to persist AI check results", { err: String(err) });
+          }
+        }
+
         // Persist this run to the log database (metadata + raw output). The
         // record id === the artifacts runId so later phases can join them.
         const logText = (logBuffers.get(runId) ?? []).join("");
@@ -1729,6 +1770,9 @@ export const playwrightRunner = {
               a11yMs,
               a11yChecks: a11yCheckCount,
               a11yNewSteps,
+              aiChecksPassed,
+              aiChecksFailed,
+              aiChecksUnevaluated,
               replayOfRunId,
             },
             logText,

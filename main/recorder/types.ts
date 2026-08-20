@@ -87,7 +87,13 @@ export type StepType =
   // glazeApiRequest(...) line; with no expectStatus the step still FAILS on
   // any 4xx/5xx — a request step that silently accepts 500 hides exactly
   // what it exists to catch.
-  | "api";
+  | "api"
+  // AI visual check: screenshot the page at this point (runtime helper) and
+  // have the app's configured model verify a natural-language claim about it
+  // AFTER the run. Never blocks or fails the Playwright run itself — the
+  // verdicts attach to the run record, and a failed claim is a run notice.
+  // The claim travels in `text`.
+  | "aiCheck";
 
 /** axe's impact scale, weakest first. An `a11y` gate step fails on violations
  *  AT OR ABOVE its `a11yImpact`; the order here is the comparison. */
@@ -952,7 +958,7 @@ export function normalizeDatasets(input: unknown): Dataset[] {
 export const STEP_TYPES: StepType[] = [
   "goto", "click", "fill", "press", "select", "check", "uncheck", "assert",
   "wait", "viewport", "if", "else", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
-  "scroll", "download", "a11y", "upload", "api",
+  "scroll", "download", "a11y", "upload", "api", "aiCheck",
 ];
 
 export type DownloadMatch = "contains" | "exact";
@@ -2096,6 +2102,10 @@ export interface RunRecord {
    *  test's accepted baseline. Reported, never fatal — the run's pass/fail is
    *  decided purely by its assertions. */
   a11yNewSteps?: number;
+  /** AI visual checks, evaluated post-run (see ai-check pipeline) */
+  aiChecksPassed?: number;
+  aiChecksFailed?: number;
+  aiChecksUnevaluated?: number;
   /** Wall-clock ms this run spent taking screenshots, and how many it took.
    *  Only present on capture runs from the instrumented fixture onward — the
    *  raw inputs for the "what does capture cost?" readout in Stats. */

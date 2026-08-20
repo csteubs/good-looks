@@ -1162,6 +1162,26 @@ function parseBody(
       continue;
     }
 
+    // glazeAiCheck(page, "<claim>", <n>) — the AI visual check. The ordinal
+    // is generator bookkeeping and is re-derived on regeneration; only the
+    // claim rides the step.
+    const aiM = rest.match(/^[\s;]*(?:await\s+|return\s+)?glazeAiCheck\s*\(/);
+    if (aiM) {
+      const openIdx = i + aiM[0].length - 1;
+      const close = matchParen(src, openIdx);
+      if (close < 0) break;
+      const inner = src.slice(openIdx + 1, close);
+      const argM = inner.match(/^\s*page\s*,\s*/);
+      const claim = argM ? parseValueArg(inner.slice(argM[0].length)) : null;
+      if (argM && claim !== null && /,\s*\d+\s*$/.test(inner)) {
+        steps.push(makeStep("aiCheck", { text: claim }));
+      } else {
+        skipped++;
+      }
+      i = close + 1;
+      continue;
+    }
+
     // page.goto("…")
     const gotoM = rest.match(/^[\s;]*(?:await\s+|return\s+)?page\.goto\s*\(/);
     if (gotoM) {

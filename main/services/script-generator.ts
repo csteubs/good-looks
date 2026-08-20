@@ -805,6 +805,8 @@ export function describeStep(step: Step): string {
   if (step.type === "else") return "else";
   if (step.type === "loop") return "repeat " + (step.loopCount ?? 1) + " times";
   if (step.type === "endLoop") return "end repeat";
+  // Kept in sync with the mirror in renderer/lib/describe-step.ts.
+  if (step.type === "aiCheck") return `AI check: ${JSON.stringify(step.text ?? "")}`;
   // Phrase, not the helper line — glazeA11yGate(...) names the mechanism.
   // Kept in sync with the mirror in renderer/lib/describe-step.ts.
   if (step.type === "a11y")
@@ -1284,6 +1286,7 @@ export function generateSpecDetailed(
   const needsGenerate = variables.some((v) => v.kind === "generated");
   const needsApi = expanded.some((e) => !e.problem && e.step.type === "api");
   const needsTotp = variables.some((v) => v.kind === "secret" && v.totp);
+  const needsAiCheck = expanded.some((e) => !e.problem && e.step.type === "aiCheck");
   const preamble = ['import { test, expect } from "@playwright/test";'];
   const runtimeNames = [
     ...(needsCapture ? ["glazeCapture"] : []),
@@ -1292,6 +1295,7 @@ export function generateSpecDetailed(
     ...(needsGenerate ? ["glazeGenerate"] : []),
     ...(needsApi ? ["glazeApiRequest"] : []),
     ...(needsTotp ? ["glazeTotp"] : []),
+    ...(needsAiCheck ? ["glazeAiCheck"] : []),
   ];
   if (runtimeNames.length > 0) {
     preamble.push(`import { ${runtimeNames.join(", ")} } from "./${GLAZE_RUNTIME_FILE}";`);
@@ -1334,6 +1338,7 @@ export function generateSpecDetailed(
   // (top of a loop, second else, no block at all) it is a SyntaxError, the
   // same never-break-the-file rule the loop halves follow.
   const blockKinds: { kind: "if" | "loop"; elsed?: boolean }[] = [];
+  let aiCheckIdx = 0;
   let loopIdx = 0;
   const refusedLoops = new Set<Step>();
 
@@ -1497,6 +1502,26 @@ export function generateSpecDetailed(
       record1(sourceIndex);
       body.push("  ".repeat(depth) + "} else {");
       depth += 1;
+      continue;
+    }
+    if (step.type === "aiCheck") {
+      const indent = "  ".repeat(depth);
+      if (step.disabled) {
+        // The STATEMENT, not the phrase: the disabled marker re-parses what
+        // follows it, and a phrase would drop the step on round-trip. The
+        // ordinal is 0 on purpose — disabled checks are outside the live
+        // numbering, and regeneration re-derives ordinals anyway.
+        body.push(
+          commentSafe(indent + "// disabled — skipped: await glazeAiCheck(page, " + q(step.text ?? "") + ", 0);"),
+        );
+        continue;
+      }
+      // The claim is q()'d like every free string; the ordinal pairs the
+      // helper's screenshot file with this step after the run and is OURS
+      // (a counter, never a step field).
+      aiCheckIdx += 1;
+      record1(sourceIndex);
+      body.push(indent + "await glazeAiCheck(page, " + q(step.text ?? "") + ", " + aiCheckIdx + ");");
       continue;
     }
     if (step.type === "download") {

@@ -44,6 +44,7 @@ const SYNTAX: Record<SyntaxTheme, Record<StepType, string>> = {
     assert: "#d7c98a",
     state: "#d7c98a",
     download: "#d7c98a",
+    aiCheck: "#d7c98a",
     a11y: "#d7c98a",
     api: "#d7c98a",
     // Control flow and waiting — the things that change what runs.
@@ -66,6 +67,7 @@ const LABEL: Partial<Record<StepType, string>> = {
   endLoop: "end repeat",
   runFlow: "flow",
   viewport: "size",
+  aiCheck: "ai check",
 };
 
 export interface TypeChipProps {

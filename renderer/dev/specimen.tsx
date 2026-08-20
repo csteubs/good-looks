@@ -66,6 +66,9 @@ const RUN_SUMMARIES: RunSummary[] = [
     captured: true,
     a11yChecks: 6,
     a11yNewSteps: 2,
+    aiChecksPassed: 2,
+    aiChecksFailed: 1,
+    aiChecksUnevaluated: 0,
   },
   {
     state: "healed",
