@@ -34,6 +34,10 @@ export type StepType =
   // between them run only when the condition holds; otherwise they're skipped
   // and the test continues gracefully.
   | "if"
+  // `else` splits an if block: steps after it run when the condition did NOT
+  // hold. Same pairing discipline as the other halves - never disabled or
+  // wrapped, valid only directly inside an `if` that has no `else` yet.
+  | "else"
   | "endif"
   // `loop` opens a repeat-N-times block, `endLoop` closes it. Same pairing
   // discipline as if/endif: the pair is inserted together, neither half can be
@@ -847,7 +851,7 @@ export function normalizeDatasets(input: unknown): Dataset[] {
 
 export const STEP_TYPES: StepType[] = [
   "goto", "click", "fill", "press", "select", "check", "uncheck", "assert",
-  "wait", "viewport", "if", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
+  "wait", "viewport", "if", "else", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
   "scroll", "download",
 ];
 

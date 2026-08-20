@@ -45,6 +45,7 @@ const SYNTAX: Record<SyntaxTheme, Record<StepType, string>> = {
     download: "#d7c98a",
     // Control flow and waiting — the things that change what runs.
     if: "#b9a6e0",
+    else: "#b9a6e0",
     endif: "#b9a6e0",
     loop: "#b9a6e0",
     endLoop: "#b9a6e0",
@@ -56,6 +57,7 @@ const SYNTAX: Record<SyntaxTheme, Record<StepType, string>> = {
 /** What the chip says. Not the raw union: `endif` reads as a typo, `runFlow`
  *  as a variable name, and both are shown to people who did not write them. */
 const LABEL: Partial<Record<StepType, string>> = {
+  else: "else",
   endif: "end if",
   loop: "repeat",
   endLoop: "end repeat",

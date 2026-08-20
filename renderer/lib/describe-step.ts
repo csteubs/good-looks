@@ -166,9 +166,9 @@ export function computeStepDepths(steps: { type: StepType }[]): number[] {
   const depths: number[] = [];
   let d = 0;
   for (const s of steps) {
-    if (s.type === "endif" || s.type === "endLoop") d = Math.max(0, d - 1);
+    if (s.type === "endif" || s.type === "endLoop" || s.type === "else") d = Math.max(0, d - 1);
     depths.push(d);
-    if (s.type === "if" || s.type === "loop") d += 1;
+    if (s.type === "if" || s.type === "loop" || s.type === "else") d += 1;
   }
   return depths;
 }
@@ -287,6 +287,7 @@ function describeState(step: Step, target: string | null): string {
 export function describeStep(step: Step): string {
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
+  if (step.type === "else") return "else";
   if (step.type === "loop") return "repeat " + (step.loopCount ?? 1) + " times";
   if (step.type === "endLoop") return "end repeat";
   if (step.type === "download") {

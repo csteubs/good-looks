@@ -733,6 +733,7 @@ export function StepRow({
               anything as part of the run that also releases it. */}
           {onReplay &&
           step.type !== "goto" &&
+          step.type !== "else" &&
           step.type !== "endif" &&
           step.type !== "loop" &&
           step.type !== "endLoop" &&
@@ -781,6 +782,7 @@ export function StepRow({
             const canContinue =
               onEdit &&
               step.type !== "if" &&
+              step.type !== "else" &&
               step.type !== "endif" &&
               step.type !== "loop" &&
               step.type !== "endLoop";

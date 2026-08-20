@@ -740,6 +740,7 @@ function stepLogLine(step: Step): string | null {
 export function describeStep(step: Step): string {
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
+  if (step.type === "else") return "else";
   if (step.type === "loop") return "repeat " + (step.loopCount ?? 1) + " times";
   if (step.type === "endLoop") return "end repeat";
   if (step.type === "download") {
@@ -1210,6 +1211,12 @@ export function generateSpecDetailed(
   // refused (repeat variable not declared) so the matching close marker is
   // skipped too.
   const loopNames: string[] = [];
+  // Open blocks by KIND, innermost last, with whether an `if` has spent its
+  // `else`. The stack exists for one emission decision: `} else {` is only
+  // valid directly inside an if that has no else yet — emitted anywhere else
+  // (top of a loop, second else, no block at all) it is a SyntaxError, the
+  // same never-break-the-file rule the loop halves follow.
+  const blockKinds: { kind: "if" | "loop"; elsed?: boolean }[] = [];
   let loopIdx = 0;
   const refusedLoops = new Set<Step>();
 
@@ -1299,6 +1306,7 @@ export function generateSpecDetailed(
       record1(sourceIndex);
       body.push("  ".repeat(depth) + `for (let ${nm} = 0; ${nm} < ${count}; ${nm}++) {`);
       loopNames.push(nm);
+      blockKinds.push({ kind: "loop" });
       depth += 1;
       continue;
     }
@@ -1307,6 +1315,7 @@ export function generateSpecDetailed(
         body.push(commentSafe("  ".repeat(depth) + "// end repeat without an open loop — skipped"));
         continue;
       }
+      if (blockKinds[blockKinds.length - 1]?.kind === "loop") blockKinds.pop();
       loopNames.pop();
       depth = Math.max(1, depth - 1);
       record1(sourceIndex);
@@ -1339,13 +1348,38 @@ export function generateSpecDetailed(
           ? `${indent}for (let ${i} = 0, ${n} = Math.max(0, Math.min(${MAX_FLOW_REPEAT}, Number(V.${variable}) || 0)); ${i} < ${n}; ${i}++) {`
           : `${indent}for (let ${i} = 0; ${i} < ${String(fixed)}; ${i}++) {`,
       );
+      blockKinds.push({ kind: "loop" });
       depth += 1;
       continue;
     }
     if (loop === "close") {
       if (refusedLoops.has(step)) continue;
+      if (blockKinds[blockKinds.length - 1]?.kind === "loop") blockKinds.pop();
       depth = Math.max(1, depth - 1);
       body.push("  ".repeat(depth) + "}");
+      continue;
+    }
+    // `else` splits the innermost if. Valid only there: emitted anywhere else
+    // it is an unbalanced-brace SyntaxError, so a stray or second else becomes
+    // a comment — the same never-break-the-file rule the loop halves follow.
+    if (step.type === "else") {
+      const top = blockKinds[blockKinds.length - 1];
+      if (!top || top.kind !== "if" || top.elsed) {
+        body.push(
+          commentSafe(
+            "  ".repeat(depth) +
+              (top?.elsed
+                ? "// second else in one if — skipped"
+                : "// else without an open if — skipped"),
+          ),
+        );
+        continue;
+      }
+      top.elsed = true;
+      depth = Math.max(1, depth - 1);
+      record1(sourceIndex);
+      body.push("  ".repeat(depth) + "} else {");
+      depth += 1;
       continue;
     }
     if (step.type === "download") {
@@ -1394,6 +1428,7 @@ export function generateSpecDetailed(
       continue;
     }
     if (step.type === "endif") depth = Math.max(1, depth - 1);
+    if (step.type === "endif" && blockKinds[blockKinds.length - 1]?.kind === "if") blockKinds.pop();
     const indent = "  ".repeat(depth);
     // A trailing log statement (viewport only) travels with its step through
     // every arm below: a disabled resize must not log that it happened, and a
@@ -1426,6 +1461,7 @@ export function generateSpecDetailed(
       body.push(indent + line);
       if (logLine) body.push(indent + logLine);
     }
+    if (step.type === "if") blockKinds.push({ kind: "if" });
     if (step.type === "if") depth += 1;
   }
 

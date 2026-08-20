@@ -8867,3 +8867,45 @@ thread advance calls through the helper and change what the tests exercise —
 and the bridge schedules more than the run (the refine pick, the flow-scope
 push), all of which would need advancing too. Shrinking real time keeps the
 tests on exactly the code path the preview runs.
+## 2026-08-19 — Else branches: positional meaning, one composer submit, jump-aware replay
+
+An `if` block can now carry an ELSE half (mabl's if/else). The step itself is
+empty — `{ type: "else" }` with no condition and no locator — because its
+whole meaning is positional: steps between the if and the else run when the
+condition holds, steps between the else and the end-if when it does not. A
+condition on the else would be a second feature (else-if) pretending to be
+this one, and the memo's variable-condition work is deliberately not in this
+change.
+
+Three decisions carry it:
+
+**The generator refuses rather than guesses.** `} else {` is only valid JS
+directly inside an un-elsed `if`, so the emitter keeps a `blockKinds` stack
+(kind + elsed flag, mirrored in the parser) and turns a stray else, a second
+else, or an else whose innermost open block is a LOOP into a `commentSafe`
+comment — the never-break-the-file rule the loop halves established. The
+loop-innermost case matters most: the else "obviously" belongs to the if one
+level out, but emitting it there would silently move steps between branches;
+a comment says what was skipped instead.
+
+**One submit inserts the whole shape.** The composer's condition kind gained
+an "Include an ELSE branch" checkbox; ticked, `onAdd` receives
+`[if, else, endif]` together. There is no lone insertable else — pairing
+discipline by construction, the same reason the loop kind inserts its halves
+together.
+
+**Replay jumps, the preview narrates.** In a live session, a false condition
+now lands the cursor ON the else (the loop increment then starts the
+else-body — the branch a real run takes), and an else reached by EXECUTION
+jumps to the endif (the condition held, so the else-body is what a real run
+skips). Both scans live in `matchingElseIndex` / `matchingBlockIndex`
+(depth-aware, so an inner if's else can never read as the outer one's). The
+injected replayer instead treats a lone else as a narrated no-op, like the
+loop halves — replay-from-step must be able to cross one.
+
+The parser accepts `} else {` only when its stack's top is an un-elsed if, so
+a foreign or invalid else is skipped (its body's known calls harvest flat,
+the standing foreign-wrapper philosophy) rather than half-read into a
+recorded block. `main/services/else-emission.test.ts` pins emission shape,
+all three refusals, round-trips at every nesting, the fixed point, and both
+parser-guard cases; both guards were revert-verified.

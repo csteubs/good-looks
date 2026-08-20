@@ -710,6 +710,8 @@ export function StepComposer({
   // Iterations for the `loop` kind, held as text so a half-typed number
   // doesn't fight the input (same rule as the step row's numeric drafts).
   const [loopTimes, setLoopTimes] = React.useState("2");
+  // Whether the condition kind also inserts an ELSE half between the pair.
+  const [withElse, setWithElse] = React.useState(false);
   // The `download` kind's three fields. Filename empty = "any download" —
   // the await itself is the assertion then, which is a real one.
   const [dlName, setDlName] = React.useState("");
@@ -958,6 +960,9 @@ export function StepComposer({
       }
       case "condition": {
         // Insert an empty IF/END-IF pair; the user drags steps between them.
+        // With the else box ticked, the ELSE half rides along — steps dragged
+        // between if and else run when the condition holds, steps between
+        // else and end-if when it does not.
         const ifStep: RawStep = { type: "if", cond };
         if (condOpt.page) {
           ifStep.value = value;
@@ -965,7 +970,9 @@ export function StepComposer({
           if (!locator) return null;
           ifStep.locator = locator;
         }
-        return [ifStep, { type: "endif" }];
+        return withElse
+          ? [ifStep, { type: "else" }, { type: "endif" }]
+          : [ifStep, { type: "endif" }];
       }
       case "assertion": {
         const step: RawStep = { type: "assert", assert, soft: soft || undefined };
@@ -1700,6 +1707,14 @@ export function StepComposer({
               <code>if</code> and <code>end if</code> rows run only when this condition is
               true — otherwise they’re skipped and the test continues.
             </Text>
+            <label className="flex cursor-pointer items-center gap-2">
+              <Checkbox
+                checked={withElse}
+                onCheckedChange={(v: boolean | "indeterminate") => setWithElse(v === true)}
+                aria-label="Include an ELSE branch"
+              />
+              <Text variant="small">Include an ELSE branch — steps after it run when the condition does NOT hold</Text>
+            </label>
             <Field label="Run the block when" orientation="vertical">
               <Select value={cond} onValueChange={(v) => setCond(v as ConditionKind)}>
                 <SelectTrigger size="small">
