@@ -39,6 +39,7 @@ const SYNTAX: Record<SyntaxTheme, Record<StepType, string>> = {
     check: "#8fd0e8",
     uncheck: "#8fd0e8",
     scroll: "#8fd0e8",
+    upload: "#8fd0e8",
     // Claims — the things that can be wrong.
     assert: "#d7c98a",
     state: "#d7c98a",

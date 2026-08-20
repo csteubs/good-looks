@@ -51,6 +51,12 @@ const cases: { label: string; step: Step }[] = [
   // Malformed on purpose: both sides must fall back to "serious" identically.
   { label: "a11y gate with forged impact", step: step({ type: "a11y", a11yImpact: "nope" as never }) },
   {
+    label: "upload",
+    step: step({ type: "upload", locator: { k: "testid", v: "f" }, value: "uploads/t/report.csv" }),
+  },
+  // Malformed on purpose: no value — both sides must degrade identically.
+  { label: "upload with no file", step: step({ type: "upload", locator: { k: "testid", v: "f" } }) },
+  {
     label: "capture count",
     step: step({ type: "capture", captureVar: "results", captureFrom: "count", locator: LOCATOR }),
   },

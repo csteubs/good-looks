@@ -300,6 +300,10 @@ export function describeStep(step: Step): string {
         : "serious";
     return "check accessibility (fail on " + impact + " or worse)";
   }
+  if (step.type === "upload") {
+    const name = typeof step.value === "string" ? step.value.split("/").pop() ?? "" : "";
+    return name ? `upload ${JSON.stringify(name)}` : "upload a file";
+  }
   if (step.type === "download") {
     const name = step.value ?? "";
     const base =

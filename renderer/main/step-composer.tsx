@@ -36,6 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
   Text,
+  toast,
 } from "@ui";
 import { Crosshair, X } from "lucide-react";
 
@@ -92,6 +93,7 @@ export type AddStepKind =
   | "runFlow"
   | "elementState"
   | "a11y"
+  | "upload"
   | "fill";
 
 export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
@@ -109,6 +111,7 @@ export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   runFlow: "Run a flow",
   elementState: "Set element state",
   a11y: "Check accessibility",
+  upload: "Upload a file",
   fill: "Fill with a variable",
 };
 
@@ -714,6 +717,11 @@ export function StepComposer({
   // Iterations for the `loop` kind, held as text so a half-typed number
   // doesn't fight the input (same rule as the step row's numeric drafts).
   const [loopTimes, setLoopTimes] = React.useState("2");
+  // The staged file an upload step will point at (scripts-relative path +
+  // display name), set by the Choose-file button's round-trip.
+  const [uploadRel, setUploadRel] = React.useState<string | null>(null);
+  const [uploadName, setUploadName] = React.useState<string>("");
+  const [uploadBusy, setUploadBusy] = React.useState(false);
   // Whether the condition kind also inserts an ELSE half between the pair.
   const [withElse, setWithElse] = React.useState(false);
   // The a11y gate's impact floor. "serious" is axe's second-worst level and
@@ -946,6 +954,10 @@ export function StepComposer({
       }
       case "a11y":
         return [{ type: "a11y", a11yImpact }];
+      case "upload": {
+        if (!locator || !uploadRel) return null;
+        return [{ type: "upload", locator, value: uploadRel }];
+      }
       case "download": {
         const name = dlName.trim();
         const varName = dlVar.trim();
@@ -1773,6 +1785,54 @@ export function StepComposer({
                 </SelectContent>
               </Select>
             </Field>
+          </>
+        ) : null}
+        {kind === "upload" ? (
+          <>
+            <Text size="small" className="text-secondary">
+              Sets a file input&apos;s files. The picked file is COPIED into this test&apos;s own
+              fixtures, so the step keeps working when the original moves. The preview narrates
+              it; runs perform it.
+            </Text>
+            <TargetElementPicker
+              picked={picked}
+              onChange={setLocator}
+              onStartPick={onStartPick}
+              onClearPick={onClearPick}
+            />
+            <div className="flex items-center gap-2">
+              <Btn
+                tone="ghost"
+                disabled={uploadBusy}
+                onClick={() => {
+                  setUploadBusy(true);
+                  void api.recorder
+                    .stageUpload()
+                    .then((res) => {
+                      if (res.canceled) return;
+                      if (res.problem || !res.relPath) {
+                        toast.error(res.problem ?? "Could not stage the file.");
+                        return;
+                      }
+                      setUploadRel(res.relPath);
+                      setUploadName(res.name ?? res.relPath);
+                    })
+                    .catch((err: unknown) => toast.error(String(err)))
+                    .finally(() => setUploadBusy(false));
+                }}
+              >
+                {uploadBusy ? "Choosing…" : "Choose file…"}
+              </Btn>
+              {uploadName ? (
+                <Text size="small" className="font-mono">
+                  {uploadName}
+                </Text>
+              ) : (
+                <Text size="small" className="text-tertiary">
+                  No file staged yet.
+                </Text>
+              )}
+            </div>
           </>
         ) : null}
       </div>

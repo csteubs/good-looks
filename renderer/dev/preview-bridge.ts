@@ -1767,6 +1767,13 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       });
       return recorderState();
     },
+    /** No native picker in a browser tab — the stage is CANNED, the same
+     *  rule as the CSV import fake, so the composer's staged-file row and
+     *  the emitted step can be seen at all in preview. */
+    "recorder:stageUpload": () => ({
+      relPath: "uploads/t-preview/fixture.csv",
+      name: "fixture.csv",
+    }),
     "recorder:getState": (): RecorderState => recorderState(),
     // Inline flow editing, over the fixtures: entering opens the sign-in
     // flow's steps as the working copy; edits are not simulated (there is no

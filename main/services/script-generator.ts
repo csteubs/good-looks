@@ -9,6 +9,7 @@ import {
   isA11yImpact,
   isCssPropName,
   isGenSpec,
+  isSafeUploadRelPath,
   isValidVariableName,
   MAX_FLOW_REPEAT,
   MAX_LOOP_COUNT,
@@ -674,6 +675,15 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
       return captureLine(step, target);
     case "state":
       return stateLine(step, target);
+    case "upload": {
+      // The staged path is interpolated only after the SHAPE guard — the
+      // string lands in executed source, and a value like "uploads/../../x"
+      // would hand setInputFiles an arbitrary file. Boundary length caps are
+      // not enough here; the guard is independent on purpose (a forged value
+      // can arrive through updateStep's raw copy).
+      if (!target || !isSafeUploadRelPath(step.value)) return null;
+      return "await " + target + ".setInputFiles(" + q(step.value) + ");";
+    }
     case "scroll":
       // Element mode wins when both are present: `scrollIntoViewIfNeeded` is
       // native, self-correcting, and reports through the step reporter (a
@@ -761,6 +771,12 @@ export function describeStep(step: Step): string {
       (isA11yImpact(step.a11yImpact) ? step.a11yImpact : "serious") +
       " or worse)"
     );
+  // The staged path names the mechanism; the phrase names the intent. Kept
+  // in sync with the mirror in renderer/lib/describe-step.ts.
+  if (step.type === "upload") {
+    const name = typeof step.value === "string" ? step.value.split("/").pop() ?? "" : "";
+    return name ? `upload ${JSON.stringify(name)}` : "upload a file";
+  }
   if (step.type === "download") {
     const name = step.value ?? "";
     const base =

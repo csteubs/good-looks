@@ -9017,3 +9017,34 @@ The genSpec is enum-guarded twice (boundary allowlist + emission fallback to
 same double-guard rule every interpolated enum follows. The runtime test
 imports the EMITTED glaze-runtime.mjs as real JS and checks each spec's
 shape, that two calls differ, and that the choice is logged.
+
+## 2026-08-19 — Upload steps: a staged copy, and a path shape the generator enforces
+
+An `upload` step sets a file input's files (mabl's file-upload step). The
+decision that shapes it: **the step points at a COPY the app staged, never at
+the picked file's original path.** "Choose file…" copies the pick into
+scripts/uploads/<testId>/ and the step stores that scripts-relative path — so
+the test still runs when the original moves, deleting the test deletes its
+fixtures (same bounded-delete drill as the imported sandbox), and the spec's
+setInputFiles(...) resolves against the scripts dir the runner already uses
+as cwd.
+
+The security half is the path's SHAPE. The staged path is a string that
+lands in EXECUTED source, and the boundary deliberately does not know its
+grammar (it is an ordinary capped string there) — so emission enforces it
+independently: `isSafeUploadRelPath` accepts exactly
+uploads/<segment>/<segment>, each segment starting alphanumeric (that alone
+rules out "." and ".."), with an explicit ".." refusal as the second belt.
+The staging side must agree — everything stageUploadFile returns passes the
+guard, pinned by a test that stages a hostile test id and a hostile basename
+and checks the result is still emittable. The parser applies the SAME guard
+reading back: a hand-written setInputFiles with an array, a buffer, or a
+path outside uploads/ counts skipped rather than round-tripping into a step
+the generator would then silently drop.
+
+The trainer preview narrates the step (a content script cannot and should
+not reach the real file system); runs perform it — the capture fixture
+already wraps setInputFiles, so upload steps get screenshots and step
+progress for free. Staging is session-scoped (`recorder:stageUpload`): the
+composer only exists inside a session, and a session has its test id from
+the moment it starts, so an unsaved recording can stage too.
