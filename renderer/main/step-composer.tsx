@@ -53,6 +53,7 @@ import type {
   A11yImpact,
   ApiMethod,
   AssertKind,
+  DialogAction,
   CaptureSource,
   TestVariable,
   VariableKind,
@@ -99,6 +100,7 @@ export type AddStepKind =
   | "api"
   | "aiCheck"
   | "group"
+  | "dialog"
   | "fill";
 
 export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
@@ -120,6 +122,7 @@ export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   api: "API request",
   aiCheck: "AI visual check",
   group: "Group steps",
+  dialog: "Handle next dialog",
   fill: "Fill with a variable",
 };
 
@@ -747,6 +750,8 @@ export function StepComposer({
   // The AI check's claim about the page at this point.
   const [aiClaim, setAiClaim] = React.useState("");
   const [groupLabel, setGroupLabel] = React.useState("");
+  const [dialogAction, setDialogAction] = React.useState<DialogAction>("accept");
+  const [dialogText, setDialogText] = React.useState("");
   // The `download` kind's three fields. Filename empty = "any download" —
   // the await itself is the assertion then, which is a real one.
   const [dlName, setDlName] = React.useState("");
@@ -1022,6 +1027,11 @@ export function StepComposer({
         const label = groupLabel.trim();
         if (label === "") return null;
         return [{ type: "group", label }, { type: "endGroup" }];
+      }
+      case "dialog": {
+        const step: RawStep = { type: "dialog", dialogAction };
+        if (dialogAction === "accept" && dialogText !== "") step.value = dialogText;
+        return [step];
       }
       case "download": {
         const name = dlName.trim();
@@ -1863,6 +1873,35 @@ export function StepComposer({
                 onChange={(e) => setGroupLabel(e.target.value)}
               />
             </Field>
+          </>
+        ) : null}
+        {kind === "dialog" ? (
+          <>
+            <Text size="small" className="text-secondary">
+              Arms a one-shot answer for the NEXT alert, confirm or prompt — place it BEFORE the
+              step that triggers the dialog. Without one, runs auto-dismiss every dialog.
+            </Text>
+            <Field label="Answer" orientation="vertical">
+              <SegmentedControl
+                size="small"
+                value={dialogAction}
+                onValueChange={(v) => setDialogAction(v as DialogAction)}
+              >
+                <SegmentedControlItem value="accept">Accept</SegmentedControlItem>
+                <SegmentedControlItem value="dismiss">Dismiss</SegmentedControlItem>
+              </SegmentedControl>
+            </Field>
+            {dialogAction === "accept" ? (
+              <Field label="Prompt text (optional)" orientation="vertical">
+                <Input
+                  size="small"
+                  aria-label="Prompt text"
+                  placeholder="Jane"
+                  value={dialogText}
+                  onChange={(e) => setDialogText(e.target.value)}
+                />
+              </Field>
+            ) : null}
           </>
         ) : null}
         {kind === "a11y" ? (

@@ -318,4 +318,21 @@ export async function glazeAiCheck(page, claim, n) {
     process.stderr.write("[glaze-ai-check] screenshot failed: " + String(err) + "\\n");
   }
 }
+
+/**
+ * Arm the NEXT JavaScript dialog: accept (with optional prompt text) or
+ * dismiss. One-shot and armed BEFORE the step that triggers it — Playwright
+ * auto-dismisses any dialog nothing is listening for, and a handler
+ * attached after the click races the dialog it exists to answer. A handler
+ * that loses the race (dialog already gone) must not fail the step.
+ */
+export async function glazeArmDialog(page, action, text) {
+  page.once("dialog", (dialog) => {
+    const done =
+      action === "accept"
+        ? dialog.accept(text === undefined ? undefined : String(text))
+        : dialog.dismiss();
+    done.catch(() => {});
+  });
+}
 `;

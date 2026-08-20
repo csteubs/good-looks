@@ -99,7 +99,13 @@ export type StepType =
   // stray half can't break the spec. Same pair-insertion discipline as
   // loop/endLoop; the label rides `label`.
   | "group"
-  | "endGroup";
+  | "endGroup"
+  // Arm the NEXT JavaScript dialog (alert/confirm/prompt): accept it —
+  // with optional prompt text — or dismiss it. One-shot, armed BEFORE the
+  // step that triggers the dialog, because Playwright auto-dismisses any
+  // dialog nothing is listening for and a handler attached after the click
+  // races the dialog it exists to answer (the download-arming argument).
+  | "dialog";
 
 /** axe's impact scale, weakest first. An `a11y` gate step fails on violations
  *  AT OR ABOVE its `a11yImpact`; the order here is the comparison. */
@@ -321,6 +327,9 @@ export interface Step {
    *  Enum-checked at the boundary AND at emission: only a value from
    *  A11Y_IMPACTS is ever interpolated into generated source. */
   a11yImpact?: A11yImpact;
+  /** `dialog` step: accept or dismiss the next JS dialog. Same double-guard
+   *  as every emitted enum. */
+  dialogAction?: DialogAction;
   /** how a `download` step compares the suggested filename against `value`
    *  (default "contains"). Auto-recorded steps use "exact" — the browser just
    *  reported the real name; hand-authored ones default to the looser match
@@ -497,6 +506,8 @@ export interface RawStep {
   timeoutMs?: number;
   loopCount?: number;
   a11yImpact?: A11yImpact;
+  /** `dialog` step: accept or dismiss the next JS dialog. */
+  dialogAction?: DialogAction;
   downloadMatch?: DownloadMatch;
   apiMethod?: ApiMethod;
   apiHeaders?: Record<string, string>;
@@ -964,7 +975,7 @@ export function normalizeDatasets(input: unknown): Dataset[] {
 export const STEP_TYPES: StepType[] = [
   "goto", "click", "fill", "press", "select", "check", "uncheck", "assert",
   "wait", "viewport", "if", "else", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
-  "scroll", "download", "a11y", "upload", "api", "aiCheck", "group", "endGroup",
+  "scroll", "download", "a11y", "upload", "api", "aiCheck", "group", "endGroup", "dialog",
 ];
 
 export type DownloadMatch = "contains" | "exact";
@@ -1001,6 +1012,11 @@ export function isValidCapturePath(v: unknown): v is string {
     /^[A-Za-z_$][A-Za-z0-9_$]*(?:(?:\.[A-Za-z_$][A-Za-z0-9_$]*)|(?:\[\d+\]))*$/.test(v)
   );
 }
+
+/** What a `dialog` step does with the next JS dialog. Interpolated into
+ *  generated source as a literal — closed vocabulary, double-guarded. */
+export const DIALOG_ACTIONS = ["accept", "dismiss"] as const;
+export type DialogAction = (typeof DIALOG_ACTIONS)[number];
 export const DOWNLOAD_MATCHES: DownloadMatch[] = ["contains", "exact"];
 
 export const ASSERT_KINDS: AssertKind[] = [
@@ -1392,6 +1408,8 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   if (downloadMatch) out.downloadMatch = downloadMatch;
   const a11yImpact = oneOf(s.a11yImpact, A11Y_IMPACTS);
   if (a11yImpact) out.a11yImpact = a11yImpact;
+  const dialogAction = oneOf(s.dialogAction, DIALOG_ACTIONS);
+  if (dialogAction) out.dialogAction = dialogAction;
 
   // `api` step fields. Method and status are closed vocabularies; headers are
   // REBUILT pair by pair (never spread) — the name must be a token and the

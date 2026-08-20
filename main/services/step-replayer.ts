@@ -547,6 +547,10 @@ export function buildReplayScript(step: Step): string {
       log("info", "AI checks are evaluated after RUNS by your configured model - the preview does not judge");
       return { ok: true };
     }
+    if (t === "dialog") {
+      log("info", "dialog handling arms on RUNS - in the trainer, answer the dialog yourself");
+      return { ok: true };
+    }
     if (t === "download") {
       log("info", "download expectations are verified on runs — the training browser cancels transfers");
       return { ok: true };

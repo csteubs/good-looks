@@ -9246,3 +9246,25 @@ separator, so a name containing "──" survives whole.
 Collapse/expand is deliberately not in this change: the marker pair, the
 nesting, the composer and the inline rename are the durable model; a
 collapse is list-view state to layer on without touching the spec format.
+## 2026-08-20 — Dialog steps: arm before the trigger, one-shot, race-safe
+
+A `dialog` step arms the answer for the NEXT JavaScript dialog — accept
+(with optional prompt text, variable-aware) or dismiss. Playwright
+auto-dismisses any dialog nothing is listening for, so a confirm() the test
+needs accepted silently takes the wrong branch without one.
+
+The design choices are the download feature's, applied again: the handler
+is ARMED BEFORE the triggering step (a listener attached after the click
+races the dialog it exists to answer), it is one-shot (`page.once` — a
+persistent handler would answer dialogs recorded steps never asked about),
+and it rides a runtime helper so the line is awaited like every step
+(`page.once(...)` alone is a bare statement the line map cannot attribute).
+A handler that loses the race — the dialog already handled or gone — must
+never fail the step; the helper swallows the rejection, and the runtime
+test drives exactly that case.
+
+Recording is manual in this change (the composer's "Handle next dialog");
+auto-capturing the user's own answer in the trainer needs a page-world
+wrap of window.confirm/prompt, which is a new injection surface to design
+deliberately rather than ride along here. The trainer preview narrates the
+step and tells the user to answer the live dialog themselves.

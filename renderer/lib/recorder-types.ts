@@ -13,6 +13,9 @@ export type DownloadMatch = "contains" | "exact";
 export const DOWNLOAD_MATCHES: DownloadMatch[] = ["contains", "exact"];
 
 /** axe impact scale, weakest first — mirror of main/recorder/types.ts. */
+export const DIALOG_ACTIONS = ["accept", "dismiss"] as const;
+export type DialogAction = (typeof DIALOG_ACTIONS)[number];
+
 export const A11Y_IMPACTS = ["minor", "moderate", "serious", "critical"] as const;
 export type A11yImpact = (typeof A11Y_IMPACTS)[number];
 /** Mirror of main/recorder/types.ts. */
@@ -46,7 +49,8 @@ export type StepType =
   | "api"
   | "aiCheck"
   | "group"
-  | "endGroup";
+  | "endGroup"
+  | "dialog";
 
 /** Predicate for an `if` step. Element conditions use `Step.locator`; page
  *  conditions (urlContains/titleContains) use `Step.value` as the substring. */
@@ -272,6 +276,7 @@ export interface Step {
   apiBody?: string;
   expectStatus?: number;
   capturePath?: string;
+  dialogAction?: DialogAction;
   text?: string;
   soft?: boolean;
   force?: boolean;
@@ -367,6 +372,7 @@ export interface RawStep {
   apiBody?: string;
   expectStatus?: number;
   capturePath?: string;
+  dialogAction?: DialogAction;
   text?: string;
   soft?: boolean;
   force?: boolean;
