@@ -80,6 +80,9 @@ export interface PassedSummary extends Base {
   captured: boolean;
   a11yChecks: number;
   a11yNewSteps: number;
+  aiChecksPassed: number;
+  aiChecksFailed: number;
+  aiChecksUnevaluated: number;
 }
 
 export interface HealedSummary extends Base {
@@ -282,6 +285,9 @@ function summariseRecord(
     captured: record.captureArtifacts === true,
     a11yChecks: record.a11yChecks ?? 0,
     a11yNewSteps: record.a11yNewSteps ?? 0,
+    aiChecksPassed: record.aiChecksPassed ?? 0,
+    aiChecksFailed: record.aiChecksFailed ?? 0,
+    aiChecksUnevaluated: record.aiChecksUnevaluated ?? 0,
   };
 }
 
@@ -344,6 +350,9 @@ export function summariseRun(input: SummaryInput): RunSummary {
       captured: false,
       a11yChecks: 0,
       a11yNewSteps: 0,
+      aiChecksPassed: 0,
+      aiChecksFailed: 0,
+      aiChecksUnevaluated: 0,
     };
   }
 

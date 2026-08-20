@@ -312,6 +312,9 @@ describe("the chip's six states are six distinct readings", () => {
         captured: false,
         a11yChecks: 0,
         a11yNewSteps: 0,
+        aiChecksPassed: 0,
+        aiChecksFailed: 0,
+        aiChecksUnevaluated: 0,
       }),
       chipFor({
         state: "healed",

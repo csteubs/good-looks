@@ -176,6 +176,8 @@ export const TESTS: TestRecord[] = [
       // "download" chip and the worded description with its capture note.
       { type: "click", locator: { k: "role", role: "button", name: "Export results" } },
       { type: "download", value: "results.csv", captureVar: "exportName" },
+      // An AI visual check — renders the "ai check" chip and the quoted claim.
+      { type: "aiCheck", text: "the first result links to the locator guide" },
       // An accessibility gate — renders the "a11y" chip and the worded floor.
       { type: "a11y", a11yImpact: "serious" },
       // An upload against a staged fixture — renders the chip and the worded

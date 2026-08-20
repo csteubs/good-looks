@@ -785,7 +785,12 @@ export function StepRow({
               step.type !== "else" &&
               step.type !== "endif" &&
               step.type !== "loop" &&
-              step.type !== "endLoop";
+              step.type !== "endLoop" &&
+              // An AI check never fails the run, so continue-on-failure would
+              // be a wrapper around nothing — and the generator emits the
+              // plain line regardless, which would silently drop the flag on
+              // the next round-trip.
+              step.type !== "aiCheck";
             const isFlowCall = step.type === "runFlow" && !!step.flowId;
             const canFlowArgs = onEdit && isFlowCall;
             const canOpenFlow = onOpenFlow && isFlowCall;

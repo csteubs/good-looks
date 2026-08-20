@@ -531,6 +531,10 @@ export const runHistoryStore = {
       a11yMs?: number;
       a11yChecks?: number;
       a11yNewSteps?: number;
+      /** AI visual checks, evaluated post-run by the configured model */
+      aiChecksPassed?: number;
+      aiChecksFailed?: number;
+      aiChecksUnevaluated?: number;
       /** measured screenshot cost for capture runs (see capture-overhead.ts) */
       captureOverheadMs?: number;
       shotCount?: number;
@@ -587,6 +591,9 @@ export const runHistoryStore = {
       ...(run.a11yMs !== undefined ? { a11yMs: run.a11yMs } : {}),
       ...(run.a11yChecks !== undefined ? { a11yChecks: run.a11yChecks } : {}),
       ...(run.a11yNewSteps ? { a11yNewSteps: run.a11yNewSteps } : {}),
+      ...(run.aiChecksPassed ? { aiChecksPassed: run.aiChecksPassed } : {}),
+      ...(run.aiChecksFailed ? { aiChecksFailed: run.aiChecksFailed } : {}),
+      ...(run.aiChecksUnevaluated ? { aiChecksUnevaluated: run.aiChecksUnevaluated } : {}),
       ...(run.datasetId ? { datasetId: run.datasetId } : {}),
       ...(run.datasetName ? { datasetName: run.datasetName } : {}),
     };

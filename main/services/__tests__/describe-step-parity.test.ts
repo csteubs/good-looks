@@ -46,6 +46,8 @@ const cases: { label: string; step: Step }[] = [
   { label: "loop", step: step({ type: "loop", loopCount: 4 }) },
   { label: "loop with no count", step: step({ type: "loop" }) },
   { label: "endLoop", step: step({ type: "endLoop" }) },
+  { label: "ai check", step: step({ type: "aiCheck", text: "the cart badge shows 3" }) },
+  { label: "ai check with no claim", step: step({ type: "aiCheck" }) },
   { label: "a11y gate", step: step({ type: "a11y", a11yImpact: "critical" }) },
   { label: "a11y gate default impact", step: step({ type: "a11y" }) },
   // Malformed on purpose: both sides must fall back to "serious" identically.

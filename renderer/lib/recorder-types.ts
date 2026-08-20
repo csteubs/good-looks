@@ -43,7 +43,8 @@ export type StepType =
   | "upload"
   | "download"
   | "a11y"
-  | "api";
+  | "api"
+  | "aiCheck";
 
 /** Predicate for an `if` step. Element conditions use `Step.locator`; page
  *  conditions (urlContains/titleContains) use `Step.value` as the substring. */
@@ -851,6 +852,9 @@ export interface RunRecord {
   a11yMs?: number;
   a11yChecks?: number;
   a11yNewSteps?: number;
+  aiChecksPassed?: number;
+  aiChecksFailed?: number;
+  aiChecksUnevaluated?: number;
   /** the dataset row this run used, when it was one row of a sweep. */
   datasetId?: string;
   datasetName?: string;

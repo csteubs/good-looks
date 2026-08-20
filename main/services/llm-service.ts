@@ -528,6 +528,127 @@ export class LlmCompletionError extends Error {
   }
 }
 
+
+/**
+ * One NON-streaming vision call: a claim about a screenshot, answered as a
+ * strict verdict. Serves the post-run AI-check pipeline, which wants a small
+ * JSON answer per screenshot rather than an interactive stream.
+ *
+ * Throws with the provider's own sentence when the call cannot be made (no
+ * key, model without vision, server down) — the caller records the check as
+ * UNEVALUATED with that reason, which is the honest degradation.
+ */
+export async function visionVerdict(params: {
+  claim: string;
+  pngBase64: string;
+}): Promise<{ pass: boolean; reason: string }> {
+  const cfg = llmConfigStore.get();
+  const provider = cfg.provider;
+  const model = cfg.model;
+  if (!model) throw new Error("No model selected — pick one in Settings → AI.");
+  const base = baseUrlFor(provider);
+  const prompt =
+    "You are verifying a UI screenshot against a claim from an automated test.\n" +
+    'Claim: "' + params.claim.replace(/"/g, "'") + '"\n' +
+    "Look only at what is visible in the screenshot. Answer with STRICT JSON, nothing else: " +
+    '{"pass": true|false, "reason": "<one short sentence>"}';
+
+  let text: string;
+  if (provider === "anthropic") {
+    const key = await anthropicKeyStore.getKey();
+    if (!key) throw new Error("Add your Anthropic API key.");
+    const res = await appFetch(`${base}/v1/messages`, {
+      method: "POST",
+      headers: anthropicHeaders(key),
+      body: JSON.stringify({
+        model,
+        max_tokens: 300,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: { type: "base64", media_type: "image/png", data: params.pngBase64 },
+              },
+              { type: "text", text: prompt },
+            ],
+          },
+        ],
+        temperature: 0,
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      const failure = describeHttpFailure({ status: res.status, body, provider, model, hasToken: false });
+      throw new Error(failure.message);
+    }
+    const data = (await res.json()) as { content?: Array<{ type?: string; text?: string }> };
+    text = (data.content ?? []).map((c) => c.text ?? "").join("");
+  } else if (provider === "ollama") {
+    // Ollama's NATIVE chat route: `images` on the message is the documented
+    // vision shape, and it works for every llava-family model without the
+    // OpenAI-compat layer's data-URI variance.
+    const res = await appFetch(`${base}/api/chat`, {
+      method: "POST",
+      body: JSON.stringify({
+        model,
+        stream: false,
+        messages: [{ role: "user", content: prompt, images: [params.pngBase64] }],
+        options: { temperature: 0 },
+      }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!res.ok) throw new Error(`Ollama returned HTTP ${res.status} — the selected model may not support images.`);
+    const data = (await res.json()) as { message?: { content?: string } };
+    text = data.message?.content ?? "";
+  } else {
+    const headers = await localAuthHeaders(provider);
+    const res = await appFetch(`${base}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        temperature: 0,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "image_url", image_url: { url: "data:image/png;base64," + params.pngBase64 } },
+              { type: "text", text: prompt },
+            ],
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      const failure = describeHttpFailure({ status: res.status, body, provider, model, hasToken: Boolean(headers.Authorization) });
+      throw new Error(failure.message);
+    }
+    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    text = data.choices?.[0]?.message?.content ?? "";
+  }
+
+  // Strict-JSON was requested; models decorate anyway. Take the first object
+  // and refuse anything unparseable rather than guessing a verdict.
+  const m = /\{[\s\S]*?\}/.exec(text);
+  if (!m) throw new Error("The model's answer was not the requested JSON verdict.");
+  let parsed: { pass?: unknown; reason?: unknown };
+  try {
+    parsed = JSON.parse(m[0]) as { pass?: unknown; reason?: unknown };
+  } catch {
+    throw new Error("The model's answer was not the requested JSON verdict.");
+  }
+  if (typeof parsed.pass !== "boolean") {
+    throw new Error("The model's answer was not the requested JSON verdict.");
+  }
+  return { pass: parsed.pass, reason: typeof parsed.reason === "string" ? parsed.reason.slice(0, 500) : "" };
+}
+
 export const llmService = {
   defaultBaseUrl(provider: LlmProvider): string {
     return DEFAULT_BASE_URLS[provider];

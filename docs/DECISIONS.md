@@ -9189,3 +9189,37 @@ recording and counting, the load-bearing paths, honor the configuration.
 The settings row drafts locally and saves on blur/Enter: the store
 normalizes hard, and per-keystroke saves would delete a half-typed
 "data-c" out from under the user — the variables panel's lesson.
+## 2026-08-20 — AI visual checks: post-run verdicts that can never fail the run
+
+An `aiCheck` step carries a natural-language claim ("the cart badge shows
+3"). At run time the runtime helper screenshots the page — that is ALL the
+run does. After exit, the app pairs each screenshot with its claim and asks
+the configured model (vision one-shot: Claude image blocks, Ollama's native
+`images`, LM Studio's OpenAI data-URI shape); verdicts land on the RunRecord
+(passed/failed/unevaluated counts), in ai-checks.json beside the run's
+artifacts, and in the output panel.
+
+**The run's own verdict is sealed — this is the design center.** A model's
+opinion about a screenshot must not be able to fail a run Playwright
+passed, or pass one it failed. Three reasons over the alternative (an
+in-spec assertion): the spec stays runnable outside the app (no model, no
+key, no egress in a bare `npx playwright test`); a hosted-model call from
+INSIDE a run would put an API key into the run environment; and verdicts
+are probabilistic — a claim that flips verdict between runs must read as
+"the model disagreed", not as test flake. Failed claims are counted, named
+in the output, and shown on the run summary strip; continue-on-failure is
+excluded from aiCheck rows because there is nothing to continue past.
+
+**Unevaluated is a first-class outcome.** No vision-capable model, provider
+down, screenshot missing — each check records WHY with the provider's own
+sentence, and after two consecutive provider failures the rest inherit the
+reason without hammering a dead endpoint. Silence is the one outcome the
+pipeline refuses.
+
+**Pairing is positional, and pinned.** The generator numbers non-disabled
+checks 1..N in expanded order; the evaluator counts the same way over the
+same list — two counters over one list, the else/loop balance argument
+again, with a test that runs both against a list containing a disabled
+check. A disabled check's marker carries the STATEMENT (ordinal 0), not the
+described phrase, because the disabled-marker parser re-parses what follows
+it and a phrase would drop the step on round-trip.

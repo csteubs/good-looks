@@ -296,4 +296,26 @@ export function glazeTotp(setupKey) {
   }
   return code;
 }
+
+/**
+ * AI visual check: capture the page for POST-RUN evaluation by the app's
+ * configured model. Never fails the run and never judges here — with no
+ * directory configured (a hand run outside the app) it says so and moves on.
+ * The claim itself lives in the spec line for the reader; the app re-reads
+ * it from the step list when it evaluates.
+ */
+export async function glazeAiCheck(page, claim, n) {
+  const dir = process.env.GLAZE_AI_CHECK_DIR || "";
+  if (!dir) {
+    console.log("[glaze-ai-check] no evaluation directory - AI checks run from Good Looks!");
+    return;
+  }
+  try {
+    const path = await import("path");
+    await page.screenshot({ path: path.join(dir, "ai-check-" + n + ".png"), timeout: 10000 });
+    console.log("[glaze-ai-check] captured check " + n + " for post-run evaluation");
+  } catch (err) {
+    process.stderr.write("[glaze-ai-check] screenshot failed: " + String(err) + "\\n");
+  }
+}
 `;
