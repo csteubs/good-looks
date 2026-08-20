@@ -45,6 +45,16 @@ const cases: { label: string; step: Step }[] = [
   { label: "loop", step: step({ type: "loop", loopCount: 4 }) },
   { label: "loop with no count", step: step({ type: "loop" }) },
   { label: "endLoop", step: step({ type: "endLoop" }) },
+  { label: "download, any", step: step({ type: "download" }) },
+  { label: "download containing", step: step({ type: "download", value: "report.csv" }) },
+  {
+    label: "download exact + capture",
+    step: step({ type: "download", value: "a.pdf", downloadMatch: "exact", captureVar: "got" }),
+  },
+  {
+    label: "download with an invalid capture name stays silent about it",
+    step: step({ type: "download", value: "a.pdf", captureVar: "not a name" }),
+  },
   // capture/runFlow were never covered here: the old hand-written step-type
   // guard omitted them, so nothing said so. Both are described by a PHRASE
   // rather than by the generated call, which is exactly the shape that drifts.

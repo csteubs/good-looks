@@ -737,6 +737,18 @@ export function describeStep(step: Step): string {
   if (step.type === "endif") return "end if";
   if (step.type === "loop") return "repeat " + (step.loopCount ?? 1) + " times";
   if (step.type === "endLoop") return "end repeat";
+  if (step.type === "download") {
+    const name = step.value ?? "";
+    const base =
+      name === ""
+        ? "expect a download"
+        : step.downloadMatch === "exact"
+          ? `expect download named ${JSON.stringify(name)}`
+          : `expect download containing ${JSON.stringify(name)}`;
+    return isValidVariableName(step.captureVar)
+      ? base + ` (filename → ${step.captureVar})`
+      : base;
+  }
   if (step.type === "wait" && step.waitUntil) return describeWait(step);
   if (step.type === "cookie") return describeCookie(step);
   if (step.type === "capture") return describeCapture(step);
@@ -1163,7 +1175,17 @@ export function generateSpecDetailed(
     preamble.push(`import { ${runtimeNames.join(", ")} } from "./${GLAZE_RUNTIME_FILE}";`);
   }
   preamble.push("");
-  const header = variableHeader(variables, needsCapture);
+  // A download step saving its filename needs the V object to exist, but NOT
+  // the glazeCapture runtime — the write is a plain property assignment. Kept
+  // separate from `needsCapture` so a download-only spec doesn't grow an
+  // import it never calls.
+  const needsVarObject =
+    needsCapture ||
+    expanded.some(
+      (e) =>
+        !e.problem && e.step.type === "download" && isValidVariableName(e.step.captureVar),
+    );
+  const header = variableHeader(variables, needsVarObject);
   // The `test(...)` line sits at `preamble.length + 1`; the variable header
   // follows it; the first body line is the one after that.
   const bodyStartLine = preamble.length + 2 + header.length;
@@ -1184,7 +1206,61 @@ export function generateSpecDetailed(
   let loopIdx = 0;
   const refusedLoops = new Set<Step>();
 
+  // ── Download arming pre-pass ─────────────────────────────────────────────
+  //
+  // Playwright's blessed download shape arms the waitForEvent promise BEFORE
+  // the triggering action — a listener attached after the click races the
+  // event it exists to catch. So each `download` step's arming line is
+  // emitted just before its trigger: the nearest preceding entry that is a
+  // plain emitting step. Structural steps (if/endif, loop halves, flow-loop
+  // markers) are refused as triggers — arming before an `endif` would put the
+  // const inside a block the await cannot see — and fall back to arming in
+  // place, which still awaits honestly against its timeout. Numbering is
+  // emission order, so regeneration is a fixed point.
+  const STRUCTURAL = new Set(["if", "endif", "loop", "endLoop"]);
+  const armBefore = new Map<number, { n: number; step: Step; sourceIndex: number }[]>();
+  const downloadNum = new Map<Step, { n: number; inPlace: boolean }>();
+  {
+    let n = 0;
+    for (let k = 0; k < expanded.length; k++) {
+      const e = expanded[k];
+      if (e.problem || e.step.type !== "download" || e.step.disabled) continue;
+      n += 1;
+      let j = k - 1;
+      while (
+        j >= 0 &&
+        (expanded[j].problem || expanded[j].step.type === "download")
+      ) {
+        j -= 1;
+      }
+      const trigger =
+        j >= 0 && !expanded[j].loop && !STRUCTURAL.has(expanded[j].step.type)
+          ? j
+          : -1;
+      downloadNum.set(e.step, { n, inPlace: trigger < 0 });
+      if (trigger >= 0) {
+        const list = armBefore.get(trigger) ?? [];
+        list.push({ n, step: e.step, sourceIndex: e.sourceIndex });
+        armBefore.set(trigger, list);
+      }
+    }
+  }
+  const armingLine = (n: number, step: Step): string => {
+    const t = step.timeoutMs;
+    const timeout =
+      typeof t === "number" && Number.isFinite(t)
+        ? Math.min(3_600_000, Math.max(1, Math.trunc(t)))
+        : DEFAULT_WAIT_TIMEOUT_MS;
+    return `const download${n} = page.waitForEvent("download", { timeout: ${timeout} });`;
+  };
+
+  let expandedIndex = -1;
   for (const { step, sourceIndex, problem, loop } of expanded) {
+    expandedIndex += 1;
+    for (const pending of armBefore.get(expandedIndex) ?? []) {
+      record1(pending.sourceIndex);
+      body.push("  ".repeat(depth) + armingLine(pending.n, pending.step));
+    }
     if (problem) {
       // Through `commentSafe` like every other comment: `problem` embeds the
       // step's LABEL, which is user text that `str()` length-caps but does not
@@ -1263,6 +1339,40 @@ export function generateSpecDetailed(
       if (refusedLoops.has(step)) continue;
       depth = Math.max(1, depth - 1);
       body.push("  ".repeat(depth) + "}");
+      continue;
+    }
+    if (step.type === "download") {
+      const indent = "  ".repeat(depth);
+      if (step.disabled) {
+        body.push(commentSafe(indent + "// disabled — skipped: " + describeStep(step)));
+        continue;
+      }
+      const num = downloadNum.get(step);
+      if (!num) continue; // unreachable: every enabled download is numbered
+      if (num.inPlace) {
+        record1(sourceIndex);
+        body.push(indent + armingLine(num.n, step));
+      }
+      const d = `d${num.n}`;
+      const parts = [`const ${d} = await download${num.n};`];
+      if ((step.value ?? "") !== "") {
+        const matcher = step.downloadMatch === "exact" ? "toBe" : "toContain";
+        parts.push(
+          `expect(${d}.suggestedFilename()).${matcher}(${valueExpr(step.value, vars)});`,
+        );
+      }
+      // The variable NAME lands in source as an identifier, so it carries the
+      // same guard `repeatVar` does — an invalid name drops the capture, never
+      // reaches the file.
+      if (isValidVariableName(step.captureVar)) {
+        parts.push(`V.${step.captureVar} = ${d}.suggestedFilename();`);
+      }
+      const stmt = `{ ${parts.join(" ")} }`;
+      record1(sourceIndex);
+      body.push(
+        indent +
+          (step.continueOnFailure ? `try ${stmt} catch { /* continue on failure */ }` : stmt),
+      );
       continue;
     }
     const line = stepLine(step, vars);

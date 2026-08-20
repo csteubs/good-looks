@@ -161,6 +161,10 @@ export const TESTS: TestRecord[] = [
       { type: "fill", locator: { k: "role", role: "searchbox" }, value: "locator" },
       { type: "press", value: "Enter" },
       { type: "endLoop" },
+      // A download expectation right after its trigger — renders the
+      // "download" chip and the worded description with its capture note.
+      { type: "click", locator: { k: "role", role: "button", name: "Export results" } },
+      { type: "download", value: "results.csv", captureVar: "exportName" },
       // Long enough to overflow the pane in both directions, which is the
       // state the step list's scrolling exists for and the one nothing in the
       // preview showed: 43 steps outrun the viewport vertically, and the fill

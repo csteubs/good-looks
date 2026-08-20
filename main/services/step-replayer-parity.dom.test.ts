@@ -385,3 +385,15 @@ describe("loop halves in the preview", () => {
     expect(close.ok).toBe(true);
   });
 });
+
+describe("download steps in the preview", () => {
+  it("is a narrated no-op that never claims verification", () => {
+    // The training browser cancels transfers, so no download event can reach
+    // the preview. The log must say verification happens on runs — a green
+    // row read as "the download was checked" would be the replayer lying in
+    // the optimistic direction, the kind this file exists to prevent.
+    const r = run(step({ type: "download", value: "report.csv" }));
+    expect(r.ok).toBe(true);
+    expect(why(r)).toMatch(/verified on runs/i);
+  });
+});

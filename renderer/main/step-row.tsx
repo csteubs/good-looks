@@ -129,6 +129,8 @@ function editableField(
     case "loop":
       // The count is the loop step's whole content — same rule as waitMs.
       return { key: "loopCount", label: "Times", value: String(step.loopCount ?? 1) };
+    case "download":
+      return { key: "value", label: "Filename", value: step.value ?? "" };
     default:
       return null;
   }

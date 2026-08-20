@@ -287,6 +287,22 @@ export function describeStep(step: Step): string {
   if (step.type === "endif") return "end if";
   if (step.type === "loop") return "repeat " + (step.loopCount ?? 1) + " times";
   if (step.type === "endLoop") return "end repeat";
+  if (step.type === "download") {
+    const name = step.value ?? "";
+    const base =
+      name === ""
+        ? "expect a download"
+        : step.downloadMatch === "exact"
+          ? `expect download named ${JSON.stringify(name)}`
+          : `expect download containing ${JSON.stringify(name)}`;
+    // Mirror of the backend's isValidVariableName gate (the backend is the
+    // source of truth; this copy only decides display).
+    const varOk =
+      !!step.captureVar &&
+      step.captureVar.length <= 40 &&
+      /^[A-Za-z_][A-Za-z0-9_]*$/.test(step.captureVar);
+    return varOk ? base + ` (filename → ${step.captureVar})` : base;
+  }
   if (step.type === "wait" && step.waitUntil) return describeWait(step);
   if (step.type === "cookie") return describeCookie(step);
   if (step.type === "capture") return describeCapture(step);
