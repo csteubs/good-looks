@@ -98,6 +98,7 @@ export type AddStepKind =
   | "upload"
   | "api"
   | "aiCheck"
+  | "group"
   | "fill";
 
 export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
@@ -118,6 +119,7 @@ export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   upload: "Upload a file",
   api: "API request",
   aiCheck: "AI visual check",
+  group: "Group steps",
   fill: "Fill with a variable",
 };
 
@@ -744,6 +746,7 @@ export function StepComposer({
   const [a11yImpact, setA11yImpact] = React.useState<A11yImpact>("serious");
   // The AI check's claim about the page at this point.
   const [aiClaim, setAiClaim] = React.useState("");
+  const [groupLabel, setGroupLabel] = React.useState("");
   // The `download` kind's three fields. Filename empty = "any download" —
   // the await itself is the assertion then, which is a real one.
   const [dlName, setDlName] = React.useState("");
@@ -1012,6 +1015,13 @@ export function StepComposer({
         const claim = aiClaim.trim();
         if (claim === "") return null;
         return [{ type: "aiCheck", text: claim }];
+      }
+      case "group": {
+        // The pair inserts together, the loop kind's idiom — the user drags
+        // steps between the halves.
+        const label = groupLabel.trim();
+        if (label === "") return null;
+        return [{ type: "group", label }, { type: "endGroup" }];
       }
       case "download": {
         const name = dlName.trim();
@@ -1834,6 +1844,23 @@ export function StepComposer({
                 placeholder="The cart badge shows 3 items"
                 value={aiClaim}
                 onChange={(e) => setAiClaim(e.target.value)}
+              />
+            </Field>
+          </>
+        ) : null}
+        {kind === "group" ? (
+          <>
+            <Text size="small" className="text-secondary">
+              Inserts a named section — organization only, nothing runs. Drag steps between the
+              group and its end; the spec carries the name as a comment.
+            </Text>
+            <Field label="Group name" orientation="vertical">
+              <Input
+                size="small"
+                aria-label="Group name"
+                placeholder="Log in"
+                value={groupLabel}
+                onChange={(e) => setGroupLabel(e.target.value)}
               />
             </Field>
           </>

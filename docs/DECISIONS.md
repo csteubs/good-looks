@@ -9223,3 +9223,26 @@ again, with a test that runs both against a list containing a disabled
 check. A disabled check's marker carries the STATEMENT (ordinal 0), not the
 described phrase, because the disabled-marker parser re-parses what follows
 it and a phrase would drop the step on round-trip.
+## 2026-08-20 — Step groups: markers, not blocks
+
+A `group`/`endGroup` pair names a section of the step list (mabl's groups):
+the list nests the members, the spec carries `// ── group: <name> ──` /
+`// ── end group ──` comments, and NOTHING executes. That non-execution is
+the design: organization must never be able to break a test, so the halves
+are comments through commentSafe (whatever the label holds stays inside the
+comment), a stray half is just a marker rather than a repair case (the
+loop/else balance machinery exists because braces break specs; comments
+don't), and the GENERATED indentation is untouched — nesting is the step
+list's rendering, not the spec's.
+
+The parser's comment-stripping preprocessor eats every comment except an
+allowlisted few (the disabled marker, the wait-until marker); group markers
+join that allowlist and are the only comments that round-trip into steps of
+their own. An ordinary human comment in a hand-edited spec is still eaten —
+pinned, because widening that hole would turn every stray comment into a
+phantom step. The label reads back as everything up to the LAST trailing
+separator, so a name containing "──" survives whole.
+
+Collapse/expand is deliberately not in this change: the marker pair, the
+nesting, the composer and the inline rename are the durable model; a
+collapse is list-view state to layer on without touching the spec format.

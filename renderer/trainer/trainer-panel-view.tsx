@@ -129,6 +129,7 @@ const ADD_STEP_KINDS: AddStepKind[] = [
   "upload",
   "api",
   "aiCheck",
+  "group",
   // Last, and deliberately: the discoverable route to it is the training
   // browser's right-click menu on the field being filled, which arrives here
   // as a `fill` context action with the element already resolved. This entry is

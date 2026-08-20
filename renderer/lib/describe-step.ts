@@ -166,9 +166,10 @@ export function computeStepDepths(steps: { type: StepType }[]): number[] {
   const depths: number[] = [];
   let d = 0;
   for (const s of steps) {
-    if (s.type === "endif" || s.type === "endLoop" || s.type === "else") d = Math.max(0, d - 1);
+    if (s.type === "endif" || s.type === "endLoop" || s.type === "else" || s.type === "endGroup")
+      d = Math.max(0, d - 1);
     depths.push(d);
-    if (s.type === "if" || s.type === "loop" || s.type === "else") d += 1;
+    if (s.type === "if" || s.type === "loop" || s.type === "else" || s.type === "group") d += 1;
   }
   return depths;
 }
@@ -292,6 +293,8 @@ export function describeStep(step: Step): string {
   if (step.type === "endLoop") return "end repeat";
   // Mirror of the backend phrase — pinned by describe-step-parity.test.ts.
   if (step.type === "aiCheck") return `AI check: ${JSON.stringify(step.text ?? "")}`;
+  if (step.type === "group") return "group: " + (step.label ?? "");
+  if (step.type === "endGroup") return "end group";
   // Mirror of the backend phrase — pinned by describe-step-parity.test.ts.
   if (step.type === "a11y") {
     const impact =

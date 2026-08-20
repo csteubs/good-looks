@@ -161,10 +161,14 @@ export const TESTS: TestRecord[] = [
       { type: "goto", url: "https://docs.example.com" },
       // A repeat block early in the LONG fixture: renders the "repeat"/"end
       // repeat" chips, the inline count edit, and the body's indent.
+      // A named group wrapping the repeat — renders the section chip, the
+      // label, and the nested indent.
+      { type: "group", label: "Search three ways" },
       { type: "loop", loopCount: 3 },
       { type: "fill", locator: { k: "role", role: "searchbox" }, value: "locator" },
       { type: "press", value: "Enter" },
       { type: "endLoop" },
+      { type: "endGroup" },
       // An elsed conditional — renders the "else" chip at its if's depth with
       // both bodies indented one deeper.
       { type: "if", cond: "visible", locator: { k: "testid", v: "no-results" } },

@@ -428,6 +428,13 @@ describe("ai checks in the preview", () => {
   });
 });
 
+describe("group markers in the preview", () => {
+  it("both halves are narrated no-ops", () => {
+    expect(run(step({ type: "group", label: "G" })).ok).toBe(true);
+    expect(run(step({ type: "endGroup" })).ok).toBe(true);
+  });
+});
+
 describe("download steps in the preview", () => {
   it("is a narrated no-op that never claims verification", () => {
     // The training browser cancels transfers, so no download event can reach

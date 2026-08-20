@@ -807,6 +807,8 @@ export function describeStep(step: Step): string {
   if (step.type === "endLoop") return "end repeat";
   // Kept in sync with the mirror in renderer/lib/describe-step.ts.
   if (step.type === "aiCheck") return `AI check: ${JSON.stringify(step.text ?? "")}`;
+  if (step.type === "group") return "group: " + (step.label ?? "");
+  if (step.type === "endGroup") return "end group";
   // Phrase, not the helper line — glazeA11yGate(...) names the mechanism.
   // Kept in sync with the mirror in renderer/lib/describe-step.ts.
   if (step.type === "a11y")
@@ -1522,6 +1524,22 @@ export function generateSpecDetailed(
       aiCheckIdx += 1;
       record1(sourceIndex);
       body.push(indent + "await glazeAiCheck(page, " + q(step.text ?? "") + ", " + aiCheckIdx + ");");
+      continue;
+    }
+    if (step.type === "group" || step.type === "endGroup") {
+      // Markers, not code: a group is organization, and organization must
+      // never be able to break a spec — so both halves are comments (through
+      // commentSafe, like every comment a step field reaches) and the
+      // GENERATED indent is untouched. Nesting is the STEP LIST's rendering.
+      const indent = "  ".repeat(depth);
+      record1(sourceIndex);
+      body.push(
+        commentSafe(
+          step.type === "group"
+            ? indent + "// ── group: " + (step.label ?? "") + " ──"
+            : indent + "// ── end group ──",
+        ),
+      );
       continue;
     }
     if (step.type === "download") {

@@ -531,6 +531,7 @@ export function buildReplayScript(step: Step): string {
       return { ok: true };
     }
     if (t === "endLoop") { log("info", "end of repeat block"); return { ok: true }; }
+    if (t === "group" || t === "endGroup") { log("info", "group marker - organization only, nothing runs"); return { ok: true }; }
     // The preview cannot receive a download event — transfers are cancelled
     // during recording on purpose. Said out loud so a green row here is never
     // read as "the download was verified"; the RUN is what verifies it.
