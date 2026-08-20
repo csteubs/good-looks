@@ -185,6 +185,15 @@ export const TESTS: TestRecord[] = [
         locator: { k: "label", v: "Import a saved search" },
         value: "uploads/t-search/saved-search.json",
       },
+      // An API request — renders the "api" chip and the worded method/status.
+      {
+        type: "api",
+        apiMethod: "POST",
+        url: "https://api.example.com/search-index",
+        expectStatus: 202,
+        captureVar: "indexJobId",
+        capturePath: "job.id",
+      },
       // A positional-path locator — the recorder's last-resort shape — so the
       // fragility glyph and the detail view's rollup callout render.
       { type: "click", locator: { k: "xpath", v: "/html[1]/body[1]/div[3]/button[2]" } },

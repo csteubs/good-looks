@@ -305,6 +305,25 @@ function main(): void {
       "uploads/../x",
       "the boundary passes an upload path through as a string (emission is the shape gate)",
     );
+    // The api step's request pieces all land in executed source or real
+    // requests: method allowlisted, header values refusing CR/LF (a stored
+    // header that smuggles a newline is a request-splitting primitive), the
+    // status bounded, the capture path grammar-checked.
+    assertEqual(
+      normalizeRawStep({ type: "api", apiMethod: "TRACE" })?.apiMethod,
+      undefined,
+      "a method outside the allowlist is dropped",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "api", apiHeaders: { "X-A": "ok\r\nX-B: smuggled" } })?.apiHeaders,
+      undefined,
+      "a header value carrying CR/LF is dropped whole",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "api", capturePath: "a.b; require(1)" })?.capturePath,
+      undefined,
+      "a capture path outside the dot/bracket grammar is dropped",
+    );
     // `nth` admits exactly one negative: -1, Playwright's "last match". The
     // bound is the boundary half of the pair; the generator independently
     // floors anything deeper to 0 (see locatorExpr), because a forged index

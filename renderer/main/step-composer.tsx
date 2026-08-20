@@ -44,12 +44,14 @@ import { Btn } from "../theme";
 
 import {
   A11Y_IMPACTS,
+  API_METHODS,
   CSS_ASSERT_PROPS,
   DEFAULT_WAIT_TIMEOUT_MS,
   isCssPropName,
 } from "../lib/recorder-types";
 import type {
   A11yImpact,
+  ApiMethod,
   AssertKind,
   CaptureSource,
   TestVariable,
@@ -94,6 +96,7 @@ export type AddStepKind =
   | "elementState"
   | "a11y"
   | "upload"
+  | "api"
   | "fill";
 
 export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
@@ -112,6 +115,7 @@ export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   elementState: "Set element state",
   a11y: "Check accessibility",
   upload: "Upload a file",
+  api: "API request",
   fill: "Fill with a variable",
 };
 
@@ -722,6 +726,15 @@ export function StepComposer({
   const [uploadRel, setUploadRel] = React.useState<string | null>(null);
   const [uploadName, setUploadName] = React.useState<string>("");
   const [uploadBusy, setUploadBusy] = React.useState(false);
+  // API request fields. Headers draft as "Name: value" lines — parsed and
+  // validated on build, kept as text while typing.
+  const [apiMethod, setApiMethod] = React.useState<ApiMethod>("GET");
+  const [apiUrl, setApiUrl] = React.useState("");
+  const [apiHeadersDraft, setApiHeadersDraft] = React.useState("");
+  const [apiBody, setApiBody] = React.useState("");
+  const [apiStatus, setApiStatus] = React.useState("");
+  const [apiCaptureVar, setApiCaptureVar] = React.useState("");
+  const [apiCapturePath, setApiCapturePath] = React.useState("");
   // Whether the condition kind also inserts an ELSE half between the pair.
   const [withElse, setWithElse] = React.useState(false);
   // The a11y gate's impact floor. "serious" is axe's second-worst level and
@@ -957,6 +970,39 @@ export function StepComposer({
       case "upload": {
         if (!locator || !uploadRel) return null;
         return [{ type: "upload", locator, value: uploadRel }];
+      }
+      case "api": {
+        const url = apiUrl.trim();
+        if (url === "") return null;
+        const step: RawStep = { type: "api", apiMethod, url };
+        const headers: Record<string, string> = {};
+        for (const line of apiHeadersDraft.split("\n")) {
+          const t = line.trim();
+          if (t === "") continue;
+          const at = t.indexOf(":");
+          // A malformed header line refuses the WHOLE submit rather than
+          // silently dropping the line — same rule as the css assert.
+          if (at <= 0) return null;
+          const name = t.slice(0, at).trim();
+          const value = t.slice(at + 1).trim();
+          if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(name)) return null;
+          headers[name] = value;
+        }
+        if (Object.keys(headers).length > 0) step.apiHeaders = headers;
+        if (apiBody.trim() !== "") step.apiBody = apiBody;
+        if (apiStatus.trim() !== "") {
+          const n = Number(apiStatus.trim());
+          if (!Number.isInteger(n) || n < 100 || n > 599) return null;
+          step.expectStatus = n;
+        }
+        const cv = apiCaptureVar.trim();
+        if (cv !== "") {
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(cv) || cv.length > 40) return null;
+          step.captureVar = cv;
+          const cp = apiCapturePath.trim();
+          if (cp !== "") step.capturePath = cp;
+        }
+        return [step];
       }
       case "download": {
         const name = dlName.trim();
@@ -1832,6 +1878,87 @@ export function StepComposer({
                   No file staged yet.
                 </Text>
               )}
+            </div>
+          </>
+        ) : null}
+        {kind === "api" ? (
+          <>
+            <Text size="small" className="text-secondary">
+              One HTTP request through the run&apos;s browser context (cookies carry over).
+              Without an expected status the step still fails on any 4xx/5xx. Values accept{" "}
+              <code className="font-mono">{"${variable}"}</code> references.
+            </Text>
+            <div className="flex items-center gap-2">
+              <Select value={apiMethod} onValueChange={(v) => setApiMethod(v as ApiMethod)}>
+                <SelectTrigger size="small" aria-label="Method" className="w-28">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {API_METHODS.map((m) => (
+                    <SelectItem key={m} value={m}>
+                      {m}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                size="small"
+                aria-label="Request URL"
+                placeholder="https://api.example.com/users"
+                value={apiUrl}
+                className="flex-1"
+                onChange={(e) => setApiUrl(e.target.value)}
+              />
+            </div>
+            <Field label="Headers — one per line, Name: value" orientation="vertical">
+              <textarea
+                aria-label="Request headers"
+                className="gl-textarea"
+                rows={2}
+                value={apiHeadersDraft}
+                onChange={(e) => setApiHeadersDraft(e.target.value)}
+              />
+            </Field>
+            <Field label="Body (optional)" orientation="vertical">
+              <textarea
+                aria-label="Request body"
+                className="gl-textarea"
+                rows={3}
+                value={apiBody}
+                onChange={(e) => setApiBody(e.target.value)}
+              />
+            </Field>
+            <div className="flex items-center gap-2">
+              <Field label="Expect status (optional)" orientation="vertical">
+                <Input
+                  size="small"
+                  aria-label="Expected status"
+                  placeholder="200"
+                  className="w-24"
+                  value={apiStatus}
+                  onChange={(e) => setApiStatus(e.target.value)}
+                />
+              </Field>
+              <Field label="Capture into variable (optional)" orientation="vertical">
+                <Input
+                  size="small"
+                  aria-label="Capture variable"
+                  placeholder="userId"
+                  className="w-36 font-mono"
+                  value={apiCaptureVar}
+                  onChange={(e) => setApiCaptureVar(e.target.value)}
+                />
+              </Field>
+              <Field label="JSON path (optional)" orientation="vertical">
+                <Input
+                  size="small"
+                  aria-label="Capture JSON path"
+                  placeholder="data.items[0].id"
+                  className="w-44 font-mono"
+                  value={apiCapturePath}
+                  onChange={(e) => setApiCapturePath(e.target.value)}
+                />
+              </Field>
             </div>
           </>
         ) : null}

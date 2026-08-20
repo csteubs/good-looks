@@ -57,6 +57,23 @@ const cases: { label: string; step: Step }[] = [
   // Malformed on purpose: no value — both sides must degrade identically.
   { label: "upload with no file", step: step({ type: "upload", locator: { k: "testid", v: "f" } }) },
   {
+    label: "api full",
+    step: step({
+      type: "api",
+      apiMethod: "POST",
+      url: "https://api.example.com/users",
+      expectStatus: 201,
+      captureVar: "userId",
+    }),
+  },
+  { label: "api minimal", step: step({ type: "api", url: "https://x.test/health" }) },
+  // Malformed on purpose: a forged method and an invalid capture name — both
+  // sides must fall back the same way.
+  {
+    label: "api with forged fields",
+    step: step({ type: "api", apiMethod: "YEET" as never, url: "u", captureVar: "not a name" }),
+  },
+  {
     label: "capture count",
     step: step({ type: "capture", captureVar: "results", captureFrom: "count", locator: LOCATOR }),
   },

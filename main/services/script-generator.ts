@@ -7,9 +7,12 @@ import {
   cookieScopeIsValid,
   ELEMENT_STATES,
   isA11yImpact,
+  isApiMethod,
   isCssPropName,
   isGenSpec,
   isSafeUploadRelPath,
+  isValidCapturePath,
+  isValidHeaderName,
   isValidVariableName,
   MAX_FLOW_REPEAT,
   MAX_LOOP_COUNT,
@@ -684,6 +687,45 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
       if (!target || !isSafeUploadRelPath(step.value)) return null;
       return "await " + target + ".setInputFiles(" + q(step.value) + ");";
     }
+    case "api": {
+      // ONE awaited helper line, fixed key order (the parser reads it back
+      // key by key). Every vocabulary is re-checked here independently of
+      // the boundary: the method from OUR allowlist, header names against
+      // the token grammar, values refusing CR/LF, status through the int
+      // guard, capture var/path through their grammars — a forged field
+      // (updateStep copies raw) must not reach source, and q()/valueExpr
+      // carry the strings that do.
+      const method = isApiMethod(step.apiMethod) ? step.apiMethod : "GET";
+      const parts: string[] = ['method: "' + method + '"'];
+      parts.push("url: " + valueExpr(step.url ?? "", vars));
+      const headers = Object.entries(step.apiHeaders ?? {}).filter(
+        ([k, v]) => isValidHeaderName(k) && typeof v === "string" && !/[\r\n]/.test(v),
+      );
+      if (headers.length > 0) {
+        parts.push(
+          "headers: { " +
+            headers.map(([k, v]) => q(k) + ": " + valueExpr(v, vars)).join(", ") +
+            " }",
+        );
+      }
+      if (typeof step.apiBody === "string" && step.apiBody !== "") {
+        parts.push("body: " + valueExpr(step.apiBody, vars));
+      }
+      const status = num(
+        typeof step.expectStatus === "number" && step.expectStatus >= 100 && step.expectStatus <= 599
+          ? step.expectStatus
+          : undefined,
+        0,
+      );
+      if (status !== "0") parts.push("expectStatus: " + status);
+      if (isValidVariableName(step.captureVar)) {
+        parts.push("captureVar: " + q(step.captureVar));
+        if (isValidCapturePath(step.capturePath)) {
+          parts.push("capturePath: " + q(step.capturePath));
+        }
+      }
+      return "await glazeApiRequest(page, V, { " + parts.join(", ") + " });";
+    }
     case "scroll":
       // Element mode wins when both are present: `scrollIntoViewIfNeeded` is
       // native, self-correcting, and reports through the step reporter (a
@@ -776,6 +818,15 @@ export function describeStep(step: Step): string {
   if (step.type === "upload") {
     const name = typeof step.value === "string" ? step.value.split("/").pop() ?? "" : "";
     return name ? `upload ${JSON.stringify(name)}` : "upload a file";
+  }
+  // Phrase, not the helper call. Kept in sync with the mirror in
+  // renderer/lib/describe-step.ts.
+  if (step.type === "api") {
+    const m = isApiMethod(step.apiMethod) ? step.apiMethod : "GET";
+    const base = `${m} ${step.url ?? ""}`.trim();
+    const status = typeof step.expectStatus === "number" ? ` expecting ${num(step.expectStatus, 0)}` : "";
+    const cap = isValidVariableName(step.captureVar) ? ` (response → ${step.captureVar})` : "";
+    return "API " + base + status + cap;
   }
   if (step.type === "download") {
     const name = step.value ?? "";
@@ -1221,12 +1272,14 @@ export function generateSpecDetailed(
   );
   const needsA11y = expanded.some((e) => !e.problem && e.step.type === "a11y");
   const needsGenerate = variables.some((v) => v.kind === "generated");
+  const needsApi = expanded.some((e) => !e.problem && e.step.type === "api");
   const preamble = ['import { test, expect } from "@playwright/test";'];
   const runtimeNames = [
     ...(needsCapture ? ["glazeCapture"] : []),
     ...(needsScroll ? ["glazeScrollTo"] : []),
     ...(needsA11y ? ["glazeA11yGate"] : []),
     ...(needsGenerate ? ["glazeGenerate"] : []),
+    ...(needsApi ? ["glazeApiRequest"] : []),
   ];
   if (runtimeNames.length > 0) {
     preamble.push(`import { ${runtimeNames.join(", ")} } from "./${GLAZE_RUNTIME_FILE}";`);
@@ -1236,8 +1289,11 @@ export function generateSpecDetailed(
   // the glazeCapture runtime — the write is a plain property assignment. Kept
   // separate from `needsCapture` so a download-only spec doesn't grow an
   // import it never calls.
+  // An api step passes V to its helper unconditionally (captures write into
+  // it), so any api step forces the header like a capture does.
   const needsVarObject =
     needsCapture ||
+    needsApi ||
     expanded.some(
       (e) =>
         !e.problem && e.step.type === "download" && isValidVariableName(e.step.captureVar),
