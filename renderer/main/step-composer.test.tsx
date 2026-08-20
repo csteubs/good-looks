@@ -24,7 +24,7 @@ import {
   CONDITION_KINDS,
   WAIT_UNTIL_KINDS,
 } from "../../main/recorder/types";
-import type { PickedElement, RawStep, WaitDialogMode } from "../lib/recorder-types";
+import type { PickedElement, RawStep, VariableKind, WaitDialogMode } from "../lib/recorder-types";
 import {
   ASSERT_OPTIONS,
   CAPTURE_OPTIONS,
@@ -550,7 +550,7 @@ describe("filling a field with a variable", () => {
     opts: {
       picked?: PickedElement | null;
       variables?: typeof VARS;
-      onCreateVariable?: (v: { name: string; kind: "plain" | "secret" | "captured"; value: string }) => Promise<void>;
+      onCreateVariable?: (v: { name: string; kind: VariableKind; value: string }) => Promise<void>;
     } = {},
   ) {
     const onAdd = vi.fn((_steps: RawStep[]) => {});

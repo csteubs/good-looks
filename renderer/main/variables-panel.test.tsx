@@ -150,6 +150,18 @@ describe("VariablesPanel", () => {
     expect(await screen.findByText("used by 2 steps")).toBeTruthy();
   });
 
+  it("shows a generator picker for a generated variable, and no value field", async () => {
+    renderPanel(
+      makeTest({ variables: [{ name: "userEmail", kind: "generated", genSpec: "email" }] }),
+    );
+    // The generator select renders with the chosen spec...
+    expect(await screen.findByLabelText("Generator for userEmail")).toBeTruthy();
+    // ...and there is NO default-value input: a stored value would read as
+    // load-bearing while never being used (fresh-per-run is the contract).
+    expect(screen.queryByLabelText("Default value for userEmail")).toBeNull();
+    expect(screen.getByText(/fresh value every run/i)).toBeTruthy();
+  });
+
   it("warns about a name that would not survive into the generated spec", async () => {
     renderPanel(makeTest({ variables: [{ name: "has-dash", kind: "plain" }] }));
     expect(await screen.findByText(/Use letters, numbers and underscores/i)).toBeTruthy();

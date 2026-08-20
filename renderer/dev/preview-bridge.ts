@@ -1760,7 +1760,10 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       previewVariables.push({
         name,
         kind,
-        ...(kind === "secret" ? {} : { value: String(p?.value ?? "") }),
+        ...(kind === "secret" || kind === "generated" ? {} : { value: String(p?.value ?? "") }),
+        ...(kind === "generated"
+          ? { genSpec: (p?.genSpec ?? "string") as TestVariable["genSpec"], value: "sample-9wq3k" }
+          : {}),
       });
       return recorderState();
     },

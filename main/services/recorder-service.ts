@@ -53,7 +53,7 @@ import {
   permissionAllowed,
   DENIED_RECORDER_PERMISSIONS,
 } from "./recorder-navigation.js";
-import type { CookieSpec } from "../recorder/types.js";
+import type { CookieSpec, GenSpec } from "../recorder/types.js";
 import type { RunBrowser } from "../recorder/types.js";
 import {
   initialCursor,
@@ -1055,6 +1055,30 @@ function cursorPastReplayed(index: number): void {
  * (respecting nested blocks), or -1 if the step isn't a block delimiter or the
  * block is unbalanced.
  */
+/** One sample value for a generated variable's SESSION preview. Shapes
+ *  mirror glazeGenerate in glaze-runtime-source.ts (the genSpec enum is the
+ *  shared contract; the exact shapes are best-effort mirrors — a drift here
+ *  is cosmetic, since this value never persists and never reaches a run). */
+function sampleGeneratedValue(spec: GenSpec): string {
+  const rand = (len: number): string => {
+    let out = "";
+    while (out.length < len) out += Math.random().toString(36).slice(2);
+    return out.slice(0, len);
+  };
+  switch (spec) {
+    case "email":
+      return "gl-" + rand(8) + "@example.com";
+    case "number":
+      return String(Math.floor(100000 + Math.random() * 900000));
+    case "uuid":
+      return randomUUID();
+    case "name":
+      return "Alex Reed";
+    default:
+      return rand(10);
+  }
+}
+
 /** The matching `else` of the `if` at `index`, or -1 when the block has none.
  *  Depth-aware for the same reason `matchingBlockIndex` is: an inner if's
  *  else must not read as the outer one's. */
@@ -2775,6 +2799,7 @@ export const recorderService = {
     name: unknown;
     kind?: unknown;
     value?: unknown;
+    genSpec?: unknown;
   }): Promise<RecorderState> {
     if (!session) throw new Error("No recording session is running.");
     if (!isValidVariableName(input.name)) {
@@ -2793,7 +2818,7 @@ export const recorderService = {
     // here and one declared on the Variables tab cannot differ in what they
     // allow — including the strip that keeps a secret's value off the record.
     const [clean] = normalizeVariables([
-      { name, kind: input.kind as VariableKind, value: input.value },
+      { name, kind: input.kind as VariableKind, value: input.value, genSpec: input.genSpec },
     ]);
     if (!clean) throw new Error("That variable could not be saved.");
 
@@ -2806,6 +2831,15 @@ export const recorderService = {
       // clean up, and claiming a write that threw would be a lie in the
       // direction of deleting something that isn't there.
       session.wroteSecrets = true;
+    }
+
+    if (clean.kind === "generated") {
+      // The SESSION holds one sample value, so trainer replay and the picker
+      // show something real while training. It never persists: the fold back
+      // into the record goes through normalizeVariables, which strips a
+      // generated variable's value — runs call glazeGenerate fresh each time.
+      // The shapes mirror the runtime's; the genSpec enum is the contract.
+      clean.value = sampleGeneratedValue(clean.genSpec ?? "string");
     }
 
     session.variables.push(clean);

@@ -8,6 +8,7 @@ import {
   ELEMENT_STATES,
   isA11yImpact,
   isCssPropName,
+  isGenSpec,
   isValidVariableName,
   MAX_FLOW_REPEAT,
   MAX_LOOP_COUNT,
@@ -1122,11 +1123,22 @@ function expandSteps(
  *  a spec containing one without the header is a ReferenceError on line one. */
 function variableHeader(variables: TestVariable[], needsCapture: boolean): string[] {
   if (variables.length === 0 && !needsCapture) return [];
-  const plain = variables.filter((v) => v.kind !== "secret");
+  const plain = variables.filter((v) => v.kind !== "secret" && v.kind !== "generated");
+  const generated = variables.filter((v) => v.kind === "generated");
   const secret = variables.filter((v) => v.kind === "secret");
   const lines: string[] = ["  const V = {"];
   for (const v of plain) {
     lines.push(`    ${v.name}: ${q(v.value ?? "")},`);
+  }
+  // Generated values sit BEFORE the spread so a dataset row can PIN one —
+  // pinning beats randomness, the same way a row overrides a plain default.
+  // The spec string comes from OUR allowlist, never the record field raw:
+  // it lands in source as a literal, so it gets the same double guard every
+  // interpolated enum does. The name is grammar-safe (isValidVariableName)
+  // but is still emitted through q() — belt and braces cost one call.
+  for (const v of generated) {
+    const spec = isGenSpec(v.genSpec) ? v.genSpec : "string";
+    lines.push(`    ${v.name}: glazeGenerate("${spec}", ${q(v.name)}),`);
   }
   // JSON.parse over an env var rather than a baked-in literal: this is what
   // lets one spec run once per dataset row without regenerating the file.
@@ -1192,11 +1204,13 @@ export function generateSpecDetailed(
     (e) => !e.problem && e.step.type === "scroll" && !e.step.locator,
   );
   const needsA11y = expanded.some((e) => !e.problem && e.step.type === "a11y");
+  const needsGenerate = variables.some((v) => v.kind === "generated");
   const preamble = ['import { test, expect } from "@playwright/test";'];
   const runtimeNames = [
     ...(needsCapture ? ["glazeCapture"] : []),
     ...(needsScroll ? ["glazeScrollTo"] : []),
     ...(needsA11y ? ["glazeA11yGate"] : []),
+    ...(needsGenerate ? ["glazeGenerate"] : []),
   ];
   if (runtimeNames.length > 0) {
     preamble.push(`import { ${runtimeNames.join(", ")} } from "./${GLAZE_RUNTIME_FILE}";`);

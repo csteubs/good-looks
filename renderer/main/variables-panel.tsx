@@ -11,6 +11,9 @@
 //                 clear it. That asymmetry is the feature, not a limitation.
 //   • captured  — written during the run by a `capture` step; any value here is
 //                 only a fallback for steps that read it before the capture.
+//   • generated — a fresh value on every run (glazeGenerate in the V header).
+//                 No stored value at all: the record keeps only WHAT to
+//                 generate (genSpec), and the run log records what was used.
 //
 // Datasets are rows over the plain/captured variables. Running a sweep queues
 // the test once per row, so a failure can be attributed to a specific row
@@ -38,9 +41,12 @@ import { FileUp, KeyRound, Play, Plus, Trash2, TriangleAlert, Variable, Workflow
 
 import { api } from "../lib/api";
 import {
+  GEN_SPEC_LABELS,
+  GEN_SPECS,
   VARIABLE_KIND_LABELS,
   VARIABLE_KINDS,
   type Dataset,
+  type GenSpec,
   type TestRecord,
   type TestVariable,
   type VariableKind,
@@ -177,6 +183,28 @@ function VariableRow({
               </Button>
             </>
           )}
+        </div>
+      ) : variable.kind === "generated" ? (
+        <div className="flex items-center gap-2">
+          <Select
+            value={variable.genSpec ?? "string"}
+            onValueChange={(v) => onChange({ ...variable, genSpec: v as GenSpec })}
+          >
+            <SelectTrigger aria-label={`Generator for ${variable.name || "variable"}`} className="w-64">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {GEN_SPECS.map((g) => (
+                <SelectItem key={g} value={g}>
+                  {GEN_SPEC_LABELS[g]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Text size="small" className="text-secondary">
+            A fresh value every run — the run log records what was used. A dataset row naming
+            this variable pins it instead.
+          </Text>
         </div>
       ) : (
         <Input
