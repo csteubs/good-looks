@@ -177,6 +177,300 @@ describe("generateSpecDetailed line map", () => {
   });
 });
 
+describe("flow variable binding", () => {
+  // What a flow's `${x}` MEANS is decided here: a flow is written against its
+  // own variable scope, so its plain variables bind to its own values, its
+  // declared parameters can be overridden per call, and only its runtime-only
+  // variables (secrets, captured values) travel as live `V.x` references. Each
+  // failure below shipped or nearly shipped: a non-param `${x}` used to fall
+  // through to the CALLER's scope, which is dynamic scoping nobody asked for.
+
+  const resolve = (flow: FlowSource) => (id: string) => (id === flow.id ? flow : null);
+
+  it("binds a caller-supplied argument over the parameter's default", () => {
+    const flow: FlowSource = {
+      id: "f1",
+      name: "Login",
+      flowParams: ["email"],
+      variables: [{ name: "email", kind: "plain", value: "default@example.com" }],
+      steps: [step({ type: "fill", locator: { k: "label", v: "Email" }, value: "${email}" })],
+    };
+    const { source } = generateSpecDetailed(
+      {
+        name: "t",
+        url: "u",
+        steps: [step({ type: "runFlow", flowId: "f1", flowArgs: { email: "override@x.com" } })],
+      },
+      { resolveFlow: resolve(flow) },
+    );
+    expect(source).toContain('fill("override@x.com")');
+    expect(source).not.toContain("default@example.com");
+  });
+
+  it("falls back to the flow's own default for an unsupplied parameter", () => {
+    const flow: FlowSource = {
+      id: "f1",
+      name: "Login",
+      flowParams: ["email"],
+      variables: [{ name: "email", kind: "plain", value: "default@example.com" }],
+      steps: [step({ type: "fill", locator: { k: "label", v: "Email" }, value: "${email}" })],
+    };
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps: [step({ type: "runFlow", flowId: "f1" })] },
+      { resolveFlow: resolve(flow) },
+    );
+    expect(source).toContain('fill("default@example.com")');
+  });
+
+  it("binds a NON-parameter plain variable to the flow's own value, never the caller's", () => {
+    const flow: FlowSource = {
+      id: "f1",
+      name: "Login",
+      flowParams: [],
+      variables: [{ name: "region", kind: "plain", value: "eu" }],
+      steps: [step({ type: "fill", locator: { k: "label", v: "Region" }, value: "${region}" })],
+    };
+    const { source } = generateSpecDetailed(
+      {
+        name: "t",
+        url: "u",
+        steps: [step({ type: "runFlow", flowId: "f1" })],
+        // The caller declares the SAME name with a different value — before the
+        // fix the flow's step silently read this one.
+        variables: [{ name: "region", kind: "plain", value: "us" }],
+      },
+      { resolveFlow: resolve(flow) },
+    );
+    expect(source).toContain('fill("eu")');
+    expect(source).not.toContain("fill(V.region)");
+  });
+
+  it("keeps a flow's captured variable a live V reference and declares it in the caller's header", () => {
+    const flow: FlowSource = {
+      id: "f1",
+      name: "Order",
+      flowParams: [],
+      variables: [{ name: "orderId", kind: "captured", value: "fallback-1" }],
+      steps: [
+        step({
+          type: "capture",
+          locator: { k: "testid", v: "order" },
+          captureVar: "orderId",
+          captureFrom: "text",
+        }),
+        step({ type: "fill", locator: { k: "label", v: "Order" }, value: "${orderId}" }),
+      ],
+    };
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps: [step({ type: "runFlow", flowId: "f1" })] },
+      { resolveFlow: resolve(flow) },
+    );
+    // The read stays runtime — a textual binding would freeze the fallback and
+    // the capture step's write would go unread.
+    expect(source).toContain("fill(V.orderId)");
+    // And the declaration (with the flow's fallback) reaches the caller's header.
+    expect(source).toContain('orderId: "fallback-1",');
+  });
+
+  it("routes a flow's secret through the caller's header as an env reference", () => {
+    const flow: FlowSource = {
+      id: "f1",
+      name: "Login",
+      flowParams: [],
+      variables: [{ name: "password", kind: "secret" }],
+      steps: [step({ type: "fill", locator: { k: "label", v: "Password" }, value: "${password}" })],
+    };
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps: [step({ type: "runFlow", flowId: "f1" })] },
+      { resolveFlow: resolve(flow) },
+    );
+    expect(source).toContain("fill(V.password)");
+    expect(source).toContain('password: process.env.GLAZE_SECRET_password ?? "",');
+  });
+
+  it("lets the caller's own declaration of a name win over a flow's runtime one", () => {
+    const flow: FlowSource = {
+      id: "f1",
+      name: "Order",
+      flowParams: [],
+      variables: [{ name: "orderId", kind: "captured", value: "flow-fallback" }],
+      steps: [step({ type: "fill", locator: { k: "label", v: "Order" }, value: "${orderId}" })],
+    };
+    const { source } = generateSpecDetailed(
+      {
+        name: "t",
+        url: "u",
+        steps: [step({ type: "runFlow", flowId: "f1" })],
+        variables: [{ name: "orderId", kind: "plain", value: "caller-value" }],
+      },
+      { resolveFlow: resolve(flow) },
+    );
+    // Exactly one declaration — a duplicate key in `const V` would be a spec
+    // that lies about which value applies.
+    expect(source.match(/^\s*orderId:/gm)).toHaveLength(1);
+    expect(source).toContain('orderId: "caller-value",');
+  });
+
+  it("a caller-supplied argument may reference the caller's own variables", () => {
+    const flow: FlowSource = {
+      id: "f1",
+      name: "Login",
+      flowParams: ["email"],
+      variables: [{ name: "email", kind: "plain", value: "default@example.com" }],
+      steps: [step({ type: "fill", locator: { k: "label", v: "Email" }, value: "${email}" })],
+    };
+    const { source } = generateSpecDetailed(
+      {
+        name: "t",
+        url: "u",
+        steps: [step({ type: "runFlow", flowId: "f1", flowArgs: { email: "${user}" } })],
+        variables: [{ name: "user", kind: "plain", value: "row@example.com" }],
+      },
+      { resolveFlow: resolve(flow) },
+    );
+    // The argument's `${user}` resolves against the caller's V — that is the
+    // whole point of textual binding at generation time.
+    expect(source).toContain("fill(V.user)");
+  });
+});
+
+describe("flow loops", () => {
+  // A repeated flow call emits a real `for` loop rather than unrolling: a
+  // variable-driven count CANNOT be unrolled (its value arrives via
+  // GLAZE_VARS at run time), so the loop emitter must exist anyway, and two
+  // code paths for one feature is how they drift. The emitted clamp is the
+  // load-bearing line — a dataset value is user input, and an unclamped
+  // `Number(V.n)` bound is an unbounded loop in executed code.
+
+  const loginFlow: FlowSource = {
+    id: "f1",
+    name: "Login",
+    flowParams: [],
+    steps: [step({ type: "click", locator: { k: "testid", v: "go" } })],
+  };
+  const resolve = (id: string) => (id === "f1" ? loginFlow : null);
+
+  it("wraps a fixed repeat in a for loop and attributes body lines to the call row", () => {
+    const steps = [
+      step({ type: "goto", url: "https://example.com" }),
+      step({ type: "runFlow", flowId: "f1", label: "Login", repeat: 3 }),
+      step({ type: "click", locator: { k: "testid", v: "after" } }),
+    ];
+    const { source, lineMap } = generateSpecDetailed(
+      { name: "t", url: "u", steps },
+      { resolveFlow: resolve },
+    );
+    expect(source).toContain("for (let gl_i0 = 0; gl_i0 < 3; gl_i0++) {");
+    const mapped = mappedLines(source, lineMap);
+    // The body line inside the loop still points at the visible runFlow row...
+    expect(mapped).toContainEqual(['await page.getByTestId("go").click();', 1]);
+    // ...and the step after the loop keeps its own index.
+    expect(mapped).toContainEqual(['await page.getByTestId("after").click();', 2]);
+    // The loop's own lines are not mapped — no reporter marker ever names them.
+    expect(source.split("\n").filter((l) => l.includes("for (let"))).toHaveLength(1);
+  });
+
+  it("emits a clamped run-time bound for a variable-driven repeat", () => {
+    const steps = [step({ type: "runFlow", flowId: "f1", repeatVar: "n" })];
+    const { source } = generateSpecDetailed(
+      {
+        name: "t",
+        url: "u",
+        steps,
+        variables: [{ name: "n", kind: "plain", value: "2" }],
+      },
+      { resolveFlow: resolve },
+    );
+    expect(source).toContain(
+      "for (let gl_i0 = 0, gl_n0 = Math.max(0, Math.min(100, Number(V.n) || 0)); gl_i0 < gl_n0; gl_i0++) {",
+    );
+  });
+
+  it("a variable repeat wins over a fixed one", () => {
+    const steps = [step({ type: "runFlow", flowId: "f1", repeat: 7, repeatVar: "n" })];
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps, variables: [{ name: "n", kind: "plain", value: "2" }] },
+      { resolveFlow: resolve },
+    );
+    expect(source).toContain("Number(V.n)");
+    expect(source).not.toContain("gl_i0 < 7");
+  });
+
+  it("runs once with a visible sentence when the repeat variable is not declared", () => {
+    const steps = [step({ type: "runFlow", flowId: "f1", label: "Login", repeatVar: "ghost" })];
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps },
+      { resolveFlow: resolve },
+    );
+    expect(source).not.toContain("for (let");
+    // The flow still runs — degrading to zero runs would be worse than once.
+    expect(source).toContain('await page.getByTestId("go").click();');
+    expect(source).toContain("repeat count ${ghost} is not a declared variable — running once");
+    // And the refused loop's close marker is skipped too: braces stay balanced.
+    expect(source.split("{").length).toBe(source.split("}").length);
+  });
+
+  it("gives nested repeated flows distinct counters", () => {
+    const inner: FlowSource = {
+      id: "f2",
+      name: "Inner",
+      flowParams: [],
+      steps: [step({ type: "click", locator: { k: "testid", v: "in" } })],
+    };
+    const outer: FlowSource = {
+      id: "f1",
+      name: "Outer",
+      flowParams: [],
+      steps: [step({ type: "runFlow", flowId: "f2", repeat: 2 })],
+    };
+    const steps = [step({ type: "runFlow", flowId: "f1", repeat: 3 })];
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps },
+      { resolveFlow: (id) => (id === "f1" ? outer : id === "f2" ? inner : null) },
+    );
+    expect(source).toContain("gl_i0 = 0; gl_i0 < 3");
+    expect(source).toContain("gl_i1 = 0; gl_i1 < 2");
+  });
+
+  it("clamps a hostile fixed count instead of emitting it", () => {
+    // Records written before the boundary learned these fields regenerate from
+    // stored JSON — the TypeScript type is not a runtime check, same argument
+    // as num().
+    const steps = [
+      { id: "s", timestamp: 0, type: "runFlow", flowId: "f1", repeat: "3); evil(); (" },
+    ] as unknown as Step[];
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps },
+      { resolveFlow: resolve },
+    );
+    expect(source).not.toContain("evil(");
+    // An unparseable count degrades to once — no loop at all.
+    expect(source).not.toContain("for (let");
+  });
+
+  it("refuses a hostile repeat variable rather than emitting it", () => {
+    const steps = [
+      { id: "s", timestamp: 0, type: "runFlow", flowId: "f1", repeatVar: "x); evil(); (" },
+    ] as unknown as Step[];
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps },
+      { resolveFlow: resolve },
+    );
+    expect(source).not.toContain("evil(");
+    expect(source).not.toContain("for (let");
+  });
+
+  it("emits no loop around a disabled call's commented-out steps", () => {
+    const steps = [step({ type: "runFlow", flowId: "f1", repeat: 3, disabled: true })];
+    const { source } = generateSpecDetailed(
+      { name: "t", url: "u", steps },
+      { resolveFlow: resolve },
+    );
+    expect(source).not.toContain("for (let");
+    expect(source).toContain("// disabled — skipped:");
+  });
+});
+
 describe("viewport steps log the resize", () => {
   // A resize is the only recorded action with no visible effect in the run
   // output — every other step names its target ("click getByRole(...)"). Without

@@ -15,7 +15,7 @@ import {
   ToolbarContent,
   ToolbarTitle,
 } from "@ui";
-import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, RotateCcw, Sparkles, Wand2, X } from "lucide-react";
+import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, RotateCcw, Sparkles, Wand2, Workflow, X } from "lucide-react";
 
 import { Btn, Segmented, StatusChip, TONE } from "../theme";
 import type { AiDebugStatus, AssertKind, DebugEntry, HealSuggestion, Locator, PickedElement, RawStep, Step, WaitDialogMode } from "../lib/recorder-types";
@@ -24,6 +24,15 @@ import { urlAssertPrefill } from "../../shared/url-assert.mjs";
 import { locatorToPrompt } from "../lib/llm-prompts";
 import { useRecorder, type ReplayRun } from "./recorder-store";
 import { CursorGap, INSERT_HERE, StepRow } from "./step-row";
+import { CreateFlowDialog } from "./create-flow-dialog";
+import { FlowStepsPreview } from "./flow-steps-preview";
+import { FlowScopeEditor } from "./flow-scope-editor";
+import {
+  emptySelection,
+  extractableRange,
+  pruneSelection,
+  selectionAfterClick,
+} from "../lib/step-selection";
 import { StepComposer, ADD_STEP_LABEL, type AddStepKind } from "./step-composer";
 import { stepSessionKey, useAiDebug } from "./ai-debug-store";
 import { parseSessionKey } from "../lib/ai-debug-sessions";
@@ -482,6 +491,11 @@ export function RecordingView() {
     setAssert,
     deleteStep,
     insertStep,
+    extractFlow,
+    flowScope,
+    enterFlowScope,
+    exitFlowScope,
+    setFlowCursor,
     insertGeneratedSteps,
     reorderStep,
     updateStep,
@@ -509,7 +523,25 @@ export function RecordingView() {
   const [addKind, setAddKind] = React.useState<AddStepKind | null>(null);
   const [aiOpen, setAiOpen] = React.useState(false);
   const [replayStatus, setReplayStatus] = React.useState<string | null>(null);
-  const [selectedStepId, setSelectedStepId] = React.useState<string | null>(null);
+  // Multi-selection over the rows: plain click, ⌘/ctrl toggle, shift range —
+  // shared with the docked panel through lib/step-selection. The ANCHOR is
+  // what the single-selection code used to call selectedStepId: the details
+  // panel and replay-from-current read it, so it keeps that name.
+  const [selection, setSelection] = React.useState(emptySelection());
+  const selectedStepId = selection.anchorId;
+  const selectAnchor = React.useCallback(
+    (id: string) => setSelection({ ids: [id], anchorId: id }),
+    [],
+  );
+  // Which runFlow rows are showing their flow's steps inline (read-only).
+  const [expandedFlows, setExpandedFlows] = React.useState<Set<string>>(new Set());
+  const [createFlowOpen, setCreateFlowOpen] = React.useState(false);
+  const [selectionNote, setSelectionNote] = React.useState<string | null>(null);
+  // The backend rebroadcasts the whole list; a deletion elsewhere must not
+  // leave ghost ids selected.
+  React.useEffect(() => {
+    setSelection((prev) => pruneSelection(prev, liveSteps));
+  }, [liveSteps]);
   // Debug panel: which tab is showing, and whether the Console auto-scrolls to
   // the latest output (on by default; a checkbox lets the user scroll manually).
   const [debugTab, setDebugTab] = React.useState("steps");
@@ -663,8 +695,8 @@ export function RecordingView() {
     if (!replayRun?.running || replayRun.steps.length === 0) return;
     const last = replayRun.steps[replayRun.steps.length - 1];
     const s = liveSteps[last.index];
-    if (s) setSelectedStepId(s.id);
-  }, [replayRun, liveSteps]);
+    if (s) selectAnchor(s.id);
+  }, [replayRun, liveSteps, selectAnchor]);
 
   // Controls stay inert until the training browser has loaded its first page,
   // until THIS window actually holds the step list, and while a replay is in
@@ -754,8 +786,9 @@ export function RecordingView() {
   // list: the panel has to sit between the two steps the new one will land
   // between, and "between" is a position in this map, not a place in the tree.
   // It renders at most once — `state.cursor` is a single index.
-  const composerAt = (index: number) =>
-    addKind !== null && state.cursor === index ? (
+  const composerAt = (index: number, inScope = false) =>
+    addKind !== null &&
+    (inScope ? flowScope?.cursor === index : !flowScope && state.cursor === index) ? (
       <StepComposer
         // Remounts when the caller re-targets it from the context menu, so a
         // half-filled draft for one element never carries over to another.
@@ -948,6 +981,24 @@ export function RecordingView() {
         ) : null}
 
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          {selectionNote ? <span className="gl-note shrink-0">{selectionNote}</span> : null}
+          {selection.ids.length > 0 ? (
+            <Btn
+              onClick={() => {
+                const verdict = extractableRange(liveSteps, selection.ids);
+                if (!verdict.ok) {
+                  setSelectionNote(verdict.reason);
+                  window.setTimeout(() => setSelectionNote(null), 6000);
+                  return;
+                }
+                setCreateFlowOpen(true);
+              }}
+              disabled={controlsDisabled}
+              title="Move the selected steps into a new reusable flow, called from here"
+            >
+              <Workflow className="size-3.5" /> Create flow ({selection.ids.length})
+            </Btn>
+          ) : null}
           <Btn onClick={openAddStepMenu} disabled={controlsDisabled}>
             <Plus className="size-3.5" /> Add step
           </Btn>
@@ -1019,8 +1070,30 @@ export function RecordingView() {
                   <StepRow
                     index={i}
                     step={s}
-                    selected={selectedStepId === s.id}
-                    onSelect={controlsDisabled ? undefined : () => setSelectedStepId(s.id)}
+                    selected={selection.ids.includes(s.id)}
+                    onSelect={
+                      controlsDisabled
+                        ? undefined
+                        : (e) =>
+                            setSelection((prev) =>
+                              selectionAfterClick(prev, liveSteps, s.id, {
+                                shift: e.shiftKey,
+                                toggle: e.metaKey || e.ctrlKey,
+                              }),
+                            )
+                    }
+                    expanded={s.type === "runFlow" ? expandedFlows.has(s.id) : undefined}
+                    onToggleExpand={
+                      s.type === "runFlow" && s.flowId
+                        ? () =>
+                            setExpandedFlows((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(s.id)) next.delete(s.id);
+                              else next.add(s.id);
+                              return next;
+                            })
+                        : undefined
+                    }
                     onDelete={controlsDisabled ? undefined : () => deleteStep(s.id)}
                     onReplay={controlsDisabled ? undefined : () => replayStep(s.id)}
                     onRefine={controlsDisabled ? undefined : () => startRefine(s.id)}
@@ -1039,6 +1112,36 @@ export function RecordingView() {
                       isOver: overIndex === i && dragId !== null && dragId !== s.id,
                     }}
                   />
+                  {s.type === "runFlow" && s.flowId && expandedFlows.has(s.id) ? (
+                    flowScope && flowScope.callStepId === s.id ? (
+                      <FlowScopeEditor
+                        scope={flowScope}
+                        controlsDisabled={controlsDisabled}
+                        onExit={() => void exitFlowScope()}
+                        composerAt={(index) => composerAt(index, true)}
+                        onDelete={deleteStep}
+                        onEdit={updateStep}
+                        onReplay={replayStep}
+                        onReorder={reorderStep}
+                        onSetCursor={setFlowCursor}
+                        indent={stepDepths[i] + 1}
+                      />
+                    ) : (
+                      <FlowStepsPreview
+                        // Remounted when a scope opens or closes, so the
+                        // read-only view refetches the just-committed steps
+                        // instead of quoting the pre-edit record.
+                        key={`${s.flowId}:${flowScope ? "scoped" : "plain"}`}
+                        flowId={s.flowId}
+                        indent={stepDepths[i] + 1}
+                        onEditFlow={
+                          controlsDisabled || flowScope
+                            ? undefined
+                            : () => void enterFlowScope(s.id)
+                        }
+                      />
+                    )
+                  ) : null}
                   <CursorGap
                     active={state.cursor === i + 1}
                     onClick={() => setCursor(i + 1)}
@@ -1075,6 +1178,16 @@ export function RecordingView() {
         onDebugStep={openStepDebug}
         aiStatusByStep={aiStatusByStep}
         onApplyHeal={applyHeal}
+      />
+
+      <CreateFlowDialog
+        open={createFlowOpen}
+        onOpenChange={setCreateFlowOpen}
+        count={selection.ids.length}
+        onCreate={async (name) => {
+          await extractFlow(selection.ids, name);
+          setSelection(emptySelection());
+        }}
       />
 
       <GenerateStepsDialog

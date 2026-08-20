@@ -1045,6 +1045,245 @@ describe("test creation paths", () => {
 // say nothing: the Steps tab updated, the run didn't, and nothing on screen
 // admitted it. So what's pinned here is not just "does it regenerate" but
 // "does the record afterwards describe what will actually run".
+describe("tests:setFlow / tests:listFlows — the flow product surface", () => {
+  it("auto-declares a plain variable for a parameter that has none", async () => {
+    // A parameter IS a variable plus membership in flowParams — without the
+    // variable there is no editable default, and the flow's own spec would
+    // emit its `${name}` references as literal text.
+    seedTest("t-flow-a", {
+      steps: [
+        { id: "s1", type: "fill", locator: { k: "label", v: "Email" }, value: "${email}", timestamp: 1 },
+      ] as Step[],
+      variables: [{ name: "email", kind: "plain", value: "a@b.com" }],
+    });
+    const rec = await invokeHandler<TestRecord>("tests:setFlow", {
+      id: "t-flow-a",
+      isFlow: true,
+      flowParams: ["email", "password"],
+    });
+    expect(rec.isFlow).toBe(true);
+    expect(rec.flowParams).toEqual(["email", "password"]);
+    const names = (rec.variables ?? []).map((v) => v.name);
+    expect(names).toContain("password");
+    // The existing declaration keeps its value — auto-declare never overwrites.
+    expect(rec.variables?.find((v) => v.name === "email")?.value).toBe("a@b.com");
+  });
+
+  it("drops invalid and duplicate parameter names at the boundary", async () => {
+    seedTest("t-flow-b");
+    const rec = await invokeHandler<TestRecord>("tests:setFlow", {
+      id: "t-flow-b",
+      isFlow: true,
+      flowParams: ["ok", "ok", "not a name", "1bad", 42, null],
+    });
+    expect(rec.flowParams).toEqual(["ok"]);
+  });
+
+  it("clears the parameter list when the flow flag is turned off", async () => {
+    seedTest("t-flow-c", { variables: [{ name: "x", kind: "plain", value: "1" }] });
+    await invokeHandler("tests:setFlow", { id: "t-flow-c", isFlow: true, flowParams: ["x"] });
+    const rec = await invokeHandler<TestRecord>("tests:setFlow", {
+      id: "t-flow-c",
+      isFlow: false,
+      flowParams: ["x"],
+    });
+    expect(rec.isFlow).toBe(false);
+    expect(rec.flowParams).toEqual([]);
+  });
+
+  it("lists flows with each parameter's default, excluding the asking test", async () => {
+    seedTest("t-flow-d", {
+      isFlow: true,
+      flowParams: ["email"],
+      variables: [
+        { name: "email", kind: "plain", value: "d@example.com" },
+        { name: "password", kind: "secret" },
+      ],
+    });
+    const rows = await invokeHandler<
+      { id: string; name: string; flowParams: string[]; paramDefaults: Record<string, string> }[]
+    >("tests:listFlows", {});
+    const row = rows.find((r) => r.id === "t-flow-d");
+    expect(row).toBeDefined();
+    expect(row?.paramDefaults).toEqual({ email: "d@example.com" });
+    const self = await invokeHandler<{ id: string }[]>("tests:listFlows", { fromId: "t-flow-d" });
+    expect(self.some((r) => r.id === "t-flow-d")).toBe(false);
+  });
+
+  it("propagates a flow change into every caller's spec on save", async () => {
+    // The whole promise of a flow — edit it once, every caller changes — is a
+    // property of the STORE, not the UI: caller specs bake the flow's steps in
+    // at generation time, so a save that doesn't regenerate them leaves stale
+    // files that run yesterday's flow.
+    seedTest("t-flow-e", {
+      isFlow: true,
+      flowParams: [],
+      variables: [{ name: "email", kind: "plain", value: "old@example.com" }],
+      steps: [
+        { id: "s1", type: "fill", locator: { k: "label", v: "Email" }, value: "${email}", timestamp: 1 },
+      ] as Step[],
+    });
+    const caller = seedTest("t-flow-f", {
+      steps: [
+        { id: "s1", type: "runFlow", flowId: "t-flow-e", label: "Login", timestamp: 1 },
+      ] as Step[],
+    });
+    caller.scriptPath = testStore.regenerateScript(caller);
+    testStore.save(caller);
+    expect(fs.readFileSync(caller.scriptPath, "utf-8")).toContain("old@example.com");
+    await invokeHandler("tests:setVariables", {
+      id: "t-flow-e",
+      variables: [{ name: "email", kind: "plain", value: "new@example.com" }],
+    });
+    const regenerated = fs.readFileSync(caller.scriptPath, "utf-8");
+    expect(regenerated).toContain("new@example.com");
+    expect(regenerated).not.toContain("old@example.com");
+  });
+
+  it("never re-parses a flow-calling test's steps from a script edit — kept and flagged", async () => {
+    // The spec-parser has no runFlow vocabulary: the file holds the flow's
+    // INLINED steps, so a re-parse would replace the reference with a
+    // flattened copy and every later flow edit would silently stop reaching
+    // this test.
+    seedTest("t-flow-i", { isFlow: true, steps: [
+      { id: "s1", type: "press", value: "Enter", timestamp: 1 },
+    ] as Step[] });
+    const caller = seedTest("t-flow-j", {
+      steps: [
+        { id: "s1", type: "runFlow", flowId: "t-flow-i", label: "Poke", timestamp: 1 },
+      ] as Step[],
+    });
+    caller.scriptPath = testStore.regenerateScript(caller);
+    testStore.save(caller);
+    const rec = await invokeHandler<TestRecord>("tests:updateScript", {
+      id: "t-flow-j",
+      source:
+        'import { test, expect } from "@playwright/test";\n' +
+        'test("x", async ({ page }) => {\n  await page.goto("https://example.com");\n});\n',
+    });
+    expect(rec.steps.map((s) => s.type)).toEqual(["runFlow"]);
+    expect(rec.stepsDiverged).toBe(true);
+    expect(rec.scriptEdited).toBe(true);
+  });
+
+  it("leaves a hand-edited caller's spec alone when its flow changes", async () => {
+    seedTest("t-flow-g", {
+      isFlow: true,
+      variables: [{ name: "email", kind: "plain", value: "one@example.com" }],
+      steps: [
+        { id: "s1", type: "fill", locator: { k: "label", v: "Email" }, value: "${email}", timestamp: 1 },
+      ] as Step[],
+    });
+    const caller = seedTest("t-flow-h", {
+      scriptEdited: true,
+      steps: [
+        { id: "s1", type: "runFlow", flowId: "t-flow-g", label: "Login", timestamp: 1 },
+      ] as Step[],
+    });
+    fs.mkdirSync(path.dirname(caller.scriptPath), { recursive: true });
+    fs.writeFileSync(caller.scriptPath, "// hand edited\n", "utf-8");
+    await invokeHandler("tests:setVariables", {
+      id: "t-flow-g",
+      variables: [{ name: "email", kind: "plain", value: "two@example.com" }],
+    });
+    expect(fs.readFileSync(caller.scriptPath, "utf-8")).toBe("// hand edited\n");
+  });
+});
+
+describe("tests:flowUsage / tests:unwrapFlow / the delete guard", () => {
+  it("reports direct callers, hidden ones included", async () => {
+    seedTest("t-use-flow", { isFlow: true });
+    seedTest("t-use-a", {
+      steps: [{ id: "s1", type: "runFlow", flowId: "t-use-flow", timestamp: 1 }] as Step[],
+    });
+    seedTest("t-use-b", {
+      hidden: true,
+      steps: [{ id: "s1", type: "runFlow", flowId: "t-use-flow", timestamp: 1 }] as Step[],
+    });
+    seedTest("t-use-c"); // no call — must not appear
+    const usage = await invokeHandler<{ id: string; name: string }[]>("tests:flowUsage", {
+      id: "t-use-flow",
+    });
+    expect(usage.map((u) => u.id).sort()).toEqual(["t-use-a", "t-use-b"]);
+  });
+
+  it("refuses to delete a test something still calls, naming the caller", async () => {
+    seedTest("t-del-flow", { isFlow: true });
+    seedTest("t-del-caller", {
+      steps: [{ id: "s1", type: "runFlow", flowId: "t-del-flow", timestamp: 1 }] as Step[],
+    });
+    await expect(invokeHandler("tests:delete", { id: "t-del-flow" })).rejects.toThrow(
+      /Test t-del-caller/,
+    );
+    // Still there — a refused delete must not half-run its cleanup.
+    expect(testStore.get("t-del-flow")).not.toBeNull();
+    // Remove the call and the delete goes through.
+    const caller = testStore.get("t-del-caller")!;
+    caller.steps = [];
+    testStore.save(caller);
+    await invokeHandler("tests:delete", { id: "t-del-flow" });
+    expect(testStore.get("t-del-flow")).toBeNull();
+  });
+
+  it("unwraps a call into bound copies of the flow's steps, in place", async () => {
+    seedTest("t-un-flow", {
+      isFlow: true,
+      flowParams: ["email"],
+      variables: [{ name: "email", kind: "plain", value: "default@example.com" }],
+      steps: [
+        { id: "f-s1", type: "fill", locator: { k: "label", v: "Email" }, value: "${email}", timestamp: 1 },
+        { id: "f-s2", type: "click", locator: { k: "role", role: "button", name: "Go" }, timestamp: 1 },
+      ] as Step[],
+    });
+    seedTest("t-un-caller", {
+      steps: [
+        { id: "c-s1", type: "goto", url: "https://example.com", timestamp: 1 },
+        {
+          id: "c-s2",
+          type: "runFlow",
+          flowId: "t-un-flow",
+          label: "Login",
+          flowArgs: { email: "override@x.com" },
+          disabled: true,
+          timestamp: 1,
+        },
+        { id: "c-s3", type: "press", value: "Enter", timestamp: 1 },
+      ] as Step[],
+    });
+    const rec = await invokeHandler<TestRecord>("tests:unwrapFlow", {
+      id: "t-un-caller",
+      stepId: "c-s2",
+    });
+    expect(rec.steps.map((s) => s.type)).toEqual(["goto", "fill", "click", "press"]);
+    // The call's argument was bound into the copy — unwrapping means what
+    // running meant.
+    expect(rec.steps[1].value).toBe("override@x.com");
+    // Fresh ids, so nothing id-keyed can confuse the copy with the original.
+    expect(rec.steps[1].id).not.toBe("f-s1");
+    // The call site's disabled covers the whole block, as the generator's
+    // inlining would have.
+    expect(rec.steps[1].disabled).toBe(true);
+    expect(rec.steps[2].disabled).toBe(true);
+    // And the flow record itself is untouched.
+    expect(testStore.get("t-un-flow")?.steps.map((s) => s.id)).toEqual(["f-s1", "f-s2"]);
+  });
+
+  it("refuses to unwrap a missing flow, and a step that is not a call", async () => {
+    seedTest("t-un-bad", {
+      steps: [
+        { id: "s1", type: "goto", url: "https://example.com", timestamp: 1 },
+        { id: "s2", type: "runFlow", flowId: "gone", label: "Gone", timestamp: 1 },
+      ] as Step[],
+    });
+    await expect(
+      invokeHandler("tests:unwrapFlow", { id: "t-un-bad", stepId: "s2" }),
+    ).rejects.toThrow(/can't be found/i);
+    await expect(
+      invokeHandler("tests:unwrapFlow", { id: "t-un-bad", stepId: "s1" }),
+    ).rejects.toThrow(/not a flow call/i);
+  });
+});
+
 describe("tests:updateSteps — steps, script, and whether they agree", () => {
   const HAND_EDITED = "// hand-written by the user, not generated\n";
 

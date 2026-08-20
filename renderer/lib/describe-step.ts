@@ -214,9 +214,11 @@ export function describeCapture(step: Step): string {
 export function describeFlow(step: Step): string {
   const name = step.label || step.flowId || "flow";
   const entries = Object.entries(step.flowArgs ?? {});
-  if (entries.length === 0) return `run flow ${name}`;
   const args = entries.map(([k, v]) => `${k}=${v.length > 18 ? v.slice(0, 17) + "…" : v}`);
-  return `run flow ${name} (${args.join(", ")})`;
+  const base =
+    entries.length === 0 ? `run flow ${name}` : `run flow ${name} (${args.join(", ")})`;
+  if (step.repeatVar) return `${base} ×\${${step.repeatVar}}`;
+  return typeof step.repeat === "number" && step.repeat > 1 ? `${base} ×${step.repeat}` : base;
 }
 
 /** Mirror of describeWait in main/services/script-generator.ts — keep in sync.

@@ -211,6 +211,16 @@ export function TestDetailView() {
   });
   const test = testQuery.data;
   const scriptChanges = scriptChangesQuery.data ?? [];
+  // Which tests call this one as a flow. Fetched for every test rather than
+  // only flagged ones — a caller step can point at a test whose flag was later
+  // turned off, and the delete guard below refuses on CALLERS, not the flag.
+  const flowUsageQuery = useQuery({
+    queryKey: ["flowUsage", id],
+    queryFn: () => api.tests.flowUsage(id),
+  });
+  const flowUsedBy = flowUsageQuery.data ?? [];
+  // The runFlow step being unwrapped, held while its confirm dialog is open.
+  const [unwrappingStep, setUnwrappingStep] = React.useState<Step | null>(null);
   // What this test's runs will do about its store's crawler signature — and it
   // only ever reports the cases where the answer is "nothing". A chip saying a
   // working signature is working would be noise on every run of every test
@@ -677,6 +687,16 @@ export function TestDetailView() {
                 <Pencil className="size-3.5 text-tertiary" />
               </ToolbarTitle>
             )}
+            {/* Same neutral chip vocabulary the step rows use: being a flow is
+                a fact about what this test IS, not an outcome, so no hue. */}
+            {test.isFlow ? (
+              <span
+                className="gl-chip"
+                title="Reusable flow — other tests inline these steps with a “Run a flow” step"
+              >
+                flow
+              </span>
+            ) : null}
             <ToolbarDescription>{test.url}</ToolbarDescription>
           </ToolbarContent>
           <ToolbarActions className="gl-detail-tools">
@@ -732,11 +752,25 @@ export function TestDetailView() {
                   </button>
                 }
                 title="Delete this test?"
-                description="This removes the recording and its generated script. This can't be undone."
+                description={
+                  flowUsedBy.length > 0
+                    ? `This test is used as a flow by ${flowUsedBy
+                        .map((c) => `“${c.name}”`)
+                        .join(", ")}. Remove or unwrap those flow calls first — deleting is blocked while anything still calls it.`
+                    : "This removes the recording and its generated script. This can't be undone."
+                }
                 confirmLabel="Delete"
                 confirmVariant="destructive"
                 onConfirm={async () => {
-                  await api.tests.remove(id);
+                  try {
+                    await api.tests.remove(id);
+                  } catch (err) {
+                    // The backend refuses to delete a flow other tests still
+                    // call — surface its sentence rather than navigating away
+                    // from a test that is still there.
+                    toast.error(err instanceof Error ? err.message : String(err));
+                    return;
+                  }
                   qc.invalidateQueries({ queryKey: ["tests"] });
                   navigate({ to: "/" });
                 }}
@@ -976,6 +1010,35 @@ export function TestDetailView() {
         </div>
       ) : null}
 
+      {/* WHERE THIS FLOW IS USED — shown for any test with callers, flagged or
+          not, because the callers are what a change here reaches. Each name is
+          a link: "which tests does editing this break" should cost one click
+          to answer, not a search. */}
+      {test.isFlow || flowUsedBy.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-4 pt-2 text-[12px] text-secondary">
+          {flowUsedBy.length === 0 ? (
+            <span>Not called by any test yet — add a “Run a flow” step in another test.</span>
+          ) : (
+            <>
+              <span>
+                Used by {flowUsedBy.length} test{flowUsedBy.length === 1 ? "" : "s"}:
+              </span>
+              {flowUsedBy.map((caller) => (
+                <button
+                  key={caller.id}
+                  type="button"
+                  className="cursor-pointer underline decoration-dotted underline-offset-2"
+                  onClick={() => navigate({ to: "/test/$id", params: { id: caller.id } })}
+                >
+                  {caller.name}
+                </button>
+              ))}
+              <span className="text-tertiary">Editing these steps changes every one of them.</span>
+            </>
+          )}
+        </div>
+      ) : null}
+
       {/* Imported tests (sourceDir set) are script-only; the verbatim file is
           the source of truth. Tests created in the app show Steps AND Script. */}
       {editingSteps ? (
@@ -1060,6 +1123,8 @@ export function TestDetailView() {
                       runStatus={runInfo?.stepStatus[i]}
                       trend={stepTrends.get(test.steps[i].id)}
                       isNew={newStepIds.has(test.steps[i].id)}
+                      onOpenFlow={(flowId) => navigate({ to: "/test/$id", params: { id: flowId } })}
+                      onUnwrapFlow={() => setUnwrappingStep(test.steps[i])}
                     />
                   ))}
                 </div>
@@ -1125,6 +1190,32 @@ export function TestDetailView() {
         onReview={test.sourceDir ? undefined : () => setTab("heals")}
         onSendToTracker={setFailureRunId}
         aiStatus={aiStatus}
+      />
+
+      {/* Unwrapping is a content change with no inverse — the call is replaced
+          by a bound COPY of the flow's steps, so later flow edits stop reaching
+          this test. Worth a confirm that says exactly that. */}
+      <Dialog
+        open={unwrappingStep !== null}
+        onOpenChange={(o) => {
+          if (!o) setUnwrappingStep(null);
+        }}
+        title="Unwrap this flow call?"
+        description={`The “${unwrappingStep?.label ?? "flow"}” call is replaced by a copy of the flow's steps, with this call's parameter values filled in. The copied steps become this test's own — edits to the flow no longer reach them.`}
+        confirmLabel="Unwrap"
+        confirmVariant="accent"
+        onConfirm={async () => {
+          if (!unwrappingStep) return;
+          try {
+            await api.tests.unwrapFlow(id, unwrappingStep.id);
+            qc.invalidateQueries({ queryKey: ["test", id] });
+            qc.invalidateQueries({ queryKey: ["tests"] });
+            qc.invalidateQueries({ queryKey: ["script", id] });
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : String(err));
+          }
+          setUnwrappingStep(null);
+        }}
       />
 
       {/* A failure names no step of its own — the loader resolves which step

@@ -101,6 +101,9 @@ export const TESTS: TestRecord[] = [
         flowId: "t-login",
         label: "Login — wrong password shows an error",
         flowArgs: { email: "buyer@example.com" },
+        // Repeated, so the call-site loop's ×N suffix — and its Repeat
+        // controls in the args dialog — are visible in the preview.
+        repeat: 2,
       },
     ),
   },

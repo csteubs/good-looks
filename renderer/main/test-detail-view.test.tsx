@@ -29,6 +29,9 @@ let routeId = "t1";
 // Records reachable by id, for those navigation tests. `test_` still answers
 // for any id the map doesn't hold, so single-test suites are unaffected.
 let library: Record<string, TestRecord> = {};
+/** What `api.tests.flowUsage()` answers with — the tests calling this one. */
+let flowUsage: { id: string; name: string }[] = [];
+const unwrapFlow = vi.fn(async (_id: string, _stepId: string) => ({}) as TestRecord);
 /** What `api.shopify.list()` answers with. Empty for every test that isn't
  *  about the signature chip, which is the state a machine with no Shopify
  *  store registered is in. */
@@ -103,6 +106,8 @@ vi.mock("../lib/api", () => ({
       setBaseUrl: (...a: Parameters<typeof setBaseUrl>) => setBaseUrl(...a),
       remove: async () => {},
       rename: async () => ({}) as TestRecord,
+      flowUsage: async () => flowUsage,
+      unwrapFlow: (...a: Parameters<typeof unwrapFlow>) => unwrapFlow(...a),
       updateScript: (...a: Parameters<typeof updateScript>) => updateScript(...a),
       updateSteps: (...a: Parameters<typeof updateSteps>) => updateSteps(...a),
       dismissDiverged: (...a: Parameters<typeof dismissDiverged>) => dismissDiverged(...a),
@@ -184,6 +189,7 @@ beforeEach(() => {
   library = {};
   runs = [];
   signatures = [];
+  flowUsage = [];
   settings = {
     defaultRunBrowser: "chromium",
     defaultRunHeadless: false,
@@ -1235,5 +1241,118 @@ describe("the Shopify signature chip", () => {
     renderView();
     await screen.findAllByRole("tab");
     expect(screen.queryByText(/Signature/)).toBeNull();
+  });
+});
+
+describe("flows — the used-by strip and the guarded delete", () => {
+  it("shows a flow's callers as click-through links", async () => {
+    test_ = record({ isFlow: true, name: "Sign in" });
+    flowUsage = [
+      { id: "t2", name: "Checkout" },
+      { id: "t3", name: "Search" },
+    ];
+    renderView();
+    expect(await screen.findByText(/Used by 2 tests/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Checkout" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Search" })).toBeTruthy();
+  });
+
+  it("tells a flow with no callers how to get one", async () => {
+    test_ = record({ isFlow: true });
+    renderView();
+    expect(await screen.findByText(/Not called by any test yet/)).toBeTruthy();
+  });
+
+  it("shows the strip for an unflagged test something still calls", async () => {
+    // Callers are what a change reaches — the flag is only what the picker
+    // offers. Turning the flag off must not hide who depends on the steps.
+    test_ = record({ isFlow: false });
+    flowUsage = [{ id: "t2", name: "Checkout" }];
+    renderView();
+    expect(await screen.findByText(/Used by 1 test/)).toBeTruthy();
+  });
+
+  it("shows no strip on an ordinary test", async () => {
+    renderView();
+    await screen.findAllByRole("tab");
+    expect(screen.queryByText(/Used by/)).toBeNull();
+    expect(screen.queryByText(/Not called by any test/)).toBeNull();
+  });
+
+  it("warns in the delete dialog while callers exist", async () => {
+    test_ = record({ isFlow: true, name: "Sign in" });
+    flowUsage = [{ id: "t2", name: "Checkout" }];
+    renderView();
+    await screen.findByText(/Used by 1 test/);
+    fireEvent.click(screen.getByLabelText("Delete test"));
+    expect(await screen.findByText(/deleting is blocked/i)).toBeTruthy();
+  });
+
+  // The utilities menu is native-menu-backed: its items never enter the DOM,
+  // so these drive it the way appearance-pane.test.tsx drives the typeface
+  // Select — stub `glazeAPI.Menu.popup` and answer with the wanted label's
+  // commandId. See CLAUDE.md's Select note; same component family.
+  interface MenuItem {
+    label?: string;
+    commandId?: number;
+    submenu?: MenuItem[];
+  }
+  function stubNativeMenu(choose: string | null): { labels: () => string[] } {
+    let seen: MenuItem[] = [];
+    const popup = vi.fn(async ({ items }: { items: MenuItem[] }) => {
+      const flat: MenuItem[] = [];
+      const walk = (list: MenuItem[]): void => {
+        for (const i of list) {
+          flat.push(i);
+          if (i.submenu) walk(i.submenu);
+        }
+      };
+      walk(items);
+      seen = flat;
+      if (choose === null) return {};
+      const hit = flat.find((i) => i.label === choose && i.commandId !== undefined);
+      if (!hit) throw new Error(`no item labelled "${choose}"`);
+      return { commandId: hit.commandId };
+    });
+    (window as unknown as { glazeAPI: { Menu: unknown } }).glazeAPI = { Menu: { popup } };
+    return { labels: () => seen.map((i) => i.label ?? "").filter(Boolean) };
+  }
+
+  const flowCallRecord = () =>
+    record({
+      steps: [
+        {
+          id: "s1",
+          type: "runFlow",
+          flowId: "f1",
+          label: "Sign in",
+          timestamp: 1,
+        },
+      ] as TestRecord["steps"],
+    });
+
+  it("offers Go to Flow and Unwrap on a runFlow row, and no parameter editor", async () => {
+    test_ = flowCallRecord();
+    renderView();
+    fireEvent.mouseDown(await screen.findByRole("tab", { name: /Steps/ }));
+    const menu = stubNativeMenu(null);
+    fireEvent.click(await screen.findByLabelText("Step utilities"));
+    await waitFor(() => expect(menu.labels()).toContain("Go to Flow"));
+    expect(menu.labels()).toContain("Unwrap Flow…");
+    // No onEdit on the read-only detail rows, so no parameter editor here —
+    // editing a call's arguments happens where steps are editable (the
+    // trainer, Edit Steps).
+    expect(menu.labels()).not.toContain("Flow Parameters…");
+  });
+
+  it("unwraps through the confirm dialog", async () => {
+    test_ = flowCallRecord();
+    renderView();
+    fireEvent.mouseDown(await screen.findByRole("tab", { name: /Steps/ }));
+    stubNativeMenu("Unwrap Flow…");
+    fireEvent.click(await screen.findByLabelText("Step utilities"));
+    expect(await screen.findByText(/call is replaced by a copy/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Unwrap" }));
+    await waitFor(() => expect(unwrapFlow).toHaveBeenCalledWith("t1", "s1"));
   });
 });

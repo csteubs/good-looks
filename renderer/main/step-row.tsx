@@ -12,7 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@ui";
-import { Check, GripVertical, Loader2, MoreHorizontal, Pencil, Play, Variable, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, GripVertical, Loader2, MoreHorizontal, Pencil, Play, Variable, X } from "lucide-react";
 import type { RunStepStatus } from "./recorder-store";
 
 import { SEL_BG, SEL_RING, TONE, Temp, TypeChip, formatDuration, insetRail } from "../theme";
@@ -200,6 +200,10 @@ export function StepRow({
   onReplay,
   onRefine,
   onEdit,
+  onOpenFlow,
+  onUnwrapFlow,
+  expanded,
+  onToggleExpand,
   drag,
   runStatus,
   isNew,
@@ -212,11 +216,25 @@ export function StepRow({
   index: number;
   step: Step;
   selected?: boolean;
-  onSelect?: () => void;
+  /** Row click. Receives the event so hosts with multi-selection can read the
+   *  shift/⌘ modifiers; single-selection hosts just ignore the argument. */
+  onSelect?: (e: React.MouseEvent) => void;
   onDelete?: () => void;
   onReplay?: () => Promise<{ ok: boolean; error?: string }>;
   onRefine?: () => void;
   onEdit?: (patch: Partial<Step>) => void;
+  /** Navigate to the flow a `runFlow` step calls. Only meaningful on hosts
+   *  that can navigate (the detail view); ignored for other step types. */
+  onOpenFlow?: (flowId: string) => void;
+  /** Replace this `runFlow` step with the flow's steps, bound as a run would
+   *  bind them. The host owns the confirm and the actual write. */
+  onUnwrapFlow?: () => void;
+  /** Whether the host is showing this flow call's steps inline beneath the
+   *  row. Only meaningful with `onToggleExpand`, and only on `runFlow` rows. */
+  expanded?: boolean;
+  /** Toggle the inline preview of the flow's steps. The host owns what is
+   *  rendered — this row only draws the chevron. */
+  onToggleExpand?: () => void;
   drag?: StepDragProps;
   /** Live run status of this step during a test run, for highlight. */
   runStatus?: RunStepStatus;
@@ -487,7 +505,7 @@ export function StepRow({
         // Don't select when clicking an interactive control inside the row.
         const target = e.target as HTMLElement;
         if (target.closest("button, input, [contenteditable]")) return;
-        onSelect();
+        onSelect(e);
       } : undefined}
       aria-selected={selected ? true : undefined}
       role={onSelect ? "option" : undefined}
@@ -508,6 +526,22 @@ export function StepRow({
           scrolls. A reader counts from one, and a failure report that says
           "step 0" costs someone a minute. */}
       <span className="gl-row-index shrink-0">{index + 1}</span>
+      {onToggleExpand && step.type === "runFlow" && step.flowId ? (
+        <button
+          type="button"
+          className="gl-icon-btn shrink-0"
+          aria-label={expanded ? "Collapse flow steps" : "Show the flow's steps"}
+          aria-expanded={expanded ? true : false}
+          title={expanded ? "Collapse flow steps" : "Show the flow's steps"}
+          onClick={onToggleExpand}
+        >
+          {expanded ? (
+            <ChevronDown className="size-3.5" aria-hidden="true" />
+          ) : (
+            <ChevronRight className="size-3.5" aria-hidden="true" />
+          )}
+        </button>
+      ) : null}
       <TypeChip type={step.type} />
       {/* Neutral chips, all three: soft / continue-on-fail / disabled are facts
           about how the step is CONFIGURED, not results, and giving any of them
@@ -689,8 +723,12 @@ export function StepRow({
               step.type !== "endif" &&
               step.type !== "loop" &&
               step.type !== "endLoop";
-            const canFlowArgs = onEdit && step.type === "runFlow";
-            if (!canRefine && !canContinue && !canFlowArgs) return null;
+            const isFlowCall = step.type === "runFlow" && !!step.flowId;
+            const canFlowArgs = onEdit && isFlowCall;
+            const canOpenFlow = onOpenFlow && isFlowCall;
+            const canUnwrap = onUnwrapFlow && isFlowCall;
+            if (!canRefine && !canContinue && !canFlowArgs && !canOpenFlow && !canUnwrap)
+              return null;
             return (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -704,6 +742,19 @@ export function StepRow({
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="bottom" align="end">
+                  {canOpenFlow ? (
+                    <DropdownMenuItem onSelect={() => onOpenFlow?.(step.flowId!)}>
+                      Go to Flow
+                    </DropdownMenuItem>
+                  ) : null}
+                  {canUnwrap ? (
+                    <DropdownMenuItem onSelect={onUnwrapFlow}>
+                      Unwrap Flow…
+                    </DropdownMenuItem>
+                  ) : null}
+                  {(canOpenFlow || canUnwrap) && (canRefine || canContinue || canFlowArgs) ? (
+                    <DropdownMenuSeparator />
+                  ) : null}
                   {canRefine ? (
                     <DropdownMenuItem onSelect={onRefine} icon="crosshair">
                       Refine Selection
@@ -752,7 +803,7 @@ export function StepRow({
           step={step}
           open={flowArgsOpen}
           onOpenChange={setFlowArgsOpen}
-          onSave={(args) => onEdit?.({ flowArgs: args })}
+          onSave={(patch) => onEdit?.(patch)}
         />
       ) : null}
     </div>

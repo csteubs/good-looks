@@ -51,6 +51,7 @@ const FIXTURE = `<!doctype html>
   <div data-testid="thin" style="width:0;height:20px;overflow:hidden">Zero width</div>
   <div data-testid="attr-present" data-state="">has empty attr</div>
   <div data-testid="attr-absent">no attr</div>
+  <button data-testid="bump" onclick="this.textContent = String(Number(this.textContent) + 1)">0</button>
 </body></html>`;
 
 let server: http.Server;
@@ -246,6 +247,51 @@ test("an indexed locator resolves in both engines", async ({ page }) => {
   const step = { id: "nth", type: "assert", assert: "visible", locator: { k: "text", v: "Duplicate", nth: 1 } } as Step;
   expect(await specVerdict(page, step)).toBe(true);
   expect(await replayerVerdict(page, step)).toBe(true);
+});
+
+test("a repeated flow call runs its steps exactly N times, and an assertion inside it still holds", async ({ page }) => {
+  // The loop emitter changes what SURROUNDS a step's line — a real `for` with
+  // a generated counter — so this is the row that catches the loop compiling
+  // to something other than N executions: the flow clicks a self-counting
+  // button, the caller repeats it, and a real assertion reads the count back.
+  // Executed as the WHOLE generated body (loop braces included), not a single
+  // extracted line, because the loop is the subject.
+  const flow = {
+    id: "f-bump",
+    name: "Bump",
+    flowParams: [],
+    steps: [
+      { id: "fb1", type: "click", locator: { k: "testid", v: "bump" }, timestamp: 0 },
+    ] as Step[],
+  };
+  const runBody = async (steps: Step[], vars?: { name: string; kind: "plain"; value: string }[]) => {
+    const src = generateSpec(
+      { name: "loop", url: base, steps, variables: vars },
+      { resolveFlow: (id) => (id === "f-bump" ? flow : null) },
+    );
+    const open = src.indexOf("=> {");
+    const close = src.lastIndexOf("});");
+    const body = src.slice(open + 4, close);
+    const fast = expect.configure({ timeout: 1500 });
+    const run = new Function("page", "expect", `return (async () => { ${body} })();`);
+    await run(page, fast);
+  };
+
+  await page.goto(base);
+  await runBody([
+    { id: "c1", type: "runFlow", flowId: "f-bump", repeat: 3, timestamp: 0 },
+    { id: "c2", type: "assert", assert: "exactText", text: "3", locator: { k: "testid", v: "bump" }, timestamp: 0 },
+  ] as Step[]);
+
+  // The variable-driven form: the count comes off the caller's V at run time.
+  await page.goto(base);
+  await runBody(
+    [
+      { id: "c1", type: "runFlow", flowId: "f-bump", repeatVar: "n", timestamp: 0 },
+      { id: "c2", type: "assert", assert: "exactText", text: "2", locator: { k: "testid", v: "bump" }, timestamp: 0 },
+    ] as Step[],
+    [{ name: "n", kind: "plain", value: "2" }],
+  );
 });
 
 test("a select step refuses an option that does not exist, in both engines", async ({ page }) => {

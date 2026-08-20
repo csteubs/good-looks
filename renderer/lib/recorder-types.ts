@@ -280,6 +280,10 @@ export interface Step {
   captureAttr?: string;
   flowId?: string;
   flowArgs?: Record<string, string>;
+  /** loop fields on a runFlow step (mirror of main types): a fixed repeat
+   *  count, or a variable NAME whose run-time value drives it (wins). */
+  repeat?: number;
+  repeatVar?: string;
   /** variable names this step interpolates; derived backend-side on write. */
   varRefs?: string[];
   /** the target element's recorded identity (mirror of main types). */
@@ -345,6 +349,8 @@ export interface RawStep {
   captureAttr?: string;
   flowId?: string;
   flowArgs?: Record<string, string>;
+  repeat?: number;
+  repeatVar?: string;
 }
 
 export type TestSpeed = "crawl" | "slow" | "medium" | "fast";
@@ -730,6 +736,7 @@ export interface SecretStatus {
   name: string;
   hasValue: boolean;
 }
+
 
 /** A single completed test run (mirror of main/recorder/types.ts RunRecord). */
 export type RunRecordKind = "run" | "baseline-update";
@@ -1422,6 +1429,37 @@ export interface RecorderState {
   pageReady: boolean;
   /** true while the training browser window is opening but hasn't shown yet. */
   loading: boolean;
+  /** The flow being edited inline through one of this session's runFlow rows,
+   *  or null (mirror of main). The flow's steps travel on `recorder:flowScope`. */
+  flowScope?: {
+    flowId: string;
+    callStepId: string;
+    name: string;
+    cursor: number;
+    stepCount: number;
+  } | null;
+}
+
+/** What committing an inline-flow scope amounted to (mirror of main's
+ *  FlowScopeCommit) — the reply to `recorder:exitFlowScope`, so the trainer can
+ *  toast it. Null when no scope was open. */
+export interface FlowScopeCommit {
+  committed: boolean;
+  flowId: string;
+  name: string;
+  callers: number;
+  conflict: boolean;
+  orphaned: boolean;
+}
+
+/** Payload of the `recorder:flowScope` push: the open scope's working copy of
+ *  the flow's steps, or null when no scope is open (mirror of main). */
+export interface FlowScopePayload {
+  flowId: string;
+  callStepId: string;
+  name: string;
+  steps: Step[];
+  cursor: number;
 }
 
 // ── Batch (suite) runs ────────────────────────────────────────────────
