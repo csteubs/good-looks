@@ -70,6 +70,7 @@ import type {
   Locator,
   RecorderState,
   RunLogs,
+  Step,
   StepStructure,
   RunRecord,
   RunTotals,
@@ -153,6 +154,26 @@ const previewVariables: TestVariable[] = [
  *  Hoisted out of the handler map because two handlers now answer with it — a
  *  created variable has to come back in the same shape a push would deliver, or
  *  the picker that asked for it would not list what it just made. */
+/** The step list the recorder preview serves: the checkout fixture's steps
+ *  plus one flow call appended, so the trainer-only flow surfaces — the
+ *  expansion chevron, the read-only preview, Flow Parameters on an editable
+ *  row — are reachable from `?view=recorder`. Appended rather than inserted so
+ *  the fixture's step ids and indexes (which other fixtures reference) hold. */
+function previewRecorderSteps(): Step[] {
+  return structuredClone([
+    ...TESTS[0].steps,
+    {
+      id: "s-flow-call",
+      type: "runFlow",
+      flowId: "t-flow-signin",
+      label: "Sign in",
+      flowArgs: { email: "buyer@example.com" },
+      repeat: 2,
+      timestamp: Date.now(),
+    } as Step,
+  ]);
+}
+
 function recorderState(): RecorderState {
   if (!recorderPreview()) {
     return {
@@ -177,7 +198,7 @@ function recorderState(): RecorderState {
     recording: true,
     paused: false,
     assertMode: null,
-    stepCount: TESTS[0].steps.length,
+    stepCount: previewRecorderSteps().length,
     testId: TESTS[0].id,
     url: TESTS[0].url,
     // Deliberately a DEEPER url than `url` above: the two fields mean different
@@ -1627,7 +1648,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     // trainer, which is a fifth of this app's UI, had no address at all. The
     // flag reports a recorder mid-session over a fixture test's steps; it does
     // NOT pretend to capture, and the banner still says so.
-    "recorder:getSteps": () => (recorderPreview() ? structuredClone(TESTS[0].steps) : []),
+    "recorder:getSteps": () => (recorderPreview() ? previewRecorderSteps() : []),
     "recorder:getDebugLogs": () => [],
     // Element context. The picker's live readout asks the page how many
     // elements the CURRENT selection matches; there is no page here, so the

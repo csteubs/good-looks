@@ -141,7 +141,7 @@ export function FlowCallDialog({
             Loading…
           </Text>
         ) : flow === null ? (
-          <Text size="small" className="text-danger">
+          <Text size="small" className="text-support-red">
             This flow can&apos;t be found — it may have been deleted. The call will say so in the
             generated script until it points at an existing flow.
           </Text>
@@ -214,7 +214,7 @@ export function FlowCallDialog({
                     onChange={(e) => setRepeatName(e.target.value)}
                   />
                 </Field>
-                <Text size="small" className={repeatNameOk ? "text-secondary" : "text-danger"}>
+                <Text size="small" className={repeatNameOk ? "text-secondary" : "text-support-red"}>
                   {repeatNameOk
                     ? "The variable's value at run time decides how many times the flow runs (capped at 100). Each iteration uses the same parameter values."
                     : "Use letters, numbers and underscores, starting with a letter — the name becomes a property in the generated spec."}

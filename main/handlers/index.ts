@@ -222,6 +222,14 @@ export function registerHandlers(): void {
     async (_e, params: { name: unknown; kind?: unknown; value?: unknown }) =>
       recorderService.addVariable(params ?? { name: undefined }),
   );
+  // Extract selected session steps into a new flow test. Unvalidated on this
+  // side for the reason addVariable is: the service throws sentences the
+  // trainer's dialog shows verbatim, from the same shared rule the button used.
+  ipcMain.handle(
+    "recorder:extractFlow",
+    async (_e, params: { stepIds: unknown; name: unknown }) =>
+      recorderService.extractFlow(params?.stepIds, params?.name),
+  );
   ipcMain.handle(
     "recorder:applyHeal",
     async (_e, params: { stepId: string; locator: Locator }) =>

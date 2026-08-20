@@ -8195,3 +8195,42 @@ the flow ONCE with a visible comment (zero runs would silently skip steps; an
 undeclared `V.x` could be a ReferenceError against a spec with no header); a
 disabled call gets no loop around its commented-out lines; counter names are
 sequential (`gl_i0`, `gl_i1`) so nested repeated flows cannot collide.
+
+## 2026-08-19 — Flows phase 4: multi-select, extract-to-flow, and the read-only expansion
+
+**Selection is a shared module, and the extraction rule is a shared spelling.**
+Both trainers gained multi-selection (plain click, ⌘/ctrl toggle, shift range)
+through `renderer/lib/step-selection.ts`; two lists disagreeing about what a
+click means would be a bug that appears only in whichever window the user is
+looking at, the same argument the insert cursor makes. Whether a selection can
+BECOME a flow — contiguous, and never splitting an `if`/`endif` pair — lives in
+`shared/flow-extraction.mjs`, because the renderer (to enable the button and
+word the refusal) and the recorder service (to re-validate what arrives over
+IPC) both need it, they cannot share a `.ts`, and the drift direction is the
+button allowing what the backend refuses. Selected ids are kept in LIST order
+regardless of click order: extraction preserves the recording's order.
+
+**`recorder:extractFlow` persists the flow immediately; the session stays
+staged.** A flow is a library entity other tests can call the moment it
+exists — holding it hostage to the session's save would make "record, extract,
+call it from the other test" impossible. Consequence, stated in the method:
+discarding the session afterwards keeps the flow while the original steps come
+back with the discarded record — a duplicate to clean up, not data loss in
+either direction. The extracted steps are re-run through `normalizeStep` on
+the way into the new record (`check:step-ingest` §1c pins the funnel is in the
+path), the name is collision-checked case-insensitively, and the cursor keeps
+pointing at the same gap through the splice.
+
+**The expansion is read-only and shows steps AS RECORDED.** A `runFlow` row's
+chevron renders the flow's steps inline (`flow-steps-preview.tsx`) with every
+editing affordance withheld — until inline flow editing exists, the flow's own
+trainer is where they change — and values render un-bound (`${email}`, not the
+caller's argument), the same no-variable-context rule `describeStep` follows.
+Binding the preview would require the renderer to import the generator's
+binding, which no renderer app code does; the parameter dialog on the same row
+already shows what this call overrides.
+
+**Extraction is trainer-only.** Edit Steps operates on an unsaved draft, so
+extraction there would persist a flow record while the caller's own edit is
+still uncommitted — a save-ordering trap. Mark-as-flow plus trainer extraction
+cover creation.

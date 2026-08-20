@@ -35,6 +35,7 @@ import {
   RotateCcw,
   Shrink,
   Wand2,
+  Workflow,
   X,
 } from "lucide-react";
 
@@ -44,6 +45,14 @@ import { computeStepDepths, describeStep } from "../lib/describe-step";
 import { urlAssertPrefill } from "../../shared/url-assert.mjs";
 import { useRecorder } from "../main/recorder-store";
 import { CursorGap, INSERT_HERE, StepRow } from "../main/step-row";
+import { CreateFlowDialog } from "../main/create-flow-dialog";
+import { FlowStepsPreview } from "../main/flow-steps-preview";
+import {
+  emptySelection,
+  extractableRange,
+  pruneSelection,
+  selectionAfterClick,
+} from "../lib/step-selection";
 import { StepComposer, ADD_STEP_LABEL, type AddStepKind } from "../main/step-composer";
 import { GenerateStepsDialog } from "../main/generate-steps-dialog";
 import { RefineSelectorDialog } from "../main/refine-selector-dialog";
@@ -180,6 +189,7 @@ export function TrainerPanelView() {
     setAssert,
     deleteStep,
     insertStep,
+    extractFlow,
     insertGeneratedSteps,
     reorderStep,
     updateStep,
@@ -203,7 +213,19 @@ export function TrainerPanelView() {
   const [addKind, setAddKind] = React.useState<AddStepKind | null>(null);
   const [aiOpen, setAiOpen] = React.useState(false);
   const [exitOpen, setExitOpen] = React.useState(false);
-  const [selectedStepId, setSelectedStepId] = React.useState<string | null>(null);
+  // Multi-selection shared with the main trainer through lib/step-selection —
+  // the anchor is what the single-selection code called selectedStepId.
+  const [selection, setSelection] = React.useState(emptySelection());
+  const selectedStepId = selection.anchorId;
+  const selectAnchor = React.useCallback(
+    (id: string) => setSelection({ ids: [id], anchorId: id }),
+    [],
+  );
+  const [expandedFlows, setExpandedFlows] = React.useState<Set<string>>(new Set());
+  const [createFlowOpen, setCreateFlowOpen] = React.useState(false);
+  React.useEffect(() => {
+    setSelection((prev) => pruneSelection(prev, liveSteps));
+  }, [liveSteps]);
   const [replayStatus, setReplayStatus] = React.useState<string | null>(null);
   const [addStepPicking, setAddStepPicking] = React.useState(false);
   const [docked, setDocked] = React.useState(true);
@@ -335,8 +357,8 @@ export function TrainerPanelView() {
     if (!replayRun?.running || replayRun.steps.length === 0) return;
     const last = replayRun.steps[replayRun.steps.length - 1];
     const s = liveSteps[last.index];
-    if (s) setSelectedStepId(s.id);
-  }, [replayRun, liveSteps]);
+    if (s) selectAnchor(s.id);
+  }, [replayRun, liveSteps, selectAnchor]);
 
   const [dragId, setDragId] = React.useState<string | null>(null);
   const [overIndex, setOverIndex] = React.useState<number | null>(null);
@@ -590,8 +612,30 @@ export function TrainerPanelView() {
                   <StepRow
                     index={i}
                     step={s}
-                    selected={selectedStepId === s.id}
-                    onSelect={controlsDisabled ? undefined : () => setSelectedStepId(s.id)}
+                    selected={selection.ids.includes(s.id)}
+                    onSelect={
+                      controlsDisabled
+                        ? undefined
+                        : (e) =>
+                            setSelection((prev) =>
+                              selectionAfterClick(prev, liveSteps, s.id, {
+                                shift: e.shiftKey,
+                                toggle: e.metaKey || e.ctrlKey,
+                              }),
+                            )
+                    }
+                    expanded={s.type === "runFlow" ? expandedFlows.has(s.id) : undefined}
+                    onToggleExpand={
+                      s.type === "runFlow" && s.flowId
+                        ? () =>
+                            setExpandedFlows((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(s.id)) next.delete(s.id);
+                              else next.add(s.id);
+                              return next;
+                            })
+                        : undefined
+                    }
                     onDelete={controlsDisabled ? undefined : () => deleteStep(s.id)}
                     onReplay={controlsDisabled ? undefined : () => replayStep(s.id)}
                     onRefine={controlsDisabled ? undefined : () => startRefine(s.id)}
@@ -614,6 +658,9 @@ export function TrainerPanelView() {
                           }
                     }
                   />
+                  {s.type === "runFlow" && s.flowId && expandedFlows.has(s.id) ? (
+                    <FlowStepsPreview flowId={s.flowId} indent={stepDepths[i] + 1} />
+                  ) : null}
                   <CursorGap
                     active={state.cursor === i + 1}
                     onClick={() => setCursor(i + 1)}
@@ -645,6 +692,23 @@ export function TrainerPanelView() {
           <Plus className="size-3.5" />
           <ChevronDown className="size-3" />
         </ToolButton>
+        {selection.ids.length > 0 ? (
+          <ToolButton
+            label={`Create a flow from the ${selection.ids.length} selected step${selection.ids.length === 1 ? "" : "s"}`}
+            onClick={() => {
+              const verdict = extractableRange(liveSteps, selection.ids);
+              if (!verdict.ok) {
+                setReplayStatus(verdict.reason);
+                window.setTimeout(() => setReplayStatus(null), 6000);
+                return;
+              }
+              setCreateFlowOpen(true);
+            }}
+            disabled={controlsDisabled}
+          >
+            <Workflow className="size-3.5" />
+          </ToolButton>
+        ) : null}
         <ToolButton
           label="Generate steps with AI"
           onClick={() => setAiOpen(true)}
@@ -697,6 +761,16 @@ export function TrainerPanelView() {
           {state.editing ? "Save Test" : "Generate Test"}
         </Btn>
       </div>
+
+      <CreateFlowDialog
+        open={createFlowOpen}
+        onOpenChange={setCreateFlowOpen}
+        count={selection.ids.length}
+        onCreate={async (name) => {
+          await extractFlow(selection.ids, name);
+          setSelection(emptySelection());
+        }}
+      />
 
       <GenerateStepsDialog
         open={aiOpen}

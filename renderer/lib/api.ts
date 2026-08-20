@@ -168,6 +168,11 @@ export const api = {
       ipc().invoke<RecorderState>("recorder:addVariable", v),
     setCursor: (index: number) =>
       ipc().invoke<RecorderState>("recorder:setCursor", { index }),
+    /** Extract a contiguous run of the session's steps into a new flow test,
+     *  replacing them with a `runFlow` call. Rejects with a message meant to
+     *  be shown: a gapped or block-splitting selection, or a taken name. */
+    extractFlow: (stepIds: string[], name: string) =>
+      ipc().invoke<RecorderState>("recorder:extractFlow", { stepIds, name }),
     replayStep: (stepId: string) =>
       ipc().invoke<DebugEntry>("recorder:replayStep", { stepId }),
     replayFromStart: () =>

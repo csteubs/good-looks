@@ -69,9 +69,11 @@ import {
   normalizePickedElement,
   normalizeRawStep,
   normalizeRawSteps,
+  normalizeStep,
   normalizeVariables,
   resolveStepForReplay,
 } from "../recorder/types.js";
+import { extractableRange } from "../../shared/flow-extraction.mjs";
 import { normalizeViewport, recordedViewport, type Viewport } from "../recorder/window-size.js";
 import {
   applyCookieStep,
@@ -2264,6 +2266,91 @@ export const recorderService = {
       broadcastSteps();
       broadcastState();
     }
+    return currentState();
+  },
+
+  /**
+   * Extract a contiguous run of the session's steps into a NEW flow test,
+   * replacing them with a `runFlow` call — mabl's bulk-edit "Create flow".
+   *
+   * The flow record persists IMMEDIATELY, unlike the session's own steps which
+   * stage until finalize: a flow is a library entity other tests can call the
+   * moment it exists, and holding it hostage to this session's save would make
+   * "record, extract, call it from the other window" impossible. The one
+   * consequence worth naming: discarding this session afterwards keeps the
+   * flow (it is a separate test) while the original steps come back with the
+   * discarded record — a duplicate to clean up, not data loss in either
+   * direction.
+   *
+   * Validated HERE as well as in the renderer, with the same shared rule
+   * (`shared/flow-extraction.mjs`): the selection arrives over IPC, and a
+   * gapped or block-splitting range would build a flow whose generated block
+   * is unbalanced. Steps are re-run through `normalizeStep` on the way into
+   * the new record — a new path that writes steps into a stored record is a
+   * new instance of the ingest boundary, whoever the caller is.
+   *
+   * Rejections are thrown: this is a dialog submit with somewhere to say
+   * "that name is taken", the same contract `addVariable` chose.
+   */
+  extractFlow(stepIds: unknown, name: unknown): RecorderState {
+    if (!session) throw new Error("No recording session is running.");
+    const ids = Array.isArray(stepIds)
+      ? stepIds.filter((v): v is string => typeof v === "string")
+      : [];
+    const verdict = extractableRange(session.steps, ids);
+    if (!verdict.ok) throw new Error(verdict.reason);
+    const flowName = typeof name === "string" ? name.trim() : "";
+    if (!flowName) throw new Error("Give the flow a name.");
+    const taken = new Set(testStore.allNames().map((n) => n.toLowerCase()));
+    if (taken.has(flowName.toLowerCase())) {
+      throw new Error(`A test named “${flowName}” already exists — pick another name.`);
+    }
+
+    const now = Date.now();
+    const extracted = session.steps
+      .slice(verdict.start, verdict.end + 1)
+      .map((s) => normalizeStep(s))
+      .filter((s): s is Step => s !== null);
+    if (extracted.length === 0) throw new Error("Nothing usable to extract.");
+
+    const flowId = randomUUID();
+    const flow: TestRecord = {
+      id: flowId,
+      name: flowName,
+      url: session.url,
+      createdAt: now,
+      updatedAt: now,
+      steps: extracted,
+      scriptPath: testStore.scriptPathFor(flowId),
+      isFlow: true,
+      flowParams: [],
+    };
+    flow.scriptPath = testStore.regenerateScript(flow);
+    testStore.save(flow);
+
+    const call: Step = {
+      id: randomUUID(),
+      timestamp: now,
+      type: "runFlow",
+      flowId,
+      // The name is stored on the step so the list stays readable even if the
+      // flow is later renamed or deleted — same rule as the composer.
+      label: flowName,
+    };
+    session.steps.splice(verdict.start, extracted.length, call);
+    // The cursor keeps pointing at the same GAP: unchanged before the range,
+    // just past the call when it was inside or at the range, and pulled back
+    // by the rows that left when it was after.
+    const removed = extracted.length - 1;
+    if (session.cursor > verdict.end) session.cursor = clampCursor(session.cursor - removed);
+    else if (session.cursor > verdict.start) session.cursor = clampCursor(verdict.start + 1);
+    logger.info("recorder", "Extracted steps into a flow", {
+      flowId,
+      name: flowName,
+      steps: extracted.length,
+    });
+    broadcastSteps();
+    broadcastState();
     return currentState();
   },
 

@@ -21,6 +21,10 @@
 // Either one alone leaves a live path. Run with:
 //   npm run check:step-ingest
 
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import {
   buildStepStructures,
   MAX_CONTEXT_PREDICATES,
@@ -146,6 +150,31 @@ function main(): void {
     ]);
     assert(!hostile.includes("pwned"), "a forged repeat never reaches the emitted spec");
     assert(!hostile.includes("evil"), "a forged repeat variable never reaches the emitted spec");
+  }
+
+  // ── 1c. extractFlow writes through the normalize funnel ──────────────────
+  //
+  // Extracting trainer steps into a flow is a path that writes steps into a
+  // STORED record, which makes it one more instance of this boundary. Source-
+  // level, like check:capture-egress's second-channel guard: the property is
+  // that the funnel is in the path, and the funnel's own behavior is what the
+  // sections above pin.
+  {
+    const service = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../recorder-service.ts"),
+      "utf8",
+    );
+    const start = service.indexOf("extractFlow(stepIds: unknown");
+    const body = start >= 0 ? service.slice(start, service.indexOf("\n  },", start)) : "";
+    assert(start >= 0, "recorder-service.ts still has extractFlow");
+    assert(
+      /\.map\(\(s\) => normalizeStep\(s\)\)/.test(body),
+      "extractFlow re-normalizes every step on its way into the new flow record",
+    );
+    assert(
+      /extractableRange\(/.test(body),
+      "extractFlow re-validates the selection with the shared rule, not a copy",
+    );
   }
 
   // ── 2. Numbers that are numbers, but not usable numerals ─────────────────

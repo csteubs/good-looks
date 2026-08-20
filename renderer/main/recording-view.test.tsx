@@ -62,6 +62,7 @@ const actions = {
   clearDebugEntry: vi.fn(),
   clearContextAction: vi.fn(),
   addVariable: vi.fn(async () => {}),
+  extractFlow: vi.fn(async () => {}),
 };
 
 let store: Record<string, unknown> = {};
@@ -768,5 +769,97 @@ describe("the fill context action", () => {
       locator: { k: "css", v: "#password" },
       value: "${storePassword}",
     });
+  });
+});
+
+describe("multi-select and Create flow", () => {
+  const CLICK = { k: "testid" as const, v: "go" };
+  const fourSteps = () => [
+    step("a", { type: "goto", url: "https://example.com" }),
+    step("b", { type: "click", locator: CLICK }),
+    step("c", { type: "fill", locator: { k: "label", v: "Email" }, value: "x" }),
+    step("d", { type: "assert", assert: "visible", locator: CLICK }),
+  ];
+
+  it("shift-click selects the whole run and surfaces the Create flow button", () => {
+    setStore({ liveSteps: fourSteps() });
+    render(withAiDebug(<RecordingView />));
+    const rows = screen.getAllByRole("option");
+    fireEvent.click(rows[1]);
+    // No button for a single selection? One step is a legal flow — the button
+    // appears from the first selected row.
+    expect(screen.getByRole("button", { name: /create flow \(1\)/i })).toBeTruthy();
+    fireEvent.click(rows[3], { shiftKey: true });
+    expect(screen.getByRole("button", { name: /create flow \(3\)/i })).toBeTruthy();
+  });
+
+  it("⌘-click toggles a row in and out of the selection", () => {
+    setStore({ liveSteps: fourSteps() });
+    render(withAiDebug(<RecordingView />));
+    const rows = screen.getAllByRole("option");
+    fireEvent.click(rows[0]);
+    fireEvent.click(rows[2], { metaKey: true });
+    expect(screen.getByRole("button", { name: /create flow \(2\)/i })).toBeTruthy();
+    fireEvent.click(rows[2], { metaKey: true });
+    expect(screen.getByRole("button", { name: /create flow \(1\)/i })).toBeTruthy();
+  });
+
+  it("refuses a gapped selection with a visible sentence instead of a dead dialog", () => {
+    setStore({ liveSteps: fourSteps() });
+    render(withAiDebug(<RecordingView />));
+    const rows = screen.getAllByRole("option");
+    fireEvent.click(rows[0]);
+    fireEvent.click(rows[2], { metaKey: true });
+    fireEvent.click(screen.getByRole("button", { name: /create flow/i }));
+    expect(screen.getByText(/contiguous run of steps/i)).toBeTruthy();
+    // And the naming dialog did NOT open.
+    expect(screen.queryByLabelText("Flow name")).toBeNull();
+  });
+
+  it("creates the flow through the dialog, in list order, and clears the selection", async () => {
+    setStore({ liveSteps: fourSteps() });
+    render(withAiDebug(<RecordingView />));
+    const rows = screen.getAllByRole("option");
+    // Click DOWNWARD from row 2 to row 1, so the ids-are-list-ordered rule is
+    // what the assertion below is actually about.
+    fireEvent.click(rows[2]);
+    fireEvent.click(rows[1], { metaKey: true });
+    fireEvent.click(screen.getByRole("button", { name: /create flow \(2\)/i }));
+    fireEvent.change(await screen.findByLabelText("Flow name"), { target: { value: "Sign in" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create flow" }));
+    await waitFor(() =>
+      expect(actions.extractFlow).toHaveBeenCalledWith(["b", "c"], "Sign in"),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /create flow/i })).toBeNull(),
+    );
+  });
+
+  it("shows the backend's refusal beside the name field", async () => {
+    actions.extractFlow.mockRejectedValueOnce(new Error("A test named “Sign in” already exists — pick another name."));
+    setStore({ liveSteps: fourSteps() });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getAllByRole("option")[1]);
+    fireEvent.click(screen.getByRole("button", { name: /create flow \(1\)/i }));
+    fireEvent.change(await screen.findByLabelText("Flow name"), { target: { value: "Sign in" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create flow" }));
+    expect(await screen.findByText(/already exists/)).toBeTruthy();
+  });
+
+  it("expands a runFlow row into a read-only preview of the flow's steps", async () => {
+    setStore({
+      liveSteps: [
+        step("a", { type: "goto", url: "https://example.com" }),
+        step("f", { type: "runFlow", flowId: "flow-1", label: "Sign in" }),
+      ],
+    });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: /show the flow's steps/i }));
+    // The api mock has no tests.get, so the preview reports the flow missing —
+    // which is itself the state worth pinning: a fetch failure says so rather
+    // than rendering nothing.
+    expect(await screen.findByText(/can't be found/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /collapse flow steps/i }));
+    expect(screen.queryByText(/can't be found/i)).toBeNull();
   });
 });

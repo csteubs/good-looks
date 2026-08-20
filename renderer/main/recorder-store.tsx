@@ -174,6 +174,9 @@ interface RecorderContextValue {
   setAssert: (mode: AssertKind | null, soft?: boolean) => void;
   deleteStep: (id: string) => void;
   insertStep: (step: RawStep, index?: number) => void;
+  /** Extract a contiguous run of session steps into a new flow test,
+   *  replacing them with a runFlow call. Rejects with a showable message. */
+  extractFlow: (stepIds: string[], name: string) => Promise<void>;
   /** Insert a batch of AI-generated steps and mark what landed as new, so the
    *  step list can glow it. Separate from `insertStep` because only this path
    *  produces steps the user did not write themselves. */
@@ -719,6 +722,16 @@ export function RecorderProvider({
     [clearNewSteps],
   );
 
+  const extractFlow = React.useCallback(
+    async (stepIds: string[], name: string) => {
+      clearNewSteps();
+      // Awaited so the caller can surface the backend's refusal (a taken name,
+      // a selection the service re-validates) in the dialog it came from.
+      await api.recorder.extractFlow(stepIds, name);
+    },
+    [clearNewSteps],
+  );
+
   const insertGeneratedSteps = React.useCallback(async (steps: RawStep[]) => {
     const before = liveStepsRef.current;
     // Sequential, not `forEach`: each insert lands at the session cursor and
@@ -854,6 +867,7 @@ export function RecorderProvider({
     setAssert,
     deleteStep,
     insertStep,
+    extractFlow,
     insertGeneratedSteps,
     reorderStep,
     updateStep,
