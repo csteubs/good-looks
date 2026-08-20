@@ -10,6 +10,67 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-20 — The list of interpolatable fields becomes a traversal that writes
+
+`interpolatableFields(step)` returned a `string[]`, and its comment told every
+caller it was the one list: "Every site that scans or substitutes must use this
+list, so a new interpolatable field can't be added to one and forgotten in the
+other." That is the correct rule, and the shape could not hold it. A list you
+can only READ cannot substitute, so the two sites that substitute —
+`resolveStepForReplay` in `types.ts` and `bindFlowStep` in the generator — each
+hand-wrote the same four assignments next to it, and the generator's own
+emission spelled the set a third time in its `valueExpr` call sites. Four
+copies, one comment asking them to agree, nothing checking that they did.
+
+They drifted the moment `api` steps landed. The generator learned to
+interpolate `apiBody` and the values of `apiHeaders` — correctly; an
+`Authorization: Bearer ${token}` is most of the point of an API step — and none
+of the other three sites were told.
+
+**Both resulting failures land far from the edit that caused them, which is why
+neither was noticed for a release.** `varRefs` is derived by `collectVarRefs` at
+`testStore.save`, and the Variables tab counts usage from it; a token
+referenced only by a request header therefore counted as **unused**. The panel
+then offers to delete a variable the run still needs, and because `valueExpr`
+deliberately leaves an undeclared reference as literal text (so a price of
+`${9.99}` survives), the next run sends the header value `Bearer ${token}` as
+those thirteen characters and the API answers 401. Nothing connects that to the
+delete. Separately, `bindFlowStep` binds a caller's arguments textually at
+generation time, so a flow parameter never reached an API step inside the flow
+body: a login flow with a `password` parameter posted `${password}` verbatim,
+looking parameterised and not being it.
+
+**The fix is the shape, not the two missing fields.** `mapInterpolatable(step,
+fn)` rewrites every interpolatable field and returns a new step (or the same
+one, when nothing changed); `interpolatableFields` is now a scan through it,
+`collectVarRefs` scans through it, and both substituters map through it. Adding
+a field is one edit. Returning the original object when `fn` changed nothing
+matters more than it looks: `resolveStepForReplay` already promised an
+unchanged step for a step with no references, and callers compare by identity.
+
+Header NAMES are deliberately left alone. A name carries the token grammar and
+is re-checked at emission, so a `${var}` in one could only ever build a header
+the generator then drops — interpolating it would turn a visible "this header
+did not appear" into a silent one.
+
+**The guard asserts both halves per field, and that is the whole point.**
+`check:variables` §8b walks a table of (field, step) rows, and for each one
+asserts that the generated spec contains `V.tok` *and* that `collectVarRefs`
+reports `tok`. Checking only the second half would pass vacuously on the day
+the generator stops interpolating a field; checking only the first would not
+notice the bookkeeping. Reverting the traversal reproduces exactly four
+failures with the generator half still green, which is the drift stated as a
+test.
+
+**What this deliberately does not fix:** a `${var}` inside a regex-backed
+assertion (`url`, `urlEndsWith`, `urlIs`, `titleContains`, and `css` with
+`contains`) still stays literal. Those embed the expected value in a pattern
+and `reEscape` only works on a string known at generation time, so lifting it
+needs a run-time escape helper in `glaze-runtime-source.ts` and a matching
+inverse in `spec-parser.ts` — a real feature with a real cost, and a separate
+one from this bookkeeping bug. The existing comments in `assertLine` already
+say so; this entry is the second half of that promise, naming what remains.
+
 ### 2026-08-19 — Scroll depth becomes an explicit step, not a hidden modifier
 
 The failure this fixes: a test whose assertion targets content the page

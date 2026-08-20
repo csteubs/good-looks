@@ -16,6 +16,7 @@ import {
   isValidVariableName,
   MAX_FLOW_REPEAT,
   MAX_LOOP_COUNT,
+  mapInterpolatable,
   toPlaywrightSameSite,
   VAR_REF_RE,
 } from "../recorder/types.js";
@@ -1064,22 +1065,16 @@ function repeatSpec(step: Step): { fixed: number; variable?: string } {
 export function bindFlowStep(step: Step, args: Record<string, string>): Step {
   const names = Object.keys(args);
   if (names.length === 0) return step;
-  const sub = (text: string | undefined): string | undefined => {
-    if (typeof text !== "string" || !text.includes("${")) return text;
+  const sub = (text: string): string => {
+    if (!text.includes("${")) return text;
     return text.replace(VAR_REF_RE, (whole, name: string) =>
       Object.prototype.hasOwnProperty.call(args, name) ? args[name] : whole,
     );
   };
-  const bound: Step = { ...step };
-  if (typeof bound.value === "string") bound.value = sub(bound.value);
-  if (typeof bound.text === "string") bound.text = sub(bound.text);
-  if (typeof bound.url === "string") bound.url = sub(bound.url);
-  if (bound.flowArgs) {
-    const next: Record<string, string> = {};
-    for (const [k, v] of Object.entries(bound.flowArgs)) next[k] = sub(v) ?? "";
-    bound.flowArgs = next;
-  }
-  return bound;
+  // Which fields those are is `mapInterpolatable`'s to say, not this
+  // function's. Spelling the list again here is what left an API step inside
+  // a flow reading the caller's `${param}` as literal text.
+  return mapInterpolatable(step, sub);
 }
 
 /**

@@ -23,7 +23,7 @@ import { MASKED, redact, REDACTED, setSecretSnapshotForTesting } from "../secret
 import { testSecretsStore } from "../test-secrets-store.js";
 import { runHistoryStore } from "../run-history-store.js";
 import { buildAlertPayload, redactPayload } from "../alert-service.js";
-import { generateSpec } from "../script-generator.js";
+import { bindFlowStep, generateSpec } from "../script-generator.js";
 import {
   collectVarRefs,
   isValidVariableName,
@@ -286,6 +286,74 @@ async function main(): Promise<void> {
     collectVarRefs(step({ type: "fill", value: "costs ${9.99}" })),
     [],
     "a ${...} that isn't an identifier is left alone, not treated as a variable",
+  );
+
+  // ── 8b. Every field the GENERATOR interpolates is one the bookkeeping sees ─
+  //
+  // The invariant, and the reason this is a loop over a table rather than four
+  // hand-written asserts: `script-generator.ts` decides which fields become
+  // `V.name` in the spec, and `mapInterpolatable` decides which fields are
+  // scanned for references, substituted for a trainer preview and bound by a
+  // flow call. Nothing in the types ties those two lists together. When they
+  // drifted — `apiBody` and the values of `apiHeaders` were interpolated by
+  // the generator and invisible to everything else — the symptoms were a
+  // variable reported as unused (so the Variables tab offered to delete a
+  // token the run still needed) and a flow parameter that never reached an API
+  // step in the flow's body.
+  //
+  // Both halves are asserted per row on purpose. Checking only "the traversal
+  // knows about it" would pass vacuously on the day the generator stops
+  // interpolating the field at all.
+  const apiStep = (over: Partial<Step>): Step =>
+    step({ type: "api", apiMethod: "POST", url: "https://api.example.com/x", ...over });
+
+  const interpolated: { field: string; step: Step }[] = [
+    { field: "value", step: step({ type: "fill", locator: { k: "label", v: "Email" }, value: "${tok}" }) },
+    { field: "text", step: step({ type: "assert", assert: "text", locator: { k: "label", v: "Email" }, text: "${tok}" }) },
+    { field: "url", step: step({ type: "goto", url: "https://example.com/${tok}" }) },
+    { field: "apiBody", step: apiStep({ apiBody: '{"q":"${tok}"}' }) },
+    { field: "apiHeaders", step: apiStep({ apiHeaders: { Authorization: "Bearer ${tok}" } }) },
+  ];
+
+  for (const { field, step: one } of interpolated) {
+    const oneSpec = generateSpec({
+      name: "interp",
+      url: "https://example.com",
+      steps: [one],
+      variables: [{ name: "tok", kind: "plain", value: "abc" }],
+    });
+    assert(
+      oneSpec.includes("V.tok"),
+      `the generator interpolates a variable in ${field}`,
+    );
+    assert(
+      collectVarRefs(one).includes("tok"),
+      `collectVarRefs sees the reference in ${field} — the usage count cannot invite deleting it`,
+    );
+  }
+
+  // ── 8c. An API step inside a parameterised flow binds the caller's args ───
+  //
+  // `bindFlowStep` substitutes textually at generation time. Before the shared
+  // traversal it rewrote value/text/url/flowArgs only, so a flow whose body
+  // posted `${password}` to an endpoint shipped those eleven characters as the
+  // request body — a login flow that looked parameterised and was not.
+  assertEqual(
+    bindFlowStep(apiStep({ apiBody: '{"pw":"${password}"}' }), { password: "${storePw}" }).apiBody,
+    '{"pw":"${storePw}"}',
+    "a flow argument binds into an API step's body",
+  );
+  assertEqual(
+    bindFlowStep(apiStep({ apiHeaders: { Authorization: "Bearer ${token}" } }), {
+      token: "${apiToken}",
+    }).apiHeaders,
+    { Authorization: "Bearer ${apiToken}" },
+    "a flow argument binds into an API step's header value",
+  );
+  assertEqual(
+    bindFlowStep(apiStep({ apiHeaders: { "X-${name}": "v" } }), { name: "nope" }).apiHeaders,
+    { "X-${name}": "v" },
+    "a header NAME is left alone — the token grammar is re-checked at emission",
   );
 
   // ── 9. Merging a trainer session's variables back into the record ───────
