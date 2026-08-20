@@ -777,6 +777,7 @@ export interface RunRecord {
   exitCode: number;
   startedAt: number;
   finishedAt: number;
+  hasTrace?: boolean;
   durationMs: number;
   logFile: string;
   logBytes: number;

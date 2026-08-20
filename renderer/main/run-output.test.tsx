@@ -178,3 +178,47 @@ describe("the log drawer", () => {
     expect(expander()).toBeTruthy();
   });
 });
+
+describe("the Open Trace icon", () => {
+  const failedRun = {
+    id: "r-1",
+    testId: "t1",
+    testName: "T",
+    url: "https://x.test",
+    status: "failed" as const,
+    exitCode: 1,
+    startedAt: 1,
+    finishedAt: 2,
+    durationMs: 1,
+    logFile: "/tmp/r.log",
+  };
+  function HistoryPanel(props: Partial<React.ComponentProps<typeof RunOutput>>) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <RunOutput
+          summary={summariseRun({
+            testId: "t1",
+            runs: [failedRun as never],
+            heals: [],
+            stepCount: 3,
+            live: null,
+            now: 10,
+          })}
+          {...props}
+        />
+      </QueryClientProvider>
+    );
+  }
+
+  it("opens the salvaged trace for the failed run that has one", () => {
+    const onOpenTrace = vi.fn();
+    render(<HistoryPanel hasTrace onOpenTrace={onOpenTrace} />);
+    fireEvent.click(screen.getByLabelText(/open this failure's playwright trace/i));
+    expect(onOpenTrace).toHaveBeenCalledWith("r-1");
+  });
+
+  it("offers nothing when the run kept no trace", () => {
+    render(<HistoryPanel hasTrace={false} onOpenTrace={vi.fn()} />);
+    expect(screen.queryByLabelText(/playwright trace/i)).toBeNull();
+  });
+});

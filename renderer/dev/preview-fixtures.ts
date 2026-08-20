@@ -257,6 +257,7 @@ export const RUNS: RunRecord[] = [
     url: "https://app.example.com/login",
     status: "failed",
     exitCode: 1,
+    hasTrace: true,
     startedAt: NOW - 30 * MINUTE,
     finishedAt: NOW - 30 * MINUTE + 8_100,
     durationMs: 8_100,

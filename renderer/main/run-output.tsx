@@ -37,7 +37,7 @@
 //    and reporting both as "Passed" is the app agreeing with the mis-heal.
 
 import { ScrollArea } from "@ui";
-import { Check, ChevronsDownUp, ChevronsUpDown, Copy, Send, Sparkles } from "lucide-react";
+import { Check, ChevronsDownUp, ChevronsUpDown, Copy, Film, Send, Sparkles } from "lucide-react";
 import { useState } from "react";
 
 import { StatusChip } from "../theme";
@@ -91,6 +91,8 @@ export function RunOutput({
   /** Opens the Heals tab, for the healed panel's review action. */
   onReview,
   onSendToTracker,
+  hasTrace,
+  onOpenTrace,
   /** Status of this test's AI debug session, or null when it has none. */
   aiStatus,
 }: {
@@ -100,6 +102,9 @@ export function RunOutput({
   onReview?: () => void;
   /** Absent where filing makes no sense (no tracker surface in the trainer). */
   onSendToTracker?: (runId: string) => void;
+  /** the latest failed run salvaged a Playwright trace */
+  hasTrace?: boolean;
+  onOpenTrace?: (runId: string) => void;
   aiStatus?: AiDebugStatus | null;
 }) {
   const [copied, setCopied] = useState(false);
@@ -156,6 +161,22 @@ export function RunOutput({
             failure: work out why, or hand it to someone. Only for a failure
             that reached history — `recordId` is what identifies the run on
             disk, and without it there is no evidence to assemble. */}
+        {/* The trace is the richest failure artifact Playwright makes — every
+            action, snapshot and network call on a timeline — and runs have
+            quietly salvaged one per failure since 2026-08-19. Only offered
+            when THIS run actually kept one; the opener still answers "no
+            trace" gracefully if retention pruned it since. */}
+        {failed && summary.state === "failed" && summary.recordId && hasTrace && onOpenTrace ? (
+          <button
+            type="button"
+            className="gl-icon-btn"
+            onClick={() => onOpenTrace(summary.recordId as string)}
+            aria-label="Open this failure's Playwright trace"
+            title="Open trace"
+          >
+            <Film className="size-3.5" />
+          </button>
+        ) : null}
         {failed && summary.state === "failed" && summary.recordId && onSendToTracker ? (
           <button
             type="button"

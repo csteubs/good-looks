@@ -954,6 +954,68 @@ function processStdout(runId: string, chunk: string): string {
   return visible;
 }
 
+/** First `trace.zip` under Playwright's scratch dir, walking at most a few
+ *  levels — the layout is `<outputDir>/<test-slug>[/retryN]/trace.zip` and a
+ *  bounded walk cannot be sent spelunking by a weird artifact tree. */
+export function findTraceZip(root: string, depth = 3): string | null {
+  if (depth < 0) return null;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const e of entries) {
+    if (e.isFile() && e.name === "trace.zip") return path.join(root, e.name);
+  }
+  for (const e of entries) {
+    if (e.isDirectory()) {
+      const found = findTraceZip(path.join(root, e.name), depth - 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/** Open a failed run's salvaged trace in Playwright's trace viewer.
+ *
+ *  Spawned exactly the way runs are — `process.execPath` +
+ *  ELECTRON_RUN_AS_NODE — and DETACHED: the viewer serves a local page and
+ *  outlives any interest this process has in it. `spawnImpl` is test
+ *  scaffolding; nothing else should pass it. */
+export function openTrace(
+  testId: string,
+  runId: string,
+  spawnImpl: typeof spawn = spawn,
+): { ok: boolean; reason?: string } {
+  // The ids become path segments and `runDir` is a bare join, so they are
+  // validated HERE, before any filesystem look: an id carrying a separator or
+  // `..` would walk out of the artifact root, and "open whatever trace.zip
+  // sits at an attacker-chosen path" is not a capability this handler should
+  // have even in its low-harm form. Same posture as the import sandbox:
+  // containment asserted where the path is built.
+  const SAFE_ID = /^[A-Za-z0-9._-]+$/;
+  if (!SAFE_ID.test(testId) || !SAFE_ID.test(runId) || testId.includes("..") || runId.includes("..")) {
+    return { ok: false, reason: "No trace for this run." };
+  }
+  const tracePath = path.join(artifactStore.runDir(testId, runId), "trace.zip");
+  if (!fs.existsSync(tracePath)) {
+    return {
+      ok: false,
+      reason:
+        "No trace for this run. Traces are kept for failed runs until their artifacts are pruned.",
+    };
+  }
+  const { cliPath } = resolvePlaywright();
+  const child = spawnImpl(process.execPath, [cliPath, "show-trace", tracePath], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref?.();
+  return { ok: true };
+}
+
 function runCli(
   runId: string,
   args: string[],
@@ -1476,6 +1538,26 @@ export const playwrightRunner = {
             /* ignore */
           }
         }
+        // Salvage the failure trace BEFORE the scratch dir goes. The generated
+        // config has said `trace: "retain-on-failure"` since it was written,
+        // and this cleanup was deleting the result on every run — retention
+        // that never bought a trace anyone could open. Copied into the run's
+        // artifact dir, where the retention sweep manages it like every other
+        // run artifact. A missing or uncopyable trace must never fail a run's
+        // bookkeeping.
+        const hasTrace = (() => {
+          if (!outputDir || exitCode === 0) return false;
+          try {
+            const zip = findTraceZip(outputDir);
+            if (!zip) return false;
+            const dest = path.join(artifactStore.runDir(rec.id, recordId), "trace.zip");
+            fs.mkdirSync(path.dirname(dest), { recursive: true });
+            fs.copyFileSync(zip, dest);
+            return true;
+          } catch {
+            return false;
+          }
+        })();
         // …and this run's Playwright scratch dir, for the same reason.
         if (outputDir) {
           try {
@@ -1596,6 +1678,7 @@ export const playwrightRunner = {
               runHeadless,
               runBrowser,
               speed,
+              ...(hasTrace ? { hasTrace: true } : {}),
               batchId: params.batchId,
               datasetId: params.datasetId,
               datasetName: params.datasetName,

@@ -157,6 +157,29 @@ called out as the stable case. The full sentence rides the accessible name
 (the hover-only-copy trap), and the detail-view callout is the hover-free
 surface. Closes the QA-KNOWN-GAPS "locator uniqueness feedback" line that had
 stood since the file was written.
+### 2026-08-19 — The trace that was retained and then deleted
+
+The generated Playwright config has said `trace: "retain-on-failure"` since it
+was written — the comment beside it calls the trace "the best failure
+artifact Playwright produces" — and the runner's cleanup deleted the scratch
+dir it landed in at the end of every run. Retention that never bought a trace
+anyone could open. Now a failed run SALVAGES the zip into its artifact dir
+(where the retention sweep manages it like every other run artifact), records
+`hasTrace` on the RunRecord, and the run panel grows an "Open trace" icon
+beside Debug-with-AI and Send-to-tracker — the three things you do with a
+failure. Opening spawns `playwright show-trace` exactly the way runs are
+spawned (`process.execPath` + ELECTRON_RUN_AS_NODE), detached, because the
+viewer serves a local page and outlives any interest this process has in it.
+
+Two guards worth naming. The salvage must never fail a run's bookkeeping —
+it is a best-effort copy inside its own try, and a bounded directory walk
+that cannot be sent spelunking. And the opener validates its ids BEFORE any
+filesystem look: they become path segments under a bare `path.join`, and
+"open whatever trace.zip sits at an attacker-chosen path" is not a capability
+the handler should have even in its low-harm form — the same
+containment-where-the-path-is-built posture as the import sandbox. If
+retention pruned the file after the flag was written, the opener answers
+plainly instead of spawning a viewer over nothing.
 
 ### 2026-08-19 — Download steps: the order is the feature
 
