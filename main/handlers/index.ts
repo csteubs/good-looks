@@ -43,6 +43,7 @@ import { sendToMain } from "../services/app-window.js";
 import { applyUiScaleToAllWindows } from "../services/ui-scale.js";
 import { annotationStore } from "../services/annotation-store.js";
 import { testStore } from "../services/test-store.js";
+import { bindFlowStep, flowCallBindings } from "../services/script-generator.js";
 import { duplicateTest } from "../services/duplicate-test.js";
 import { importService } from "../services/import-service.js";
 import { normalizeBaseUrl } from "../services/imported-config.js";
@@ -221,6 +222,23 @@ export function registerHandlers(): void {
     async (_e, params: { name: unknown; kind?: unknown; value?: unknown }) =>
       recorderService.addVariable(params ?? { name: undefined }),
   );
+  // Extract selected session steps into a new flow test. Unvalidated on this
+  // side for the reason addVariable is: the service throws sentences the
+  // trainer's dialog shows verbatim, from the same shared rule the button used.
+  ipcMain.handle(
+    "recorder:extractFlow",
+    async (_e, params: { stepIds: unknown; name: unknown }) =>
+      recorderService.extractFlow(params?.stepIds, params?.name),
+  );
+  // Inline flow editing: open a runFlow row's flow for recording, commit and
+  // close it, and move the insert cursor within it.
+  ipcMain.handle("recorder:enterFlowScope", async (_e, params: { stepId: unknown }) =>
+    recorderService.enterFlowScope(params?.stepId),
+  );
+  ipcMain.handle("recorder:exitFlowScope", async () => recorderService.exitFlowScope());
+  ipcMain.handle("recorder:setFlowCursor", async (_e, params: { index: number }) =>
+    recorderService.setFlowCursor(Number(params?.index) || 0),
+  );
   ipcMain.handle(
     "recorder:applyHeal",
     async (_e, params: { stepId: string; locator: Locator }) =>
@@ -370,6 +388,19 @@ export function registerHandlers(): void {
   // fails silently: nothing errors, the test is gone from the library, and its
   // leftovers surface weeks later under a name nobody recognises.
   ipcMain.handle("tests:delete", async (_e, params: { id: string }) => {
+    // A test other tests still CALL cannot be deleted — their specs inline its
+    // steps, and the day after the delete every one of them regenerates with a
+    // "flow not found" comment where the steps were. Blocked with the caller
+    // names rather than cascaded: silently rewriting N other tests on a delete
+    // is a bigger surprise than a refusal. Unwrap or remove the calls first.
+    const callers = testStore.callersOf(params.id);
+    if (callers.length > 0) {
+      const names = callers.map((t) => `“${t.name}”`).join(", ");
+      throw new Error(
+        `This test is used as a flow by ${callers.length === 1 ? "" : `${callers.length} tests: `}${names}. ` +
+          "Remove or unwrap those flow calls first.",
+      );
+    }
     testStore.remove(params.id);
     // Drop any captured visual-testing artifacts + pinned baselines for this test.
     artifactStore.deleteTest(params.id);
@@ -709,10 +740,27 @@ export function registerHandlers(): void {
       const rec = testStore.get(params.id);
       if (!rec) throw new Error("Test not found: " + params.id);
       rec.isFlow = params.isFlow === true;
-      rec.flowParams = Array.isArray(params.flowParams)
+      const names = Array.isArray(params.flowParams)
         ? params.flowParams.filter(isValidVariableName)
         : [];
+      // Deduped and capped the same way the variables they project onto are.
+      rec.flowParams = rec.isFlow ? [...new Set(names)].slice(0, 50) : [];
+      // A parameter IS a variable plus membership in flowParams — its default
+      // value is the variable's value, so a parameter with no variable would
+      // have no editable default and its `${name}` references would emit as
+      // literal text in the flow's own spec. Declare the missing ones.
+      const have = new Set((rec.variables ?? []).map((v) => v.name));
+      const missing = rec.flowParams.filter((n) => !have.has(n));
+      if (missing.length > 0) {
+        rec.variables = normalizeVariables([
+          ...(rec.variables ?? []),
+          ...missing.map((n) => ({ name: n, kind: "plain" as const, value: "" })),
+        ]);
+      }
       rec.updatedAt = Date.now();
+      // The declared set may have grown, which changes the flow's own `const V`
+      // header — and testStore.save regenerates every caller's spec after it.
+      if (!rec.scriptEdited) rec.scriptPath = testStore.regenerateScript(rec);
       testStore.save(rec);
       return rec;
     },
@@ -720,7 +768,10 @@ export function registerHandlers(): void {
 
   /** Tests usable as flows from `fromId`, excluding itself. Cycles are refused
    *  at generation time too, but keeping a test from listing itself is the
-   *  difference between "can't do that" and never offering it. */
+   *  difference between "can't do that" and never offering it.
+   *
+   *  `paramDefaults` carries each parameter's default value (its variable's
+   *  value) so the composer can show what an unoverridden call will use. */
   ipcMain.handle("tests:listFlows", async (_e, params: { fromId?: string }) => {
     return testStore
       .list()
@@ -740,6 +791,56 @@ export function registerHandlers(): void {
           ]),
         ),
       }));
+  });
+
+  /** Which tests call this flow directly — the reverse index the library has
+   *  no stored form of. Computed by scanning steps (through hidden tests too:
+   *  a hidden caller still has a spec on disk that inlines the flow). */
+  ipcMain.handle("tests:flowUsage", async (_e, params: { id: string }) => {
+    return testStore.callersOf(params.id).map((t) => ({ id: t.id, name: t.name }));
+  });
+
+  /** Replace one `runFlow` step with the flow's steps, bound exactly as the
+   *  generator would bind them — the exported helpers ARE the generator's, so
+   *  unwrapping cannot mean something different from running.
+   *
+   *  One level only: a nested `runFlow` inside the flow stays a call. Fresh
+   *  ids on every copied step (two steps sharing an id would confuse every
+   *  id-keyed feature: selection, heals, replay flashes), and the call site's
+   *  disabled/continue-on-failure propagate to the whole block, the same rule
+   *  `expandSteps` applies. */
+  ipcMain.handle("tests:unwrapFlow", async (_e, params: { id: string; stepId: string }) => {
+    const rec = testStore.get(params.id);
+    if (!rec) throw new Error("Test not found: " + params.id);
+    const at = rec.steps.findIndex((s) => s.id === params.stepId);
+    if (at < 0) throw new Error("Step not found: " + params.stepId);
+    const call = rec.steps[at];
+    if (call.type !== "runFlow" || !call.flowId) {
+      throw new Error("That step is not a flow call.");
+    }
+    if (call.flowId === rec.id) throw new Error("A test cannot unwrap itself.");
+    const flow = testStore.get(call.flowId);
+    if (!flow) {
+      throw new Error("This flow can't be found — it may have been deleted.");
+    }
+    if (flow.steps.length === 0) {
+      throw new Error(`“${flow.name}” has no steps to unwrap.`);
+    }
+    const { randomUUID } = await import("crypto");
+    const args = flowCallBindings(flow, call.flowArgs);
+    const now = Date.now();
+    const inline = flow.steps.map((s) => {
+      const bound = bindFlowStep(s, args);
+      const copy: Step = { ...bound, id: randomUUID(), timestamp: now };
+      if (call.disabled) copy.disabled = true;
+      if (call.continueOnFailure) copy.continueOnFailure = true;
+      return copy;
+    });
+    rec.steps = [...rec.steps.slice(0, at), ...inline, ...rec.steps.slice(at + 1)];
+    rec.updatedAt = now;
+    if (!rec.scriptEdited) rec.scriptPath = testStore.regenerateScript(rec);
+    testStore.save(rec);
+    return rec;
   });
 
   // ── Heal journal ─────────────────────────────────────────────────────────
@@ -866,7 +967,24 @@ export function registerHandlers(): void {
     // edited spec (e.g. after applying an AI-suggested fix). Imported tests
     // (sourceDir set) stay script-only and keep their verbatim file as the
     // source of truth, so we don't overwrite their parsed steps.
-    if (!rec.sourceDir) {
+    //
+    // A record whose steps CALL FLOWS is the other exception: the spec-parser
+    // has no runFlow vocabulary (the call is inlined at generation time, so
+    // the file holds the flow's steps, not the call), and re-parsing would
+    // silently replace the reference with a flattened copy — every later flow
+    // edit then stops reaching this test, with nothing on screen saying so.
+    // The steps are kept and marked diverged instead; regenerating from steps
+    // is the way back into agreement.
+    const callsFlows = rec.steps.some((s) => s.type === "runFlow");
+    if (callsFlows && !rec.sourceDir) {
+      rec.stepsDiverged = true;
+      rec.stepsDivergedReason = "parse";
+      rec.stepsDivergedDismissed = undefined;
+      logger.warn("handlers", "Script edited on a test that calls flows — steps kept, not re-parsed", {
+        id: rec.id,
+      });
+    }
+    if (!rec.sourceDir && !callsFlows) {
       try {
         const { steps, skipped } = parseSpecDetailed(source);
         rec.steps = steps;
@@ -1594,8 +1712,12 @@ export function registerHandlers(): void {
         runHeadless?: boolean;
         browser?: string;
       },
-    ) =>
-      playwrightRunner.start({
+    ) => {
+      // A run executes stored specs, so an open inline-flow scope commits
+      // first — otherwise the run reads the stale flow at the exact moment the
+      // user is verifying their edit. A no-op when no trainer scope is open.
+      recorderService.exitFlowScope();
+      return playwrightRunner.start({
         testId: params.id,
         headed: params.headed ?? true,
         captureArtifacts: params.captureArtifacts ?? false,
@@ -1603,7 +1725,8 @@ export function registerHandlers(): void {
         // Unvalidated input would reach the Playwright CLI verbatim; fall back
         // to the test/global default rather than failing the run.
         browser: isRunBrowser(params.browser) ? params.browser : undefined,
-      }),
+      });
+    },
   );
   // Re-execute a past run's recorded steps against the live site. Always
   // captures, so the re-run produces its own screenshots to compare.

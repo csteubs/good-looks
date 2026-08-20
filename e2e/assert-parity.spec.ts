@@ -56,6 +56,7 @@ const FIXTURE = `<!doctype html>
   <div data-testid="thin" style="width:0;height:20px;overflow:hidden">Zero width</div>
   <div data-testid="attr-present" data-state="">has empty attr</div>
   <div data-testid="attr-absent">no attr</div>
+  <button data-testid="bump" onclick="this.textContent = String(Number(this.textContent) + 1)">0</button>
   <!-- Lazy-render fixture for scroll steps: the reviews block is NOT in the
        DOM until the page scrolls past 600px — the shape of a virtualized list
        or an IntersectionObserver gate, and the reason assertions against such
@@ -144,6 +145,8 @@ function rows(origin: string): Row[] {
     { label: "urlIs rejects a prefix", step: s({ assert: "urlIs", value: origin }), expected: false },
     { label: "urlEndsWith the trailing slash", step: s({ assert: "urlEndsWith", value: "/" }), expected: true },
     { label: "urlEndsWith rejects a non-suffix", step: s({ assert: "urlEndsWith", value: "127.0.0.1" }), expected: false },
+    { label: "urlPathIs the site root", step: s({ assert: "urlPathIs", value: "/" }), expected: true },
+    { label: "urlPathIs rejects a path the page is not at", step: s({ assert: "urlPathIs", value: "/checkout" }), expected: false },
 
     // ---- title: exact vs contains ----------------------------------------
     { label: "title is the whole title", step: s({ assert: "title", value: "Cart | Acme" }), expected: true },
@@ -215,6 +218,39 @@ test("every assertion means the same thing to the trainer and to the run", async
   expect(wrong, "these assertions do not do what the fixture says they should").toEqual([]);
 });
 
+test("URL path assertions ignore query noise; whole-URL kinds do not", async ({ page }) => {
+  // The failure that made "the URL assertion never passes" true in the field:
+  // the value is a path, the kind compares the FULL URL, and the run-time URL
+  // carries a `?variant=` or `utm_*` the recording did not. The fixture server
+  // answers every path, so this page has all three kinds of noise at once.
+  await page.goto(base + "/cart/?step=2#top");
+  const rows: Row[] = [
+    { label: "urlPathIs the path, under query and fragment noise", step: s({ assert: "urlPathIs", value: "/cart" }), expected: true },
+    { label: "urlPathIs tolerates the trailing slash", step: s({ assert: "urlPathIs", value: "/cart/" }), expected: true },
+    { label: "urlPathIs is not a prefix match", step: s({ assert: "urlPathIs", value: "/car" }), expected: false },
+    { label: "urlPathIs supplies a missing leading slash", step: s({ assert: "urlPathIs", value: "cart" }), expected: true },
+    // The exact shape both of this app's real recorded URL assertions had, and
+    // the reason neither could ever pass: "ends with the path" is false the
+    // moment the URL carries a query string.
+    { label: "urlEndsWith a bare path fails under query noise", step: s({ assert: "urlEndsWith", value: "/cart" }), expected: false },
+    { label: "url contains still passes", step: s({ assert: "url", value: "/cart" }), expected: true },
+  ];
+  const disagreements: string[] = [];
+  const wrong: string[] = [];
+  for (const row of rows) {
+    const fromSpec = await specVerdict(page, row.step);
+    const fromTrainer = await replayerVerdict(page, row.step);
+    if (fromSpec !== fromTrainer) {
+      disagreements.push(`${row.label}: the run says ${fromSpec}, the trainer says ${fromTrainer}`);
+    }
+    if (fromSpec !== row.expected) {
+      wrong.push(`${row.label}: expected ${row.expected}, the run says ${fromSpec}`);
+    }
+  }
+  expect(disagreements, "the trainer and the run disagree about these steps").toEqual([]);
+  expect(wrong, "these assertions do not do what the fixture says they should").toEqual([]);
+});
+
 test("an ambiguous locator fails in BOTH engines, not just the run", async ({ page }) => {
   await page.goto(base);
   // Playwright's strict mode refuses a locator matching two elements. The
@@ -232,6 +268,51 @@ test("an indexed locator resolves in both engines", async ({ page }) => {
   const step = { id: "nth", type: "assert", assert: "visible", locator: { k: "text", v: "Duplicate", nth: 1 } } as Step;
   expect(await specVerdict(page, step)).toBe(true);
   expect(await replayerVerdict(page, step)).toBe(true);
+});
+
+test("a repeated flow call runs its steps exactly N times, and an assertion inside it still holds", async ({ page }) => {
+  // The loop emitter changes what SURROUNDS a step's line — a real `for` with
+  // a generated counter — so this is the row that catches the loop compiling
+  // to something other than N executions: the flow clicks a self-counting
+  // button, the caller repeats it, and a real assertion reads the count back.
+  // Executed as the WHOLE generated body (loop braces included), not a single
+  // extracted line, because the loop is the subject.
+  const flow = {
+    id: "f-bump",
+    name: "Bump",
+    flowParams: [],
+    steps: [
+      { id: "fb1", type: "click", locator: { k: "testid", v: "bump" }, timestamp: 0 },
+    ] as Step[],
+  };
+  const runBody = async (steps: Step[], vars?: { name: string; kind: "plain"; value: string }[]) => {
+    const src = generateSpec(
+      { name: "loop", url: base, steps, variables: vars },
+      { resolveFlow: (id) => (id === "f-bump" ? flow : null) },
+    );
+    const open = src.indexOf("=> {");
+    const close = src.lastIndexOf("});");
+    const body = src.slice(open + 4, close);
+    const fast = expect.configure({ timeout: 1500 });
+    const run = new Function("page", "expect", `return (async () => { ${body} })();`);
+    await run(page, fast);
+  };
+
+  await page.goto(base);
+  await runBody([
+    { id: "c1", type: "runFlow", flowId: "f-bump", repeat: 3, timestamp: 0 },
+    { id: "c2", type: "assert", assert: "exactText", text: "3", locator: { k: "testid", v: "bump" }, timestamp: 0 },
+  ] as Step[]);
+
+  // The variable-driven form: the count comes off the caller's V at run time.
+  await page.goto(base);
+  await runBody(
+    [
+      { id: "c1", type: "runFlow", flowId: "f-bump", repeatVar: "n", timestamp: 0 },
+      { id: "c2", type: "assert", assert: "exactText", text: "2", locator: { k: "testid", v: "bump" }, timestamp: 0 },
+    ] as Step[],
+    [{ name: "n", kind: "plain", value: "2" }],
+  );
 });
 
 test("a select step refuses an option that does not exist, in both engines", async ({ page }) => {

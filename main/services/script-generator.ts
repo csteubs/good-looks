@@ -1,12 +1,15 @@
 // Convert recorded steps into a @playwright/test spec file.
 
 import { GLAZE_RUNTIME_FILE } from "./glaze-runtime-source.js";
-import { ASSERT_SEMANTICS, reEscape, textMatchExpr, WAIT_SEMANTICS } from "../../shared/step-semantics.mjs";
+import { ASSERT_SEMANTICS, reEscape, textMatchExpr, urlPathExpr, WAIT_SEMANTICS } from "../../shared/step-semantics.mjs";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import {
   cookieScopeIsValid,
   ELEMENT_STATES,
   isCssPropName,
+  isValidVariableName,
+  MAX_FLOW_REPEAT,
+  MAX_LOOP_COUNT,
   toPlaywrightSameSite,
   VAR_REF_RE,
 } from "../recorder/types.js";
@@ -216,6 +219,12 @@ function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>
     // value it cannot stand behind; this refuses to GENERATE one.
     if ((step.value ?? "") === "") return null;
     return "await " + e + "(page).toHaveURL(" + textMatchExpr(step.value ?? "", semantics) + ");";
+  }
+  if (step.assert === "urlPathIs") {
+    // Same empty-value refusal as above: with no path, `urlPathPattern` builds
+    // the site-root pattern, which asserts something the user never typed.
+    if ((step.value ?? "") === "") return null;
+    return "await " + e + "(page).toHaveURL(" + urlPathExpr(step.value ?? "") + ");";
   }
   if (step.assert === "title" || step.assert === "titleContains") {
     const semantics = ASSERT_SEMANTICS[step.assert];
@@ -595,7 +604,7 @@ function ungeneratableReason(step: Step): string {
   if (needsLocator && !step.locator) return "this step needs an element and none was recorded";
   if (step.type === "assert") {
     const a = step.assert;
-    if (a === "url" || a === "urlEndsWith" || a === "urlIs" || a === "title" || a === "titleContains") {
+    if (a === "url" || a === "urlEndsWith" || a === "urlIs" || a === "urlPathIs" || a === "title" || a === "titleContains") {
       // The only way to reach here for a page-level assert. Said plainly,
       // because the alternative — generating it — is an assertion that either
       // matches every page or no page.
@@ -726,6 +735,8 @@ function stepLogLine(step: Step): string | null {
 export function describeStep(step: Step): string {
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
+  if (step.type === "loop") return "repeat " + (step.loopCount ?? 1) + " times";
+  if (step.type === "endLoop") return "end repeat";
   if (step.type === "wait" && step.waitUntil) return describeWait(step);
   if (step.type === "cookie") return describeCookie(step);
   if (step.type === "capture") return describeCapture(step);
@@ -774,11 +785,15 @@ export function describeFlow(step: Step): string {
   // arguments, and two calls to the same flow differ only here. Values are
   // clipped for the step list; the only spec-side sink is a comment, and both
   // comment emitters run through `commentSafe`, so a hostile value cannot
-  // escape (pinned in assert-emission.test.ts).
+  // escape (pinned in assert-emission.test.ts). A repeated call carries its
+  // ×N / ×${var} suffix — the loop is part of what the call MEANS.
   const entries = Object.entries(step.flowArgs ?? {});
-  if (entries.length === 0) return `run flow ${name}`;
   const args = entries.map(([k, v]) => `${k}=${v.length > 18 ? v.slice(0, 17) + "…" : v}`);
-  return `run flow ${name} (${args.join(", ")})`;
+  const base =
+    entries.length === 0 ? `run flow ${name}` : `run flow ${name} (${args.join(", ")})`;
+  const { fixed, variable } = repeatSpec(step);
+  if (variable !== undefined) return `${base} ×\${${variable}}`;
+  return fixed > 1 ? `${base} ×${fixed}` : base;
 }
 
 /** Readable phrasing of a cookie step for the trainer's step list. Kept in
@@ -891,6 +906,23 @@ interface ExpandedStep {
   /** set when the step can't be generated (missing flow, cycle); emitted as a
    *  comment so the spec stays runnable and the problem stays visible. */
   problem?: string;
+  /** marks the boundary of a repeated flow call: `open` emits the `for` line,
+   *  `close` its `}`. Both carry the `runFlow` step itself (so emission can
+   *  read `repeat`/`repeatVar`) and the call row's sourceIndex. */
+  loop?: "open" | "close";
+}
+
+/** A `runFlow` step's effective repeat, both clamped forms. Applied at
+ *  expansion AND baked into the emitted expression: the emitted clamp is the
+ *  one that bounds a variable-driven count, whose value only exists at run
+ *  time and arrives from a dataset row — user input. */
+function repeatSpec(step: Step): { fixed: number; variable?: string } {
+  const variable = isValidVariableName(step.repeatVar) ? step.repeatVar : undefined;
+  const raw =
+    typeof step.repeat === "number" && Number.isFinite(step.repeat)
+      ? Math.trunc(step.repeat)
+      : 1;
+  return { fixed: Math.max(1, Math.min(MAX_FLOW_REPEAT, raw)), variable };
 }
 
 /** Substitute `${param}` references in a flow step's interpolatable fields.
@@ -898,8 +930,13 @@ interface ExpandedStep {
  *  Binding happens HERE, textually, at generation time rather than through a
  *  runtime scope: the value a caller supplies may itself reference the
  *  caller's own variables, and rewriting the text lets that resolve against the
- *  caller's `V` with no nested scopes to reason about. */
-function bindFlowStep(step: Step, args: Record<string, string>): Step {
+ *  caller's `V` with no nested scopes to reason about.
+ *
+ *  Exported for the callers that need the SAME binding outside generation —
+ *  unwrapping a flow call into plain steps, and the trainer's inline preview of
+ *  what an inlined step will do. A second spelling of this substitution would
+ *  disagree with the generated spec the day either changed. */
+export function bindFlowStep(step: Step, args: Record<string, string>): Step {
   const names = Object.keys(args);
   if (names.length === 0) return step;
   const sub = (text: string | undefined): string | undefined => {
@@ -920,12 +957,57 @@ function bindFlowStep(step: Step, args: Record<string, string>): Step {
   return bound;
 }
 
-/** Expand `runFlow` steps into the steps they invoke, depth-first. */
+/**
+ * The textual bindings one `runFlow` call applies to its flow's steps.
+ *
+ * ALL of the flow's plain variables are bound, not only the declared
+ * parameters. A flow is written against its OWN variable scope, and before this
+ * a non-parameter `${x}` inside a flow fell through to the caller: if the
+ * caller happened to declare an `x` the step silently read the caller's value,
+ * and if it didn't the reference emitted as the literal string `"${x}"`. Both
+ * are wrong the same way — dynamic scoping nobody asked for.
+ *
+ * Two kinds stay UNBOUND on purpose, so they keep resolving through `V` at run
+ * time: a secret's value is never on the record (it arrives via env), and a
+ * captured variable's value doesn't exist until the flow's own `capture` step
+ * writes it mid-run. Both are surfaced to the caller's header instead — see
+ * the `extras` accumulator in `expandSteps`. A parameter naming a secret or
+ * captured variable is therefore not overridable; a parameter naming nothing
+ * at all still binds (caller's value, else empty).
+ */
+export function flowCallBindings(
+  flow: Pick<FlowSource, "variables" | "flowParams">,
+  flowArgs: Record<string, string> | undefined,
+): Record<string, string> {
+  const params = new Set(flow.flowParams ?? []);
+  const args: Record<string, string> = {};
+  for (const v of flow.variables ?? []) {
+    if (v.kind !== "plain") continue;
+    const supplied = params.has(v.name) ? flowArgs?.[v.name] : undefined;
+    args[v.name] = typeof supplied === "string" ? supplied : (v.value ?? "");
+  }
+  for (const param of params) {
+    if (param in args) continue;
+    const declared = (flow.variables ?? []).find((v) => v.name === param);
+    if (declared) continue; // secret/captured: stays a runtime V reference
+    const supplied = flowArgs?.[param];
+    args[param] = typeof supplied === "string" ? supplied : "";
+  }
+  return args;
+}
+
+/** Expand `runFlow` steps into the steps they invoke, depth-first.
+ *
+ *  `extras` accumulates the flow variables that CANNOT be bound textually
+ *  (secrets and captured variables) so the caller's `const V` header can
+ *  declare them — without that, a flow's `${sessionToken}` reference emits as
+ *  literal text and its secret has no `process.env` line to arrive through. */
 function expandSteps(
   steps: Step[],
   opts: GenerateOptions,
   sourceIndexOf: (i: number) => number,
   stack: string[],
+  extras: Map<string, TestVariable>,
 ): ExpandedStep[] {
   const out: ExpandedStep[] = [];
   steps.forEach((step, i) => {
@@ -957,17 +1039,12 @@ function expandSteps(
       out.push({ step, sourceIndex, problem: `flow ${label} has no steps` });
       return;
     }
-    // Bind each parameter: the caller's argument wins, and a parameter the
-    // caller didn't supply falls back to the flow's own declared default.
-    const args: Record<string, string> = {};
-    for (const param of flow.flowParams ?? []) {
-      const supplied = step.flowArgs?.[param];
-      if (typeof supplied === "string") {
-        args[param] = supplied;
-        continue;
-      }
-      const own = (flow.variables ?? []).find((v) => v.name === param);
-      args[param] = own?.value ?? "";
+    // Bind the flow's variable scope: the caller's argument wins for a declared
+    // parameter, everything else takes the flow's own value.
+    const args = flowCallBindings(flow, step.flowArgs);
+    for (const v of flow.variables ?? []) {
+      if (v.kind === "plain") continue;
+      if (!extras.has(v.name)) extras.set(v.name, v);
     }
     const inner = expandSteps(
       flow.steps.map((s) => {
@@ -981,8 +1058,17 @@ function expandSteps(
       opts,
       () => sourceIndex,
       [...stack, flowId],
+      extras,
     );
-    out.push(...inner);
+    // A repeated call wraps its inlined block in loop markers. A DISABLED call
+    // doesn't: its steps are emitted commented out, and a live `for` around
+    // dead lines would be an empty loop that claims to run something.
+    const { fixed, variable } = repeatSpec(step);
+    if ((variable !== undefined || fixed > 1) && !step.disabled) {
+      out.push({ step, sourceIndex, loop: "open" }, ...inner, { step, sourceIndex, loop: "close" });
+    } else {
+      out.push(...inner);
+    }
   });
   return out;
 }
@@ -1039,14 +1125,22 @@ export function generateSpecDetailed(
   record: SpecSource,
   opts: GenerateOptions = {},
 ): GeneratedSpec {
-  const variables = record.variables ?? [];
-  const vars: ReadonlySet<string> = new Set(variables.map((v) => v.name));
   const body: string[] = [];
   const lineMap: Record<number, number> = {};
 
   // Track block nesting so conditional bodies are indented one level deeper.
   let depth = 1; // base level: statements sit inside the test() callback
-  const expanded = expandSteps(record.steps, opts, (i) => i, []);
+  const flowExtras = new Map<string, TestVariable>();
+  const expanded = expandSteps(record.steps, opts, (i) => i, [], flowExtras);
+
+  // The caller's declarations, plus the inlined flows' runtime-only variables
+  // (secrets and captured values). The caller's own declaration of a name wins
+  // — a flow must not be able to shadow what the test already says — and the
+  // extras keep their relative order so regeneration is deterministic.
+  const own = record.variables ?? [];
+  const ownNames = new Set(own.map((v) => v.name));
+  const variables = [...own, ...[...flowExtras.values()].filter((v) => !ownNames.has(v.name))];
+  const vars: ReadonlySet<string> = new Set(variables.map((v) => v.name));
 
   // Everything above the test body, built as lines so the line map is derived
   // from the real preamble rather than a hard-coded count — the preamble grows
@@ -1078,7 +1172,19 @@ export function generateSpecDetailed(
     lineMap[bodyStartLine + body.length] = index;
   };
 
-  for (const { step, sourceIndex, problem } of expanded) {
+  // TWO loop bookkeepings, for the two loop constructs. `loopNames` holds the
+  // open `loop`/`endLoop` BLOCK variables (`i`, `i2`, …) so nested blocks
+  // don't shadow each other — a second `let i` inside the first is a
+  // SyntaxError. `loopIdx`/`refusedLoops` belong to the runFlow CALL repeat:
+  // sequential `gl_i<k>` counters so nested repeated flows can't collide with
+  // each other or with the block names, and the set of calls whose loop was
+  // refused (repeat variable not declared) so the matching close marker is
+  // skipped too.
+  const loopNames: string[] = [];
+  let loopIdx = 0;
+  const refusedLoops = new Set<Step>();
+
+  for (const { step, sourceIndex, problem, loop } of expanded) {
     if (problem) {
       // Through `commentSafe` like every other comment: `problem` embeds the
       // step's LABEL, which is user text that `str()` length-caps but does not
@@ -1088,6 +1194,75 @@ export function generateSpecDetailed(
       // made it page input compiled into executed code. Pinned alongside the
       // other comment sinks in assert-emission.test.ts.
       body.push(commentSafe("  // " + problem));
+      continue;
+    }
+    // Loop halves are emitted here rather than in `stepLine`: the `for` line
+    // needs a variable name that depends on how many loops are already open,
+    // which is emission-order state a per-step formatter cannot hold. Same
+    // pairing rules as if/endif — never disabled, never wrapped — plus one
+    // repair the spec's parseability demands: a stray `endLoop` (its opening
+    // half was deleted) becomes a comment instead of an unbalanced `}` that
+    // would make the whole file a syntax error.
+    if (step.type === "loop") {
+      const lc = step.loopCount;
+      // The generator clamps independently of `normalizeLocator`-style bounds
+      // at the boundary — same double-guard as every numeral, covering steps
+      // that arrive through `updateStep`'s raw copy.
+      const count =
+        typeof lc === "number" && Number.isFinite(lc)
+          ? Math.min(MAX_LOOP_COUNT, Math.max(1, Math.trunc(lc)))
+          : 1;
+      const nm = loopNames.length === 0 ? "i" : "i" + (loopNames.length + 1);
+      record1(sourceIndex);
+      body.push("  ".repeat(depth) + `for (let ${nm} = 0; ${nm} < ${count}; ${nm}++) {`);
+      loopNames.push(nm);
+      depth += 1;
+      continue;
+    }
+    if (step.type === "endLoop") {
+      if (loopNames.length === 0) {
+        body.push(commentSafe("  ".repeat(depth) + "// end repeat without an open loop — skipped"));
+        continue;
+      }
+      loopNames.pop();
+      depth = Math.max(1, depth - 1);
+      record1(sourceIndex);
+      body.push("  ".repeat(depth) + "}");
+      continue;
+    }
+    if (loop === "open") {
+      const { fixed, variable } = repeatSpec(step);
+      if (variable !== undefined && !vars.has(variable)) {
+        // A count read from a variable nothing declares would emit
+        // `Number(V.x)` against a header that may not even exist. Running the
+        // flow ONCE with a visible sentence is the degradation that loses the
+        // least — the steps still run, and the file says why only once.
+        refusedLoops.add(step);
+        body.push(
+          commentSafe(
+            "  ".repeat(depth) +
+              `// flow ${step.label || step.flowId || "flow"} repeat count \${${variable}} is not a declared variable — running once`,
+          ),
+        );
+        continue;
+      }
+      const indent = "  ".repeat(depth);
+      const k = loopIdx;
+      loopIdx += 1;
+      const i = `gl_i${k}`;
+      const n = `gl_n${k}`;
+      body.push(
+        variable !== undefined
+          ? `${indent}for (let ${i} = 0, ${n} = Math.max(0, Math.min(${MAX_FLOW_REPEAT}, Number(V.${variable}) || 0)); ${i} < ${n}; ${i}++) {`
+          : `${indent}for (let ${i} = 0; ${i} < ${String(fixed)}; ${i}++) {`,
+      );
+      depth += 1;
+      continue;
+    }
+    if (loop === "close") {
+      if (refusedLoops.has(step)) continue;
+      depth = Math.max(1, depth - 1);
+      body.push("  ".repeat(depth) + "}");
       continue;
     }
     const line = stepLine(step, vars);
@@ -1135,6 +1310,16 @@ export function generateSpecDetailed(
       if (logLine) body.push(indent + logLine);
     }
     if (step.type === "if") depth += 1;
+  }
+
+  // A `loop` whose closing half was deleted would leave the file with an
+  // unclosed `for {` — a syntax error, a spec that cannot run. Close what
+  // remains open with plain braces: the parser reads each one back as an
+  // `endLoop`, so the next round-trip restores the pair instead of losing it.
+  while (loopNames.length > 0) {
+    loopNames.pop();
+    depth = Math.max(1, depth - 1);
+    body.push("  ".repeat(depth) + "}");
   }
 
   const title = record.name && record.name.trim() ? record.name.trim() : "recorded test";

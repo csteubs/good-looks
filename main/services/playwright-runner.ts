@@ -501,17 +501,50 @@ async function variableEnv(
   testId: string,
   vars: Record<string, string> | undefined,
   variables: TestVariable[],
+  steps: Step[] = [],
 ): Promise<NodeJS.ProcessEnv> {
   const out: NodeJS.ProcessEnv = {};
   if (vars && Object.keys(vars).length > 0) out.GLAZE_VARS = JSON.stringify(vars);
-  const secretNames = variables.filter((v) => v.kind === "secret").map((v) => v.name);
-  if (secretNames.length === 0) return out;
-  const stored = await testSecretsStore.valuesFor(testId);
-  for (const name of secretNames) {
-    // A declared-but-unset secret becomes an empty string rather than being
-    // left undefined, so the spec's `?? ""` fallback is what runs and the
-    // failure is "the field was empty", not "process.env is missing a key".
-    out[secretEnvName(name)] = stored[name] ?? "";
+
+  // Secrets, per owning test. An inlined flow's secret lives in the FLOW's
+  // encrypted store, not the caller's — the caller's spec declares the env
+  // reference (the generator merges the flow's secret declarations into the
+  // header), so without this walk the value never arrives and every run fails
+  // with an empty field. Caller first, so a caller declaring the same name
+  // wins — the same no-shadowing rule the generated header applies.
+  const sources: { testId: string; names: string[] }[] = [];
+  const seenTests = new Set<string>([testId]);
+  sources.push({
+    testId,
+    names: variables.filter((v) => v.kind === "secret").map((v) => v.name),
+  });
+  const walk = (list: Step[]): void => {
+    for (const step of list) {
+      if (step.type !== "runFlow" || !step.flowId) continue;
+      if (seenTests.has(step.flowId)) continue; // cycle guard, matches the generator's
+      seenTests.add(step.flowId);
+      const flow = testStore.get(step.flowId);
+      if (!flow) continue;
+      sources.push({
+        testId: flow.id,
+        names: (flow.variables ?? []).filter((v) => v.kind === "secret").map((v) => v.name),
+      });
+      walk(flow.steps);
+    }
+  };
+  walk(steps);
+
+  for (const source of sources) {
+    if (source.names.length === 0) continue;
+    const stored = await testSecretsStore.valuesFor(source.testId);
+    for (const name of source.names) {
+      const key = secretEnvName(name);
+      if (key in out) continue; // first declaration wins (caller over flow)
+      // A declared-but-unset secret becomes an empty string rather than being
+      // left undefined, so the spec's `?? ""` fallback is what runs and the
+      // failure is "the field was empty", not "process.env is missing a key".
+      out[key] = stored[name] ?? "";
+    }
   }
   return out;
 }
@@ -1095,7 +1128,7 @@ export const playwrightRunner = {
         // produces is redacted synchronously when it's persisted, so the
         // snapshot has to already know every secret the run could expose.
         await refreshSecretSnapshot();
-        const varEnv = await variableEnv(rec.id, params.vars, rec.variables ?? []);
+        const varEnv = await variableEnv(rec.id, params.vars, rec.variables ?? [], rec.steps);
 
         // Decide whether this run actually captures. Gate BEFORE any capture
         // work so an off run (or an imported test) pays nothing. Imported specs

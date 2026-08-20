@@ -93,7 +93,11 @@ describe("FlowArgsDialog", () => {
     const email = await screen.findByLabelText("Flow argument email");
     fireEvent.change(email, { target: { value: "new@x.com" } });
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
-    expect(onSave).toHaveBeenCalledWith({ email: "new@x.com" });
+    expect(onSave).toHaveBeenCalledWith({
+      flowArgs: { email: "new@x.com" },
+      repeat: undefined,
+      repeatVar: undefined,
+    });
   });
 
   it("clearing a field back to blank omits its key on save", async () => {
@@ -106,7 +110,7 @@ describe("FlowArgsDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: /save/i }));
     // {} rather than { email: "" }: the empty string would OVERRIDE the
     // default at generation time instead of falling back to it.
-    expect(onSave).toHaveBeenCalledWith({});
+    expect(onSave).toHaveBeenCalledWith({ flowArgs: {}, repeat: undefined, repeatVar: undefined });
   });
 
   it("says so and disables saving when the flow no longer exists", async () => {
@@ -119,5 +123,57 @@ describe("FlowArgsDialog", () => {
     expect((save as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(save);
     expect(onSave).not.toHaveBeenCalled();
+  });
+});
+
+describe("FlowArgsDialog — the Repeat controls (the call-site loop)", () => {
+  // Ported from the retired flow-call-editor: the loop fields ride the same
+  // patch as the arguments, and both are ALWAYS present so "Once" can clear an
+  // existing repeat — an omitted key would leave the old loop on the step.
+  const seedFlow = () => {
+    flowList = [
+      { id: "f1", name: "Login", flowParams: ["email"], paramDefaults: { email: "d@x.com" } },
+    ];
+  };
+
+  it("saves a fixed repeat count", async () => {
+    seedFlow();
+    const { onSave } = renderDialog(makeStep());
+    await screen.findByLabelText("Flow argument email");
+    fireEvent.click(screen.getByText("N times"));
+    fireEvent.change(screen.getByLabelText("Repeat count"), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith({ flowArgs: {}, repeat: 5, repeatVar: undefined }),
+    );
+  });
+
+  it("saves a variable-driven repeat, and drops an invalid name", async () => {
+    seedFlow();
+    const { onSave } = renderDialog(makeStep());
+    await screen.findByLabelText("Flow argument email");
+    fireEvent.click(screen.getByText("By variable"));
+    fireEvent.change(screen.getByLabelText("Repeat count variable"), {
+      target: { value: "resultCount" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith({
+        flowArgs: {},
+        repeat: undefined,
+        repeatVar: "resultCount",
+      }),
+    );
+  });
+
+  it("choosing Once clears an existing repeat", async () => {
+    seedFlow();
+    const { onSave } = renderDialog(makeStep({ repeat: 3 }));
+    await screen.findByLabelText("Flow argument email");
+    fireEvent.click(screen.getByText("Once"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith({ flowArgs: {}, repeat: undefined, repeatVar: undefined }),
+    );
   });
 });

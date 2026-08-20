@@ -69,6 +69,9 @@ export function splitForDisplay(url: string): { origin: string; rest: string } {
  *  three the main window's assert menu carries — the point is that the user no
  *  longer has to leave the page to reach them. */
 const URL_ASSERTS: ReadonlyArray<{ kind: AssertKind; label: string }> = [
+  // "URL path is" first: the robust default. The other kinds compare the full
+  // URL, which query-string noise (`?variant=`, `utm_*`) fails between runs.
+  { kind: "urlPathIs", label: "URL path is…" },
   { kind: "url", label: "URL contains…" },
   { kind: "urlEndsWith", label: "URL ends with…" },
   { kind: "urlIs", label: "URL is…" },

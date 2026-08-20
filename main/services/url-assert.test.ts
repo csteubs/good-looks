@@ -39,6 +39,22 @@ describe("urlAssertPrefill", () => {
     );
   });
 
+  it("gives `urlPathIs` the pathname alone — the query is the noise it exists to ignore", () => {
+    // The whole point of the kind: the value it seeds must survive the
+    // `?variant=` and `utm_*` that differ between the recording and the run.
+    expect(urlAssertPrefill("urlPathIs", "https://ritual.com/cart?step=2#top")).toBe("/cart");
+    expect(
+      urlAssertPrefill("urlPathIs", "https://ritual.com/products/synbiotic?variant=42283036246110"),
+    ).toBe("/products/synbiotic");
+  });
+
+  it("gives `urlPathIs` the root path at a site root — exact match makes `/` safe", () => {
+    // Unlike the contains kinds below, "path is /" is a true and falsifiable
+    // statement about the page: it fails the moment the test is anywhere else.
+    expect(urlAssertPrefill("urlPathIs", "https://ritual.com/")).toBe("/");
+    expect(urlAssertPrefill("urlPathIs", "https://ritual.com")).toBe("/");
+  });
+
   it("falls back to the host at the site root rather than suggesting `/`", () => {
     // THE ONE THAT MATTERS MOST. `toHaveURL("/")` is satisfied by every URL on
     // every host, so prefilling it would generate an assertion that passes

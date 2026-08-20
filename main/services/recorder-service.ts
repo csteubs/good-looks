@@ -60,6 +60,7 @@ import {
   isRunBrowser,
   isValidVariableName,
   MAX_DRAIN_BYTES,
+  MAX_FLOW_REPEAT,
   MAX_STEP_STRING_LENGTH,
   MAX_VARIABLES_PER_TEST,
   mergeSessionVariables,
@@ -68,9 +69,11 @@ import {
   normalizePickedElement,
   normalizeRawStep,
   normalizeRawSteps,
+  normalizeStep,
   normalizeVariables,
   resolveStepForReplay,
 } from "../recorder/types.js";
+import { extractableRange } from "../../shared/flow-extraction.mjs";
 import { normalizeViewport, recordedViewport, type Viewport } from "../recorder/window-size.js";
 import {
   applyCookieStep,
@@ -105,7 +108,7 @@ import { applyTestSessionProxy } from "./proxy-service.js";
 import { scaled, uiScale } from "./ui-scale.js";
 import { getWindowUrl, getPreloadPath } from "../windows/window-paths.js";
 import { runHistoryStore } from "./run-history-store.js";
-import { describeStep } from "./script-generator.js";
+import { bindFlowStep, describeStep, flowCallBindings } from "./script-generator.js";
 import { testStore } from "./test-store.js";
 import { testSecretsStore } from "./test-secrets-store.js";
 import { MASKED, redact, refreshSecretSnapshot } from "./secret-redaction.js";
@@ -455,6 +458,12 @@ function maskValues<T extends { error?: string; logs?: DebugEntry["logs"] }>(
 async function runStep(
   wc: { executeJavaScript: (script: string) => Promise<unknown> },
   step: Step,
+  /** Whose variable scope resolves this step's `${name}` references. Defaults
+   *  to the session's — an INLINED flow step passes the flow's own, because
+   *  its secrets live in the flow's encrypted store and its captured names in
+   *  the flow's declarations, exactly as the generator's header arranges for
+   *  a real run. */
+  ctx?: { variables: TestVariable[]; secretsTestId: string },
 ): Promise<ReplayStepResult> {
   if (step.type === "viewport") {
     // `pageResizeHost()` — NOT the window — because the recorded number is the
@@ -498,8 +507,12 @@ async function runStep(
   // hosted-model prompt by "Debug with AI" on the step.
   const resolved = resolveStepForReplay(
     step,
-    session?.variables ?? [],
-    session ? await testSecretsStore.valuesFor(session.testId) : {},
+    ctx?.variables ?? session?.variables ?? [],
+    ctx
+      ? await testSecretsStore.valuesFor(ctx.secretsTestId)
+      : session
+        ? await testSecretsStore.valuesFor(session.testId)
+        : {},
   );
   if (resolved.missingSecrets.length > 0) {
     // Declared but never given a value. Filling "" would submit a blank
@@ -652,6 +665,38 @@ interface Session {
    * page cannot read it and cannot forge a step through that channel.
    */
   captureNonce: string;
+  /**
+   * The flow being edited INLINE through one of this session's `runFlow` rows.
+   *
+   * STAGED, like the session's own steps: `steps` is a working copy of the
+   * flow record's list, edited in place by every step method while the scope
+   * is open, and committed to the store on scope EXIT (collapse, "Done", any
+   * whole-list replay, finalize) — never per keystroke, and never deferred to
+   * the session's save. Per-edit write-through would regenerate every caller's
+   * spec on each keystroke and let a run elsewhere pick up a half-recorded
+   * flow; deferring to finalize would make an in-session replay run against
+   * the STALE flow at the exact moment the user is verifying their edit.
+   * `discardExit` drops it unwritten, which is what "Discard" must mean.
+   *
+   * One level only: entering a nested flow commits and re-enters. `openedUpdatedAt`
+   * is the conflict check — the flow record moving under an open scope (Edit
+   * Steps in the main window, MCP) is reported on commit, last-writer-wins.
+   */
+  flowScope: FlowScope | null;
+}
+
+interface FlowScope {
+  flowId: string;
+  /** the runFlow row in session.steps the scope was entered through */
+  callStepId: string;
+  name: string;
+  /** working copy of the flow record's steps */
+  steps: Step[];
+  /** insert index within `steps` */
+  cursor: number;
+  /** flow record's updatedAt when the scope opened, for conflict detection */
+  openedUpdatedAt: number;
+  dirty: boolean;
 }
 
 const POLL_INTERVAL_MS = 250;
@@ -835,6 +880,15 @@ function currentState(): RecorderState {
     replaying: session?.replaying ?? false,
     pageReady: session?.pageReady ?? false,
     loading: !!session && !session.pageReady && !session.loadFailed,
+    flowScope: session?.flowScope
+      ? {
+          flowId: session.flowScope.flowId,
+          callStepId: session.flowScope.callStepId,
+          name: session.flowScope.name,
+          cursor: session.flowScope.cursor,
+          stepCount: session.flowScope.steps.length,
+        }
+      : null,
     // No `loadFailed` here. `Session.loadFailed` above is real and gates
     // `loading`, but it could never be OBSERVED through this snapshot: the one
     // path that sets it nulls the session before the next broadcast, so the
@@ -856,9 +910,104 @@ function broadcastSteps(): void {
   sendToMain("recorder:steps", session?.steps ?? []);
 }
 
+/** The open scope's working copy, whole, on its own channel — never on
+ *  `recorder:steps`, whose payload two other consumers type as the session's
+ *  `Step[]`. Null closes the expansion in both trainers. */
+function broadcastFlowScope(): void {
+  const scope = session?.flowScope ?? null;
+  sendToMain(
+    "recorder:flowScope",
+    scope
+      ? {
+          flowId: scope.flowId,
+          callStepId: scope.callStepId,
+          name: scope.name,
+          steps: scope.steps,
+          cursor: scope.cursor,
+        }
+      : null,
+  );
+}
+
 function clampCursor(index: number): number {
   const n = session?.steps.length ?? 0;
   return Math.max(0, Math.min(n, index));
+}
+
+function clampScopeCursor(index: number): number {
+  const n = session?.flowScope?.steps.length ?? 0;
+  return Math.max(0, Math.min(n, index));
+}
+
+/** What one committed scope amounted to — returned so the renderer can toast
+ *  ("Flow 'Login' updated — used by 3 tests") without the backend growing a
+ *  toast channel. */
+export interface FlowScopeCommit {
+  committed: boolean;
+  flowId: string;
+  name: string;
+  /** direct callers whose specs the save regenerated */
+  callers: number;
+  /** the flow record moved under the open scope (another window, MCP) and this
+   *  commit overwrote that edit — last-writer-wins, said out loud */
+  conflict: boolean;
+  /** the flow record was DELETED while the scope was open; nothing was written */
+  orphaned: boolean;
+}
+
+/**
+ * Write the open scope's working copy back to the flow record and close the
+ * scope. The single commit path: "Done editing flow", entering another scope,
+ * every whole-list replay, and finalize all land here. A clean (never-edited)
+ * scope closes without touching the store — collapsing a flow you only looked
+ * at must not re-date it for every caller.
+ */
+function commitFlowScope(): FlowScopeCommit | null {
+  if (!session?.flowScope) return null;
+  const scope = session.flowScope;
+  session.flowScope = null;
+  const result: FlowScopeCommit = {
+    committed: false,
+    flowId: scope.flowId,
+    name: scope.name,
+    callers: 0,
+    conflict: false,
+    orphaned: false,
+  };
+  if (scope.dirty) {
+    const flow = testStore.get(scope.flowId);
+    if (!flow) {
+      // Deleted while the scope was open. Nothing to write to — the edits are
+      // lost with the record they belonged to, and resurrecting the flow from
+      // the working copy would undo a delete the user made on purpose.
+      result.orphaned = true;
+      logger.warn("recorder", "Flow deleted while its inline scope was open", {
+        flowId: scope.flowId,
+      });
+    } else {
+      result.conflict = flow.updatedAt !== scope.openedUpdatedAt;
+      // Re-normalized on the way into a stored record — the same funnel every
+      // other step-writing path uses (see check:step-ingest §1c).
+      flow.steps = scope.steps
+        .map((s) => normalizeStep(s))
+        .filter((s): s is Step => s !== null);
+      flow.updatedAt = Date.now();
+      if (!flow.scriptEdited) flow.scriptPath = testStore.regenerateScript(flow);
+      // save() regenerates every caller's spec — that is the propagation.
+      testStore.save(flow);
+      result.committed = true;
+      result.callers = testStore.callersOf(scope.flowId).length;
+      logger.info("recorder", "Committed inline flow edits", {
+        flowId: scope.flowId,
+        steps: flow.steps.length,
+        callers: result.callers,
+        conflict: result.conflict,
+      });
+    }
+  }
+  broadcastFlowScope();
+  broadcastState();
+  return result;
 }
 
 /**
@@ -927,9 +1076,102 @@ function matchingBlockIndex(steps: Step[], index: number): number {
   return -1;
 }
 
+/** One step a whole-list replay will execute, tagged with the CALLER-visible
+ *  row it reports against. */
+interface ReplayEntry {
+  step: Step;
+  /** index into session.steps — inlined flow steps all carry their runFlow
+   *  row's index, the same rule the generator's line map follows, so the
+   *  highlight and the cursor land on rows the user can see. */
+  sourceIndex: number;
+  /** variable scope for `${name}` resolution — the flow's own for inlined
+   *  steps, absent (= the session's) for the caller's. */
+  ctx?: { variables: TestVariable[]; secretsTestId: string };
+}
+
+/**
+ * What a whole-list replay executes: the session's steps with every `runFlow`
+ * call expanded into its flow's steps — bound exactly as the generator binds
+ * them, cycle-guarded the same way, repeats UNROLLED (a replay is sequential
+ * execution, so unrolling is what a loop means here; a variable-driven count
+ * resolves against the session's variables and degrades to once). A call whose
+ * flow is missing, empty, or circular stays a bare `runFlow` entry — the
+ * injected replayer answers it with its "not previewable" note, which is the
+ * visible degradation. Copied steps get suffixed ids so two iterations of one
+ * flow cannot collide in anything id-keyed.
+ */
+function replayEntries(steps: Step[]): ReplayEntry[] {
+  const out: ReplayEntry[] = [];
+  const walk = (
+    list: Step[],
+    sourceIndexOf: (i: number) => number,
+    stack: string[],
+    ctx: ReplayEntry["ctx"],
+  ): void => {
+    list.forEach((step, i) => {
+      const sourceIndex = sourceIndexOf(i);
+      if (step.type !== "runFlow" || !step.flowId || step.disabled) {
+        out.push({ step, sourceIndex, ctx });
+        return;
+      }
+      const flow = stack.includes(step.flowId) ? null : testStore.get(step.flowId);
+      if (!flow || flow.steps.length === 0) {
+        out.push({ step, sourceIndex, ctx });
+        return;
+      }
+      const args = flowCallBindings(flow, step.flowArgs);
+      const innerCtx = { variables: flow.variables ?? [], secretsTestId: flow.id };
+      const rv = isValidVariableName(step.repeatVar) ? step.repeatVar : undefined;
+      let repeats =
+        typeof step.repeat === "number" && Number.isFinite(step.repeat)
+          ? Math.max(1, Math.min(MAX_FLOW_REPEAT, Math.trunc(step.repeat)))
+          : 1;
+      if (rv) {
+        const value = session?.variables.find((v) => v.name === rv)?.value;
+        const n = Math.trunc(Number(value));
+        repeats = Number.isFinite(n) && n > 0 ? Math.min(MAX_FLOW_REPEAT, n) : 1;
+      }
+      for (let r = 0; r < repeats; r++) {
+        walk(
+          flow.steps.map((inner) => {
+            const bound = bindFlowStep(inner, args);
+            const copy: Step = { ...bound, id: `${inner.id}::${step.id}:${r}` };
+            if (step.continueOnFailure) copy.continueOnFailure = true;
+            return copy;
+          }),
+          () => sourceIndex,
+          [...stack, step.flowId!],
+          innerCtx,
+        );
+      }
+    });
+  };
+  walk(steps, (i) => i, [], undefined);
+  return out;
+}
+
 function addStep(raw: RawStep): void {
   if (!session) return;
   const step: Step = { id: randomUUID(), timestamp: Date.now(), ...raw };
+  // While a flow scope is open, EVERYTHING the funnel receives lands in the
+  // flow's working copy — a click captured in the training browser and an
+  // Add-step submit alike. The routing lives here, at the one place both
+  // capture channels and insertStep reach, so a new arrival path cannot land
+  // in the caller while the banner says it is recording into the flow.
+  if (session.flowScope) {
+    const scope = session.flowScope;
+    const at = clampScopeCursor(scope.cursor);
+    scope.steps.splice(at, 0, step);
+    scope.cursor = at + 1;
+    scope.dirty = true;
+    if (raw.type === "assert" && session.assertMode) {
+      session.assertMode = null;
+      session.assertSoft = false;
+    }
+    broadcastFlowScope();
+    broadcastState();
+    return;
+  }
   const at = clampCursor(session.cursor);
   session.steps.splice(at, 0, step);
   session.cursor = at + 1;
@@ -1382,6 +1624,7 @@ export const recorderService = {
       pageReady: false,
       loadFailed: false,
       captureNonce: randomUUID(),
+      flowScope: null,
     };
 
     // The pointer position remembered from the previous session was measured
@@ -1894,6 +2137,9 @@ export const recorderService = {
         // location. Right-clicking a filled-in email box and choosing "URL
         // contains…" opened the dialog suggesting the email address.
         const assertPageItems: MenuItemConstructorOptions[] = [
+          // "URL path is" first: the robust default. The other kinds compare
+          // the full URL, which query-string noise fails between runs.
+          { label: "URL path is…", click: () => ctxAction({ kind: "assertion", assert: "urlPathIs", picked: null, prefillText: "", prefillValue: urlAssertPrefill("urlPathIs", currentPageUrl()) }) },
           { label: "URL contains…", click: () => ctxAction({ kind: "assertion", assert: "url", picked: null, prefillText: "", prefillValue: urlAssertPrefill("url", currentPageUrl()) }) },
           { label: "URL ends with…", click: () => ctxAction({ kind: "assertion", assert: "urlEndsWith", picked: null, prefillText: "", prefillValue: urlAssertPrefill("urlEndsWith", currentPageUrl()) }) },
           { label: "URL is…", click: () => ctxAction({ kind: "assertion", assert: "urlIs", picked: null, prefillText: "", prefillValue: urlAssertPrefill("urlIs", currentPageUrl()) }) },
@@ -2231,6 +2477,25 @@ export const recorderService = {
 
   deleteStep(stepId: string): RecorderState {
     if (session) {
+      // A step shown inside the open flow scope deletes from the WORKING COPY.
+      // Step ids are UUIDs, unique across both lists, so id lookup is the
+      // routing — the same rule every step method here follows.
+      const scope = session.flowScope;
+      if (scope) {
+        const at = scope.steps.findIndex((s) => s.id === stepId);
+        if (at >= 0) {
+          const remove = new Set<number>([at]);
+          const partner = matchingBlockIndex(scope.steps, at);
+          if (partner >= 0) remove.add(partner);
+          const removedBeforeCursor = [...remove].filter((i) => i < scope.cursor).length;
+          scope.steps = scope.steps.filter((_, i) => !remove.has(i));
+          scope.cursor = clampScopeCursor(scope.cursor - removedBeforeCursor);
+          scope.dirty = true;
+          broadcastFlowScope();
+          broadcastState();
+          return currentState();
+        }
+      }
       const idx = session.steps.findIndex((s) => s.id === stepId);
       if (idx < 0) return currentState();
       // Deleting one delimiter of a conditional block removes both, so blocks
@@ -2257,10 +2522,162 @@ export const recorderService = {
       const clean = normalizeRawStep(raw);
       if (!clean) return currentState();
       const step: Step = { id: randomUUID(), timestamp: Date.now(), ...clean };
+      // Same routing as the capture funnel: an open scope receives the insert.
+      const scope = session.flowScope;
+      if (scope) {
+        const at = index == null ? clampScopeCursor(scope.cursor) : clampScopeCursor(index);
+        scope.steps.splice(at, 0, step);
+        scope.cursor = at + 1;
+        scope.dirty = true;
+        broadcastFlowScope();
+        broadcastState();
+        return currentState();
+      }
       const at = index == null ? clampCursor(session.cursor) : clampCursor(index);
       session.steps.splice(at, 0, step);
       session.cursor = at + 1;
       broadcastSteps();
+      broadcastState();
+    }
+    return currentState();
+  },
+
+  /**
+   * Extract a contiguous run of the session's steps into a NEW flow test,
+   * replacing them with a `runFlow` call — mabl's bulk-edit "Create flow".
+   *
+   * The flow record persists IMMEDIATELY, unlike the session's own steps which
+   * stage until finalize: a flow is a library entity other tests can call the
+   * moment it exists, and holding it hostage to this session's save would make
+   * "record, extract, call it from the other window" impossible. The one
+   * consequence worth naming: discarding this session afterwards keeps the
+   * flow (it is a separate test) while the original steps come back with the
+   * discarded record — a duplicate to clean up, not data loss in either
+   * direction.
+   *
+   * Validated HERE as well as in the renderer, with the same shared rule
+   * (`shared/flow-extraction.mjs`): the selection arrives over IPC, and a
+   * gapped or block-splitting range would build a flow whose generated block
+   * is unbalanced. Steps are re-run through `normalizeStep` on the way into
+   * the new record — a new path that writes steps into a stored record is a
+   * new instance of the ingest boundary, whoever the caller is.
+   *
+   * Rejections are thrown: this is a dialog submit with somewhere to say
+   * "that name is taken", the same contract `addVariable` chose.
+   */
+  extractFlow(stepIds: unknown, name: unknown): RecorderState {
+    if (!session) throw new Error("No recording session is running.");
+    const ids = Array.isArray(stepIds)
+      ? stepIds.filter((v): v is string => typeof v === "string")
+      : [];
+    const verdict = extractableRange(session.steps, ids);
+    if (!verdict.ok) throw new Error(verdict.reason);
+    const flowName = typeof name === "string" ? name.trim() : "";
+    if (!flowName) throw new Error("Give the flow a name.");
+    const taken = new Set(testStore.allNames().map((n) => n.toLowerCase()));
+    if (taken.has(flowName.toLowerCase())) {
+      throw new Error(`A test named “${flowName}” already exists — pick another name.`);
+    }
+
+    const now = Date.now();
+    const extracted = session.steps
+      .slice(verdict.start, verdict.end + 1)
+      .map((s) => normalizeStep(s))
+      .filter((s): s is Step => s !== null);
+    if (extracted.length === 0) throw new Error("Nothing usable to extract.");
+
+    const flowId = randomUUID();
+    const flow: TestRecord = {
+      id: flowId,
+      name: flowName,
+      url: session.url,
+      createdAt: now,
+      updatedAt: now,
+      steps: extracted,
+      scriptPath: testStore.scriptPathFor(flowId),
+      isFlow: true,
+      flowParams: [],
+    };
+    flow.scriptPath = testStore.regenerateScript(flow);
+    testStore.save(flow);
+
+    const call: Step = {
+      id: randomUUID(),
+      timestamp: now,
+      type: "runFlow",
+      flowId,
+      // The name is stored on the step so the list stays readable even if the
+      // flow is later renamed or deleted — same rule as the composer.
+      label: flowName,
+    };
+    session.steps.splice(verdict.start, extracted.length, call);
+    // The cursor keeps pointing at the same GAP: unchanged before the range,
+    // just past the call when it was inside or at the range, and pulled back
+    // by the rows that left when it was after.
+    const removed = extracted.length - 1;
+    if (session.cursor > verdict.end) session.cursor = clampCursor(session.cursor - removed);
+    else if (session.cursor > verdict.start) session.cursor = clampCursor(verdict.start + 1);
+    logger.info("recorder", "Extracted steps into a flow", {
+      flowId,
+      name: flowName,
+      steps: extracted.length,
+    });
+    broadcastSteps();
+    broadcastState();
+    return currentState();
+  },
+
+  /**
+   * Open a `runFlow` row for INLINE EDITING: subsequent captures, inserts and
+   * edits land in the flow's working copy until the scope commits. One scope
+   * at a time — entering while another is open commits that one first, the
+   * same gesture mabl's trainer makes. Thrown rejections are shown by the
+   * dialog-free banner path, so they carry sentences.
+   */
+  enterFlowScope(callStepId: unknown): RecorderState {
+    if (!session) throw new Error("No recording session is running.");
+    const call = session.steps.find((s) => s.id === callStepId);
+    if (!call || call.type !== "runFlow" || !call.flowId) {
+      throw new Error("That step is not a flow call.");
+    }
+    const flow = testStore.get(call.flowId);
+    if (!flow) {
+      throw new Error("This flow can't be found — it may have been deleted.");
+    }
+    // Editing a flow through a call inside ITSELF would be a scope whose
+    // commit invalidates its own working copy. The generator refuses the
+    // cycle at run time; refuse the editing gesture outright.
+    if (flow.id === session.testId) {
+      throw new Error("A test can't edit itself as a flow.");
+    }
+    commitFlowScope();
+    session.flowScope = {
+      flowId: flow.id,
+      callStepId: call.id,
+      name: flow.name,
+      // A working COPY: the record must not change until the commit, or
+      // "Done editing" and "it already happened" stop being different things.
+      steps: structuredClone(flow.steps),
+      cursor: flow.steps.length,
+      openedUpdatedAt: flow.updatedAt,
+      dirty: false,
+    };
+    broadcastFlowScope();
+    broadcastState();
+    return currentState();
+  },
+
+  /** Commit the open scope (if any) and close it. The reply carries what
+   *  happened so the renderer can toast it; null when nothing was open. */
+  exitFlowScope(): FlowScopeCommit | null {
+    return commitFlowScope();
+  },
+
+  /** Move the insert cursor WITHIN the open scope's working copy. */
+  setFlowCursor(index: number): RecorderState {
+    if (session?.flowScope) {
+      session.flowScope.cursor = clampScopeCursor(index);
+      broadcastFlowScope();
       broadcastState();
     }
     return currentState();
@@ -2325,6 +2742,21 @@ export const recorderService = {
   /** Move a step to a new index (drag-to-reorder). */
   reorderStep(stepId: string, toIndex: number): RecorderState {
     if (session) {
+      // A scope step reorders within the scope — `toIndex` is clamped to the
+      // working copy, so a drag cannot move a flow step into the caller.
+      const scope = session.flowScope;
+      if (scope) {
+        const fromScope = scope.steps.findIndex((s) => s.id === stepId);
+        if (fromScope >= 0) {
+          const [moved] = scope.steps.splice(fromScope, 1);
+          const to = Math.max(0, Math.min(scope.steps.length, toIndex));
+          scope.steps.splice(to, 0, moved);
+          scope.dirty = true;
+          broadcastFlowScope();
+          broadcastState();
+          return currentState();
+        }
+      }
       const from = session.steps.findIndex((s) => s.id === stepId);
       if (from >= 0) {
         const [moved] = session.steps.splice(from, 1);
@@ -2340,7 +2772,10 @@ export const recorderService = {
   /** Shallow-merge editable fields of a step (inline editing). */
   updateStep(stepId: string, patch: Partial<Step>): RecorderState {
     if (session) {
-      const step = session.steps.find((s) => s.id === stepId);
+      // Scope first: ids are unique across both lists, and an edit made on an
+      // expanded flow row must change the FLOW, not silently fall through.
+      const inScope = session.flowScope?.steps.find((s) => s.id === stepId);
+      const step = inScope ?? session.steps.find((s) => s.id === stepId);
       if (step) {
         const allowed: (keyof Step)[] = [
           "value",
@@ -2361,6 +2796,7 @@ export const recorderService = {
           "waitMs",
           "waitUntil",
           "timeoutMs",
+          "loopCount",
           "soft",
           "assert",
           "locator",
@@ -2384,6 +2820,22 @@ export const recorderService = {
           if (args && Object.keys(args).length > 0) target.flowArgs = args;
           else delete target.flowArgs;
         }
+        // The call-site loop fields, re-checked like flowArgs: `repeat` bounds
+        // a `for` loop in executed source, and `repeatVar` becomes
+        // `Number(V.name)`. Cleared (not merely ignored) on an invalid value,
+        // so the editor's "Once" choice can actually turn a loop off.
+        if ("repeat" in patch) {
+          const n =
+            typeof patch.repeat === "number" && Number.isFinite(patch.repeat)
+              ? Math.trunc(patch.repeat)
+              : 0;
+          if (n >= 2 && n <= MAX_FLOW_REPEAT) target.repeat = n;
+          else delete target.repeat;
+        }
+        if ("repeatVar" in patch) {
+          if (isValidVariableName(patch.repeatVar)) target.repeatVar = patch.repeatVar;
+          else delete target.repeatVar;
+        }
         // Retargeting a step (Refine Selector) may point it at a DIFFERENT
         // element, which makes the recorded fingerprint a description of
         // something else — and Auto-Heal scoring against it would then confidently
@@ -2392,7 +2844,12 @@ export const recorderService = {
         // candidate is the exception: same intended element, new locator, so
         // that path preserves the fingerprint (see applyHeal).
         if ("locator" in patch && !patch.fingerprint) delete target.fingerprint;
-        broadcastSteps();
+        if (inScope && session.flowScope) {
+          session.flowScope.dirty = true;
+          broadcastFlowScope();
+        } else {
+          broadcastSteps();
+        }
         broadcastState();
       }
     }
@@ -2478,8 +2935,14 @@ export const recorderService = {
     if (!session) return empty("No active recording session.");
     const page = pageWc();
     if (!page) return empty("Recorder window is not open.");
-    const idx = session.steps.findIndex((s) => s.id === stepId);
-    const step = session.steps[idx];
+    // A row inside the open flow scope previews from the WORKING COPY — the
+    // per-step ▶ is how an inline edit is checked before committing it. Its
+    // index is within the scope, which is also where the highlight lives.
+    const scopeIdx = session.flowScope?.steps.findIndex((s) => s.id === stepId) ?? -1;
+    const idx =
+      scopeIdx >= 0 ? scopeIdx : session.steps.findIndex((s) => s.id === stepId);
+    const step =
+      scopeIdx >= 0 ? session.flowScope!.steps[scopeIdx] : session.steps[idx];
     if (!step) return empty("Step not found.");
 
     const wc = pageExecutor(page);
@@ -2512,8 +2975,16 @@ export const recorderService = {
         if (!ok) logger.info("recorder", "replayStep failed", { stepId, error });
         this.persistDebug(entry);
         // One rule for every replay, single step included: the browser is now
-        // past this step, so the insert cursor is too.
-        if (ok) cursorPastReplayed(idx);
+        // past this step, so the insert cursor is too. A SCOPE step moves the
+        // scope's cursor — advancing the caller's would point it at a gap the
+        // browser never reached.
+        if (ok && scopeIdx >= 0 && session?.flowScope) {
+          session.flowScope.cursor = clampScopeCursor(scopeIdx + 1);
+          broadcastFlowScope();
+          broadcastState();
+        } else if (ok) {
+          cursorPastReplayed(idx);
+        }
         sendToMain("recorder:replayStep", { index: idx, status: "end", ok });
         return entry;
       } catch (err) {
@@ -2554,20 +3025,25 @@ export const recorderService = {
       return { ok: false, stoppedAtIndex: -1, error: "Recorder window is not open." };
     }
     const wc = pageExecutor(page);
+    // A whole-list replay runs the CALLER's list, so an open inline-flow scope
+    // commits first — otherwise the expansion below reads the stale record at
+    // the exact moment the user is verifying their edit.
+    commitFlowScope();
+    const entries = replayEntries(session.steps);
     return withCaptureSuspended(async () => {
       try {
-        for (let i = 0; i < (session?.steps.length ?? 0); i++) {
+        for (let i = 0; i < entries.length; i++) {
           // The window may close (finalize → session = null) mid-run.
           if (!session || !pageAlive()) break;
-          const step = session.steps[i];
+          const { step, sourceIndex, ctx } = entries[i];
           // A disabled step is skipped — log why and continue without running it.
           if (step.disabled) {
-            logger.info("recorder", "Step skipped — disabled", { stepIndex: i });
-            cursorPastReplayed(i);
+            logger.info("recorder", "Step skipped — disabled", { stepIndex: sourceIndex });
+            cursorPastReplayed(sourceIndex);
             continue;
           }
           try {
-            const result = await runStep(wc, step);
+            const result = await runStep(wc, step, ctx);
             let ok = !!(result && result.ok);
             let error = ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`;
             let logs: DebugEntry["logs"] = result?.logs ?? [];
@@ -2583,7 +3059,7 @@ export const recorderService = {
             }
             const entry: DebugEntry = {
               stepId: step.id,
-              stepIndex: i,
+              stepIndex: sourceIndex,
               stepLabel: describeStep(step),
               ok,
               error,
@@ -2593,33 +3069,34 @@ export const recorderService = {
             this.persistDebug(entry);
             // Structural logic steps never stop the run; a false condition skips
             // its whole block so downstream steps aren't previewed on a page that
-            // never showed the conditional content.
+            // never showed the conditional content. Matched over the EXPANDED
+            // list — an `if` inside an inlined flow pairs with its own `endif`.
             if (step.type === "if") {
               if (result?.met === false) {
-                const end = matchingBlockIndex(session.steps, i);
+                const end = matchingBlockIndex(entries.map((e) => e.step), i);
                 if (end > i) i = end;
               }
-              cursorPastReplayed(i);
+              cursorPastReplayed(entries[i].sourceIndex);
               continue;
             }
             if (step.type === "endif") {
-              cursorPastReplayed(i);
+              cursorPastReplayed(sourceIndex);
               continue;
             }
             if (ok) {
-              cursorPastReplayed(i);
-              return { ok: true, stoppedAtIndex: i };
+              cursorPastReplayed(sourceIndex);
+              return { ok: true, stoppedAtIndex: sourceIndex };
             }
             // Step failed — stop here so the user can iterate.
             return {
               ok: false,
-              stoppedAtIndex: i,
+              stoppedAtIndex: sourceIndex,
               error: entry.error,
             };
           } catch (err) {
             const entry: DebugEntry = {
               stepId: step.id,
-              stepIndex: i,
+              stepIndex: sourceIndex,
               stepLabel: describeStep(step),
               ok: false,
               error: String(err),
@@ -2627,7 +3104,7 @@ export const recorderService = {
               logs: verboseErrorLogs(err, step),
             };
             this.persistDebug(entry);
-            return { ok: false, stoppedAtIndex: i, error: String(err) };
+            return { ok: false, stoppedAtIndex: sourceIndex, error: String(err) };
           }
         }
         // No steps to replay.
@@ -2652,28 +3129,31 @@ export const recorderService = {
       return { ok: false, failedAtIndex: -1, error: "Recorder window is not open." };
     }
     const wc = pageExecutor(page);
+    // Commit an open inline-flow scope first — see replayFromStart.
+    commitFlowScope();
+    const entries = replayEntries(session.steps);
     return withCaptureSuspended(async () => {
       try {
-        for (let i = 0; i < (session?.steps.length ?? 0); i++) {
+        for (let i = 0; i < entries.length; i++) {
           // The window may close (finalize → session = null) mid-run.
           if (!session || !pageAlive()) break;
-          const step = session.steps[i];
+          const { step, sourceIndex, ctx } = entries[i];
           // A disabled step is skipped — log why and move on without running it.
           if (step.disabled) {
-            logger.info("recorder", "Step skipped — disabled", { stepIndex: i });
-            cursorPastReplayed(i);
+            logger.info("recorder", "Step skipped — disabled", { stepIndex: sourceIndex });
+            cursorPastReplayed(sourceIndex);
             continue;
           }
-          sendToMain("recorder:replayStep", { index: i, status: "begin", ok: true });
+          sendToMain("recorder:replayStep", { index: sourceIndex, status: "begin", ok: true });
           let ok = false;
           let error: string | undefined;
           let met: boolean | undefined;
           let logs: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[] = [];
           try {
-            const result = await runStep(wc, step);
+            const result = await runStep(wc, step, ctx);
             ok = !!(result && result.ok);
             met = result?.met;
-            error = ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`;
+            error = ok ? undefined : result?.error || `Step ${sourceIndex + 1} failed during replay.`;
             logs = result?.logs ?? [];
           } catch (err) {
             error = String(err);
@@ -2682,7 +3162,7 @@ export const recorderService = {
           // Auto-Heal: heal an unresolved locator before the failure stops the
           // run. Candidates are surfaced to the Console either way.
           if (!ok && step.locator && step.type !== "if") {
-            const healed = await healAndRetry(wc, step, i, error);
+            const healed = await healAndRetry(wc, step, sourceIndex, error);
             if (healed.okWithHeal) {
               ok = true;
               error = undefined;
@@ -2691,7 +3171,7 @@ export const recorderService = {
           }
           const entry: DebugEntry = {
             stepId: step.id,
-            stepIndex: i,
+            stepIndex: sourceIndex,
             stepLabel: describeStep(step),
             ok,
             error,
@@ -2699,21 +3179,21 @@ export const recorderService = {
             logs,
           };
           this.persistDebug(entry);
-          sendToMain("recorder:replayStep", { index: i, status: "end", ok });
+          sendToMain("recorder:replayStep", { index: sourceIndex, status: "end", ok });
           // Skip the body of a conditional block whose condition didn't hold —
           // the skipped steps are left un-highlighted (never begun), matching a
-          // real run that branches past them.
+          // real run that branches past them. Matched over the EXPANDED list.
           if (step.type === "if" && met === false) {
-            const end = matchingBlockIndex(session.steps, i);
+            const end = matchingBlockIndex(entries.map((e) => e.step), i);
             if (end > i) i = end;
-            cursorPastReplayed(i);
+            cursorPastReplayed(entries[i].sourceIndex);
             continue;
           }
           // A soft assertion reports failure but doesn't stop the run.
           if (!ok && !step.soft) {
-            return { ok: false, failedAtIndex: i, error };
+            return { ok: false, failedAtIndex: sourceIndex, error };
           }
-          cursorPastReplayed(i);
+          cursorPastReplayed(sourceIndex);
         }
         return { ok: true, failedAtIndex: -1 };
       } catch (err) {
@@ -2747,46 +3227,53 @@ export const recorderService = {
       return { ok: false, ranCount: 0, passedCount: 0, failedAtIndex: -1, error: "Recorder window is not open." };
     }
     const wc = pageExecutor(page);
+    // Commit an open inline-flow scope first — see replayFromStart.
+    commitFlowScope();
     const from = Math.max(0, Math.min(startIndex, session.steps.length));
-    const total = session.steps
-      .slice(from)
-      .filter((s) => s.type !== "if" && s.type !== "endif").length;
+    const entries = replayEntries(session.steps);
+    // `startIndex` is a CALLER-list index; the run starts at the first
+    // expanded entry that row produced.
+    const fromEntry = entries.findIndex((e) => e.sourceIndex >= from);
+    const startAt = fromEntry < 0 ? entries.length : fromEntry;
+    const total = entries
+      .slice(startAt)
+      .filter((e) => e.step.type !== "if" && e.step.type !== "endif").length;
     let ran = 0;
     let passed = 0;
     sendToMain("recorder:replayLog", { phase: "start", startIndex: from, total });
     return withCaptureSuspended(async () => {
       try {
-        for (let i = from; i < (session?.steps.length ?? 0); i++) {
+        for (let i = startAt; i < entries.length; i++) {
           // The window may close (finalize → session = null) mid-run.
           if (!session || !pageAlive()) break;
-          const step = session.steps[i];
+          const { step, sourceIndex, ctx } = entries[i];
           // A disabled step is skipped — log why, stream it as skipped, and move
           // on without running it (not counted in ran/passed totals).
           if (step.disabled) {
-            logger.info("recorder", "Step skipped — disabled", { stepIndex: i });
+            logger.info("recorder", "Step skipped — disabled", { stepIndex: sourceIndex });
             sendToMain("recorder:replayLog", {
               phase: "step",
-              index: i,
+              index: sourceIndex,
               stepLabel: describeStep(step),
               ok: true,
               error: "Skipped — disabled",
               logs: [{ i: 0, t: Date.now(), level: "info", m: "Step skipped — disabled" }],
             });
-            cursorPastReplayed(i);
+            cursorPastReplayed(sourceIndex);
             await sleep(REPLAY_STEP_DELAY_MS);
             continue;
           }
-          sendToMain("recorder:replayStep", { index: i, status: "begin", ok: true });
+          sendToMain("recorder:replayStep", { index: sourceIndex, status: "begin", ok: true });
           await sleep(REPLAY_SETTLE_MS);
           let ok = false;
           let error: string | undefined;
           let met: boolean | undefined;
           let logs: DebugEntry["logs"] = [];
           try {
-            const result = await runStep(wc, step);
+            const result = await runStep(wc, step, ctx);
             ok = !!(result && result.ok);
             met = result?.met;
-            error = ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`;
+            error = ok ? undefined : result?.error || `Step ${sourceIndex + 1} failed during replay.`;
             logs = result?.logs ?? [];
           } catch (err) {
             error = String(err);
@@ -2794,7 +3281,7 @@ export const recorderService = {
           }
           const entry: DebugEntry = {
             stepId: step.id,
-            stepIndex: i,
+            stepIndex: sourceIndex,
             stepLabel: describeStep(step),
             ok,
             error,
@@ -2802,20 +3289,21 @@ export const recorderService = {
             logs,
           };
           this.persistDebug(entry);
-          sendToMain("recorder:replayStep", { index: i, status: "end", ok });
+          sendToMain("recorder:replayStep", { index: sourceIndex, status: "end", ok });
           // Structural steps: never counted or streamed; a false `if` skips its
           // whole block (leaving those steps un-highlighted, like a real run).
+          // Matched over the EXPANDED list.
           if (step.type === "if") {
             if (met === false) {
-              const end = matchingBlockIndex(session.steps, i);
+              const end = matchingBlockIndex(entries.map((e) => e.step), i);
               if (end > i) i = end;
             }
-            cursorPastReplayed(i);
+            cursorPastReplayed(entries[i].sourceIndex);
             await sleep(REPLAY_STEP_DELAY_MS);
             continue;
           }
           if (step.type === "endif") {
-            cursorPastReplayed(i);
+            cursorPastReplayed(sourceIndex);
             await sleep(REPLAY_STEP_DELAY_MS);
             continue;
           }
@@ -2826,7 +3314,7 @@ export const recorderService = {
           // to heal it before reporting the failure. If a candidate auto-succeeds,
           // count the step as passed and stream the healed result.
           if (!ok && step.locator) {
-            const healed = await healAndRetry(wc, step, i, error);
+            const healed = await healAndRetry(wc, step, sourceIndex, error);
             heal = healed.heal;
             if (healed.okWithHeal) {
               ok = true;
@@ -2836,7 +3324,7 @@ export const recorderService = {
               // Persist the healed outcome as the step's debug entry.
               const healedEntry: DebugEntry = {
                 stepId: step.id,
-                stepIndex: i,
+                stepIndex: sourceIndex,
                 stepLabel: describeStep(step),
                 ok: true,
                 error: undefined,
@@ -2844,12 +3332,12 @@ export const recorderService = {
                 logs,
               };
               this.persistDebug(healedEntry);
-              sendToMain("recorder:replayStep", { index: i, status: "end", ok: true });
+              sendToMain("recorder:replayStep", { index: sourceIndex, status: "end", ok: true });
             }
           }
           sendToMain("recorder:replayLog", {
             phase: "step",
-            index: i,
+            index: sourceIndex,
             stepLabel: describeStep(step),
             ok,
             error,
@@ -2858,10 +3346,10 @@ export const recorderService = {
           });
           // A soft assertion reports failure but doesn't stop the run.
           if (!ok && !step.soft) {
-            sendToMain("recorder:replayLog", { phase: "done", ran, passed, failedAtIndex: i });
-            return { ok: false, ranCount: ran, passedCount: passed, failedAtIndex: i, error };
+            sendToMain("recorder:replayLog", { phase: "done", ran, passed, failedAtIndex: sourceIndex });
+            return { ok: false, ranCount: ran, passedCount: passed, failedAtIndex: sourceIndex, error };
           }
-          cursorPastReplayed(i);
+          cursorPastReplayed(sourceIndex);
           await sleep(REPLAY_STEP_DELAY_MS);
         }
         sendToMain("recorder:replayLog", { phase: "done", ran, passed, failedAtIndex: -1 });
@@ -2945,6 +3433,11 @@ export const recorderService = {
 };
 
 async function finalize(): Promise<void> {
+  // Saving the session is a save path, so an open inline-flow scope commits
+  // with it — "Save Test" must not silently discard edits the banner said were
+  // being recorded into the flow. (`discardExit` nulls the session without
+  // coming here, which is exactly how a discard drops the scope unwritten.)
+  commitFlowScope();
   stopPolling();
   closeTrainerPanel();
   const s = session;

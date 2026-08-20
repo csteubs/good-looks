@@ -610,8 +610,11 @@ function parseBody(
 ): { steps: Step[]; skipped: number } {
   const steps: Step[] = [];
   let skipped = 0;
-  // Depth of recognized `if (...) {` blocks awaiting their closing `}` → endif.
-  let ifDepth = 0;
+  // Recognized open blocks awaiting their closing `}`, innermost last. A
+  // STACK of kinds rather than the old single counter, because a `}` must
+  // close back into the step that opened it: `endif` for an `if`, `endLoop`
+  // for a `for` — one counter cannot tell `if { for {` from `for { if {`.
+  const blockStack: ("if" | "loop")[] = [];
   const src = stripComments(body);
 
   // A single forward scan. At each position we test the known call shapes;
@@ -621,12 +624,41 @@ function parseBody(
   while (i < src.length) {
     const rest = src.slice(i);
 
-    // Closing brace of a recognized conditional block → endif.
+    // Closing brace of a recognized block → the closer for whatever opened it.
     const braceM = rest.match(/^[\s;]*\}/);
-    if (braceM && ifDepth > 0) {
-      ifDepth--;
-      steps.push(makeStep("endif", {}));
+    if (braceM && blockStack.length > 0) {
+      const kind = blockStack.pop();
+      steps.push(makeStep(kind === "loop" ? "endLoop" : "endif", {}));
       i += braceM[0].length;
+      continue;
+    }
+
+    // for (let i = 0; i < N; i++) { … } — the generator's repeat block. The
+    // variable name is pinned to the generator's own vocabulary (`i`, `i2`, …)
+    // and must be the SAME name in all three positions; a foreign for-loop —
+    // over anything else, or counting differently — is skipped whole below,
+    // like a foreign `if`, rather than half-read into a loop step that would
+    // regenerate as something the original was not.
+    const forM = rest.match(
+      /^[\s;]*for\s*\(\s*let\s+([A-Za-z_$][\w$]*)\s*=\s*0\s*;\s*([A-Za-z_$][\w$]*)\s*<\s*(\d+)\s*;\s*([A-Za-z_$][\w$]*)\s*\+\+\s*\)\s*\{/,
+    );
+    if (forM) {
+      const ours =
+        forM[1] === forM[2] && forM[1] === forM[4] && /^i\d*$/.test(forM[1]);
+      if (ours) {
+        steps.push(makeStep("loop", { loopCount: parseInt(forM[3], 10) }));
+        blockStack.push("loop");
+        i += forM[0].length;
+        continue;
+      }
+      // The counting SHAPE with names that are not the generator's — a
+      // near-miss. Half-reading it into a `loop` step would regenerate as a
+      // repeat the original never was, so the whole block is skipped, inner
+      // calls included, and counted so `stepsDiverged` can say so.
+      const braceIdx = i + forM[0].length - 1;
+      const blockClose = matchBrace(src, braceIdx);
+      skipped++;
+      i = blockClose >= 0 ? blockClose + 1 : braceIdx + 1;
       continue;
     }
 
@@ -641,7 +673,7 @@ function parseBody(
       const parsed = parseCondition(src.slice(openIdx + 1, close));
       if (parsed && braceIdx >= 0 && afterCond.slice(0, braceIdx).trim() === "") {
         steps.push(makeStep("if", parsed));
-        ifDepth++;
+        blockStack.push("if");
         i = close + 1 + braceIdx + 1; // resume just past the opening brace
         continue;
       }
@@ -1059,6 +1091,31 @@ function parseBody(
             const reM = argStr.match(/^new\s+RegExp\s*\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*(?:,\s*"(?:[^"\\]|\\.)*"\s*)?\)/);
             if (reM) {
               const pattern = unescapeLit(reM[1].slice(1, -1));
+              // "URL path is" first: its pattern is structural — it starts
+              // with `^` and ends with `$` INSIDE an alternation, so the
+              // anchored-start/anchored-end classification below would file it
+              // as `urlIs` and store the whole pattern as the value. The
+              // prefix and suffix are `urlPathPattern`'s, verbatim; only the
+              // generator writes this shape, because `reEscape` would escape
+              // these metacharacters in any literal value.
+              const PATH_PREFIX = "^[a-z][a-z0-9+.-]*://[^/?#]*";
+              const PATH_SUFFIX = "/?(?:[?#]|$)";
+              if (
+                pageAssertM[1] === "toHaveURL" &&
+                pattern.startsWith(PATH_PREFIX) &&
+                pattern.endsWith(PATH_SUFFIX)
+              ) {
+                const middle = pattern.slice(PATH_PREFIX.length, pattern.length - PATH_SUFFIX.length);
+                // An empty middle is the site root — the pattern spells "/" as
+                // nothing, so reading it back must restore the "/".
+                emit(
+                  "urlPathIs",
+                  { ...(soft ? { soft: true } : {}) },
+                  { value: middle === "" ? "/" : reUnescape(middle) },
+                );
+                i = isWait ? lineEnd : aClose + 1;
+                continue;
+              }
               const anchoredStart = pattern.startsWith("^");
               const anchoredEnd = pattern.endsWith("$");
               const isUrl = pageAssertM[1] === "toHaveURL";

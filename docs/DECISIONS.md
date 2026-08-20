@@ -73,6 +73,115 @@ asserts absent-before/present-after through BOTH engines, running the real
 `scroll` — the model has no way to know a depth, and the capture script
 records the real one.
 
+### 2026-08-19 — "URL path is": the URL assertion that survives real URLs
+
+The report was "the URL assertion has never passed as a test step", and the
+engine turned out to be innocent: the generator, the injected replayer and the
+parity harness all agree, and a true URL assertion passes under real
+Playwright. What the store showed instead was that every URL assertion a user
+had actually recorded was DOA for one of two reasons, neither of which any
+existing guard could see:
+
+- **The value was a path and the kind compared the full URL.** Both real
+  recordings used `urlEndsWith` with a bare path (`/bundle-and-save`,
+  `/collections/all/products/synbiotic-plus-for-gut-health`), and a real
+  site's run-time URL carries a query string the recording did not —
+  `?variant=` on every product card click, `utm_*` after every redirect. "Ends
+  with the path" is false the moment anything follows the path. The parity
+  harness never caught this because its fixture pages have clean URLs; the
+  semantics were right, the VALUES could never survive contact with the site.
+- **Three tests carried `urlIs` steps with no value at all** (arrived through
+  the AI-steps path, which validated the kind but not the value). The
+  generator refuses an empty expected value, so the steps rendered normally in
+  the list and generated nothing — a step that looks added and asserts
+  nothing, for weeks.
+
+**The fix is a fourth URL kind rather than a repaired third.** `urlPathIs`
+("URL path is") compares the URL's PATH alone — query and fragment ignored,
+one trailing slash tolerated, missing leading slash supplied, case-insensitive
+like the other URL kinds. This is mabl's model (their URL assertions target a
+picked component, pathname by default) adopted at the scope that pays: the
+pathname is the one component users actually mean when they assert "the
+navigation landed on the right page", and the query is the part that changes
+under their feet. Changing `urlEndsWith`'s meaning instead was rejected — its
+label promises the literal end of the URL, stored tests rely on that, and a
+kind whose label lies is the exact bug `step-semantics.mjs` exists to end.
+The other mabl components (host, port, protocol, hash, per-param query
+asserts) were deliberately not added: `urlIs`/`url` already cover host
+assertions, and each new kind is another row in every table and menu.
+
+**One pattern, applied to one string, by all three readers.** `urlPathPattern`
+builds `^scheme://host + path + /?(?:[?#]|$)` as RegExp source; the generator
+emits it inside `toHaveURL(new RegExp(…, "i"))`, the replayer tests the same
+pattern against `location.href`, and `describe-step` shows the same
+expression. The alternative — Playwright's predicate form
+`toHaveURL(url => url.pathname === …)` — reads better in a spec but would be a
+new statement grammar for the spec-parser, the step line map and the AI
+prompts, and its page-side twin would be a SECOND spelling of how a path is
+carved out of a URL. A structural pattern keeps the single-spelling property
+the semantics module is built on. It is serialized into the replayer with
+`toString` like `matchesValue`, which is why it inlines its escape rule
+instead of calling `reEscape` — a module-scope reference would be renamed by
+esbuild and throw inside the page; `assert-emission.test.ts` pins the two
+escape spellings together. The spec-parser recognizes the pattern's literal
+prefix/suffix BEFORE the anchor classification, because the pattern ends in
+`$`-inside-an-alternation and would otherwise be filed as `urlIs` carrying the
+raw pattern, re-escaped on every regeneration.
+
+**Robust-by-default, not robust-if-you-know.** `urlPathIs` leads every URL
+assert menu (composer, both panels, the URL bar, the right-click menu) and
+prefills with the live pathname; at a site root it suggests `/`, which is safe
+for an exact path match where it would be vacuous for a contains one. And the
+valueless-step hole is closed at both doors: the composer refuses to submit a
+page-level value assert with an empty value (same rule as its css case), the
+AI-steps validator drops one (the prompt already said it would be refused),
+and the replayer now fails one with "nothing will be generated for it" instead
+of letting `matchesValue`'s empty-substring true paint it green. The
+generator's UNGENERATABLE comment stays as the backstop for steps already on
+disk.
+### 2026-08-19 — Repeat blocks: the first loop, and why balance is the design center
+
+A `loop`/`endLoop` step pair — "repeat N times" — compiled to a real `for`
+around the enclosed steps. Modeled on mabl's loops (their modes: fixed count,
+variable, per-element, per-array-item); this ships the fixed count alone,
+because the CONSTRUCT is the expensive part — block model, generation,
+round-trip, nesting, UI — and the other modes need designs this one does not
+(a per-element loop needs a way for inner steps to reference the loop's
+cursor, which is a locator-model question, not a loop question). The pair
+idiom is the conditional's: one insert produces both halves, steps are
+dragged between them, the body indents in the list.
+
+**Balance is a hard property, not a preference.** An `if` block that loses a
+half emits an unbalanced brace today, and the spec degrades to a SyntaxError —
+a latent repair debt this feature declined to inherit. The generator repairs
+loops instead of trusting them: a stray `endLoop` (its opener deleted) becomes
+a comment rather than an unbalanced `}`; an unclosed `loop` is closed at the
+body's end with a PLAIN `}`, chosen precisely so the parser reads it back as
+an `endLoop` and the next round-trip restores the pair instead of losing it.
+Neither half can be disabled or wrapped (generator refuses, kebab doesn't
+offer), because half a disabled loop is the same broken shape.
+
+**Nested loops name themselves by depth.** `for (let i …)` inside
+`for (let i …)` is itself a SyntaxError, so the generator names `i`, `i2`,
+`i3` by open-loop count — emission-order state, which is why the loop lines
+are emitted by the body walk rather than the per-step `stepLine`.
+
+**The parser got a stack where it had a counter.** One `ifDepth` counter
+cannot tell `if { for {` from `for { if {` — a `}` must close back into the
+step kind that opened it. The block stack does, and the near-miss rule
+guards the vocabulary boundary: the counting SHAPE (`for (let x = 0; y < N;
+z++)`) with names that are not the generator's own (`i\d*`, all three
+positions agreeing) is skipped WHOLE and counted, because half-reading it
+into a `loop` step would regenerate as a repeat the original never was.
+A fully foreign loop (`for (const row of rows)`) keeps the parser's standing
+behaviour — unknown text passed over, known calls inside still harvested —
+pinned now so the contract is explicit.
+
+**The preview walks the body once, and says so.** The trainer's replayer is
+a linear walk; repetition is the run's behaviour. Both halves are narrated
+no-ops there, with the count in the log — a preview that silently added one
+item where the run adds five would read as a broken run.
+
 ### 2026-08-19 — Position becomes something the user can say, and the step list stops hiding the chain
 
 `Locator.nth` has existed since `pickLocator`'s ambiguity fallback began
@@ -8294,3 +8403,236 @@ survival), and three `e2e/context-parity.spec.ts` rows (the injected oracle
 and the real emitted expression against an independently stated answer) were
 all run against the unfixed tree: 4, 6 and 3 failures respectively, exactly
 where the disagreement was claimed to be.
+
+## 2026-08-19 — Flow parameters are variables, and a flow's variables bind to the flow
+
+The flow engine (`isFlow`/`flowParams`/`runFlow` with `flowArgs`) had existed
+since the Routines work, but nothing in the renderer could reach it: no UI
+called `tests:setFlow`, nothing wrote `flowArgs`, and the composer's own empty
+state pointed at an affordance that did not exist. This change is the first of
+the mabl-parity phases (see the plan in the PR): mark-as-flow and a parameter
+manager on the Variables tab, per-call overrides in the composer and in a
+dialog on the `runFlow` row, and the binding fix below.
+
+**A parameter is a variable plus membership in `flowParams` — there is no
+separate default field.** A flow is a runnable test, and when run standalone
+its `const V` header already uses `variables[name].value`. A dedicated
+`defaultValue` on the parameter would be a second number able to disagree with
+what the flow does when run alone. Consequence: `tests:setFlow` auto-declares
+an empty plain variable for any parameter that lacks one, so the default is
+always editable and the flow's own spec compiles its `${name}` references.
+
+**A flow's `${x}` now means the flow's `x`, not the caller's.** `expandSteps`
+used to bind only declared parameters; any other `${x}` fell through to the
+caller's scope — if the caller declared `x` the flow silently read the
+caller's value, and if it didn't the reference emitted as literal text. Both
+were dynamic scoping nobody asked for. Now every plain variable of the flow
+binds textually at generation time (caller's argument wins for a declared
+parameter), while secrets and captured variables stay live `V.x` references
+and their declarations are merged into the caller's header — with the caller's
+own declaration of a name winning, the same no-shadowing rule the header
+already applies to secrets. The runner walks `runFlow` targets (cycle-guarded)
+so a flow's secret arrives in the caller's child process env from the flow's
+own encrypted store. This is a behavior change for any existing flow that
+accidentally relied on reading the caller's variables; it is in the
+correct-scoping direction and the parity tests in `script-generator.test.ts`
+pin each case.
+
+**Propagation moved into `testStore.save`.** Caller specs bake a flow's steps
+in at generation time, so any change to a flow silently invalidated every
+caller's spec on disk — a flow edit only took effect for a caller at that
+caller's next unrelated regeneration. `save` now regenerates every direct and
+transitive caller's spec file (cycle-guarded; hand-edited and imported specs
+skipped; records untouched, so no `updatedAt` churn). The choke point is the
+same one that derives `varRefs`, for the same reason: every write path —
+finalize, Edit Steps, `tests:setVariables`, `tests:setFlow`, heals — passes
+through it, and the one that forgot would ship stale specs.
+
+**Overrides are stored sparsely.** An empty field in the composer or the call
+dialog is "follow the flow's default" and stores no key; only non-empty
+overrides land in `flowArgs`. Storing `""` would pin the call to an empty
+string and make a later default change silently not apply. Secret and captured
+parameters take no textual override at all — an override is a plaintext value
+on a step record, which is exactly where a secret must not go.
+
+## 2026-08-19 — Flows phase 2: the library surface (used-by, guarded delete, unwrap)
+
+**Deleting a called test is blocked, not cascaded.** A test other tests call
+has its steps baked into their specs; after a delete each caller regenerates
+with a "flow not found" comment where the steps were. The handler refuses with
+the caller names, and the detail view's delete dialog says so before the
+attempt. The alternative — silently rewriting or breaking N other tests on one
+delete — is the bigger surprise. The guard keys on CALLERS (a step scan), not
+on `isFlow`: turning the flag off must not make a depended-on test deletable.
+
+**Unwrap goes through the generator's own binding.** `tests:unwrapFlow`
+replaces one `runFlow` step with copies of the flow's steps bound by the
+exported `flowCallBindings`/`bindFlowStep` — the same functions `expandSteps`
+uses — so the unwrapped test does exactly what the call did. One level only
+(a nested `runFlow` inside the flow stays a call), fresh ids on every copy,
+and the call site's disabled/continue-on-failure propagate to the whole block,
+mirroring the inliner. Unwrap is offered on the detail view's Steps tab with a
+confirm that says the copies stop following the flow; it is deliberately NOT
+offered inside Edit Steps, which holds an unsaved draft — a record write from
+inside a draft is a save-ordering trap (the same reason extraction is
+trainer-only).
+
+**Flows get a rail section and leave their folders.** A flow is a building
+block rather than a test someone runs, so it lists under a "Flows" section at
+the bottom of the rail (mabl's Tests > Flows in this rail's vocabulary) instead
+of among the tests. While flagged, a flow's `group` is not rendered — the
+section is its place — though the field survives on the record for when the
+flag comes off. A synthetic folder named "Flows" was rejected: it would collide
+with a user folder of that name and put one test in two places.
+
+**The used-by strip is computed, never stored.** `tests:flowUsage` scans steps
+(`testStore.callersOf`, hidden tests included — a hidden caller still has a
+spec on disk). A stored reverse index would be one more thing to keep true;
+the scan is a JSON read the library's size makes free.
+
+## 2026-08-19 — Flow loops emit a real `for`, never an unrolled copy
+
+A `runFlow` call can now repeat: a fixed count (2–100) or a variable whose
+run-time value drives it (`repeatVar`, which wins when both are set). The
+generator wraps the inlined block in `for (let gl_i0 = 0; …)` — variable
+counts emit `Math.max(0, Math.min(100, Number(V.name) || 0))` as the bound.
+
+**Why a loop and not unrolling.** A variable-driven count cannot be unrolled
+(the value arrives via GLAZE_VARS or a dataset row at run time), so a loop
+emitter has to exist; unrolling fixed counts as well would be a second code
+path producing different specs for the same feature. Loop-body lines are
+stable, so the existing line map attributes every iteration to the visible
+call row and the step-progress reporter needs no change — the row re-reports
+begin/end per iteration, pinned by a new `step-progress.spec.ts` row, with the
+emitted semantics pinned end-to-end by a new `assert-parity.spec.ts` test that
+counts real clicks through a real loop.
+
+**The emitted clamp is load-bearing.** A dataset value is user input and an
+unclamped `Number(V.n)` bound is an unbounded loop in executed code — so the
+cap is baked into the emitted expression, not merely checked at ingest. Both
+halves are pinned by `check:step-ingest` §1b: the boundary drops a forged
+`repeat`/`repeatVar`, and the generator refuses them again for steps stored
+before the boundary knew the fields (the `num()` argument, again).
+
+Degradations chosen over surprises: a repeat variable nothing declares runs
+the flow ONCE with a visible comment (zero runs would silently skip steps; an
+undeclared `V.x` could be a ReferenceError against a spec with no header); a
+disabled call gets no loop around its commented-out lines; counter names are
+sequential (`gl_i0`, `gl_i1`) so nested repeated flows cannot collide.
+
+## 2026-08-19 — Flows phase 4: multi-select, extract-to-flow, and the read-only expansion
+
+**Selection is a shared module, and the extraction rule is a shared spelling.**
+Both trainers gained multi-selection (plain click, ⌘/ctrl toggle, shift range)
+through `renderer/lib/step-selection.ts`; two lists disagreeing about what a
+click means would be a bug that appears only in whichever window the user is
+looking at, the same argument the insert cursor makes. Whether a selection can
+BECOME a flow — contiguous, and never splitting an `if`/`endif` pair — lives in
+`shared/flow-extraction.mjs`, because the renderer (to enable the button and
+word the refusal) and the recorder service (to re-validate what arrives over
+IPC) both need it, they cannot share a `.ts`, and the drift direction is the
+button allowing what the backend refuses. Selected ids are kept in LIST order
+regardless of click order: extraction preserves the recording's order.
+
+**`recorder:extractFlow` persists the flow immediately; the session stays
+staged.** A flow is a library entity other tests can call the moment it
+exists — holding it hostage to the session's save would make "record, extract,
+call it from the other test" impossible. Consequence, stated in the method:
+discarding the session afterwards keeps the flow while the original steps come
+back with the discarded record — a duplicate to clean up, not data loss in
+either direction. The extracted steps are re-run through `normalizeStep` on
+the way into the new record (`check:step-ingest` §1c pins the funnel is in the
+path), the name is collision-checked case-insensitively, and the cursor keeps
+pointing at the same gap through the splice.
+
+**The expansion is read-only and shows steps AS RECORDED.** A `runFlow` row's
+chevron renders the flow's steps inline (`flow-steps-preview.tsx`) with every
+editing affordance withheld — until inline flow editing exists, the flow's own
+trainer is where they change — and values render un-bound (`${email}`, not the
+caller's argument), the same no-variable-context rule `describeStep` follows.
+Binding the preview would require the renderer to import the generator's
+binding, which no renderer app code does; the parameter dialog on the same row
+already shows what this call overrides.
+
+**Extraction is trainer-only.** Edit Steps operates on an unsaved draft, so
+extraction there would persist a flow record while the caller's own edit is
+still uncommitted — a save-ordering trap. Mark-as-flow plus trainer extraction
+cover creation.
+
+## 2026-08-19 — Flows phase 5: inline flow editing, staged in the session, committed on scope exit
+
+Expanding a `runFlow` row in either trainer now offers "Edit here": the flow's
+steps become an editable region, the insert cursor can move inside it, and a
+step captured in the training browser — or added, edited, deleted, reordered,
+replayed — lands in the FLOW rather than the caller. mabl's model, on this
+app's session architecture.
+
+**The scope is a working copy, committed on exit — not written per edit, not
+deferred to the session's save.** `Session.flowScope` holds a clone of the
+flow record's steps plus its own cursor; `commitFlowScope` (the one commit
+path) normalizes the steps back through `normalizeStep`, writes the record,
+and lets `testStore.save`'s caller-propagation regenerate every dependent
+spec. Per-edit write-through was rejected because it breaks the trainer's own
+contract (nothing persists before an explicit save; "Discard" must mean it),
+regenerates N caller specs per keystroke, and lets a run elsewhere pick up a
+half-recorded flow. Deferring to finalize was rejected because an in-session
+replay resolves flows from the STORE, so it would run the stale flow at the
+exact moment the user is verifying the edit. Hence the commit triggers:
+"Done editing flow", entering another scope, all three whole-list replays,
+`runner:run`, and finalize — while `discardExit` drops the copy unwritten.
+`check:flow-scope` pins each of these structurally, including that the routing
+lives in `addStep` (the one funnel both capture channels reach) and that the
+scope's steps ride their own `recorder:flowScope` push rather than
+`recorder:steps`, whose payload two consumers type as the session's list.
+
+**Conflicts are detected, not merged.** The scope records the flow's
+`updatedAt` at open; a record that moved underneath (Edit Steps in the main
+window, MCP) is reported in the commit toast and overwritten —
+last-writer-wins is honest for a singleton-session app, and a merge UI for a
+case this rare would dwarf the feature.
+
+**Whole-list replays now execute flows.** `replayEntries` expands `runFlow`
+calls at replay time — bound by the same exported `flowCallBindings`/
+`bindFlowStep` the generator uses, cycle-guarded the same way, repeats
+UNROLLED (a variable count resolves against the session's variables and
+degrades to once) — and every inlined entry reports against its call row's
+index, the same rule the generator's line map follows, so the highlight and
+`cursorPastReplayed` land on rows the user can see. An inlined step resolves
+its `${name}` references against the FLOW's declarations and secret store
+(`runStep` grew a scope parameter), matching what the generated header
+arranges for a real run. A call whose flow is missing or circular stays a bare
+`runFlow` entry and the injected replayer answers with its "not previewable"
+note. Copied steps get suffixed ids so two iterations of one flow cannot
+collide in anything id-keyed.
+
+**One scope at a time.** Entering a nested flow commits the open scope and
+enters the new one; a test cannot open itself as a flow. Matches mabl, and
+keeps the commit/discard matrix a single row.
+
+## 2026-08-19 — Reconciling the flows branch with main's #182 and #187
+
+The flows PR and main briefly built overlapping features in parallel. The
+merge keeps ONE implementation per surface, choosing main's where both existed:
+
+The parameter UI is main's (#182) — `flow-args-fields.tsx` with
+`collectFlowArgs` and the `FlowInfo.paramDefaults` shape, the Variables tab's
+Switch-based section, the "Edit Flow Arguments…" step-row item. The branch's
+duplicate (`flow-call-editor.tsx`, its `FlowSummary` shape, its checkbox
+section) was deleted, and the branch's additions were grafted onto main's
+components instead: the Repeat controls now live in `FlowArgsDialog` (whose
+`onSave` became a step PATCH so "Once" can clear a loop), and Go to Flow /
+Unwrap Flow sit beside Edit Flow Arguments in the row menu.
+
+Two loop constructs now coexist, deliberately: a `loop`/`endLoop` BLOCK (#187)
+repeats any steps a fixed number of times, while a `runFlow` call's
+`repeat`/`repeatVar` is mabl's flow-scoped loop — the call-site form is the
+only one that can be variable-driven, and its `gl_i<k>` counters cannot
+collide with the block's `i`/`i2` names. Wrapping a call in a block covers the
+fixed case twice; that redundancy was accepted over removing either feature in
+a conflict-resolution merge.
+
+Everything the branch added that main lacked survives unchanged: the binding
+fix (a flow's plain variables bind to the flow's own values; secrets/captured
+surface into the caller's header and env), caller-spec propagation in
+`testStore.save`, the library surface (used-by, guarded delete, unwrap, rail
+section), trainer multi-select and extraction, and inline flow editing.

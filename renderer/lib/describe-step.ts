@@ -3,7 +3,7 @@
 // script generator so what the user sees matches the generated script.
 
 import { DEFAULT_WAIT_TIMEOUT_MS, ELEMENT_STATES, isCssPropName } from "./recorder-types";
-import { ASSERT_SEMANTICS, reEscape, textMatchExpr } from "../../shared/step-semantics.mjs";
+import { ASSERT_SEMANTICS, reEscape, textMatchExpr, urlPathExpr } from "../../shared/step-semantics.mjs";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import type { Locator, Step, StepType } from "./recorder-types";
 
@@ -79,6 +79,10 @@ function describeAssert(step: Step, target: string | null): string {
     const s = ASSERT_SEMANTICS[step.assert];
     if (!s || (step.value ?? "") === "") return "assert";
     return e + "(page).toHaveURL(" + textMatchExpr(step.value ?? "", s) + ")";
+  }
+  if (step.assert === "urlPathIs") {
+    if ((step.value ?? "") === "") return "assert";
+    return e + "(page).toHaveURL(" + urlPathExpr(step.value ?? "") + ")";
   }
   if (step.assert === "title") {
     if ((step.value ?? "") === "") return "assert";
@@ -162,9 +166,9 @@ export function computeStepDepths(steps: { type: StepType }[]): number[] {
   const depths: number[] = [];
   let d = 0;
   for (const s of steps) {
-    if (s.type === "endif") d = Math.max(0, d - 1);
+    if (s.type === "endif" || s.type === "endLoop") d = Math.max(0, d - 1);
     depths.push(d);
-    if (s.type === "if") d += 1;
+    if (s.type === "if" || s.type === "loop") d += 1;
   }
   return depths;
 }
@@ -210,9 +214,11 @@ export function describeCapture(step: Step): string {
 export function describeFlow(step: Step): string {
   const name = step.label || step.flowId || "flow";
   const entries = Object.entries(step.flowArgs ?? {});
-  if (entries.length === 0) return `run flow ${name}`;
   const args = entries.map(([k, v]) => `${k}=${v.length > 18 ? v.slice(0, 17) + "…" : v}`);
-  return `run flow ${name} (${args.join(", ")})`;
+  const base =
+    entries.length === 0 ? `run flow ${name}` : `run flow ${name} (${args.join(", ")})`;
+  if (step.repeatVar) return `${base} ×\${${step.repeatVar}}`;
+  return typeof step.repeat === "number" && step.repeat > 1 ? `${base} ×${step.repeat}` : base;
 }
 
 /** Mirror of describeWait in main/services/script-generator.ts — keep in sync.
@@ -279,6 +285,8 @@ function describeState(step: Step, target: string | null): string {
 export function describeStep(step: Step): string {
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
+  if (step.type === "loop") return "repeat " + (step.loopCount ?? 1) + " times";
+  if (step.type === "endLoop") return "end repeat";
   if (step.type === "wait" && step.waitUntil) return describeWait(step);
   if (step.type === "cookie") return describeCookie(step);
   if (step.type === "capture") return describeCapture(step);

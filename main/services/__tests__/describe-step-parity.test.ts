@@ -42,6 +42,9 @@ const cases: { label: string; step: Step }[] = [
   { label: "wait for locator", step: step({ type: "wait", locator: LOCATOR }) },
   { label: "viewport", step: step({ type: "viewport", width: 1024, height: 768 }) },
   { label: "endif", step: step({ type: "endif" }) },
+  { label: "loop", step: step({ type: "loop", loopCount: 4 }) },
+  { label: "loop with no count", step: step({ type: "loop" }) },
+  { label: "endLoop", step: step({ type: "endLoop" }) },
   // capture/runFlow were never covered here: the old hand-written step-type
   // guard omitted them, so nothing said so. Both are described by a PHRASE
   // rather than by the generated call, which is exactly the shape that drifts.

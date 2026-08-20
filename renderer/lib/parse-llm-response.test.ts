@@ -105,6 +105,38 @@ describe("extractStepsJson", () => {
     expect(steps).toBeNull();
   });
 
+  it("drops a page-level value assert with no value — a step that would generate nothing", () => {
+    // The generator refuses these outright (an empty "contains" matches every
+    // page), so keeping the step would plant one that looks added and asserts
+    // nothing — which is exactly how three tests in the store came to carry
+    // valueless `urlIs` steps. The prompt says an empty expected value is
+    // refused; this is where the refusal happens.
+    const kinds = ["url", "urlEndsWith", "urlIs", "urlPathIs", "title", "titleContains"];
+    for (const kind of kinds) {
+      expect(
+        extractStepsJson(JSON.stringify([{ type: "assert", assert: kind }])),
+        `a valueless ${kind} assert must be dropped`,
+      ).toBeNull();
+      expect(
+        extractStepsJson(JSON.stringify([{ type: "assert", assert: kind, value: "" }])),
+        `an empty-valued ${kind} assert must be dropped`,
+      ).toBeNull();
+    }
+    // The same kinds WITH a value survive — the refusal is about the value,
+    // not the kind.
+    const kept = extractStepsJson(
+      JSON.stringify(kinds.map((kind) => ({ type: "assert", assert: kind, value: "/cart" }))),
+    );
+    expect(kept).toHaveLength(kinds.length);
+  });
+
+  it("keeps the new urlPathIs kind — the mirror list feeds this validator", () => {
+    const steps = extractStepsJson('[{"type":"assert","assert":"urlPathIs","value":"/checkout"}]');
+    expect(steps).toHaveLength(1);
+    expect(steps![0].assert).toBe("urlPathIs");
+    expect(steps![0].value).toBe("/checkout");
+  });
+
   it("carries a testid locator's attr override, by the shared rule", () => {
     // The prompt tells the model a "testid" locator may add "attr" when the
     // element's test id lives on data-test-id/data-test. Same rule as

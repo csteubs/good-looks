@@ -100,7 +100,9 @@ picks. Grouped by the job you are actually doing:
 | Ask | Tools behind it |
 | --- | --- |
 | "List my recorded tests." | `list_tests` |
+| "Which of my tests are reusable flows?" | `list_tests` with its `isFlow` filter |
 | "Show me the steps and the generated script for the checkout test." | `get_test` |
+| "What parameters does the Sign in flow take?" | `get_test` — a flow reports `flowParams`, and its variables carry the defaults |
 | "What Routines do I have saved, and how many runs does the nightly one spawn?" | `list_routines` |
 
 ### Running things

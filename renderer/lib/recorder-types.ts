@@ -22,6 +22,8 @@ export type StepType =
   | "viewport"
   | "if"
   | "endif"
+  | "loop"
+  | "endLoop"
   | "cookie"
   | "capture"
   | "runFlow"
@@ -125,6 +127,9 @@ export type AssertKind =
   | "url"
   | "urlEndsWith"
   | "urlIs"
+  // The URL's PATH alone, exactly — query string and #fragment ignored. See
+  // the note in main/recorder/types.ts.
+  | "urlPathIs"
   // `title` is exact ("Page title is"); `titleContains` is the substring kind
   // the vocabulary was missing. See the note in main/recorder/types.ts.
   | "title"
@@ -146,7 +151,20 @@ export type AssertKind =
 export const ASSERT_KINDS: AssertKind[] = [
   "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked",
   "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs",
-  "title", "titleContains", "css",
+  "urlPathIs", "title", "titleContains", "css",
+];
+
+/**
+ * The page-level assert kinds whose whole meaning is their `value` — a step
+ * of one of these with an empty value generates NOTHING (the generator refuses
+ * an assertion that would match every page or no page), so both places that
+ * accept steps from outside the recorder use this to refuse the step instead:
+ * the composer disables submit, and `parse-llm-response.ts` drops it. Three
+ * tests in the store carried valueless `urlIs` steps for weeks — visible in
+ * the list, asserting nothing in every run.
+ */
+export const PAGE_VALUE_ASSERT_KINDS: ReadonlyArray<AssertKind> = [
+  "url", "urlEndsWith", "urlIs", "urlPathIs", "title", "titleContains",
 ];
 
 /** Every `waitUntil` predicate, as a runtime list (mirror of main types). */
@@ -228,6 +246,7 @@ export interface Step {
   url?: string;
   assert?: AssertKind;
   cond?: ConditionKind;
+  loopCount?: number;
   text?: string;
   soft?: boolean;
   attr?: string;
@@ -266,6 +285,10 @@ export interface Step {
   captureAttr?: string;
   flowId?: string;
   flowArgs?: Record<string, string>;
+  /** loop fields on a runFlow step (mirror of main types): a fixed repeat
+   *  count, or a variable NAME whose run-time value drives it (wins). */
+  repeat?: number;
+  repeatVar?: string;
   /** variable names this step interpolates; derived backend-side on write. */
   varRefs?: string[];
   /** the target element's recorded identity (mirror of main types). */
@@ -309,6 +332,7 @@ export interface RawStep {
   url?: string;
   assert?: AssertKind;
   cond?: ConditionKind;
+  loopCount?: number;
   text?: string;
   soft?: boolean;
   attr?: string;
@@ -332,6 +356,8 @@ export interface RawStep {
   captureAttr?: string;
   flowId?: string;
   flowArgs?: Record<string, string>;
+  repeat?: number;
+  repeatVar?: string;
 }
 
 export type TestSpeed = "crawl" | "slow" | "medium" | "fast";
@@ -717,6 +743,7 @@ export interface SecretStatus {
   name: string;
   hasValue: boolean;
 }
+
 
 /** A single completed test run (mirror of main/recorder/types.ts RunRecord). */
 export type RunRecordKind = "run" | "baseline-update";
@@ -1409,6 +1436,37 @@ export interface RecorderState {
   pageReady: boolean;
   /** true while the training browser window is opening but hasn't shown yet. */
   loading: boolean;
+  /** The flow being edited inline through one of this session's runFlow rows,
+   *  or null (mirror of main). The flow's steps travel on `recorder:flowScope`. */
+  flowScope?: {
+    flowId: string;
+    callStepId: string;
+    name: string;
+    cursor: number;
+    stepCount: number;
+  } | null;
+}
+
+/** What committing an inline-flow scope amounted to (mirror of main's
+ *  FlowScopeCommit) — the reply to `recorder:exitFlowScope`, so the trainer can
+ *  toast it. Null when no scope was open. */
+export interface FlowScopeCommit {
+  committed: boolean;
+  flowId: string;
+  name: string;
+  callers: number;
+  conflict: boolean;
+  orphaned: boolean;
+}
+
+/** Payload of the `recorder:flowScope` push: the open scope's working copy of
+ *  the flow's steps, or null when no scope is open (mirror of main). */
+export interface FlowScopePayload {
+  flowId: string;
+  callStepId: string;
+  name: string;
+  steps: Step[];
+  cursor: number;
 }
 
 // ── Batch (suite) runs ────────────────────────────────────────────────

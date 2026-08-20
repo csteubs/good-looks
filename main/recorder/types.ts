@@ -35,6 +35,12 @@ export type StepType =
   // and the test continues gracefully.
   | "if"
   | "endif"
+  // `loop` opens a repeat-N-times block, `endLoop` closes it. Same pairing
+  // discipline as if/endif: the pair is inserted together, neither half can be
+  // disabled or wrapped, and the generator emits a real `for` whose body is
+  // the steps between them.
+  | "loop"
+  | "endLoop"
   // Cookie state. Applied through the browser session rather than injected JS,
   // because an httpOnly cookie is invisible to document.cookie by definition.
   | "cookie"
@@ -199,6 +205,12 @@ export type AssertKind =
   | "url"
   | "urlEndsWith"
   | "urlIs"
+  // The URL's PATH alone, exactly — query string and #fragment ignored, one
+  // trailing slash tolerated. The robust default for "did the navigation land
+  // where I meant": the three kinds above compare the FULL URL, and every URL
+  // assertion recorded in this app's own store had failed on query noise
+  // (`?variant=`, `utm_*`) that differed between the recording and the run.
+  | "urlPathIs"
   // `title` is an EXACT whole-title match, which is what its "Page title is"
   // label has always promised and what the generator has always emitted. The
   // trainer's replayer read it as a case-insensitive substring, so "Cart"
@@ -250,6 +262,9 @@ export interface Step {
   assert?: AssertKind;
   /** condition predicate when type === "if" */
   cond?: ConditionKind;
+  /** iterations for a `loop` step. Reaches the generator as a BARE NUMERAL —
+   *  see normalizeRawStep's `int` note — bounded [1, MAX_LOOP_COUNT]. */
+  loopCount?: number;
   /** assertion text / extra description */
   text?: string;
   /** soft assertion — reports a failure but doesn't stop the test (expect.soft) */
@@ -310,6 +325,17 @@ export interface Step {
   /** argument bindings for a `runFlow` step: flow parameter name → value
    *  expression (which may itself interpolate `${var}` from the caller). */
   flowArgs?: Record<string, string>;
+  /** how many times a `runFlow` step repeats its flow (a loop). Absent or 1
+   *  means once. Clamped at the boundary AND re-clamped at emission — the
+   *  generated `for` bound is executed code, and an unclamped count is an
+   *  unbounded loop. */
+  repeat?: number;
+  /** variable whose run-time value drives the repeat count instead of a fixed
+   *  number (wins over `repeat` when both are set). A bare variable NAME, not
+   *  a `${name}` reference — it compiles to `Number(V.name)`, so it carries
+   *  the same identifier constraint as a variable name and is re-validated by
+   *  the generator before emission. */
+  repeatVar?: string;
   /** names of the variables this step's value/text/url interpolates. Derived on
    *  write by `collectVarRefs` — never hand-maintained — so the editor can warn
    *  before deleting a variable something still references. */
@@ -391,6 +417,7 @@ export interface RawStep {
   waitMs?: number;
   waitUntil?: WaitUntilKind;
   timeoutMs?: number;
+  loopCount?: number;
   /** cookie fields, so a cookie step can be inserted via insertStep */
   cookieAction?: CookieAction;
   cookie?: CookieSpec;
@@ -400,6 +427,8 @@ export interface RawStep {
   captureAttr?: string;
   flowId?: string;
   flowArgs?: Record<string, string>;
+  repeat?: number;
+  repeatVar?: string;
   /** the target element's recorded identity, attached by the capture script */
   fingerprint?: ElementFingerprint;
 }
@@ -800,14 +829,14 @@ export function normalizeDatasets(input: unknown): Dataset[] {
 
 export const STEP_TYPES: StepType[] = [
   "goto", "click", "fill", "press", "select", "check", "uncheck", "assert",
-  "wait", "viewport", "if", "endif", "cookie", "capture", "runFlow", "state",
+  "wait", "viewport", "if", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
   "scroll",
 ];
 
 export const ASSERT_KINDS: AssertKind[] = [
   "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked",
-  "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs", "title",
-  "titleContains", "css",
+  "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs",
+  "urlPathIs", "title", "titleContains", "css",
 ];
 
 export const ELEMENT_STATES: ElementState[] = ["hover", "focus", "press", "release"];
@@ -896,6 +925,18 @@ export const MAX_STEP_STRING_LENGTH = 8000;
 export const MAX_FINGERPRINT_CANDIDATES = 40;
 export const MAX_FINGERPRINT_ATTRIBUTES = 40;
 export const MAX_FLOW_ARGS = 50;
+
+/** Most times a `runFlow` step may repeat its flow (the CALL-SITE loop, which
+ *  is the one that can be variable-driven). Clamped at the boundary,
+ *  re-clamped in the EMITTED count expression — the second clamp is the one
+ *  that bounds a variable-driven count, whose value only exists at run time. */
+export const MAX_FLOW_REPEAT = 100;
+/** Upper bound on a `loop` step's iterations — matches the ceiling mabl gives
+ *  its loops, and past it a "test" is a load generator. Reaches the spec as a
+ *  bare numeral, so it carries the same double-guard as every numeric field:
+ *  this bound at the boundary, and a clamp in the generator for steps that
+ *  arrive around it. */
+export const MAX_LOOP_COUNT = 500;
 /** Upper bound on `Locator.nth`. The recorder only ever writes this when no
  *  candidate locator was unique, and it caps its own scan well below here
  *  (`MAX_UNIQUENESS_SCAN` in capture-script.ts) — so a value near this one did
@@ -1173,6 +1214,8 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   if (scrollY !== undefined) out.scrollY = scrollY;
   if (waitMs !== undefined) out.waitMs = waitMs;
   if (timeoutMs !== undefined) out.timeoutMs = timeoutMs;
+  const loopCount = int(s.loopCount, 1, MAX_LOOP_COUNT);
+  if (loopCount !== undefined) out.loopCount = loopCount;
 
   const cookieAction = oneOf(s.cookieAction, COOKIE_ACTIONS);
   if (cookieAction) out.cookieAction = cookieAction;
@@ -1189,6 +1232,13 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   if (flowId !== undefined) out.flowId = flowId;
   const flowArgs = normalizeFlowArgs(s.flowArgs);
   if (flowArgs && Object.keys(flowArgs).length > 0) out.flowArgs = flowArgs;
+  // Loop fields. `repeat` is stored only when it means something (2+): 1 is
+  // the default and 0 would be a step that claims to exist and never runs.
+  // `repeatVar` is an identifier headed for `Number(V.name)` in executed
+  // source, so it carries the variable-name grammar, not just a length cap.
+  const repeat = int(s.repeat, 2, MAX_FLOW_REPEAT);
+  if (repeat !== undefined) out.repeat = repeat;
+  if (isValidVariableName(s.repeatVar)) out.repeatVar = s.repeatVar;
 
   const fingerprint = normalizeFingerprint(s.fingerprint);
   if (fingerprint) out.fingerprint = fingerprint;
@@ -1577,13 +1627,20 @@ export function interpolatableFields(step: Step): string[] {
   return parts;
 }
 
-/** All variable names a step references across its interpolatable fields. */
+/** All variable names a step references across its interpolatable fields.
+ *  `repeatVar` is included even though it is a bare name rather than a
+ *  `${name}` reference — it reads a variable at run time, and a variable the
+ *  usage counts miss is one the user is invited to delete while a loop still
+ *  depends on it. */
 export function collectVarRefs(step: Step): string[] {
   const out: string[] = [];
   for (const field of interpolatableFields(step)) {
     for (const name of varRefsIn(field)) {
       if (!out.includes(name)) out.push(name);
     }
+  }
+  if (isValidVariableName(step.repeatVar) && !out.includes(step.repeatVar)) {
+    out.push(step.repeatVar);
   }
   return out;
 }
@@ -2424,6 +2481,19 @@ export interface RecorderState {
    *  The renderer shows a loading modal with copy explaining the load; if this
    *  stays true past the timeout, the session is cancelled and an error shown. */
   loading: boolean;
+  /** The flow being edited INLINE through one of this session's `runFlow`
+   *  rows, or null. While set, captured and inserted steps land in the flow's
+   *  working copy rather than the session's list — the flow's steps themselves
+   *  travel on the `recorder:flowScope` push, not here, because two other
+   *  consumers type `recorder:steps` as the session's `Step[]` and a second
+   *  list in the state would invite reading the wrong one. */
+  flowScope?: {
+    flowId: string;
+    callStepId: string;
+    name: string;
+    cursor: number;
+    stepCount: number;
+  } | null;
 }
 
 // ── Batch (suite) runs ────────────────────────────────────────────────

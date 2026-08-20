@@ -15,6 +15,7 @@ import type {
   ScriptChangeListEntry,
   ScriptChangeSource,
   SecretStatus,
+  FlowScopeCommit,
   TestVariable,
   VariableKind,
   AiDebugHistoryRecord,
@@ -178,6 +179,20 @@ export const api = {
       ipc().invoke<RecorderState>("recorder:addVariable", v),
     setCursor: (index: number) =>
       ipc().invoke<RecorderState>("recorder:setCursor", { index }),
+    /** Extract a contiguous run of the session's steps into a new flow test,
+     *  replacing them with a `runFlow` call. Rejects with a message meant to
+     *  be shown: a gapped or block-splitting selection, or a taken name. */
+    extractFlow: (stepIds: string[], name: string) =>
+      ipc().invoke<RecorderState>("recorder:extractFlow", { stepIds, name }),
+    /** Open a runFlow row's flow for inline editing — captures and edits then
+     *  land in the flow's working copy until exitFlowScope commits. */
+    enterFlowScope: (stepId: string) =>
+      ipc().invoke<RecorderState>("recorder:enterFlowScope", { stepId }),
+    /** Commit and close the open scope. Null when none was open. */
+    exitFlowScope: () => ipc().invoke<FlowScopeCommit | null>("recorder:exitFlowScope"),
+    /** Move the insert cursor within the open scope's working copy. */
+    setFlowCursor: (index: number) =>
+      ipc().invoke<RecorderState>("recorder:setFlowCursor", { index }),
     replayStep: (stepId: string) =>
       ipc().invoke<DebugEntry>("recorder:replayStep", { stepId }),
     replayFromStart: () =>
@@ -322,6 +337,12 @@ export const api = {
     setFlow: (id: string, isFlow: boolean, flowParams: string[]) =>
       ipc().invoke<TestRecord>("tests:setFlow", { id, isFlow, flowParams }),
     listFlows: (fromId?: string) => ipc().invoke<FlowInfo[]>("tests:listFlows", { fromId }),
+    /** Which tests call this flow directly — the "Used by" list. */
+    flowUsage: (id: string) =>
+      ipc().invoke<{ id: string; name: string }[]>("tests:flowUsage", { id }),
+    /** Replace one runFlow step with the flow's steps, bound as a run would. */
+    unwrapFlow: (id: string, stepId: string) =>
+      ipc().invoke<TestRecord>("tests:unwrapFlow", { id, stepId }),
     importFiles: () => ipc().invoke<ImportResult>("tests:importFiles"),
     /** `ref` is an optional branch or tag. Validated in the main process with
      *  the branch switcher's own rule (`shared/branch-paths.mjs`) — a ref

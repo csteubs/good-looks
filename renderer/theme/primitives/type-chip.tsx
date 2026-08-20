@@ -45,6 +45,8 @@ const SYNTAX: Record<SyntaxTheme, Record<StepType, string>> = {
     // Control flow and waiting — the things that change what runs.
     if: "#b9a6e0",
     endif: "#b9a6e0",
+    loop: "#b9a6e0",
+    endLoop: "#b9a6e0",
     runFlow: "#b9a6e0",
     wait: "#9aa3a8",
   },
@@ -54,6 +56,8 @@ const SYNTAX: Record<SyntaxTheme, Record<StepType, string>> = {
  *  as a variable name, and both are shown to people who did not write them. */
 const LABEL: Partial<Record<StepType, string>> = {
   endif: "end if",
+  loop: "repeat",
+  endLoop: "end repeat",
   runFlow: "flow",
   viewport: "size",
 };

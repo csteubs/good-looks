@@ -78,6 +78,7 @@ import { formatLocator, KIND_LABEL } from "./refine-selector-dialog";
 export type AddStepKind =
   | "assertion"
   | "condition"
+  | "loop"
   | "wait"
   | "goto"
   | "press"
@@ -92,6 +93,7 @@ export type AddStepKind =
 export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   assertion: "Add assertion",
   condition: "Add condition (if)",
+  loop: "Repeat steps (loop)",
   wait: "Add wait",
   goto: "Go to URL",
   press: "Press key",
@@ -217,6 +219,11 @@ export const ASSERT_OPTIONS: {
   { value: "attribute", label: "Has attribute", need: "attr" },
   { value: "count", label: "Has count", need: "count" },
   { value: "css", label: "Has CSS property", need: "css" },
+  // "URL path is" first among the URL kinds: it is the robust default. The
+  // other three compare the FULL URL, so query-string noise the site appends
+  // between the recording and the run (`?variant=`, `utm_*`) fails them for a
+  // reason that has nothing to do with the product.
+  { value: "urlPathIs", label: "URL path is", need: "value", pageLevel: true },
   { value: "url", label: "URL contains", need: "value", pageLevel: true },
   { value: "urlEndsWith", label: "URL ends with", need: "value", pageLevel: true },
   { value: "urlIs", label: "URL is", need: "value", pageLevel: true },
@@ -697,6 +704,9 @@ export function StepComposer({
   const [captureFrom, setCaptureFrom] = React.useState<CaptureSource>("text");
   const [captureAttr, setCaptureAttr] = React.useState("");
   const [flowId, setFlowId] = React.useState("");
+  // Iterations for the `loop` kind, held as text so a half-typed number
+  // doesn't fight the input (same rule as the step row's numeric drafts).
+  const [loopTimes, setLoopTimes] = React.useState("2");
   // Draft values for the selected flow's parameters, keyed by parameter name.
   // Reset when the flow changes: two flows sharing a parameter name is a
   // coincidence, not a reason to carry a value across.
@@ -758,6 +768,10 @@ export function StepComposer({
       setCaptureFrom("text");
       setCaptureAttr("");
       setFlowId("");
+      setFlowArgVals({});
+      setFlowRepeatMode("once");
+      setFlowRepeatCount("2");
+      setFlowRepeatName("");
       setFillVar("");
       setCreatingVar(false);
     }
@@ -766,6 +780,11 @@ export function StepComposer({
   // Flows available to call from here. Fetched on mount rather than held by the
   // parent, so a flow created in another window shows up without a reload.
   const [flows, setFlows] = React.useState<FlowInfo[]>([]);
+  // The call's loop: once, a fixed count, or driven by a variable's run-time
+  // value. Mirrors the args dialog, which edits the same fields later.
+  const [flowRepeatMode, setFlowRepeatMode] = React.useState<"once" | "count" | "variable">("once");
+  const [flowRepeatCount, setFlowRepeatCount] = React.useState("2");
+  const [flowRepeatName, setFlowRepeatName] = React.useState("");
   React.useEffect(() => {
     if (kind !== "runFlow") return;
     let live = true;
@@ -889,6 +908,12 @@ export function StepComposer({
         // flow's default", which requires the KEY to be absent — an empty
         // string would override the default (see collectFlowArgs).
         const args = collectFlowArgs(flow?.flowParams ?? [], flowArgVals);
+        // A variable-driven repeat needs a usable name; refuse the submit
+        // rather than silently adding a call that runs once.
+        if (flowRepeatMode === "variable" && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(flowRepeatName)) {
+          return null;
+        }
+        const repeatCount = Math.max(2, Math.min(100, Math.trunc(Number(flowRepeatCount) || 2)));
         return [
           {
             type: "runFlow",
@@ -897,8 +922,18 @@ export function StepComposer({
             // the flow is later renamed or deleted.
             label: flow?.name ?? flowId,
             ...(Object.keys(args).length > 0 ? { flowArgs: args } : {}),
+            ...(flowRepeatMode === "count" ? { repeat: repeatCount } : {}),
+            ...(flowRepeatMode === "variable" ? { repeatVar: flowRepeatName } : {}),
           },
         ];
+      }
+      case "loop": {
+        // Insert an empty REPEAT/END-REPEAT pair, same idiom as the condition:
+        // the user drags steps between the halves. The count is clamped here
+        // AND at the boundary AND in the generator — three independent guards
+        // for a numeral that lands in the spec bare.
+        const n = Math.min(500, Math.max(1, Math.trunc(Number(loopTimes) || 1)));
+        return [{ type: "loop", loopCount: n }, { type: "endLoop" }];
       }
       case "condition": {
         // Insert an empty IF/END-IF pair; the user drags steps between them.
@@ -917,6 +952,13 @@ export function StepComposer({
           if (!locator) return null;
           step.locator = locator;
         }
+        // A page-level assert with an empty value refuses the WHOLE submit,
+        // the same rule the css case applies below: the generator refuses to
+        // emit it (an empty "contains" matches every page), so accepting it
+        // here plants a step that looks added and asserts nothing. Element
+        // `value` asserts stay submittable empty — asserting an input is
+        // blank is a real assertion.
+        if (opt.pageLevel && opt.need === "value" && value === "") return null;
         if (opt.need === "text") step.text = text;
         if (opt.need === "value") step.value = value;
         if (opt.need === "attr") {
@@ -1349,6 +1391,26 @@ export function StepComposer({
           </>
         ) : null}
 
+        {kind === "loop" ? (
+          <>
+            <Field label="Times" orientation="vertical">
+              <Input
+                size="small"
+                inputMode="numeric"
+                value={loopTimes}
+                onChange={(e) => setLoopTimes(e.target.value)}
+                aria-label="Loop count"
+                className="w-20"
+              />
+            </Field>
+            <Text size="small" className="text-secondary">
+              Inserts a repeat block. Drag the steps to run between the two halves — they run in
+              order, that many times. The trainer&apos;s preview walks the body once; the real run
+              repeats it.
+            </Text>
+          </>
+        ) : null}
+
         {kind === "runFlow" ? (
           <>
             <Field label="Flow" orientation="vertical">
@@ -1393,6 +1455,52 @@ export function StepComposer({
                 The flow's steps are inlined into this test's script when it runs.
               </Text>
             )}
+            {flowId ? (
+              <>
+                <Field label="Repeat" orientation="vertical">
+                  <SegmentedControl
+                    size="small"
+                    value={flowRepeatMode}
+                    onValueChange={(v) => setFlowRepeatMode(v as "once" | "count" | "variable")}
+                  >
+                    <SegmentedControlItem value="once">Once</SegmentedControlItem>
+                    <SegmentedControlItem value="count">N times</SegmentedControlItem>
+                    <SegmentedControlItem value="variable">By variable</SegmentedControlItem>
+                  </SegmentedControl>
+                </Field>
+                {flowRepeatMode === "count" ? (
+                  <Field label="Times" orientation="vertical">
+                    <Input
+                      size="small"
+                      type="number"
+                      min={2}
+                      max={100}
+                      value={flowRepeatCount}
+                      aria-label="Repeat count"
+                      onChange={(e) => setFlowRepeatCount(e.target.value)}
+                    />
+                  </Field>
+                ) : null}
+                {flowRepeatMode === "variable" ? (
+                  <>
+                    <Field label="Count variable" orientation="vertical">
+                      <Input
+                        size="small"
+                        className="font-mono"
+                        value={flowRepeatName}
+                        placeholder="resultCount"
+                        aria-label="Repeat count variable"
+                        onChange={(e) => setFlowRepeatName(e.target.value)}
+                      />
+                    </Field>
+                    <Text size="small" className="text-secondary">
+                      The variable&apos;s value at run time decides how many times the flow runs
+                      (capped at 100). Each iteration uses the same parameter values.
+                    </Text>
+                  </>
+                ) : null}
+              </>
+            ) : null}
           </>
         ) : null}
 
@@ -1440,7 +1548,18 @@ export function StepComposer({
               </Field>
             ) : null}
             {opt.need === "value" ? (
-              <Field label={opt.pageLevel ? "Expected (substring or regex)" : "Expected value"} orientation="vertical">
+              // The label carries the kind's own contract, because the values
+              // are LITERAL — the old copy said "substring or regex", and a
+              // user who took it at its word got an assertion that matched
+              // their pattern characters, not their pattern.
+              <Field
+                label={
+                  assert === "urlPathIs"
+                    ? "Expected path (query string and #fragment ignored)"
+                    : "Expected value"
+                }
+                orientation="vertical"
+              >
                 <Input size="small" value={value} onChange={(e) => setValue(e.target.value)} />
               </Field>
             ) : null}

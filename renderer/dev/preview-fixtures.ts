@@ -87,6 +87,9 @@ export const TESTS: TestRecord[] = [
       // `toHaveURL("/order/confirmed")` — an exact whole-URL match, which is
       // not what the label says and could never pass.
       { type: "assert", assert: "url", value: "/order/confirmed" },
+      // The robust default: path-only, so the step list shows the structural
+      // pattern (`^scheme://host` + path + `/?(?:[?#]|$)`) a run executes.
+      { type: "assert", assert: "urlPathIs", value: "/order/confirmed" },
       { type: "assert", assert: "titleContains", value: "Order" },
       // LAST, so the s1–s8 ids above keep meaning what the visual baselines,
       // drift ratios and the s4 heal say they mean. A parameterized flow call:
@@ -98,6 +101,9 @@ export const TESTS: TestRecord[] = [
         flowId: "t-login",
         label: "Login — wrong password shows an error",
         flowArgs: { email: "buyer@example.com" },
+        // Repeated, so the call-site loop's ×N suffix — and its Repeat
+        // controls in the args dialog — are visible in the preview.
+        repeat: 2,
       },
       // Both scroll forms, LAST for the same id-stability reason. The position
       // form is the one the capture script auto-records; its row is also the
@@ -147,8 +153,14 @@ export const TESTS: TestRecord[] = [
     stepsDivergedReason: "unapplied",
     steps: steps(
       { type: "goto", url: "https://docs.example.com" },
+      // A repeat block early in the LONG fixture (t-checkout's step count is
+      // budgeted by the bridge's simulated-run test, so the loop rows live
+      // here): renders the "repeat"/"end repeat" chips, the inline count
+      // edit, and the body's indent.
+      { type: "loop", loopCount: 3 },
       { type: "fill", locator: { k: "role", role: "searchbox" }, value: "locator" },
       { type: "press", value: "Enter" },
+      { type: "endLoop" },
       // Long enough to overflow the pane in both directions, which is the
       // state the step list's scrolling exists for and the one nothing in the
       // preview showed: 43 steps outrun the viewport vertically, and the fill
