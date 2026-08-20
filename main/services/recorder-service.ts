@@ -2356,6 +2356,8 @@ export const recorderService = {
           "count",
           "width",
           "height",
+          "scrollX",
+          "scrollY",
           "waitMs",
           "waitUntil",
           "timeoutMs",

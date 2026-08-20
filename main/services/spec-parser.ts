@@ -9,7 +9,8 @@
 // looking for the full vocabulary script-generator.ts emits: page.goto,
 // page.waitForTimeout, page.setViewportSize, page.keyboard.press,
 // getByRole/getByLabel/.../locator(...).click/.fill/.selectOption/.check/
-// .uncheck/.press/.waitFor, and expect(...)/expect.soft(...) assertions
+// .uncheck/.press/.waitFor/.scrollIntoViewIfNeeded, glazeScrollTo(page, x, y),
+// and expect(...)/expect.soft(...) assertions
 // (toBeVisible/toBeHidden/toContainText/toHaveText/toBeEnabled/toBeDisabled/
 // toBeChecked/.not.toBeChecked/toHaveValue/toHaveAttribute/toHaveCount, plus
 // page-level toHaveURL/toHaveTitle). A statement that still can't be
@@ -467,6 +468,7 @@ const LOCATOR_ACTIONS = [
   "waitFor",
   "hover",
   "focus",
+  "scrollIntoViewIfNeeded",
 ] as const;
 
 const LOCATOR_ACTION_RE = LOCATOR_ACTIONS.join("|");
@@ -483,6 +485,9 @@ function locatorActionStep(locator: Locator, action: string, argsStr: string): S
   // imported test that hovered.
   if (action === "hover" || action === "focus") {
     return makeStep("state", { locator, elementState: action });
+  }
+  if (action === "scrollIntoViewIfNeeded") {
+    return makeStep("scroll", { locator });
   }
   if (action === "waitFor") {
     // `.waitFor({ state: … })` is a conditional wait with a native API, so it
@@ -831,6 +836,31 @@ function parseBody(
             captureFrom: argM[3] as Step["captureFrom"],
             ...(argM[4] ? { captureAttr: argM[4] } : {}),
             ...(parsedLoc ? { locator: parsedLoc.locator } : {}),
+          }),
+        );
+      } else {
+        skipped++;
+      }
+      i = close + 1;
+      continue;
+    }
+
+    // glazeScrollTo(page, <x>, <y>) — a position scroll step. Same narrow
+    // positional match as glazeCapture: the args are generator-emitted bare
+    // numerals, and anything else is a hand-written call not worth half-parsing.
+    const scrM = rest.match(/^[\s;]*(?:await\s+|return\s+)?glazeScrollTo\s*\(/);
+    if (scrM) {
+      const openIdx = i + scrM[0].length - 1;
+      const close = matchParen(src, openIdx);
+      if (close < 0) break;
+      const argM = src
+        .slice(openIdx + 1, close)
+        .match(/^\s*page\s*,\s*(\d+)\s*,\s*(\d+)\s*$/);
+      if (argM) {
+        steps.push(
+          makeStep("scroll", {
+            scrollX: parseInt(argM[1], 10),
+            scrollY: parseInt(argM[2], 10),
           }),
         );
       } else {

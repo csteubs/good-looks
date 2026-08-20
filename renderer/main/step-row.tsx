@@ -50,10 +50,23 @@ export function parseSizeDraft(draft: string): { width: number; height: number }
   return { width, height };
 }
 
+/** Same idea for a position scroll's `x, y`. Unlike a viewport axis, 0 is a
+ *  legitimate value on both axes (scrolling back to the top IS a position), so
+ *  this parses digits directly rather than through clampViewportAxis, whose
+ *  falsy-rejection would refuse it. */
+export function parseScrollDraft(draft: string): { scrollX: number; scrollY: number } | null {
+  const m = draft.trim().match(/^(\d+)\s*[,x×]\s*(\d+)$/i);
+  if (!m) return null;
+  const scrollX = parseInt(m[1], 10);
+  const scrollY = parseInt(m[2], 10);
+  if (!Number.isFinite(scrollX) || !Number.isFinite(scrollY)) return null;
+  return { scrollX, scrollY };
+}
+
 /** The single field a step exposes for quick inline editing, if any. */
 function editableField(
   step: Step,
-): { key: "value" | "text" | "url" | "waitMs" | "timeoutMs" | "size"; label: string; value: string } | null {
+): { key: "value" | "text" | "url" | "waitMs" | "timeoutMs" | "size" | "scrollPos"; label: string; value: string } | null {
   switch (step.type) {
     case "goto":
       return { key: "url", label: "URL", value: step.url ?? "" };
@@ -66,6 +79,16 @@ function editableField(
         label: "Size (width×height)",
         value: `${step.width ?? 1280}x${step.height ?? 800}`,
       };
+    case "scroll":
+      // Only the position form is inline-editable; an element scroll's target
+      // is edited via Refine, same as every other locator-bearing step.
+      if (!step.locator)
+        return {
+          key: "scrollPos",
+          label: "Scroll to (x, y)",
+          value: `${step.scrollX ?? 0}, ${step.scrollY ?? 0}`,
+        };
+      return null;
     case "fill":
     case "select":
     case "press":
@@ -307,6 +330,12 @@ export function StepRow({
       // resize with only a width is not a smaller edit, it's a broken step.
       const size = parseSizeDraft(draft);
       if (size) onEdit(size);
+      return setEditing(false);
+    }
+    if (field.key === "scrollPos") {
+      // Same rule as size: both axes or nothing.
+      const pos = parseScrollDraft(draft);
+      if (pos) onEdit(pos);
       return setEditing(false);
     }
     // The remaining numeric fields are parsed here rather than stored as the

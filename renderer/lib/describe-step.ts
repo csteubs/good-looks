@@ -311,6 +311,20 @@ export function describeStep(step: Step): string {
       return target ? target + ".waitFor()" : "wait";
     case "viewport":
       return "page.setViewportSize({ width: " + (step.width ?? 1280) + ", height: " + (step.height ?? 800) + " })";
+    case "scroll":
+      // Element mode reads like the emitted line; position mode is a phrase,
+      // because the emitted glazeScrollTo(...) names the mechanism rather than
+      // the intent. Kept in sync with describeStep in
+      // main/services/script-generator.ts — pinned by describe-step-parity.
+      // typeof-checked like the backend's num(): a stored step can carry a
+      // forged string in a numeric field, and it must not reach UI copy.
+      return target
+        ? target + ".scrollIntoViewIfNeeded()"
+        : "scroll to (" +
+            (typeof step.scrollX === "number" && Number.isFinite(step.scrollX) ? Math.trunc(step.scrollX) : 0) +
+            ", " +
+            (typeof step.scrollY === "number" && Number.isFinite(step.scrollY) ? Math.trunc(step.scrollY) : 0) +
+            ")";
     case "assert":
       return describeAssert(step, target);
     case "state":

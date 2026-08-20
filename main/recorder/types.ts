@@ -44,7 +44,13 @@ export type StepType =
   | "runFlow"
   // Pseudo-state layer: puts an element into :hover / :focus / :active so the
   // assertion AFTER it measures the styled state rather than the resting one.
-  | "state";
+  | "state"
+  // Scroll layer: brings a page position (scrollX/scrollY) or an element
+  // (locator) into view. Recorded automatically when the user scrolls during
+  // capture, because Playwright actions auto-scroll but ASSERTIONS do not —
+  // and content a page renders lazily (virtualized lists, IntersectionObserver
+  // gates) is not in the DOM at all until the scroll that reveals it happens.
+  | "scroll";
 
 /**
  * Predicate for an `if` step. Element conditions resolve `Step.locator`; page
@@ -266,6 +272,11 @@ export interface Step {
   width?: number;
   /** viewport height when type === "viewport" */
   height?: number;
+  /** absolute page X a `scroll` step scrolls to (CSS px). Ignored when the
+   *  step carries a locator — an element scroll is `scrollIntoViewIfNeeded`. */
+  scrollX?: number;
+  /** absolute page Y a `scroll` step scrolls to (CSS px). Same locator rule. */
+  scrollY?: number;
   /** wait duration in ms when type === "wait" (omit to wait for the locator instead) */
   waitMs?: number;
   /** predicate a `wait` step blocks on until it holds. Takes precedence over
@@ -375,6 +386,8 @@ export interface RawStep {
   count?: number;
   width?: number;
   height?: number;
+  scrollX?: number;
+  scrollY?: number;
   waitMs?: number;
   waitUntil?: WaitUntilKind;
   timeoutMs?: number;
@@ -788,6 +801,7 @@ export function normalizeDatasets(input: unknown): Dataset[] {
 export const STEP_TYPES: StepType[] = [
   "goto", "click", "fill", "press", "select", "check", "uncheck", "assert",
   "wait", "viewport", "if", "endif", "cookie", "capture", "runFlow", "state",
+  "scroll",
 ];
 
 export const ASSERT_KINDS: AssertKind[] = [
@@ -1148,11 +1162,15 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   const count = int(s.count, 0, 1_000_000);
   const width = int(s.width, 1, 100_000);
   const height = int(s.height, 1, 100_000);
+  const scrollX = int(s.scrollX, 0, 10_000_000);
+  const scrollY = int(s.scrollY, 0, 10_000_000);
   const waitMs = int(s.waitMs, 0, 3_600_000);
   const timeoutMs = int(s.timeoutMs, 0, 3_600_000);
   if (count !== undefined) out.count = count;
   if (width !== undefined) out.width = width;
   if (height !== undefined) out.height = height;
+  if (scrollX !== undefined) out.scrollX = scrollX;
+  if (scrollY !== undefined) out.scrollY = scrollY;
   if (waitMs !== undefined) out.waitMs = waitMs;
   if (timeoutMs !== undefined) out.timeoutMs = timeoutMs;
 

@@ -529,3 +529,39 @@ describe("replayer errors are classified for Auto-Heal", () => {
     expect(isLocatorFailure(res.error, s)).toBe(false);
   });
 });
+
+describe("scroll steps", () => {
+  it("scrolls the window to a recorded position", () => {
+    const calls: [number, number][] = [];
+    (window as unknown as { scrollTo: (x: number, y: number) => void }).scrollTo = (
+      x: number,
+      y: number,
+    ) => calls.push([x, y]);
+    const res = run(step({ type: "scroll", scrollX: 0, scrollY: 1240 }));
+    expect(res.ok).toBe(true);
+    expect(calls).toEqual([[0, 1240]]);
+  });
+
+  it("scrolls a resolved element into view", () => {
+    document.body.innerHTML = `<div data-testid="reviews">Reviews</div>`;
+    let scrolled = false;
+    (Element.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView = () => {
+      scrolled = true;
+    };
+    const res = run(step({ type: "scroll", locator: { k: "testid", v: "reviews" } }));
+    expect(res.ok).toBe(true);
+    expect(scrolled).toBe(true);
+  });
+
+  it("fails on a missing element rather than silently succeeding", () => {
+    const res = run(step({ type: "scroll", locator: { k: "testid", v: "gone" } }));
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("not found");
+  });
+
+  it("refuses an ambiguous locator, like the run's strict mode would", () => {
+    document.body.innerHTML = `<p>Duplicate</p><p>Duplicate label</p>`;
+    const res = run(step({ type: "scroll", locator: { k: "text", v: "Duplicate" } }));
+    expect(res.ok).toBe(false);
+  });
+});

@@ -83,6 +83,7 @@ export type AddStepKind =
   | "press"
   | "find"
   | "viewport"
+  | "scroll"
   | "capture"
   | "runFlow"
   | "elementState"
@@ -96,6 +97,7 @@ export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   press: "Press key",
   find: "Find element",
   viewport: "Set viewport",
+  scroll: "Scroll",
   capture: "Capture a value",
   runFlow: "Run a flow",
   elementState: "Set element state",
@@ -686,6 +688,11 @@ export function StepComposer({
   const [viewport, setViewport] = React.useState("desktop");
   const [vw, setVw] = React.useState("1280");
   const [vh, setVh] = React.useState("800");
+  // Scroll step: to a picked element (the default — it self-corrects when the
+  // page reflows) or to an absolute page position.
+  const [scrollMode, setScrollMode] = React.useState<"element" | "position">("element");
+  const [scrollXDraft, setScrollXDraft] = React.useState("0");
+  const [scrollYDraft, setScrollYDraft] = React.useState("0");
   const [captureVar, setCaptureVar] = React.useState("");
   const [captureFrom, setCaptureFrom] = React.useState<CaptureSource>("text");
   const [captureAttr, setCaptureAttr] = React.useState("");
@@ -744,6 +751,9 @@ export function StepComposer({
       setViewport("desktop");
       setVw("1280");
       setVh("800");
+      setScrollMode("element");
+      setScrollXDraft("0");
+      setScrollYDraft("0");
       setCaptureVar("");
       setCaptureFrom("text");
       setCaptureAttr("");
@@ -831,6 +841,19 @@ export function StepComposer({
         }
         const p = RESIZE_PRESETS.find((v) => v.id === viewport);
         return [{ type: "viewport", width: p?.w ?? 1280, height: p?.h ?? 800 }];
+      }
+      case "scroll": {
+        if (scrollMode === "element") {
+          // No target picked → refuse the submit, same rule as `find`: a
+          // scroll-to-nothing is not a smaller step, it's a broken one.
+          return locator ? [{ type: "scroll", locator }] : null;
+        }
+        // Parsed to NUMBERS here, not passed through as the typed strings —
+        // these are emitted into the spec as bare numerals, and a string
+        // reaching the generator is the shape of the original injection bug.
+        const sx = Math.max(0, Math.trunc(Number(scrollXDraft) || 0));
+        const sy = Math.max(0, Math.trunc(Number(scrollYDraft) || 0));
+        return [{ type: "scroll", scrollX: sx, scrollY: sy }];
       }
       case "find":
         return locator ? [{ type: "assert", assert: "visible", locator }] : null;
@@ -1227,6 +1250,57 @@ export function StepComposer({
                 </Field>
               </div>
             ) : null}
+          </>
+        ) : null}
+
+        {kind === "scroll" ? (
+          <>
+            <Text variant="small" color="secondary">
+              Scroll the page before the next step. Content some pages render only on scroll
+              (lazy lists, infinite feeds) is not on the page until this happens — an assertion
+              on it fails in a run without a scroll step ahead of it.
+            </Text>
+            <Field label="Scroll to" orientation="vertical">
+              <Select
+                value={scrollMode}
+                onValueChange={(v) => setScrollMode(v === "position" ? "position" : "element")}
+              >
+                <SelectTrigger size="small">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="element">An element (scrollIntoViewIfNeeded)</SelectItem>
+                  <SelectItem value="position">A page position (x, y)</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            {scrollMode === "element" ? (
+              <TargetElementPicker
+                picked={picked}
+                onChange={setLocator}
+                onStartPick={onStartPick}
+                onClearPick={onClearPick}
+              />
+            ) : (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field label="X (px)" orientation="vertical">
+                  <Input
+                    size="small"
+                    type="number"
+                    value={scrollXDraft}
+                    onChange={(e) => setScrollXDraft(e.target.value)}
+                  />
+                </Field>
+                <Field label="Y (px)" orientation="vertical">
+                  <Input
+                    size="small"
+                    type="number"
+                    value={scrollYDraft}
+                    onChange={(e) => setScrollYDraft(e.target.value)}
+                  />
+                </Field>
+              </div>
+            )}
           </>
         ) : null}
 

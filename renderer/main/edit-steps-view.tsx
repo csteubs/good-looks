@@ -35,18 +35,21 @@ import { clampViewportAxis, RESIZE_PRESETS } from "../lib/viewport-presets";
 // Locator-free step kinds offered in the "+ Add step" menu. Element-targeted
 // steps (most assertions, find, element conditions, wait-for-element) need
 // the trainer's browser picker and are intentionally excluded here.
-type EditStepKind = "goto" | "wait" | "viewport" | "press" | "assertUrl" | "assertTitle";
+type EditStepKind = "goto" | "wait" | "viewport" | "scroll" | "press" | "assertUrl" | "assertTitle";
 
 const KIND_LABEL: Record<EditStepKind, string> = {
   goto: "Go to URL",
   wait: "Wait (duration)",
   viewport: "Set viewport",
+  // Position-only here: this dialog has no element picker (it edits a saved
+  // test with no live page), so scroll-to-element is composed in the trainer.
+  scroll: "Scroll to position",
   press: "Press key",
   assertUrl: "Assert page URL",
   assertTitle: "Assert page title",
 };
 
-const KINDS: EditStepKind[] = ["goto", "wait", "viewport", "press", "assertUrl", "assertTitle"];
+const KINDS: EditStepKind[] = ["goto", "wait", "viewport", "scroll", "press", "assertUrl", "assertTitle"];
 
 interface NativeMenu {
   popup: (options: {
@@ -280,6 +283,8 @@ function EditStepAddDialog({
   const [viewport, setViewport] = React.useState("desktop");
   const [vw, setVw] = React.useState("1280");
   const [vh, setVh] = React.useState("800");
+  const [scrollXDraft, setScrollXDraft] = React.useState("0");
+  const [scrollYDraft, setScrollYDraft] = React.useState("0");
   const [assertValue, setAssertValue] = React.useState("");
   const [soft, setSoft] = React.useState(false);
 
@@ -291,6 +296,8 @@ function EditStepAddDialog({
       setViewport("desktop");
       setVw("1280");
       setVh("800");
+      setScrollXDraft("0");
+      setScrollYDraft("0");
       setAssertValue("");
       setSoft(false);
     }
@@ -317,6 +324,13 @@ function EditStepAddDialog({
         }
         const p = RESIZE_PRESETS.find((v) => v.id === viewport);
         return [{ type: "viewport", width: p?.w ?? 1280, height: p?.h ?? 800 }];
+      }
+      case "scroll": {
+        // Numbers, not the typed strings — scroll offsets are emitted into the
+        // spec as bare numerals (same rule as every numeric step field).
+        const sx = Math.max(0, Math.trunc(Number(scrollXDraft) || 0));
+        const sy = Math.max(0, Math.trunc(Number(scrollYDraft) || 0));
+        return [{ type: "scroll", scrollX: sx, scrollY: sy }];
       }
       case "assertUrl":
         return assertValue.trim()
@@ -404,6 +418,28 @@ function EditStepAddDialog({
               </div>
             ) : null}
           </>
+        ) : null}
+
+        {kind === "scroll" ? (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="X (px)" orientation="vertical">
+              <Input
+                autoFocus
+                size="small"
+                type="number"
+                value={scrollXDraft}
+                onChange={(e) => setScrollXDraft(e.target.value)}
+              />
+            </Field>
+            <Field label="Y (px)" orientation="vertical">
+              <Input
+                size="small"
+                type="number"
+                value={scrollYDraft}
+                onChange={(e) => setScrollYDraft(e.target.value)}
+              />
+            </Field>
+          </div>
         ) : null}
 
         {kind === "assertUrl" || kind === "assertTitle" ? (

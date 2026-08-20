@@ -1,6 +1,6 @@
 // TypeChip — the step-type pill.
 //
-// Sixteen step types, and the chip is how a step list is scanned rather than
+// Seventeen step types, and the chip is how a step list is scanned rather than
 // read: `fill` rows and `assert` rows have different shapes of consequence, and
 // the eye should find them without parsing the description.
 //
@@ -38,6 +38,7 @@ const SYNTAX: Record<SyntaxTheme, Record<StepType, string>> = {
     select: "#8fd0e8",
     check: "#8fd0e8",
     uncheck: "#8fd0e8",
+    scroll: "#8fd0e8",
     // Claims — the things that can be wrong.
     assert: "#d7c98a",
     state: "#d7c98a",

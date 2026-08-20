@@ -337,8 +337,12 @@ describe("the scripted run", () => {
 
   it("passes the test whose fixture history passed", async () => {
     installPreviewBridge();
+    // Its own timeout, because this is the one run that plays EVERY step:
+    // t-checkout's scripted run is timer-paced at ~260ms per event, so its
+    // wall-clock grows with the fixture's step count — it crossed the default
+    // 5s the day the scroll rows were added, not because anything broke.
     expect((await runToCompletion("t-checkout")).code).toBe(0);
-  });
+  }, 15_000);
 
   it("leaves the steps after a failure unreported, as Playwright would", async () => {
     // Not marked passed, not marked failed — never attempted. A run that

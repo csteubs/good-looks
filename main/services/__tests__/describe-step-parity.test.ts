@@ -86,6 +86,13 @@ const cases: { label: string; step: Step }[] = [
   // Malformed on purpose: both sides must degrade the same way rather than one
   // throwing and the other printing "undefined".
   { label: "cookie with no cookie payload", step: step({ type: "cookie", cookieAction: "set" }) },
+  // Scroll: the element form reads like the emitted line, the position form is
+  // a phrase (the emitted glazeScrollTo(...) names the mechanism, not the
+  // intent). Both sides must say the same thing either way.
+  { label: "scroll to element", step: step({ type: "scroll", locator: LOCATOR }) },
+  { label: "scroll to position", step: step({ type: "scroll", scrollX: 0, scrollY: 1240 }) },
+  // Malformed on purpose, same rule as the cookie above.
+  { label: "scroll with neither form", step: step({ type: "scroll" }) },
 ];
 
 // Every assert kind, since assertLine is the branchiest part of both files.

@@ -1,15 +1,19 @@
 // The spec runtime helper as a raw JS string, written next to the specs at
 // runtime (like step-reporter-source.ts and capture-fixture-source.ts).
 //
-// It exists for exactly one reason: a `capture` step has to write into the
-// run's variable scope, and the natural way to spell that —
-// `V.orderId = await page.getByTestId("order").textContent();` — starts with
-// `V.`, not `await`. `buildStepLineMap` in playwright-runner classifies spec
-// lines by a leading `await`, and Playwright's own reporter attributes a
-// failure to a line; a statement neither of them recognizes as a step would
-// shift every later step's highlight and screenshot attribution by one. Routing
-// the assignment through an awaited call keeps the line shaped like every other
-// step's.
+// Every helper here exists for the same structural reason: a step must emit
+// exactly ONE awaited line. `buildStepLineMap` in playwright-runner classifies
+// spec lines by a leading `await`, and Playwright's own reporter attributes a
+// failure to a line; a statement neither of them recognizes as a step — or a
+// step spanning several — would shift every later step's highlight and
+// screenshot attribution.
+//
+//  • glazeCapture: a capture step's natural spelling —
+//    `V.orderId = await page.getByTestId("order").textContent();` — starts
+//    with `V.`, not `await`. Routing the assignment through an awaited call
+//    keeps the line shaped like every other step's.
+//  • glazeScrollTo: an incremental scroll is a LOOP, and a loop inlined into
+//    the spec would be many lines for one step.
 //
 // Plain JavaScript (no TypeScript) because Playwright loads it through its own
 // Babel transform, which does not understand `import type`.
@@ -48,5 +52,43 @@ export async function glazeCapture(vars, name, subject, from, attr) {
   }
   vars[name] = value == null ? "" : String(value).trim();
   return vars[name];
+}
+
+/**
+ * Scroll the window to an absolute page position, the way a person does:
+ * in viewport-sized increments with a beat between them, so a page that
+ * renders lazily (infinite scroll, IntersectionObserver-gated content) sees
+ * scroll progression and has time to extend itself. A single jump to the
+ * recorded offset would clamp at the CURRENT document height, which on a lazy
+ * page is far short of where the user actually was.
+ *
+ * Stops when the target is reached, or when several consecutive rounds make
+ * no progress — a page that is now shorter than it was at record time has
+ * been scrolled as far as it goes, and that is not this step's failure to
+ * report (the assertion after it will say what is missing).
+ */
+export async function glazeScrollTo(page, x, y) {
+  let last = null;
+  let stalls = 0;
+  for (let i = 0; i < 120; i++) {
+    const pos = await page.evaluate(([tx, ty]) => {
+      const cap = Math.max(200, window.innerHeight * 0.8);
+      const dx = Math.max(-cap, Math.min(cap, tx - window.scrollX));
+      const dy = Math.max(-cap, Math.min(cap, ty - window.scrollY));
+      window.scrollBy(dx, dy);
+      return { x: window.scrollX, y: window.scrollY };
+    }, [x, y]);
+    if (Math.abs(pos.x - x) < 2 && Math.abs(pos.y - y) < 2) return;
+    if (last && pos.x === last.x && pos.y === last.y) {
+      // No progress. Give a lazy loader a few rounds to extend the page
+      // before concluding it is as tall as it gets.
+      stalls++;
+      if (stalls >= 3) return;
+    } else {
+      stalls = 0;
+    }
+    last = pos;
+    await page.waitForTimeout(80);
+  }
 }
 `;

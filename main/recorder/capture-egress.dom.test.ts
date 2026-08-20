@@ -36,6 +36,7 @@ import {
   ATTR_PAUSED,
   buildCaptureScript,
   DRAIN_SCRIPT,
+  SCROLL_CAPTURE_MIN_PX,
   WORLD_STATE_KEY,
 } from "./capture-script.js";
 import { parseCaptureMessage, parseDrainPayload } from "./capture-channel.js";
@@ -445,5 +446,67 @@ describe("the drain script", () => {
     expect(page.drained(), "an unserializable queue reads as nothing to ingest").toBeNull();
     page.captureState()?.queue.pop();
     expect(page.drained()?.entries).toHaveLength(1);
+  });
+});
+
+describe("scroll depth becomes an explicit step", () => {
+  /** jsdom never scrolls, so the position is installed directly. `scrollX`
+   *  and `scrollY` are [Replaceable] per the spec, which is what makes the
+   *  redefinition legitimate rather than a jsdom accident. */
+  function scrollTo(win: Window, x: number, y: number): void {
+    Object.defineProperty(win, "scrollX", { value: x, configurable: true, writable: true });
+    Object.defineProperty(win, "scrollY", { value: y, configurable: true, writable: true });
+  }
+
+  it("records a scroll step before the click that needed it, once per depth", () => {
+    const h = harness('<button id="b">Go</button>');
+    scrollTo(h.win, 0, 800);
+    h.click("#b");
+    // Through the real boundary (egress normalizes) — a scroll step the
+    // normalizer refuses would pass a weaker read of the envelope and then be
+    // missing in the app.
+    let steps = h.egress();
+    expect(steps.map((s) => s.type)).toEqual(["scroll", "click"]);
+    expect(steps[0].scrollX).toBe(0);
+    expect(steps[0].scrollY).toBe(800);
+
+    // Same depth again: the scroll was already recorded, the second click
+    // must not repeat it.
+    h.click("#b");
+    steps = h.egress();
+    expect(steps.map((s) => s.type)).toEqual(["scroll", "click", "click"]);
+  });
+
+  it("ignores drift below the threshold", () => {
+    const h = harness('<button id="b">Go</button>');
+    scrollTo(h.win, 0, SCROLL_CAPTURE_MIN_PX - 1);
+    h.click("#b");
+    expect(h.egress().map((s) => s.type)).toEqual(["click"]);
+  });
+
+  it("records the scroll for an assertion too — the case the feature exists for", () => {
+    const h = harness('<div id="lazy">Reviews</div>');
+    h.doc.documentElement.setAttribute(ATTR_ASSERT, "visible");
+    scrollTo(h.win, 0, 1240);
+    h.click("#lazy");
+    const steps = h.egress();
+    expect(steps.map((s) => s.type)).toEqual(["scroll", "assert"]);
+    expect(steps[0].scrollY).toBe(1240);
+  });
+
+  it("does not owe a scroll step for a locator-free step", () => {
+    const h = harness('<input id="t" type="text" />');
+    scrollTo(h.win, 0, 900);
+    // Escape dispatched at the DOCUMENT: the target is not an element, so the
+    // press step carries no locator — and a step with no element does not
+    // depend on where the page is scrolled to.
+    h.doc.dispatchEvent(
+      new (h.win as unknown as { KeyboardEvent: typeof KeyboardEvent }).KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+      }),
+    );
+    expect(h.egress().map((s) => s.type)).toEqual(["press"]);
+    expect(h.egress()[0].locator).toBeUndefined();
   });
 });

@@ -275,3 +275,59 @@ describe("viewport steps log the resize", () => {
     expect(source).toContain("1280x800");
   });
 });
+
+describe("scroll steps", () => {
+  it("emits scrollIntoViewIfNeeded for the element form", () => {
+    const steps = [step({ type: "scroll", locator: { k: "testid", v: "reviews" } })];
+    const { source, lineMap } = generateSpecDetailed({ name: "t", url: "u", steps });
+    expect(source).toContain('await page.getByTestId("reviews").scrollIntoViewIfNeeded();');
+    expect(Object.values(lineMap)).toEqual([0]);
+  });
+
+  it("emits a glazeScrollTo call — and its import — for the position form", () => {
+    const steps = [step({ type: "scroll", scrollX: 0, scrollY: 1240 })];
+    const { source, lineMap } = generateSpecDetailed({ name: "t", url: "u", steps });
+    expect(source).toContain("await glazeScrollTo(page, 0, 1240);");
+    expect(source).toContain('import { glazeScrollTo } from "./glaze-runtime.mjs";');
+    // The helper import must not drag the variable header in: only capture
+    // steps write into V.
+    expect(source).not.toContain("const V = {");
+    expect(Object.values(lineMap)).toEqual([0]);
+  });
+
+  it("does not import the runtime for element scrolls, and keeps capture-only imports byte-stable", () => {
+    const elementOnly = generateSpecDetailed({
+      name: "t",
+      url: "u",
+      steps: [step({ type: "scroll", locator: { k: "testid", v: "a" } })],
+    });
+    expect(elementOnly.source).not.toContain("glaze-runtime.mjs");
+    // A capture-only spec must keep the exact import it has always had — tests
+    // already on disk regenerate from stored steps and must stay byte-identical.
+    const captureOnly = generateSpecDetailed({
+      name: "t",
+      url: "u",
+      steps: [step({ type: "capture", captureVar: "x", captureFrom: "url" })],
+    });
+    expect(captureOnly.source).toContain('import { glazeCapture } from "./glaze-runtime.mjs";');
+  });
+
+  it("cannot be poisoned through the scroll offsets", () => {
+    // Same boundary as count/width: tests recorded before the fix are already
+    // on disk and regenerate from stored steps, so the generator guards on its
+    // own, independent of normalizeRawStep.
+    const steps = [
+      { id: "s", timestamp: 0, type: "scroll", scrollX: '0); require("child_process"); (', scrollY: 10 },
+    ] as unknown as Step[];
+    const { source } = generateSpecDetailed({ name: "t", url: "u", steps });
+    expect(source).not.toContain("child_process");
+    expect(source).toContain("await glazeScrollTo(page, 0, 10);");
+  });
+
+  it("a scroll with neither an element nor a position is an UNGENERATABLE comment, not a vanished step", () => {
+    const steps = [step({ type: "scroll" })];
+    const { source } = generateSpecDetailed({ name: "t", url: "u", steps });
+    expect(source).toContain("UNGENERATABLE STEP");
+    expect(source).toContain("neither an element nor a position");
+  });
+});

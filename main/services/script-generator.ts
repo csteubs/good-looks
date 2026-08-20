@@ -609,6 +609,7 @@ function ungeneratableReason(step: Step): string {
   if (step.type === "cookie") return "the cookie is missing a name, or a domain/path to scope it to";
   if (step.type === "state") return "the element state is missing or not one this app can replay";
   if (step.type === "wait" && !step.locator) return "this wait needs an element and none was recorded";
+  if (step.type === "scroll") return "this scroll step has neither an element nor a position";
   return "this app could not turn it into a Playwright statement";
 }
 
@@ -657,6 +658,21 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
       return captureLine(step, target);
     case "state":
       return stateLine(step, target);
+    case "scroll":
+      // Element mode wins when both are present: `scrollIntoViewIfNeeded` is
+      // native, self-correcting, and reports through the step reporter (a
+      // locator call located in the spec). Position mode goes through the
+      // glazeScrollTo runtime helper because reaching a recorded depth on a
+      // lazily-rendered page takes incremental scrolling — a loop, which must
+      // not be many spec lines for one step. `num`, never interpolation: these
+      // arrive from the capture channel and land in source as bare numerals,
+      // which is the exact hole the `count` field was RCE through.
+      if (target) return "await " + target + ".scrollIntoViewIfNeeded();";
+      if (typeof step.scrollX === "number" || typeof step.scrollY === "number")
+        return (
+          "await glazeScrollTo(page, " + num(step.scrollX, 0) + ", " + num(step.scrollY, 0) + ");"
+        );
+      return null;
     // A runFlow step emits no line of its own — its target flow's steps are
     // inlined in its place by `expandSteps` before generation reaches here.
     case "runFlow":
@@ -714,6 +730,17 @@ export function describeStep(step: Step): string {
   if (step.type === "cookie") return describeCookie(step);
   if (step.type === "capture") return describeCapture(step);
   if (step.type === "runFlow") return describeFlow(step);
+  // A position scroll is described as a phrase: the emitted line is a
+  // glazeScrollTo(...) helper call, which names the mechanism rather than the
+  // intent. An ELEMENT scroll falls through to the line, which reads fine.
+  // Kept in sync with the mirror in renderer/lib/describe-step.ts — pinned by
+  // describe-step-parity.test.ts.
+  // `num`, not raw interpolation, even though this is "only" a description:
+  // it is embedded into the spec as an UNGENERATABLE comment for a scroll step
+  // with no usable fields, and a step already on disk can carry a forged
+  // string in these fields (updateStep copies without re-normalizing).
+  if (step.type === "scroll" && !step.locator)
+    return "scroll to (" + num(step.scrollX, 0) + ", " + num(step.scrollY, 0) + ")";
   const line = stepLine(step);
   return line ? line.replace(/^await /, "").replace(/;$/, "") : step.type;
 }
@@ -1025,13 +1052,24 @@ export function generateSpecDetailed(
   // from the real preamble rather than a hard-coded count — the preamble grows
   // by one when a capture step is present, and an off-by-one here would
   // mis-attribute EVERY step rather than fail loudly.
-  const needsRuntime = expanded.some((e) => !e.problem && e.step.type === "capture");
+  const needsCapture = expanded.some((e) => !e.problem && e.step.type === "capture");
+  // Only a POSITION scroll needs the helper — an element scroll is a native
+  // locator call. Import exactly the names used: a capture-only spec must keep
+  // regenerating byte-identically to what this generator produced before
+  // scroll steps existed.
+  const needsScroll = expanded.some(
+    (e) => !e.problem && e.step.type === "scroll" && !e.step.locator,
+  );
   const preamble = ['import { test, expect } from "@playwright/test";'];
-  if (needsRuntime) {
-    preamble.push(`import { glazeCapture } from "./${GLAZE_RUNTIME_FILE}";`);
+  const runtimeNames = [
+    ...(needsCapture ? ["glazeCapture"] : []),
+    ...(needsScroll ? ["glazeScrollTo"] : []),
+  ];
+  if (runtimeNames.length > 0) {
+    preamble.push(`import { ${runtimeNames.join(", ")} } from "./${GLAZE_RUNTIME_FILE}";`);
   }
   preamble.push("");
-  const header = variableHeader(variables, needsRuntime);
+  const header = variableHeader(variables, needsCapture);
   // The `test(...)` line sits at `preamble.length + 1`; the variable header
   // follows it; the first body line is the one after that.
   const bodyStartLine = preamble.length + 2 + header.length;
