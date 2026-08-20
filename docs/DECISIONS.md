@@ -9083,3 +9083,33 @@ and driving glazeApiRequest against a fake page — "fails on 500 by default"
 is a meaning claim, and only executing the helper can hold it. The parity
 guard also caught the renderer's describe printing a forged method raw while
 the backend fell back to GET; both now validate against the same allowlist.
+
+## 2026-08-19 — TOTP secrets: a getter in V, and one implementation of the math
+
+MFA logins need the current one-time code. TOTP is modelled as a PROPERTY of
+a secret (`totp: true`), not a new variable kind: the setup key is exactly as
+sensitive as a password, so it must live in the encrypted store, cross IPC
+one way, stay out of specs and logs — every rule secrets already have. The
+flag only changes what a READ produces.
+
+**The V header exposes a totp secret as a getter.** A code computed at spec
+start is stale by the MFA prompt (codes rotate every 30 seconds), so
+`get mfa() { return glazeTotp(process.env.GLAZE_SECRET_mfa ?? ""); }` derives
+a fresh code at every `${mfa}` read. Getters sit with the secrets, after the
+GLAZE_VARS spread, so a dataset row cannot shadow one — the same
+no-substitution rule plaintext rows have always had against secrets.
+
+**The math lives once, in shared/totp.mjs, with the HMAC injected.** The
+shared tree is pure (no node imports), and TOTP needs crypto — so the RFC
+6238 function takes an hmac-as-bytes function as its first argument, and
+each side wraps its own crypto: the runtime embeds `totpCode` via toString
+(the step-semantics idiom) and hands it node's createHmac; the trainer's
+replay derives codes through the same function. Two implementations of an
+OTP algorithm is how a trainer that logs in and a run that doesn't happens.
+The math is pinned against RFC 6238's own Appendix B vectors — including the
+64-bit counter case, which is why the counter shifts by division rather
+than `>>=`.
+
+A setup key that doesn't decode reports like a missing secret — the trainer
+refuses to type rather than typing a wrong code, and the runtime throws
+naming the fix ("paste the setup key, not a one-time code").

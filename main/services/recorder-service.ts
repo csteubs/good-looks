@@ -8,12 +8,13 @@
 // stores state and queued steps on <html> attributes (see capture-script.ts),
 // which this service reads/writes across calls.
 
-import { randomUUID } from "crypto";
+import { createHmac, randomUUID } from "crypto";
 
 import { BrowserWindow, logger, Menu, WebContentsView } from "@shell/backend";
 import type { MenuItemConstructorOptions, WebContentsNavigationEvent } from "@shell/backend";
 
 import { urlAssertPrefill } from "../../shared/url-assert.mjs";
+import { totpCode } from "../../shared/totp.mjs";
 import { normalizeSignatureHost, signatureForUrl } from "../../shared/shopify-signature.mjs";
 
 import {
@@ -513,6 +514,7 @@ async function runStep(
       : session
         ? await testSecretsStore.valuesFor(session.testId)
         : {},
+    deriveTotpCode,
   );
   if (resolved.missingSecrets.length > 0) {
     // Declared but never given a value. Filling "" would submit a blank
@@ -1077,6 +1079,16 @@ function sampleGeneratedValue(spec: GenSpec): string {
     default:
       return rand(10);
   }
+}
+
+/** The current code for a TOTP secret's setup key — the SAME shared math
+ *  the generated runtime embeds, wrapped over node crypto. Null means the
+ *  key didn't decode; resolveStepForReplay reports that like a missing
+ *  secret rather than typing a wrong code. */
+function deriveTotpCode(setupKey: string): string | null {
+  const hmac = (key: number[], msg: number[]): number[] =>
+    Array.from(createHmac("sha1", Buffer.from(key)).update(Buffer.from(msg)).digest());
+  return totpCode(hmac, setupKey, Date.now());
 }
 
 /** The matching `else` of the `if` at `index`, or -1 when the block has none.
@@ -2800,6 +2812,7 @@ export const recorderService = {
     kind?: unknown;
     value?: unknown;
     genSpec?: unknown;
+    totp?: unknown;
   }): Promise<RecorderState> {
     if (!session) throw new Error("No recording session is running.");
     if (!isValidVariableName(input.name)) {
@@ -2818,7 +2831,13 @@ export const recorderService = {
     // here and one declared on the Variables tab cannot differ in what they
     // allow — including the strip that keeps a secret's value off the record.
     const [clean] = normalizeVariables([
-      { name, kind: input.kind as VariableKind, value: input.value, genSpec: input.genSpec },
+      {
+        name,
+        kind: input.kind as VariableKind,
+        value: input.value,
+        genSpec: input.genSpec,
+        totp: input.totp === true,
+      },
     ]);
     if (!clean) throw new Error("That variable could not be saved.");
 

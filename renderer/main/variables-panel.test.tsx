@@ -162,6 +162,18 @@ describe("VariablesPanel", () => {
     expect(screen.getByText(/fresh value every run/i)).toBeTruthy();
   });
 
+  it("offers the TOTP flag on a secret and saves it through the same list", async () => {
+    secretStatus = [{ name: "mfa", hasValue: true }];
+    renderPanel(makeTest({ variables: [{ name: "mfa", kind: "secret" }] }));
+    const box = await screen.findByLabelText("TOTP key for mfa");
+    fireEvent.click(box);
+    await waitFor(() =>
+      expect(setVariables).toHaveBeenCalledWith("t1", [
+        { name: "mfa", kind: "secret", totp: true },
+      ]),
+    );
+  });
+
   it("warns about a name that would not survive into the generated spec", async () => {
     renderPanel(makeTest({ variables: [{ name: "has-dash", kind: "plain" }] }));
     expect(await screen.findByText(/Use letters, numbers and underscores/i)).toBeTruthy();

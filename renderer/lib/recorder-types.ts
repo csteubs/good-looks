@@ -659,6 +659,9 @@ export interface TestVariable {
   kind: VariableKind;
   /** what a "generated" variable produces — mirror of main types */
   genSpec?: GenSpec;
+  /** secret only: the stored value is a TOTP setup key; reads produce the
+   *  current 6-digit code (mirror of main types) */
+  totp?: boolean;
   description?: string;
 }
 

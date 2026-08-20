@@ -1211,7 +1211,17 @@ function variableHeader(variables: TestVariable[], needsCapture: boolean): strin
   // lets one spec run once per dataset row without regenerating the file.
   lines.push('    ...JSON.parse(process.env.GLAZE_VARS || "{}"),');
   for (const v of secret) {
-    lines.push(`    ${v.name}: process.env.${secretEnvName(v.name)} ?? "",`);
+    if (v.totp) {
+      // A GETTER, not a value: TOTP codes expire in 30 seconds, and a code
+      // computed at spec start is stale by the MFA prompt. Every ${V.name}
+      // read derives the current code from the stored setup key. Sits with
+      // the secrets, after the spread, so a dataset row cannot shadow it.
+      lines.push(
+        `    get ${v.name}() { return glazeTotp(process.env.${secretEnvName(v.name)} ?? ""); },`,
+      );
+    } else {
+      lines.push(`    ${v.name}: process.env.${secretEnvName(v.name)} ?? "",`);
+    }
   }
   lines.push("  };");
   return lines;
@@ -1273,6 +1283,7 @@ export function generateSpecDetailed(
   const needsA11y = expanded.some((e) => !e.problem && e.step.type === "a11y");
   const needsGenerate = variables.some((v) => v.kind === "generated");
   const needsApi = expanded.some((e) => !e.problem && e.step.type === "api");
+  const needsTotp = variables.some((v) => v.kind === "secret" && v.totp);
   const preamble = ['import { test, expect } from "@playwright/test";'];
   const runtimeNames = [
     ...(needsCapture ? ["glazeCapture"] : []),
@@ -1280,6 +1291,7 @@ export function generateSpecDetailed(
     ...(needsA11y ? ["glazeA11yGate"] : []),
     ...(needsGenerate ? ["glazeGenerate"] : []),
     ...(needsApi ? ["glazeApiRequest"] : []),
+    ...(needsTotp ? ["glazeTotp"] : []),
   ];
   if (runtimeNames.length > 0) {
     preamble.push(`import { ${runtimeNames.join(", ")} } from "./${GLAZE_RUNTIME_FILE}";`);

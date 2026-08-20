@@ -756,6 +756,10 @@ export interface TestVariable {
   /** What a "generated" variable produces. Enum-checked at the boundary AND
    *  at emission — it lands in generated source as a string literal. */
   genSpec?: GenSpec;
+  /** secret only: the stored value is a TOTP setup key (base32), and every
+   *  read derives the CURRENT 6-digit code from it — the spec's V object
+   *  exposes a getter, so a login 40 seconds in gets a fresh code. */
+  totp?: boolean;
   description?: string;
 }
 
@@ -845,6 +849,9 @@ export function normalizeVariables(input: unknown): TestVariable[] {
     if (kind === "generated") {
       entry.genSpec = isGenSpec(v.genSpec) ? v.genSpec : "string";
     }
+    // TOTP is a property OF a secret — the setup key lives encrypted like
+    // any secret value; the flag only changes what a read produces.
+    if (kind === "secret" && v.totp === true) entry.totp = true;
     if (typeof v.description === "string" && v.description.trim()) {
       entry.description = v.description.trim().slice(0, 200);
     }
@@ -1851,6 +1858,11 @@ export function resolveStepForReplay(
   step: Step,
   variables: readonly TestVariable[],
   secretValues: Readonly<Record<string, string>> = {},
+  /** Derives the current code from a TOTP secret's stored setup key. Passed
+   *  in because this module is pure and the HMAC lives in node:crypto —
+   *  null means the key didn't decode, which reports like a missing secret
+   *  rather than typing a wrong code. */
+  deriveTotp?: (setupKey: string) => string | null,
 ): { step: Step; usedValues: string[]; missingSecrets: string[] } {
   const refs = collectVarRefs(step);
   if (refs.length === 0) return { step, usedValues: [], missingSecrets: [] };
@@ -1867,6 +1879,14 @@ export function resolveStepForReplay(
     if (typeof stored !== "string" || stored === "") {
       if (!missingSecrets.includes(name)) missingSecrets.push(name);
       return null;
+    }
+    if (v.totp) {
+      const code = deriveTotp ? deriveTotp(stored) : null;
+      if (code === null) {
+        if (!missingSecrets.includes(name)) missingSecrets.push(name);
+        return null;
+      }
+      return code;
     }
     return stored;
   };
