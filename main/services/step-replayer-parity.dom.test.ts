@@ -394,6 +394,16 @@ describe("loop halves in the preview", () => {
   });
 });
 
+describe("a11y gates in the preview", () => {
+  it("is a narrated no-op that never claims the check ran", () => {
+    // The preview carries no axe. Same honesty rule as download: a green row
+    // must not read as "accessibility was checked".
+    const r = run(step({ type: "a11y", a11yImpact: "serious" }));
+    expect(r.ok).toBe(true);
+    expect(why(r)).toMatch(/run/i);
+  });
+});
+
 describe("download steps in the preview", () => {
   it("is a narrated no-op that never claims verification", () => {
     // The training browser cancels transfers, so no download event can reach

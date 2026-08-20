@@ -8945,3 +8945,42 @@ doubled-quote escapes, BOM, CRLF) — hand-rolled here rather than a dependency
 because the app has no other CSV need and the whole dialect fits in fifty
 lines with a test battery pinning each clause. Cancelling the picker says
 nothing at all, the same rule the folder importer follows.
+## 2026-08-19 — The accessibility gate step: a placed assertion, not a report
+
+The per-run a11y capture (2026-08-15) deliberately never fails a run — it is
+reporting. mabl's model also has the other thing: a check the author PLACES
+that fails the test. The new `a11y` step is that gate: axe runs at that point
+in the test, and any NEW violation at or above the step's impact floor
+(default "serious") throws.
+
+**"New" is decided against the test's accepted baseline, delivered by env,
+not baked into source.** The spec reads GLAZE_A11Y_BASELINE (a JSON array of
+accepted `rule|target` keys, flattened from the record's `a11yBaseline`), the
+same channel shape as GLAZE_VARS. Baking the accepted keys into the generated
+spec was rejected because accepts don't regenerate specs — a user who accepts
+a finding would keep failing the gate until some unrelated edit regenerated.
+Outside the app the env is absent and the gate is at its strictest, which is
+the safe direction: strictness surfaces findings, the opposite silently
+passes them.
+
+**The decision logic lives in shared/a11y-rollup.mjs (`gateFailures`) and is
+EMBEDDED into the generated runtime via toString(), the step-semantics
+idiom.** The key spelling is that module's whole reason to exist; a second
+spelling in the runtime is how an accepted violation stops matching. The
+embedded function must be self-contained, so it inlines the key template —
+and a parity test pins it against `keysOf`, which is what makes the inlining
+safe rather than a third copy.
+
+**The impact floor is enum-guarded twice**: allowlisted at the ingest
+boundary AND at emission (an unknown value falls back to "serious"), because
+it is interpolated into generated source as a string literal and a forged
+value can arrive through updateStep's raw copy — the same double-guard rule
+every interpolated field follows.
+
+axe reaches the page through the runtime helper itself when the per-step
+capture toggle didn't already inject it: from GLAZE_AXE_PATH (now passed
+whenever the bundled file exists, not only when the toggle is on), else from
+a local axe-core install, else a clear error naming the fix. The injection
+uses page.evaluate, which runs through the driver and is not subject to the
+page's CSP the way a script tag is. The trainer preview narrates the step as
+a no-op — it carries no axe, and a green row must not read as "checked".

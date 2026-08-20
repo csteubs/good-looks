@@ -46,6 +46,10 @@ const cases: { label: string; step: Step }[] = [
   { label: "loop", step: step({ type: "loop", loopCount: 4 }) },
   { label: "loop with no count", step: step({ type: "loop" }) },
   { label: "endLoop", step: step({ type: "endLoop" }) },
+  { label: "a11y gate", step: step({ type: "a11y", a11yImpact: "critical" }) },
+  { label: "a11y gate default impact", step: step({ type: "a11y" }) },
+  // Malformed on purpose: both sides must fall back to "serious" identically.
+  { label: "a11y gate with forged impact", step: step({ type: "a11y", a11yImpact: "nope" as never }) },
   {
     label: "capture count",
     step: step({ type: "capture", captureVar: "results", captureFrom: "count", locator: LOCATOR }),

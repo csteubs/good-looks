@@ -51,6 +51,46 @@ export function keysOf(v) {
 }
 
 /**
+ * The a11y GATE step's whole decision: which violations fail it.
+ *
+ * A violation fails when its impact is at or above `minImpact` AND at least
+ * one of its node keys is not in the accepted baseline. The returned entries
+ * keep only the fresh (unaccepted) nodes, so the error can point at exactly
+ * what regressed rather than re-listing what was already signed off.
+ *
+ * Lives HERE because the spelling of a key is this module's whole reason to
+ * exist — and this function's source is EMBEDDED into the generated runtime
+ * (`glaze-runtime-source.ts` interpolates `gateFailures.toString()`), so it
+ * must stay self-contained: no free identifiers except its own parameters
+ * and locals. A closure over `violationKey` would emit as a dangling
+ * reference in the spec runtime and every gate step would throw.
+ *
+ * @param {{ id: string, impact?: string, help?: string, nodes?: string[] }[]} violations
+ * @param {string} minImpact  one of "minor" | "moderate" | "serious" | "critical"
+ * @param {string[]} baselineKeys  accepted `id|target` keys
+ * @returns {{ id: string, impact: string, help: string, nodes: string[] }[]}
+ */
+export function gateFailures(violations, minImpact, baselineKeys) {
+  const order = { minor: 0, moderate: 1, serious: 2, critical: 3 };
+  const min = order[minImpact] !== undefined ? order[minImpact] : 2;
+  const accepted = new Set(baselineKeys);
+  const out = [];
+  for (const v of violations || []) {
+    const impact = v.impact || "minor";
+    if ((order[impact] !== undefined ? order[impact] : 0) < min) continue;
+    const targets = v.nodes && v.nodes.length > 0 ? v.nodes : [""];
+    // Inlined key spelling — MUST match violationKey above. The parity test
+    // in a11y-rollup.test.ts pins the two together, which is what lets this
+    // function remain embeddable (see the doc comment).
+    const fresh = targets.filter((t) => !accepted.has(`${v.id}|${t}`));
+    if (fresh.length > 0) {
+      out.push({ id: v.id, impact, help: v.help || "", nodes: fresh });
+    }
+  }
+  return out;
+}
+
+/**
  * The runs a suite-wide accessibility answer is computed over: each test's most
  * recent run that actually COMPLETED checks.
  *

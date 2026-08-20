@@ -42,11 +42,13 @@ import { Crosshair, X } from "lucide-react";
 import { Btn } from "../theme";
 
 import {
+  A11Y_IMPACTS,
   CSS_ASSERT_PROPS,
   DEFAULT_WAIT_TIMEOUT_MS,
   isCssPropName,
 } from "../lib/recorder-types";
 import type {
+  A11yImpact,
   AssertKind,
   CaptureSource,
   TestVariable,
@@ -89,6 +91,7 @@ export type AddStepKind =
   | "download"
   | "runFlow"
   | "elementState"
+  | "a11y"
   | "fill";
 
 export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
@@ -105,6 +108,7 @@ export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   download: "Expect a download",
   runFlow: "Run a flow",
   elementState: "Set element state",
+  a11y: "Check accessibility",
   fill: "Fill with a variable",
 };
 
@@ -712,6 +716,9 @@ export function StepComposer({
   const [loopTimes, setLoopTimes] = React.useState("2");
   // Whether the condition kind also inserts an ELSE half between the pair.
   const [withElse, setWithElse] = React.useState(false);
+  // The a11y gate's impact floor. "serious" is axe's second-worst level and
+  // the default that makes a first gate useful without drowning in minors.
+  const [a11yImpact, setA11yImpact] = React.useState<A11yImpact>("serious");
   // The `download` kind's three fields. Filename empty = "any download" —
   // the await itself is the assertion then, which is a real one.
   const [dlName, setDlName] = React.useState("");
@@ -937,6 +944,8 @@ export function StepComposer({
           },
         ];
       }
+      case "a11y":
+        return [{ type: "a11y", a11yImpact }];
       case "download": {
         const name = dlName.trim();
         const varName = dlVar.trim();
@@ -1741,6 +1750,29 @@ export function StepComposer({
                 onClearPick={onClearPick}
               />
             )}
+          </>
+        ) : null}
+        {kind === "a11y" ? (
+          <>
+            <Text size="small" className="text-secondary">
+              Runs axe against the page at this point and FAILS the test on any new violation at
+              or above the chosen impact. Violations already accepted on this test&apos;s
+              Accessibility tab don&apos;t fail the gate.
+            </Text>
+            <Field label="Fail on" orientation="vertical">
+              <Select value={a11yImpact} onValueChange={(v) => setA11yImpact(v as A11yImpact)}>
+                <SelectTrigger size="small">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {A11Y_IMPACTS.map((impact) => (
+                    <SelectItem key={impact} value={impact}>
+                      {impact === "minor" ? "minor or worse (strictest)" : impact + " or worse"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
           </>
         ) : null}
       </div>

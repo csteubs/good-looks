@@ -1505,7 +1505,16 @@ export const playwrightRunner = {
             GLAZE_HEAL: healing ? "1" : "0",
             GLAZE_SETTLE: settling ? "1" : "0",
             GLAZE_A11Y: a11y ? "1" : "0",
-            GLAZE_AXE_PATH: a11y ? axeFile : "",
+            // The path travels whenever the file exists, not only when the CAPTURE
+            // toggle is on: an `a11y` GATE step injects axe itself mid-test via
+            // glazeA11yGate, and gating the path on the toggle would make the
+            // gate fail on runs that never asked for per-step capture.
+            GLAZE_AXE_PATH: fs.existsSync(axeFile) ? axeFile : "",
+            // Accepted violations, flattened to keys. Env rather than baked into
+            // the spec so an accept takes effect without regenerating.
+            GLAZE_A11Y_BASELINE: JSON.stringify(
+              Object.values(rec.a11yBaseline ?? {}).flat(),
+            ),
             GLAZE_HEAL_DIR: healDir,
             GLAZE_HEAL_MAP: healMapPath,
             PW_SLOWMO_MS: String(slowMo),

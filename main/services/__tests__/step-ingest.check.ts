@@ -280,6 +280,21 @@ function main(): void {
       "exact",
       "a legitimate download match mode survives ingest",
     );
+    // The a11y gate's impact floor is interpolated into generated source as a
+    // string literal — enum-allowlisted here, and the generator independently
+    // falls back to "serious" for anything else (pinned in
+    // a11y-emission.test.ts), because a forged value can also arrive through
+    // `recorder:updateStep`'s raw copy.
+    assertEqual(
+      normalizeRawStep({ type: "a11y", a11yImpact: '"); evil(); ("' })?.a11yImpact,
+      undefined,
+      "a forged a11y impact is dropped at the boundary",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "a11y", a11yImpact: "critical" })?.a11yImpact,
+      "critical",
+      "a legitimate a11y impact survives ingest",
+    );
     // `nth` admits exactly one negative: -1, Playwright's "last match". The
     // bound is the boundary half of the pair; the generator independently
     // floors anything deeper to 0 (see locatorExpr), because a forged index

@@ -67,7 +67,23 @@ export type StepType =
   // races the event it exists to catch. Recorded automatically when the
   // training browser sees `will-download` (the transfer itself is cancelled;
   // a recording session is for looking).
-  | "download";
+  | "download"
+  // Accessibility GATE: run axe here and FAIL the step on any new violation
+  // at or above `a11yImpact`. Distinct from the per-run a11y capture toggle,
+  // which is reporting and never fails — this one is an assertion the user
+  // placed. "New" means not in the test's accepted baseline, which reaches
+  // the spec as GLAZE_A11Y_BASELINE env (never baked into source, so an
+  // accept takes effect without regenerating).
+  | "a11y";
+
+/** axe's impact scale, weakest first. An `a11y` gate step fails on violations
+ *  AT OR ABOVE its `a11yImpact`; the order here is the comparison. */
+export const A11Y_IMPACTS = ["minor", "moderate", "serious", "critical"] as const;
+export type A11yImpact = (typeof A11Y_IMPACTS)[number];
+
+export function isA11yImpact(v: unknown): v is A11yImpact {
+  return typeof v === "string" && (A11Y_IMPACTS as readonly string[]).includes(v);
+}
 
 /**
  * Predicate for an `if` step. Element conditions resolve `Step.locator`; page
@@ -276,6 +292,10 @@ export interface Step {
   /** iterations for a `loop` step. Reaches the generator as a BARE NUMERAL —
    *  see normalizeRawStep's `int` note — bounded [1, MAX_LOOP_COUNT]. */
   loopCount?: number;
+  /** minimum axe impact that fails an `a11y` gate step (default "serious").
+   *  Enum-checked at the boundary AND at emission: only a value from
+   *  A11Y_IMPACTS is ever interpolated into generated source. */
+  a11yImpact?: A11yImpact;
   /** how a `download` step compares the suggested filename against `value`
    *  (default "contains"). Auto-recorded steps use "exact" — the browser just
    *  reported the real name; hand-authored ones default to the looser match
@@ -439,6 +459,7 @@ export interface RawStep {
   waitUntil?: WaitUntilKind;
   timeoutMs?: number;
   loopCount?: number;
+  a11yImpact?: A11yImpact;
   downloadMatch?: DownloadMatch;
   /** cookie fields, so a cookie step can be inserted via insertStep */
   cookieAction?: CookieAction;
@@ -852,7 +873,7 @@ export function normalizeDatasets(input: unknown): Dataset[] {
 export const STEP_TYPES: StepType[] = [
   "goto", "click", "fill", "press", "select", "check", "uncheck", "assert",
   "wait", "viewport", "if", "else", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
-  "scroll", "download",
+  "scroll", "download", "a11y",
 ];
 
 export type DownloadMatch = "contains" | "exact";
@@ -1244,6 +1265,8 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   if (loopCount !== undefined) out.loopCount = loopCount;
   const downloadMatch = oneOf(s.downloadMatch, DOWNLOAD_MATCHES);
   if (downloadMatch) out.downloadMatch = downloadMatch;
+  const a11yImpact = oneOf(s.a11yImpact, A11Y_IMPACTS);
+  if (a11yImpact) out.a11yImpact = a11yImpact;
 
   const cookieAction = oneOf(s.cookieAction, COOKIE_ACTIONS);
   if (cookieAction) out.cookieAction = cookieAction;
