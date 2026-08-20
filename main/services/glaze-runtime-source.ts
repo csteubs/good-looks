@@ -41,6 +41,11 @@ export async function glazeCapture(vars, name, subject, from, attr) {
       value = await subject.inputValue();
     } else if (from === "attribute") {
       value = await subject.getAttribute(attr || "");
+    } else if (from === "count") {
+      // How many elements the locator matches — deliberately NOT a strict
+      // resolve: counting an ambiguous or absent locator is the whole point
+      // (0 is an answer, not a failure).
+      value = String(await subject.count());
     } else {
       value = await subject.textContent();
     }

@@ -411,3 +411,19 @@ describe("force clicks in the preview", () => {
     expect(why(r)).toMatch(/ignored.*force/i);
   });
 });
+
+describe("count capture in the preview", () => {
+  it("counts without strict-resolving — ambiguous and absent are answers", () => {
+    document.body.innerHTML = "<li>a</li><li>b</li><li>c</li>";
+    const many = run(
+      step({ type: "capture", captureVar: "n", captureFrom: "count", locator: { k: "css", v: "li" } }),
+    );
+    expect(many.ok).toBe(true);
+    expect((many as { captured?: string }).captured).toBe("3");
+    const none = run(
+      step({ type: "capture", captureVar: "n", captureFrom: "count", locator: { k: "css", v: ".gone" } }),
+    );
+    expect(none.ok).toBe(true);
+    expect((none as { captured?: string }).captured).toBe("0");
+  });
+});

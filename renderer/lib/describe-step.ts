@@ -196,6 +196,8 @@ export function describeCapture(step: Step): string {
   const from = step.captureFrom ?? "text";
   const loc = step.locator ? "page." + locatorExpr(step.locator) : "page";
   switch (from) {
+    case "count":
+      return `capture ${name} from ${loc} count`;
     case "url":
       return `capture ${name} from the page URL`;
     case "title":

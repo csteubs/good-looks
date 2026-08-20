@@ -614,6 +614,13 @@ export function buildReplayScript(step: Step): string {
       var from = step.captureFrom || "text";
       if (from === "url") { log("info", "captured URL"); return { ok: true, captured: location.href }; }
       if (from === "title") { log("info", "captured title"); return { ok: true, captured: document.title }; }
+      // Count deliberately bypasses the unique resolve below: counting an
+      // ambiguous or absent locator is the whole point, and 0 is an answer.
+      if (from === "count") {
+        var cAll = resolveAll(step.locator);
+        log("info", "captured " + (step.captureVar || "?") + " = " + cAll.length + " match(es)");
+        return { ok: true, captured: String(cAll.length) };
+      }
       var cEl = resolve(step.locator);
       if (!cEl) { log("error", "Element not found — cannot capture"); return { ok: false, error: "Element not found" }; }
       var got = "";

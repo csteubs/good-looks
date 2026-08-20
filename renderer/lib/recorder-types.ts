@@ -316,9 +316,9 @@ export interface ElementFingerprint {
 }
 
 /** What a `capture` step reads off its resolved element (mirror of main types). */
-export type CaptureSource = "text" | "value" | "attribute" | "url" | "title";
+export type CaptureSource = "text" | "value" | "attribute" | "url" | "title" | "count";
 
-export const CAPTURE_SOURCES: CaptureSource[] = ["text", "value", "attribute", "url", "title"];
+export const CAPTURE_SOURCES: CaptureSource[] = ["text", "value", "attribute", "url", "title", "count"];
 
 /** Display labels for the capture-source picker. */
 export const CAPTURE_SOURCE_LABELS: Record<CaptureSource, string> = {
@@ -327,6 +327,7 @@ export const CAPTURE_SOURCE_LABELS: Record<CaptureSource, string> = {
   attribute: "Attribute",
   url: "Page URL",
   title: "Page title",
+  count: "Match count",
 };
 
 /** Payload for a manually-added or AI-generated step (no id/timestamp yet). */
