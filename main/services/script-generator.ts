@@ -633,7 +633,12 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
     case "goto":
       return "await page.goto(" + valueExpr(step.url, vars) + ");";
     case "click":
-      return target ? "await " + target + ".click();" : null;
+      // `force` skips Playwright's actionability checks — the per-step escape
+      // for targets covered or animating BY DESIGN. `=== true`, not truthy: a
+      // stored step predates the boundary knowing the field.
+      return target
+        ? "await " + target + ".click(" + (step.force === true ? "{ force: true }" : "") + ");"
+        : null;
     case "fill":
       return target ? "await " + target + ".fill(" + valueExpr(step.value, vars) + ");" : null;
     case "select":

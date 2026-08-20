@@ -180,6 +180,30 @@ the handler should have even in its low-harm form — the same
 containment-where-the-path-is-built posture as the import sandbox. If
 retention pruned the file after the flag was written, the opener answers
 plainly instead of spawning a viewer over nothing.
+### 2026-08-19 — The actionability escape, wired into failure reasons
+
+mabl shipped the inverse feature in July: their clicks historically forced
+through covered and moving elements, and they added opt-in strictness.
+Playwright is strict by construction — the better default, catching buttons
+no user could press — but it had NO escape here, and a target covered or
+animating BY DESIGN (decorative overlays, canvas-drawn controls) left the
+user choosing between `continueOnFailure` (which swallows real failures too)
+and abandoning the step. `Step.force` is the escape: a per-click kebab toggle
+emitting `.click({ force: true })`, off by default, `=== true` at the
+generator because stored steps predate the boundary knowing the field. Only
+the exact options literal parses back; a foreign click option stays foreign.
+
+The preview honors it: the replayer's occlusion check — the one that mirrors
+"element intercepts pointer events" — is skipped for a force click with a
+log line saying so, because failing in the trainer while the run passes is
+the pessimistic lie for a step that opted out of the check on purpose.
+
+And the failure gets a name: a new built-in reason, "Target not actionable",
+auto-suggested from Playwright's actionability wording (deliberately NOT
+matching bare "not visible", which also appears in plain resolve failures —
+mislabelling a vanished element would send the user to the force toggle when
+the element is simply gone). Its description points at the toggle, which is
+the discoverability path: fail for this reason, read why, find the escape.
 
 ### 2026-08-19 — Download steps: the order is the feature
 

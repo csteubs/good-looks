@@ -397,3 +397,17 @@ describe("download steps in the preview", () => {
     expect(why(r)).toMatch(/verified on runs/i);
   });
 });
+
+describe("force clicks in the preview", () => {
+  it("ignores the cover when the step opted out of the check, and says so", () => {
+    // The run skips actionability for a force click, so failing here would be
+    // the pessimistic lie — this step turned the check off on purpose.
+    document.body.innerHTML =
+      '<button data-testid="b">Buy</button><div id="banner" class="cookie-bar">Accept</div>';
+    (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null })
+      .elementFromPoint = () => document.getElementById("banner");
+    const r = run(step({ type: "click", locator: { k: "testid", v: "b" }, force: true }));
+    expect(r.ok).toBe(true);
+    expect(why(r)).toMatch(/ignored.*force/i);
+  });
+});

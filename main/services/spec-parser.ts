@@ -524,9 +524,14 @@ function locatorActionStep(locator: Locator, action: string, argsStr: string): S
     uncheck: "uncheck",
     press: "press",
   };
+  // `.click({ force: true })` — the actionability escape. Only the exact
+  // options object the generator emits reads back; anything else in a click's
+  // args is a foreign refinement and falls through unclassified below.
+  const force = action === "click" && /^\s*\{\s*force:\s*true\s*\}\s*$/.test(argsStr);
   const value = parseValueArg(argsStr);
   return makeStep(typeMap[action], {
     locator,
+    ...(force ? { force: true } : {}),
     ...(value !== null ? { value: unescapeLit(value) } : {}),
   });
 }

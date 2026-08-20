@@ -900,3 +900,42 @@ describe("the locator fragility indicator", () => {
     expect(screen.queryByRole("button", { name: /locator/i })).toBeNull();
   });
 });
+
+describe("the force toggle", () => {
+  it("offers Ignore Actionability on click steps and patches force", async () => {
+    const onEdit = vi.fn();
+    const seen: string[] = [];
+    const popup = vi.fn(async (opts: { items: { label?: string; commandId?: number }[] }) => {
+      for (const i of opts.items) if (i.label) seen.push(i.label);
+      const hit = opts.items.find((i) => i.label === "Ignore Actionability (force)");
+      return hit?.commandId !== undefined ? { commandId: hit.commandId } : {};
+    });
+    (window as unknown as { glazeAPI: { Menu: unknown } }).glazeAPI = { Menu: { popup } };
+    render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} onEdit={onEdit} />,
+    );
+    fireEvent.click(screen.getByLabelText("Step utilities"));
+    await waitFor(() => expect(popup).toHaveBeenCalled());
+    expect(seen).toContain("Ignore Actionability (force)");
+    await waitFor(() => expect(onEdit).toHaveBeenCalledWith({ force: true }));
+  });
+
+  it("keeps the toggle off non-click steps", async () => {
+    const seen: string[] = [];
+    const popup = vi.fn(async (opts: { items: { label?: string; commandId?: number }[] }) => {
+      for (const i of opts.items) if (i.label) seen.push(i.label);
+      return {};
+    });
+    (window as unknown as { glazeAPI: { Menu: unknown } }).glazeAPI = { Menu: { popup } };
+    render(
+      <StepRow
+        index={0}
+        step={step({ type: "fill", locator: LOCATOR, value: "x" })}
+        onEdit={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("Step utilities"));
+    await waitFor(() => expect(popup).toHaveBeenCalled());
+    expect(seen).not.toContain("Ignore Actionability (force)");
+  });
+});
