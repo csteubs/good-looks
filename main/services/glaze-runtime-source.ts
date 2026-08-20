@@ -17,6 +17,14 @@
 //
 // Plain JavaScript (no TypeScript) because Playwright loads it through its own
 // Babel transform, which does not understand `import type`.
+//
+//  • glazeA11yGate: the a11y GATE step — axe at this point in the test, FAIL
+//    on new violations at/above the impact floor. Its decision logic is NOT
+//    written here: `gateFailures` is imported from shared/a11y-rollup.mjs and
+//    embedded via toString(), the step-semantics idiom, so the gate and the
+//    app's baseline bookkeeping can never disagree about what a key means.
+
+import { gateFailures } from "../../shared/a11y-rollup.mjs";
 
 export const GLAZE_RUNTIME_FILE = "glaze-runtime.mjs";
 
@@ -94,6 +102,78 @@ export async function glazeScrollTo(page, x, y) {
     }
     last = pos;
     await page.waitForTimeout(80);
+  }
+}
+
+/** Which violations fail an accessibility gate. Embedded from
+ *  shared/a11y-rollup.mjs — do not edit here; the app's baseline bookkeeping
+ *  uses the same rule and the two must never drift. */
+const glazeGateFailures = ${gateFailures.toString()};
+
+/**
+ * Accessibility GATE: run axe against the page as it is RIGHT NOW and throw
+ * on any new violation at or above "minImpact".
+ *
+ * "New" means not in the accepted baseline, which arrives as the
+ * GLAZE_A11Y_BASELINE env JSON (set by Good Looks! from the test's accepted
+ * violations). Outside the app the env is absent, so the gate is at its
+ * strictest — every violation at the floor fails. That direction is safe:
+ * strictness surfaces findings; the other direction silently passes them.
+ *
+ * axe is injected here if the per-step capture toggle didn't already inject
+ * it: from GLAZE_AXE_PATH when the app is driving, else from a local
+ * axe-core install. page.evaluate runs through the driver, so a page CSP
+ * cannot block the injection the way it would a script tag.
+ */
+export async function glazeA11yGate(page, minImpact) {
+  const hasAxe = await page.evaluate(() => typeof window.axe !== "undefined");
+  if (!hasAxe) {
+    const fs = await import("fs");
+    let src = null;
+    const fromEnv = process.env.GLAZE_AXE_PATH || "";
+    if (fromEnv) {
+      try { src = fs.readFileSync(fromEnv, "utf8"); } catch (err) { src = null; }
+    }
+    if (!src) {
+      try {
+        const { createRequire } = await import("module");
+        const req = createRequire(import.meta.url);
+        src = fs.readFileSync(req.resolve("axe-core/axe.min.js"), "utf8");
+      } catch (err) { src = null; }
+    }
+    if (!src) {
+      throw new Error(
+        "Accessibility gate: axe-core was not found. Run from Good Looks!, or npm install axe-core next to this spec.",
+      );
+    }
+    await page.evaluate(src);
+  }
+  const violations = await page.evaluate(async (caps) => {
+    const res = await window.axe.run(document, {
+      resultTypes: ["violations"],
+      reporter: "v2",
+    });
+    return (res.violations || []).slice(0, caps.maxViolations).map((v) => ({
+      id: v.id,
+      impact: v.impact || "minor",
+      help: v.help,
+      nodes: (v.nodes || []).slice(0, caps.maxNodes).map((n) => (n.target || []).join(" ")),
+    }));
+  }, { maxViolations: 25, maxNodes: 5 });
+
+  let baseline = [];
+  try { baseline = JSON.parse(process.env.GLAZE_A11Y_BASELINE || "[]"); } catch (err) { baseline = []; }
+  const failures = glazeGateFailures(violations, minImpact, baseline);
+  if (failures.length > 0) {
+    const lines = failures.map((f) =>
+      "  [" + f.impact + "] " + f.id + (f.help ? " — " + f.help : "") +
+      (f.nodes[0] ? " (" + f.nodes.slice(0, 3).join(", ") + ")" : ""),
+    );
+    throw new Error(
+      "Accessibility gate failed — " + failures.length +
+      (failures.length === 1 ? " new violation" : " new violations") +
+      " at or above \\"" + minImpact + "\\":\\n" + lines.join("\\n"),
+    );
   }
 }
 `;

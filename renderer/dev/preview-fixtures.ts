@@ -176,6 +176,8 @@ export const TESTS: TestRecord[] = [
       // "download" chip and the worded description with its capture note.
       { type: "click", locator: { k: "role", role: "button", name: "Export results" } },
       { type: "download", value: "results.csv", captureVar: "exportName" },
+      // An accessibility gate — renders the "a11y" chip and the worded floor.
+      { type: "a11y", a11yImpact: "serious" },
       // A positional-path locator — the recorder's last-resort shape — so the
       // fragility glyph and the detail view's rollup callout render.
       { type: "click", locator: { k: "xpath", v: "/html[1]/body[1]/div[3]/button[2]" } },

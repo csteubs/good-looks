@@ -43,6 +43,7 @@ const SYNTAX: Record<SyntaxTheme, Record<StepType, string>> = {
     assert: "#d7c98a",
     state: "#d7c98a",
     download: "#d7c98a",
+    a11y: "#d7c98a",
     // Control flow and waiting — the things that change what runs.
     if: "#b9a6e0",
     else: "#b9a6e0",

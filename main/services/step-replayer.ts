@@ -538,6 +538,12 @@ export function buildReplayScript(step: Step): string {
       log("info", "download expectations are verified on runs — the training browser cancels transfers");
       return { ok: true };
     }
+    // Same honesty rule as download: the preview does not carry axe, so a
+    // green row must never read as "accessibility was checked".
+    if (t === "a11y") {
+      log("info", "accessibility gates run on RUNS — the preview does not check");
+      return { ok: true };
+    }
     if (t === "goto") { log("info", "goto runs at test start; skipped in preview"); return { ok: true, error: "goto runs at test start; skipped in preview" }; }
     // Unreachable in the trainer: runStep dispatches viewport steps to
     // resize-service, which resizes the native window (a page cannot resize the

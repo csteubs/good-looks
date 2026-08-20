@@ -290,6 +290,16 @@ export function describeStep(step: Step): string {
   if (step.type === "else") return "else";
   if (step.type === "loop") return "repeat " + (step.loopCount ?? 1) + " times";
   if (step.type === "endLoop") return "end repeat";
+  // Mirror of the backend phrase — pinned by describe-step-parity.test.ts.
+  if (step.type === "a11y") {
+    const impact =
+      step.a11yImpact === "minor" ||
+      step.a11yImpact === "moderate" ||
+      step.a11yImpact === "critical"
+        ? step.a11yImpact
+        : "serious";
+    return "check accessibility (fail on " + impact + " or worse)";
+  }
   if (step.type === "download") {
     const name = step.value ?? "";
     const base =

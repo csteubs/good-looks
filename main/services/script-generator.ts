@@ -6,6 +6,7 @@ import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import {
   cookieScopeIsValid,
   ELEMENT_STATES,
+  isA11yImpact,
   isCssPropName,
   isValidVariableName,
   MAX_FLOW_REPEAT,
@@ -687,6 +688,14 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
           "await glazeScrollTo(page, " + num(step.scrollX, 0) + ", " + num(step.scrollY, 0) + ");"
         );
       return null;
+    case "a11y": {
+      // The impact interpolated into source comes from OUR allowlist, never
+      // from the step field — same independent-guard rule as num()/q(). An
+      // unknown value (possible only if the boundary is bypassed) falls back
+      // to the default rather than reaching the spec.
+      const impact = isA11yImpact(step.a11yImpact) ? step.a11yImpact : "serious";
+      return 'await glazeA11yGate(page, "' + impact + '");';
+    }
     // A runFlow step emits no line of its own — its target flow's steps are
     // inlined in its place by `expandSteps` before generation reaches here.
     case "runFlow":
@@ -743,6 +752,14 @@ export function describeStep(step: Step): string {
   if (step.type === "else") return "else";
   if (step.type === "loop") return "repeat " + (step.loopCount ?? 1) + " times";
   if (step.type === "endLoop") return "end repeat";
+  // Phrase, not the helper line — glazeA11yGate(...) names the mechanism.
+  // Kept in sync with the mirror in renderer/lib/describe-step.ts.
+  if (step.type === "a11y")
+    return (
+      "check accessibility (fail on " +
+      (isA11yImpact(step.a11yImpact) ? step.a11yImpact : "serious") +
+      " or worse)"
+    );
   if (step.type === "download") {
     const name = step.value ?? "";
     const base =
@@ -1174,10 +1191,12 @@ export function generateSpecDetailed(
   const needsScroll = expanded.some(
     (e) => !e.problem && e.step.type === "scroll" && !e.step.locator,
   );
+  const needsA11y = expanded.some((e) => !e.problem && e.step.type === "a11y");
   const preamble = ['import { test, expect } from "@playwright/test";'];
   const runtimeNames = [
     ...(needsCapture ? ["glazeCapture"] : []),
     ...(needsScroll ? ["glazeScrollTo"] : []),
+    ...(needsA11y ? ["glazeA11yGate"] : []),
   ];
   if (runtimeNames.length > 0) {
     preamble.push(`import { ${runtimeNames.join(", ")} } from "./${GLAZE_RUNTIME_FILE}";`);

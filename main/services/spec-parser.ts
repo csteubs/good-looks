@@ -1011,6 +1011,26 @@ function parseBody(
       continue;
     }
 
+    // glazeA11yGate(page, "<impact>") — the accessibility gate step. The
+    // impact must be one of the four axe levels; anything else is a
+    // hand-written call and counts skipped rather than half-parsing.
+    const a11yM = rest.match(/^[\s;]*(?:await\s+|return\s+)?glazeA11yGate\s*\(/);
+    if (a11yM) {
+      const openIdx = i + a11yM[0].length - 1;
+      const close = matchParen(src, openIdx);
+      if (close < 0) break;
+      const argM = src
+        .slice(openIdx + 1, close)
+        .match(/^\s*page\s*,\s*"(minor|moderate|serious|critical)"\s*$/);
+      if (argM) {
+        steps.push(makeStep("a11y", { a11yImpact: argM[1] as Step["a11yImpact"] }));
+      } else {
+        skipped++;
+      }
+      i = close + 1;
+      continue;
+    }
+
     // page.goto("…")
     const gotoM = rest.match(/^[\s;]*(?:await\s+|return\s+)?page\.goto\s*\(/);
     if (gotoM) {

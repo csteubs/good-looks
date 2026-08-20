@@ -11,6 +11,12 @@ export declare function violationKey(id: string, target: string): string;
 
 export declare function keysOf(v: { id: string; nodes?: string[] }): string[];
 
+export declare function gateFailures(
+  violations: { id: string; impact?: string; help?: string; nodes?: string[] }[],
+  minImpact: string,
+  baselineKeys: string[],
+): { id: string; impact: string; help: string; nodes: string[] }[];
+
 export declare function selectLatestA11yRuns<
   T extends { testId: string; startedAt: number; kind?: string; a11yChecks?: number },
 >(runs: readonly T[]): T[];

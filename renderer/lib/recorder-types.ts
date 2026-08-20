@@ -12,6 +12,10 @@ export type { ProxySource, ProxyTraffic };
 export type DownloadMatch = "contains" | "exact";
 export const DOWNLOAD_MATCHES: DownloadMatch[] = ["contains", "exact"];
 
+/** axe impact scale, weakest first — mirror of main/recorder/types.ts. */
+export const A11Y_IMPACTS = ["minor", "moderate", "serious", "critical"] as const;
+export type A11yImpact = (typeof A11Y_IMPACTS)[number];
+
 export type StepType =
   | "goto"
   | "click"
@@ -33,7 +37,8 @@ export type StepType =
   | "runFlow"
   | "state"
   | "scroll"
-  | "download";
+  | "download"
+  | "a11y";
 
 /** Predicate for an `if` step. Element conditions use `Step.locator`; page
  *  conditions (urlContains/titleContains) use `Step.value` as the substring. */
@@ -253,6 +258,7 @@ export interface Step {
   cond?: ConditionKind;
   loopCount?: number;
   downloadMatch?: DownloadMatch;
+  a11yImpact?: A11yImpact;
   text?: string;
   soft?: boolean;
   force?: boolean;
@@ -342,6 +348,7 @@ export interface RawStep {
   cond?: ConditionKind;
   loopCount?: number;
   downloadMatch?: DownloadMatch;
+  a11yImpact?: A11yImpact;
   text?: string;
   soft?: boolean;
   force?: boolean;
