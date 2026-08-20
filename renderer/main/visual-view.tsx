@@ -52,7 +52,6 @@ import type {
   Annotation,
   ReplayStep,
   ReplayStepStatus,
-  RunNoticeKind,
   DiffRegion,
   RunReplay,
   RunReplaySummary,
@@ -1600,36 +1599,6 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
     },
   });
 
-  // Waving a banner off, as opposed to signing off on what it reports. The
-  // undo is not a nicety: dismissing is one click on a control that sits beside
-  // an irreversible one, and without a way back the two read as equally
-  // dangerous.
-  const restoreNotice = useMutation({
-    mutationFn: (kind: RunNoticeKind) =>
-      api.artifacts.restoreNotice(summary.testId, summary.runId, kind),
-    onSuccess: (replay) => patchReplay(replay),
-  });
-  const dismissNotice = useMutation({
-    mutationFn: (kind: RunNoticeKind) =>
-      api.artifacts.dismissNotice(summary.testId, summary.runId, kind),
-    onSuccess: (replay, kind) => {
-      patchReplay(replay);
-      toast.success(
-        kind === "visual"
-          ? "Visual changes dismissed for this run."
-          : "Accessibility issues dismissed for this run.",
-        {
-          description: "Nothing was accepted — the findings are still on the run's steps.",
-          action: {
-            label: "Undo",
-            onClick: () => restoreNotice.mutate(kind),
-          },
-        },
-      );
-    },
-    onError: (err) => toast.error(`Couldn't dismiss: ${err}`),
-  });
-
   if (replayQuery.isLoading) {
     return (
       <Panel title="Replay" className="gl-visual-viewer">
@@ -1674,10 +1643,6 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
       ? steps.filter((s) => s.diff?.state === "changed" || s.index === idx)
       : steps;
   const a11yCount = countA11ySteps(steps);
-  // Read off the replay, not component state: the banner has to stay gone after
-  // the user selects another run and comes back, which is where a local flag
-  // would quietly reset.
-  const dismissed = new Set(replay.dismissedNotices ?? []);
   const canDiff = Boolean(step.diff?.diffFile);
   const hasBaselineView =
     step.diff !== undefined && step.diff.state !== "unable" && Boolean(step.screenshot);
@@ -1705,6 +1670,15 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
       {changedCount > 0 ? (
         <span className="gl-chip-tone" style={toneSurface(TONE.amber)}>
           {changedCount} visual {changedCount === 1 ? "change" : "changes"}
+        </span>
+      ) : null}
+      {/* The accessibility count lived only in a full-width banner before, so
+          taking the banner away without this chip would make a run with a11y
+          findings read as clean. Amber for the same reason the banner was:
+          reported, never fatal. */}
+      {a11yCount > 0 ? (
+        <span className="gl-chip-tone" style={toneSurface(TONE.amber)}>
+          {a11yCount} a11y {a11yCount === 1 ? "issue" : "issues"}
         </span>
       ) : null}
       <div className="gl-visual-stepper">
@@ -1766,6 +1740,54 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
       <div className="gl-visual-head">
         <ThresholdControl testId={summary.testId} steps={steps} />
         <div className="gl-visual-head-tools">
+          {/* The run-wide accepts, as tools rather than banners. They used to
+              ride on two full-width notices above the stage, which pushed the
+              screenshot — the thing this screen exists to show — below the
+              fold on any run with findings. The counts those banners carried
+              are in the panel header now; what's left here is only the action.
+
+              ALWAYS RENDERED, DISABLED when the run has nothing to accept —
+              never mounted conditionally. This band's standing rule is that
+              its width is the same on every run (`check:narrow-layout` pins
+              it): a control that appears when a run has findings shoves
+              "Re-run" and "Masks & baselines" sideways exactly when someone
+              is reaching for them. Both stay `ghost`: signing off on a whole
+              run blind must never be the brightest thing on screen — the
+              affirmative tone is reserved for the per-step accept. */}
+          <AlertDialog
+            trigger={
+              <Btn
+                tone="ghost"
+                disabled={changedCount === 0 || acceptVisualRun.isPending}
+                title="Pin every step's current screenshot as its new baseline"
+              >
+                <Stamp aria-hidden="true" />
+                Accept visuals
+              </Btn>
+            }
+            title="Pin every screenshot in this run as the new baseline?"
+            description="Every step's current screenshot replaces its baseline, including steps that matched. Later runs are compared against these frames, so anything wrong in them becomes the expected result."
+            confirmLabel="Accept all"
+            confirmVariant="accent"
+            onConfirm={() => acceptVisualRun.mutate()}
+          />
+          <AlertDialog
+            trigger={
+              <Btn
+                tone="ghost"
+                disabled={a11yCount === 0 || acceptA11yRun.isPending}
+                title="Accept every unaccepted accessibility issue in this run"
+              >
+                <Stamp aria-hidden="true" />
+                Accept a11y
+              </Btn>
+            }
+            title="Accept every accessibility issue in this run?"
+            description="They stop being flagged on future runs. Use this to establish a starting point on a site with pre-existing issues — new problems introduced later will still show up."
+            confirmLabel="Accept all"
+            confirmVariant="accent"
+            onConfirm={() => acceptA11yRun.mutate()}
+          />
           <Btn
             tone="ghost"
             disabled={rerunning}
@@ -1793,115 +1815,32 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         stepLabelById={new Map(steps.map((st) => [st.stepId, st.label]))}
       />
 
-      {/* THE THREE NOTICES, in one band. A run can carry all three at once — it
-          failed, frames changed, and axe found something — and each is a
-          `.gl-notice` with an inset rail in the tone the finding takes, rather
-          than the SDK callout's filled rounded box. Three of those stacked over
-          a screenshot is a wall of colour above the one thing this screen
-          exists to show. */}
-      {replay.failedIndex !== null || (changedCount > 0 && !dismissed.has("visual")) ||
-      (a11yCount > 0 && !dismissed.has("a11y")) ? (
+      {/* ONE NOTICE LEFT: the failure. Visual changes and accessibility
+          findings used to stack two more full-width banners here, each mostly
+          restating a count with a run-wide accept riding on it — which pushed
+          the screenshot, the one thing this screen exists to show, below the
+          fold on exactly the runs worth looking at. The counts are chips in
+          the panel header now and the accepts are in the tool band above; the
+          failure keeps its banner because it carries something neither chip
+          nor button can: which step, and the jump to it. */}
+      {replay.failedIndex !== null ? (
         <div className="gl-visual-notices">
-          {replay.failedIndex !== null ? (
-            <div className="gl-notice gl-visual-notice" style={{ boxShadow: insetRail(TONE.red) }}>
-              <span className="gl-visual-notice-icon">
-                <TriangleAlert aria-hidden="true" />
+          <div className="gl-notice gl-visual-notice" style={{ boxShadow: insetRail(TONE.red) }}>
+            <span className="gl-visual-notice-icon">
+              <TriangleAlert aria-hidden="true" />
+            </span>
+            <div className="gl-visual-notice-body">
+              <span>
+                Run failed at step {replay.failedIndex + 1}:{" "}
+                <code className="gl-mono-value">{steps[replay.failedIndex]?.label}</code>
               </span>
-              <div className="gl-visual-notice-body">
-                <span>
-                  Run failed at step {replay.failedIndex + 1}:{" "}
-                  <code className="gl-mono-value">{steps[replay.failedIndex]?.label}</code>
-                </span>
-                {idx !== replay.failedIndex ? (
-                  <Btn tone="ghost" onClick={() => setCurrent(replay.failedIndex as number)}>
-                    Jump to failure
-                  </Btn>
-                ) : null}
-              </div>
+              {idx !== replay.failedIndex ? (
+                <Btn tone="ghost" onClick={() => setCurrent(replay.failedIndex as number)}>
+                  Jump to failure
+                </Btn>
+              ) : null}
             </div>
-          ) : null}
-
-          {/* Two exits, and they mean different things — which is the reason
-              both are here. "Accept all" REPINS every baseline and changes what
-              every later run compares against; dismissing changes nothing but
-              the notice. Offering only the first would have made signing off
-              blind the cheapest way to clear the screen — so the accept stays
-              `ghost`, and the affirmative tone is spent on the per-step button
-              this very sentence points at. */}
-          {changedCount > 0 && !dismissed.has("visual") ? (
-            <div className="gl-notice gl-visual-notice" style={{ boxShadow: insetRail(TONE.amber) }}>
-              <span className="gl-visual-notice-icon">
-                <Eye aria-hidden="true" />
-              </span>
-              <div className="gl-visual-notice-body">
-                <span>
-                  Visual change detected in {changedCount} {changedCount === 1 ? "step" : "steps"}{" "}
-                  (over {fmtPct((replay.visualThreshold ?? 0) / 100)} threshold). Use the per-step
-                  "Accept New Baseline" button to re-pin a step.
-                </span>
-                <AlertDialog
-                  trigger={
-                    <Btn tone="ghost" disabled={acceptVisualRun.isPending}>
-                      <Stamp aria-hidden="true" />
-                      Accept all for this run
-                    </Btn>
-                  }
-                  title="Pin every screenshot in this run as the new baseline?"
-                  description="Every step's current screenshot replaces its baseline, including steps that matched. Later runs are compared against these frames, so anything wrong in them becomes the expected result."
-                  confirmLabel="Accept all"
-                  confirmVariant="accent"
-                  onConfirm={() => acceptVisualRun.mutate()}
-                />
-              </div>
-              <button
-                type="button"
-                className="gl-icon-btn gl-visual-notice-dismiss"
-                aria-label="Dismiss visual changes for this run"
-                onClick={() => dismissNotice.mutate("visual")}
-              >
-                <X aria-hidden="true" />
-              </button>
-            </div>
-          ) : null}
-
-          {/* Accessibility, as its own notice rather than folded into the visual
-              one: they are different kinds of finding, and a run can easily have
-              one without the other. Never affects the run's pass/fail, which is
-              why it is amber and not red. */}
-          {a11yCount > 0 && !dismissed.has("a11y") ? (
-            <div className="gl-notice gl-visual-notice" style={{ boxShadow: insetRail(TONE.amber) }}>
-              <span className="gl-visual-notice-icon">
-                <Accessibility aria-hidden="true" />
-              </span>
-              <div className="gl-visual-notice-body">
-                <span>
-                  {a11yCount} {a11yCount === 1 ? "step has" : "steps have"} accessibility issues that
-                  aren't accepted yet. This doesn't affect whether the run passed.
-                </span>
-                <AlertDialog
-                  trigger={
-                    <Btn tone="ghost" disabled={acceptA11yRun.isPending}>
-                      <Stamp aria-hidden="true" />
-                      Accept all for this run
-                    </Btn>
-                  }
-                  title="Accept every accessibility issue in this run?"
-                  description="They stop being flagged on future runs. Use this to establish a starting point on a site with pre-existing issues — new problems introduced later will still show up."
-                  confirmLabel="Accept all"
-                  confirmVariant="accent"
-                  onConfirm={() => acceptA11yRun.mutate()}
-                />
-              </div>
-              <button
-                type="button"
-                className="gl-icon-btn gl-visual-notice-dismiss"
-                aria-label="Dismiss accessibility issues for this run"
-                onClick={() => dismissNotice.mutate("a11y")}
-              >
-                <X aria-hidden="true" />
-              </button>
-            </div>
-          ) : null}
+          </div>
         </div>
       ) : null}
 
@@ -2331,7 +2270,12 @@ function RunList({
                 </span>
               </span>
               <span className="gl-visual-run-meta">
-                <StatusChip tone={r.status === "passed" ? "phos" : "red"}>{r.status}</StatusChip>
+                {/* Marks BEFORE the chip, on its line. They used to hang on a
+                    strip of their own under the chip, where two 11px icons
+                    right-aligned beneath a bordered label read as misaligned
+                    debris rather than as findings. One row, centred against
+                    the chip, and the chip keeps the trailing edge so every
+                    row's verdict lines up down the list. */}
                 <span className="gl-visual-run-marks">
                   {r.changedSteps > 0 ? <Eye aria-label="visual change" /> : null}
                   {/* The summary has carried this count since the feature landed
@@ -2344,6 +2288,7 @@ function RunList({
                     <Accessibility aria-label="accessibility issues" />
                   ) : null}
                 </span>
+                <StatusChip tone={r.status === "passed" ? "phos" : "red"}>{r.status}</StatusChip>
               </span>
             </button>
           );

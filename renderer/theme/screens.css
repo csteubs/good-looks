@@ -3613,22 +3613,22 @@
   white-space: nowrap;
 }
 
+/* ONE ROW, marks then chip, centred on each other. The marks used to sit on
+   their own strip UNDER the chip, right-aligned — two 11px icons dangling off
+   a bordered label read as misalignment, not as information. Inline, the chip
+   sets the row's height by itself, so rows no longer needed a reserved strip
+   to stay uniform. */
 .gl-visual-run-meta {
   flex: 0 0 auto;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 3px;
+  align-items: center;
+  gap: 6px;
 }
 
-/* The marks keep their strip whether or not a run has any, so a list of runs
-   does not change row height depending on what each one found. */
 .gl-visual-run-marks {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 4px;
-  height: 11px;
 }
 
 /* AMBER, BOTH OF THEM, and the shapes are what separate them. A visual change
@@ -3709,11 +3709,11 @@
 
 /* ── The notices ──────────────────────────────────────────────────────── */
 
-/* Three of them, and a run can have all three at once: it failed, frames
-   changed, and axe found something. They are `.gl-notice` with an inset rail in
-   the tone the finding takes — the same motif every status in this design uses,
-   rather than the SDK callout's filled rounded box, which at three stacked is a
-   wall of colour above the picture the screen exists to show. */
+/* One left: the failure. The visual-change and accessibility banners moved
+   into the panel header (as count chips) and the tool band (as the run-wide
+   accepts) — two full-width notices restating counts pushed the screenshot
+   below the fold on exactly the runs worth looking at. The failure keeps its
+   banner because it names the step and offers the jump to it. */
 .gl-visual-notices {
   display: flex;
   flex-direction: column;
@@ -3747,11 +3747,6 @@
   gap: 8px;
   min-width: 0;
   flex: 1 1 auto;
-}
-
-.gl-visual-notice-dismiss {
-  flex: 0 0 auto;
-  margin-inline-start: auto;
 }
 
 /* ── The stage ────────────────────────────────────────────────────────── */

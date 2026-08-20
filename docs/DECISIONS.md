@@ -8698,3 +8698,39 @@ fix (a flow's plain variables bind to the flow's own values; secrets/captured
 surface into the caller's header and env), caller-spec propagation in
 `testStore.save`, the library surface (used-by, guarded delete, unwrap, rail
 section), trainer multi-select and extraction, and inline flow editing.
+
+## 2026-08-19 — The Visual view's findings banners become chips and tool-band accepts
+
+The Visual view stacked up to three full-width notices between the tool band
+and the stage: the failure, the visual changes, and the accessibility
+findings. The last two each restated a count and carried an "Accept all for
+this run" button — on exactly the runs worth looking at, they pushed the
+screenshot (the one thing the screen exists to show) below the fold. They are
+gone. The counts are amber chips in the panel header beside the verdict
+("N visual changes", "N a11y issues" — the a11y count previously existed
+NOWHERE but its banner, so the chip is load-bearing, not decoration), and the
+run-wide accepts are two ghost buttons in the tool band ("Accept visuals",
+"Accept a11y"), each still behind its confirm dialog. The failure keeps its
+banner because it carries what neither a chip nor a button can: which step,
+and the jump to it.
+
+Two decisions inside that:
+
+- **The accepts are disabled when the run has nothing to accept, never
+  unmounted.** The band's standing rule is one width on every run
+  (`check:narrow-layout`): a control that mounts when findings appear shoves
+  "Re-run" and "Masks & baselines" sideways exactly when someone reaches for
+  them. The check now pins the new shape — no conditional mount on
+  `changedCount`/`a11yCount` in the band, and both accepts present and
+  disabled-gated.
+- **Dismissal left this screen with the banners.** Dismiss existed to wave a
+  full-width banner off without accepting what it reported; a chip and a
+  disabled-able button are not noise that needs waving off. The flag and its
+  ops (`run-notice-ops.ts`, `RunReplay.dismissedNotices`) survive — the
+  test's Accessibility tab still writes them — and the visual kind stays
+  valid data on old replays.
+
+The run list's finding marks (the eye / accessibility icons) also moved from
+a strip UNDER the pass/fail chip to the same row, before it: two 11px icons
+right-aligned beneath a bordered label read as misaligned debris, and the
+row's height no longer depends on a reserved strip.

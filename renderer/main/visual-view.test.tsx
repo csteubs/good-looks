@@ -13,10 +13,8 @@
 // run-selection behavior, where the failure mode is a blank pane.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-
-import { clearToastCalls, toastCalls } from "../__tests__/sonner-stub";
 
 import type { RunReplaySummary, VisualDiff } from "../lib/recorder-types";
 import { DiffBadge, VisualView, framesOverThreshold } from "./visual-view";
@@ -33,9 +31,9 @@ let shot: string | null = null;
 let baselineShot: string | null = null;
 let baselines: unknown[] = [];
 
-// The four exits from a findings banner. Each returns the replay the way the
-// real handler does — patched, so the view re-renders from the same object the
-// backend would hand back rather than from a local guess.
+// The two run-wide accepts. Each returns the replay the way the real handler
+// does — patched, so the view re-renders from the same object the backend
+// would hand back rather than from a local guess.
 const acceptVisualRun = vi.fn(async () => {
   const r = replayDetail as { steps: { screenshot?: string | null; diff?: unknown }[] };
   for (const s of r.steps) if (s.screenshot) s.diff = { state: "match", ratio: 0, threshold: 0.2 };
@@ -46,17 +44,6 @@ const acceptA11yRun = vi.fn(async () => {
   for (const s of r.steps) if (s.a11y) s.a11y = { ...s.a11y, newKeys: [], acceptedCount: 1 };
   return replayDetail;
 });
-const dismissNotice = vi.fn(async (_testId: string, _runId: string, kind: string) => {
-  const r = replayDetail as { dismissedNotices?: string[] };
-  r.dismissedNotices = [...new Set([...(r.dismissedNotices ?? []), kind])];
-  return replayDetail;
-});
-const restoreNotice = vi.fn(async (_testId: string, _runId: string, kind: string) => {
-  const r = replayDetail as { dismissedNotices?: string[] };
-  r.dismissedNotices = (r.dismissedNotices ?? []).filter((k) => k !== kind);
-  return replayDetail;
-});
-
 vi.mock("../lib/api", () => ({
   api: {
     artifacts: {
@@ -64,8 +51,6 @@ vi.mock("../lib/api", () => ({
       getReplay: async (_testId: string, runId: string) =>
         replayById ? (replayById[runId] ?? null) : replayDetail,
       readShot: async () => shot,
-      dismissNotice: (...a: Parameters<typeof dismissNotice>) => dismissNotice(...a),
-      restoreNotice: (...a: Parameters<typeof restoreNotice>) => restoreNotice(...a),
     },
     runs: { list: async () => [] },
     visual: {
@@ -242,13 +227,14 @@ describe("VisualView run selection", () => {
   });
 });
 
-// Accepting and dismissing are NOT two words for the same button, and the whole
-// point of these tests is that the screen keeps them apart. Accepting re-pins a
-// baseline or pins violations onto the test record — it changes what every later
-// run reports. Dismissing changes one run's banner and nothing else. Before this
-// there was no dismiss at all, so the cheapest way to clear a nagging screen was
-// to accept findings you had not looked at.
-describe("clearing a run's findings banners", () => {
+// The run-wide accepts live in the tool band and the counts in the panel
+// header — the full-width findings banners are GONE, deliberately. Each banner
+// restated a count with a run-wide accept riding on it, and together they
+// pushed the screenshot below the fold on exactly the runs worth looking at.
+// What these tests pin: the accepts still work from their smaller home, the
+// counts survive as chips (a11y's count lived ONLY in its banner before), and
+// the banners stay gone.
+describe("run-wide accepts in the tool band", () => {
   beforeEach(() => {
     // Not optional here: half these tests assert a mock was NOT called, and
     // without a reset they pass or fail on the previous test's clicks.
@@ -308,83 +294,73 @@ describe("clearing a run's findings banners", () => {
     fireEvent.click(confirm);
   }
 
-  it("offers a run-wide accept for VISUAL changes, not just per-step", async () => {
-    // The gap this closes: accessibility had "Accept all for this run" from the
-    // start and visual did not, so re-pinning a twenty-step run meant twenty
-    // clicks — and the two banners taught contradictory mental models.
+  it("accepts every visual change from the tool band", async () => {
     renderVisual();
-    await screen.findByText(/Visual change detected/);
-    await confirmFrom(/Accept all for this run/);
+    await confirmFrom(/^Accept visuals$/);
     await waitFor(() => expect(acceptVisualRun).toHaveBeenCalledWith("t1", "r1"));
-    // The banner goes because the FINDINGS went, which is what makes accept
-    // different from dismiss: nothing is left to report.
-    await waitFor(() => expect(screen.queryByText(/Visual change detected/)).toBeNull());
+    // The button DISABLES because the findings went: the patched replay reads
+    // "match" on every frame, so there is nothing left to accept. Disabled
+    // rather than unmounted — removing it would change the tool band's width,
+    // which is the reflow `check:narrow-layout` pins against.
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: /^Accept visuals$/ }) as HTMLButtonElement).disabled,
+      ).toBe(true),
+    );
   });
 
-  it("dismisses the visual banner without touching a single baseline", async () => {
+  it("accepts every accessibility issue from the tool band", async () => {
     renderVisual();
-    await screen.findByText(/Visual change detected/);
-    fireEvent.click(screen.getByLabelText("Dismiss visual changes for this run"));
-    await waitFor(() => expect(screen.queryByText(/Visual change detected/)).toBeNull());
-    expect(dismissNotice).toHaveBeenCalledWith("t1", "r1", "visual");
-    // The one assertion that separates this from the accept above. If dismiss
-    // ever grew into "accept quietly", this is what would notice.
+    await confirmFrom(/^Accept a11y$/);
+    await waitFor(() => expect(acceptA11yRun).toHaveBeenCalledWith("t1", "r1"));
     expect(acceptVisualRun).not.toHaveBeenCalled();
-    const steps = (replayDetail as { steps: { diff?: { state: string } }[] }).steps;
-    expect(steps[0].diff?.state).toBe("changed");
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: /^Accept a11y$/ }) as HTMLButtonElement).disabled,
+      ).toBe(true),
+    );
   });
 
-  it("dismisses the accessibility banner without accepting the violations", async () => {
+  it("asks before either run-wide accept fires", async () => {
+    // Both accepts change what every LATER run compares against or reports.
+    // A single misclick in a toolbar must not re-pin twenty baselines.
     renderVisual();
-    await screen.findByText(/accessibility issues that/);
-    fireEvent.click(screen.getByLabelText("Dismiss accessibility issues for this run"));
-    await waitFor(() => expect(screen.queryByText(/accessibility issues that/)).toBeNull());
-    expect(dismissNotice).toHaveBeenCalledWith("t1", "r1", "a11y");
-    expect(acceptA11yRun).not.toHaveBeenCalled();
-    const steps = (replayDetail as { steps: { a11y?: { newKeys: string[] } }[] }).steps;
-    expect(steps[1].a11y?.newKeys).toEqual(["color-contrast|.total"]);
+    const trigger = (await screen.findAllByRole("button", { name: /^Accept visuals$/ }))[0];
+    fireEvent.click(trigger);
+    await screen.findByRole("button", { name: "Accept all" });
+    expect(acceptVisualRun).not.toHaveBeenCalled();
   });
 
-  it("dismisses one banner without silencing the other", async () => {
-    // They are separate findings and a run can have either. Sharing one flag
-    // would hide an accessibility regression because someone waved off a pixel
-    // diff, which is the worst version of this feature.
+  it("carries both counts as header chips, not banners", async () => {
+    // The a11y count lived ONLY in its banner before; without this chip a run
+    // whose findings were accessibility ones would read as clean.
     renderVisual();
-    await screen.findByText(/Visual change detected/);
-    fireEvent.click(screen.getByLabelText("Dismiss visual changes for this run"));
-    await waitFor(() => expect(screen.queryByText(/Visual change detected/)).toBeNull());
-    expect(screen.getByText(/accessibility issues that/)).toBeTruthy();
-  });
-
-  it("keeps a banner dismissed on the replay, not in component state", async () => {
-    // A dismissal held in the component comes back the moment the user selects
-    // another run and returns — which is not a dismissal. Seeded on the replay
-    // here, exactly as a re-read from disk would deliver it.
-    (replayDetail as { dismissedNotices: string[] }).dismissedNotices = ["visual", "a11y"];
-    renderVisual();
-    await screen.findByText("Checkout");
-    await waitFor(() => {
-      if (!document.querySelector('[data-gl="crt"]')) throw new Error("not ready");
-    });
+    expect(await screen.findByText("1 visual change")).toBeTruthy();
+    expect(screen.getByText("1 a11y issue")).toBeTruthy();
+    // The banners themselves stay gone — they pushed the screenshot below the
+    // fold on exactly the runs worth looking at.
     expect(screen.queryByText(/Visual change detected/)).toBeNull();
     expect(screen.queryByText(/accessibility issues that/)).toBeNull();
   });
 
-  it("offers a way back from a dismissal", async () => {
-    // Dismiss sits one click away and beside an irreversible control; without an
-    // undo the two read as equally dangerous and the user uses neither.
-    clearToastCalls();
+  it("disables the run-wide accepts when the run has nothing to accept", async () => {
+    // Disabled, not unmounted: a control that appears only on runs with
+    // findings changes the tool band's width exactly when someone is reaching
+    // for the buttons beside it (`check:narrow-layout`).
+    const detail = replayDetail as { steps: Record<string, unknown>[] };
+    detail.steps = detail.steps.map((s) => ({
+      ...s,
+      diff: { state: "match", ratio: 0, threshold: 0.2 },
+      a11y: undefined,
+    }));
     renderVisual();
-    await screen.findByText(/Visual change detected/);
-    fireEvent.click(screen.getByLabelText("Dismiss visual changes for this run"));
-    await waitFor(() => expect(dismissNotice).toHaveBeenCalled());
-    const undo = toastCalls
-      .map((c) => (c.options as { action?: { label: string; onClick: () => void } } | undefined))
-      .find((o) => o?.action?.label === "Undo");
-    expect(undo).toBeTruthy();
-    act(() => undo!.action!.onClick());
-    await waitFor(() => expect(restoreNotice).toHaveBeenCalledWith("t1", "r1", "visual"));
-    expect(await screen.findByText(/Visual change detected/)).toBeTruthy();
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="crt"]')) throw new Error("not ready");
+    });
+    const visuals = screen.getByRole("button", { name: /^Accept visuals$/ }) as HTMLButtonElement;
+    const a11y = screen.getByRole("button", { name: /^Accept a11y$/ }) as HTMLButtonElement;
+    expect(visuals.disabled).toBe(true);
+    expect(a11y.disabled).toBe(true);
   });
 });
 
