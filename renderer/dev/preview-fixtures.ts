@@ -205,6 +205,11 @@ export const TESTS: TestRecord[] = [
       // A positional-path locator — the recorder's last-resort shape — so the
       // fragility glyph and the detail view's rollup callout render.
       { type: "click", locator: { k: "xpath", v: "/html[1]/body[1]/div[3]/button[2]" } },
+      // The teardown divider, with a step under it — the only way to see the
+      // row that says everything below it survives a failure, and the only
+      // place the divider's own styling is visible at all.
+      { type: "teardown" },
+      { type: "click", locator: { k: "role", role: "button", name: "Delete saved search" } },
       // Long enough to overflow the pane in both directions, which is the
       // state the step list's scrolling exists for and the one nothing in the
       // preview showed: 43 steps outrun the viewport vertically, and the fill

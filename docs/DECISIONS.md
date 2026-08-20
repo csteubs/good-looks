@@ -145,6 +145,79 @@ inverse in `spec-parser.ts` — a real feature with a real cost, and a separate
 one from this bookkeeping bug. The existing comments in `assertLine` already
 say so; this entry is the second half of that promise, naming what remains.
 
+### 2026-08-20 — Teardown is a divider and an error latch, not a `finally`
+
+The gap: a test that creates something — an account, an order, an uploaded
+file — has no way to clean it up when it fails, which is exactly when the
+cleanup matters. Every step after the failure is skipped, so the run leaves
+its mess behind and the NEXT run starts from a dirty state and fails for a
+reason that has nothing to do with the change being tested.
+
+**A divider, not a `teardown`/`endTeardown` pair.** Every other block in this
+vocabulary comes in halves, so a pair was the reflex. But there is nothing
+after a teardown: the block is the whole rest of the test, so a closing half
+could only ever be redundant (sitting on the last row) or contradictory
+(sitting anywhere else, with steps below it belonging to nothing). A single
+row that reads "everything below always runs" is also the thing the user
+actually wants to see. It costs the pair-balance machinery `if`/`loop`/`group`
+each carry, and it means no half can be deleted to strand the other.
+
+**`try { … } finally { … }` is the obvious emission and it is wrong.** When
+the body has already thrown and a cleanup step throws too, the error from
+`finally` REPLACES it — JavaScript keeps the last one. The run then reports
+"could not click Delete account" and the failure the user has to see is gone,
+which turns the feature into a way of LOSING failures. So the emission is an
+error latch: each half is caught, `glTeardownError` keeps the FIRST error, and
+a rethrow at the end is what keeps the test failing.
+
+```js
+let glTeardownError;
+try {
+  …body…
+} catch (e) { glTeardownError = e; }
+// ── teardown (always runs) ──
+try {
+  …teardown…
+} catch (e) { if (glTeardownError === undefined) glTeardownError = e; }
+if (glTeardownError !== undefined) throw glTeardownError;
+```
+
+The latch reads `=== undefined` rather than testing truthiness, because a
+thrown value can be falsy — `throw ""` is legal and a library rejecting with
+`null` is not exotic — and a latch that reads that as "nothing failed" turns a
+real failure into a green run.
+
+**Two refusals, both said out loud in the spec.** A divider nested inside an
+`if` or `loop` cannot be honoured: the block it opens would have to close
+across the enclosing brace, and a spec that does not parse is worse than a
+test with no teardown. A SECOND divider has no meaning either, since the first
+already claimed everything after it. Both degrade to a comment naming the
+reason, and both still round-trip — the refused comment is preserved through
+`stripComments` and reads back as the divider the user placed, so regeneration
+refuses it again rather than silently deleting a row from their step list.
+
+**The parser's matchers sit above two others and both orderings are
+load-bearing.** The generic continue-on-failure `try { … } catch { … }`
+matcher would take the latch's opening `try {` for a wrapper and read the
+ENTIRE test body back as one statement tagged `continueOnFailure`; the bare
+`}` closer would take the divider's leading `}` for an `endif`. They are
+anchored on the `glTeardownError` identifier rather than on the `── teardown ──`
+banner, because comments are stripped before the scan and a name that specific
+cannot appear by accident.
+
+**The test executes the emitted body rather than only reading it.** "Cleanup
+runs after a failure" is a claim about behaviour, and the naive `finally`
+satisfies every source-shape assertion while getting the behaviour wrong —
+verified by installing it: the cleanup-still-runs test stays green and
+`keeps the BODY's error when both halves fail` goes red, along with nine
+others. That is the discrimination the suite has to have.
+
+**A spec with no divider is untouched** — no wrapper, no extra indentation, no
+`glTeardownError` — so the whole library still regenerates byte-identically.
+`baseDepth` exists for that: every block-closing `Math.max` floors at it
+rather than at a hard-coded 1, which would un-indent the first `}` of a block
+that closed inside the wrapper.
+
 ### 2026-08-19 — Scroll depth becomes an explicit step, not a hidden modifier
 
 The failure this fixes: a test whose assertion targets content the page

@@ -532,6 +532,11 @@ export function buildReplayScript(step: Step): string {
     }
     if (t === "endLoop") { log("info", "end of repeat block"); return { ok: true }; }
     if (t === "group" || t === "endGroup") { log("info", "group marker - organization only, nothing runs"); return { ok: true }; }
+    // Same honesty rule as download/a11y: the divider's whole meaning is what
+    // happens AFTER a failure, and the trainer replays a step at a time with
+    // no failed run to recover from. A green row here must not read as "the
+    // teardown was proved to run".
+    if (t === "teardown") { log("info", "teardown divider - on a RUN everything below still runs after a failure; the preview just replays in order"); return { ok: true }; }
     // The preview cannot receive a download event — transfers are cancelled
     // during recording on purpose. Said out loud so a green row here is never
     // read as "the download was verified"; the RUN is what verifies it.

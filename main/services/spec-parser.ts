@@ -154,6 +154,16 @@ function stripComments(src: string): string {
         i += 2;
         continue;
       }
+      // A REFUSED teardown divider is a comment and nothing else — there is no
+      // code to anchor it to — so it has to survive the strip or the row the
+      // user placed disappears on the next round trip. The honoured divider
+      // needs no entry here: it is recognized by the `glTeardownError` latch
+      // itself, and its `── teardown ──` banner is decoration for the reader.
+      if (after.match(/^\s*teardown divider ignored/)) {
+        out += "//";
+        i += 2;
+        continue;
+      }
       const nl = src.indexOf("\n", i);
       if (nl < 0) break;
       i = nl;
@@ -757,6 +767,49 @@ function parseBody(
   let i = 0;
   while (i < src.length) {
     const rest = src.slice(i);
+
+    // ── The teardown latch ─────────────────────────────────────────────────
+    //
+    // Matched FIRST, before the brace closer and the continue-on-failure
+    // `try {` below, and both of those orderings are load-bearing. The generic
+    // wrapper matcher would take the latch's opening `try {` for a
+    // continue-on-failure wrapper and read the entire test body back as one
+    // statement tagged `continueOnFailure`; the brace closer would take the
+    // divider's leading `}` for an `endif`.
+    //
+    // Anchored on the `glTeardownError` identifier rather than on the
+    // `── teardown ──` banner, because comments are stripped above and a name
+    // this specific cannot appear by accident. Only the divider becomes a
+    // step — the open and close are scaffolding with no row of their own.
+    const tdOpenM = rest.match(/^[\s;]*let glTeardownError;\s*try\s*\{/);
+    if (tdOpenM) {
+      i += tdOpenM[0].length;
+      continue;
+    }
+    const tdSplitM = rest.match(
+      /^[\s;]*\}\s*catch\s*\(e\)\s*\{\s*glTeardownError = e;\s*\}\s*try\s*\{/,
+    );
+    if (tdSplitM) {
+      steps.push(makeStep("teardown", {}));
+      i += tdSplitM[0].length;
+      continue;
+    }
+    const tdCloseM = rest.match(
+      /^[\s;]*\}\s*catch\s*\(e\)\s*\{\s*if\s*\(glTeardownError === undefined\)\s*glTeardownError = e;\s*\}\s*if\s*\(glTeardownError !== undefined\)\s*throw glTeardownError;/,
+    );
+    if (tdCloseM) {
+      i += tdCloseM[0].length;
+      continue;
+    }
+    // A divider the generator refused still reads back as the row the user
+    // placed. Regeneration then refuses it again, so the round trip is a fixed
+    // point — dropping it instead would silently edit the user's step list.
+    const tdRefusedM = rest.match(/^[\s;]*\/\/\s*teardown divider ignored[^\r\n]*(?:\r?\n|$)/);
+    if (tdRefusedM) {
+      steps.push(makeStep("teardown", {}));
+      i += tdRefusedM[0].length;
+      continue;
+    }
 
     // Closing brace of a recognized block → the closer for whatever opened it.
     const braceM = rest.match(/^[\s;]*\}/);

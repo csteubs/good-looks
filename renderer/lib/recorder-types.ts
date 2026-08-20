@@ -50,6 +50,10 @@ export type StepType =
   | "aiCheck"
   | "group"
   | "endGroup"
+  // Everything below this divider runs even when a step above it failed.
+  // Mirror of the main-process type; see there for why it is a divider
+  // rather than a pair.
+  | "teardown"
   | "dialog";
 
 /** Predicate for an `if` step. Element conditions use `Step.locator`; page
