@@ -20,7 +20,8 @@
 
 import { randomUUID } from "crypto";
 
-import { regexPatternFromTemplate } from "../../shared/step-semantics.mjs";
+import { COMPARE_OPS, regexPatternFromTemplate } from "../../shared/step-semantics.mjs";
+import type { CompareOp } from "../../shared/step-semantics.mjs";
 import { parseTestIdSelector } from "../../shared/testid-attr.mjs";
 import { DEFAULT_WAIT_TIMEOUT_MS } from "./script-generator.js";
 import { fromPlaywrightSameSite, isSafeUploadRelPath } from "../recorder/types.js";
@@ -824,6 +825,26 @@ function matchBrace(s: string, openIdx: number): number {
  */
 function parseCondition(raw: string): Partial<Step> | null {
   const c = raw.trim();
+  // glazeCompare(V.<name>, "<op>", <expected>) — a variable condition. Matched
+  // FIRST: `parseLocator` below is happy to find nothing and return null, but
+  // an expected value that happens to contain a locator-shaped substring would
+  // otherwise get a chance to be misread.
+  const varM = c.match(/^glazeCompare\s*\(\s*V\.([A-Za-z_][A-Za-z0-9_]*)\s*,\s*"([a-zA-Z]+)"\s*,\s*/);
+  if (varM) {
+    const op = varM[2];
+    // The vocabulary is re-checked on the way IN as well as on the way out: a
+    // hand-edited spec is an untrusted-ish input, and an operator this app
+    // does not have would round-trip into a step the generator then refuses.
+    if (!(COMPARE_OPS as string[]).includes(op)) return null;
+    const rest = c.slice(varM[0].length, c.length - 1);
+    const value = parseValueArg(rest);
+    return {
+      cond: "variable",
+      captureVar: varM[1],
+      ...(op === "eq" ? {} : { compareOp: op as CompareOp }),
+      ...(value !== null ? { value: unescapeLit(value) } : {}),
+    };
+  }
   // Page-level conditions.
   //
   // The optional `.toLowerCase()` on both sides is the URL condition's case
@@ -853,6 +874,112 @@ function parseCondition(raw: string): Partial<Step> | null {
   else if (/\.isChecked\s*\(/.test(c)) cond = negated ? "unchecked" : "checked";
   if (!cond) return null;
   return { cond, locator: parsed.locator };
+}
+
+/**
+ * Read a `variable` assertion's matcher back into `{ compareOp, value }`.
+ *
+ * The generator emits real Playwright matchers rather than a boolean helper —
+ * see `variableAssertLine` for why — so the operator has to be recovered from
+ * WHICH matcher was called, plus whether it was negated. Every shape the
+ * generator writes is listed; anything else is a foreign refinement and returns
+ * null, which the caller counts as a skip.
+ *
+ * `eq` reads back as ABSENT rather than as `compareOp: "eq"`, because absent is
+ * what the generator treats as the default — a minimal step must round-trip
+ * shape-equal instead of growing a field.
+ */
+function parseVariableAssert(
+  src: string,
+  close: number,
+  after: string,
+  numeric: boolean,
+  _name: string,
+): { step: Record<string, unknown>; end: number } | null {
+  const m = after.match(
+    /^\s*(\.not)?\.(toBe|toContain|toMatch|toBeGreaterThan|toBeLessThan|toBeGreaterThanOrEqual|toBeLessThanOrEqual)\s*\(/,
+  );
+  if (!m) return null;
+  const negated = !!m[1];
+  const matcher = m[2];
+  const aOpen = close + 1 + after.indexOf("(", m[0].length - 1);
+  const aClose = matchParen(src, aOpen);
+  if (aClose < 0) return null;
+  const opts = parseTrailingOptions(src.slice(aOpen + 1, aClose), TIMEOUT_OPTION_KEYS);
+  if (opts === null) return null;
+  const argsStr = opts.before.trim();
+  const tOpt = opts.timeout !== null ? { timeoutMs: opts.timeout } : {};
+  const end = aClose + 1;
+
+  const NUMERIC: Record<string, CompareOp> = {
+    toBeGreaterThan: "gt",
+    toBeLessThan: "lt",
+    toBeGreaterThanOrEqual: "gte",
+    toBeLessThanOrEqual: "lte",
+  };
+  if (NUMERIC[matcher]) {
+    // The numeric matchers have no negated form in what the generator writes,
+    // and `Number(...)` on both sides is part of the shape — a bare argument
+    // is a hand-written variant this parser does not own.
+    if (negated || !numeric) return null;
+    const numArg = argsStr.match(/^Number\s*\(([\s\S]*)\)$/);
+    if (!numArg) return null;
+    const value = parseValueArg(numArg[1]);
+    return {
+      step: { compareOp: NUMERIC[matcher], ...(value !== null ? { value: unescapeLit(value) } : {}), ...tOpt },
+      end,
+    };
+  }
+  // Everything else compares the string form, so a `Number(...)` subject with a
+  // string matcher is a shape the generator never writes.
+  if (numeric) return null;
+
+  if (matcher === "toBe" || matcher === "toContain") {
+    const value = parseValueArg(argsStr);
+    const op: CompareOp =
+      matcher === "toBe" ? (negated ? "neq" : "eq") : negated ? "notContains" : "contains";
+    return {
+      step: {
+        ...(op === "eq" ? {} : { compareOp: op }),
+        ...(value !== null ? { value: unescapeLit(value) } : {}),
+        ...tOpt,
+      },
+      end,
+    };
+  }
+
+  // toMatch: `matches` carries the user's pattern verbatim, while
+  // starts/ends-with carry an ANCHORED, regex-escaped one. The anchors are what
+  // tell them apart, and they are read through the emitter's own inverse rather
+  // than by a second spelling of the template shape.
+  const reM = argsStr.match(
+    /^new\s+RegExp\s*\(\s*("(?:[^"\\]|\\.)*"|`(?:[^`\\]|\\.)*`)\s*\)$/,
+  );
+  if (!reM) return null;
+  const lit = reM[1];
+  const pattern = lit.charAt(0) === "`" ? regexPatternFromTemplate(lit) : unescapeLit(lit.slice(1, -1));
+  if (pattern === null) return null;
+  const anchoredStart = pattern.startsWith("^");
+  const anchoredEnd = pattern.endsWith("$");
+  if (!anchoredStart && !anchoredEnd) {
+    // A bare pattern is `matches`, and its value is the pattern AS TYPED — it
+    // was never regex-escaped on the way out, so it must not be unescaped on
+    // the way back.
+    return { step: { compareOp: "matches" as CompareOp, value: pattern, ...tOpt }, end };
+  }
+  if (anchoredStart && anchoredEnd) return null;
+  const bare = pattern.replace(/^\^/, "").replace(/\$$/, "");
+  const op: CompareOp = anchoredStart
+    ? negated
+      ? "notStartsWith"
+      : "startsWith"
+    : negated
+      ? "notEndsWith"
+      : "endsWith";
+  // ALWAYS unescape: the generator regex-escaped this on the way out, so
+  // leaving it escaped would re-escape it on the next regeneration and the
+  // value would drift a backslash further from what the user typed every time.
+  return { step: { compareOp: op, value: reUnescape(bare), ...tOpt }, end };
 }
 
 /** Parse the body of a single test callback into steps, plus a count of
@@ -1364,6 +1491,18 @@ function parseBody(
       continue;
     }
 
+    // glazeEcho(<message>) — the run-log line.
+    const echoM = rest.match(/^[\s;]*(?:await\s+|return\s+)?glazeEcho\s*\(/);
+    if (echoM) {
+      const openIdx = i + echoM[0].length - 1;
+      const close = matchParen(src, openIdx);
+      if (close < 0) break;
+      const text = parseValueArg(src.slice(openIdx + 1, close));
+      steps.push(makeStep("echo", text !== null ? { text: unescapeLit(text) } : {}));
+      i = close + 1;
+      continue;
+    }
+
     // glazeArmDialog(page, "<action>"[, text]) — the dialog-arming step.
     const dlgM = rest.match(/^[\s;]*(?:await\s+|return\s+)?glazeArmDialog\s*\(/);
     if (dlgM) {
@@ -1593,6 +1732,33 @@ function parseBody(
           steps.push(makeStep("assert", { ...base, assert, ...extra }));
         }
       };
+
+      // A VARIABLE assertion: `expect(V.name, "name")` or, for the numeric
+      // operators, `expect(Number(V.name), "name")`. Matched before the page
+      // and locator branches because its subject is neither.
+      const varSubjM = inner.match(
+        /^(Number\s*\(\s*)?V\.([A-Za-z_][A-Za-z0-9_]*)\s*\)?\s*,\s*"([A-Za-z_][A-Za-z0-9_]*)"$/,
+      );
+      if (varSubjM) {
+        const numeric = !!varSubjM[1];
+        const name = varSubjM[2];
+        const parsed = parseVariableAssert(src, close, after, numeric, name);
+        if (parsed) {
+          steps.push(
+            makeStep("assert", {
+              assert: "variable",
+              ...(soft ? { soft: true } : {}),
+              captureVar: name,
+              ...parsed.step,
+            }),
+          );
+          i = parsed.end;
+        } else {
+          skipped++;
+          i = close + 1;
+        }
+        continue;
+      }
 
       if (inner === "page") {
         const pageAssertM = after.match(/^\s*\.(toHaveURL|toHaveTitle)\s*\(/);

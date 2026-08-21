@@ -228,6 +228,18 @@ export const TESTS: TestRecord[] = [
         timeoutMs: 30_000,
       },
       { type: "reload" },
+      // The variable checks, which are only visible as step rows if a fixture
+      // carries one: the assertion, the condition wrapping a step, and the echo.
+      {
+        type: "assert",
+        assert: "variable",
+        captureVar: "indexJobId",
+        compareOp: "startsWith",
+        value: "job-",
+      },
+      { type: "if", cond: "variable", captureVar: "exportName", compareOp: "contains", value: ".csv" },
+      { type: "echo", text: "export was ${exportName}" },
+      { type: "endif" },
       // The teardown divider, with a step under it — the only way to see the
       // row that says everything below it survives a failure, and the only
       // place the divider's own styling is visible at all.

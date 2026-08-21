@@ -60,6 +60,9 @@ const SYNTAX: Record<SyntaxTheme, Record<StepType, string>> = {
     endGroup: "#b9a6e0",
     teardown: "#b9a6e0",
     wait: "#9aa3a8",
+    // Not a claim and not an interaction — a line of output. The quiet grey
+    // `wait` already occupies is the honest category for it.
+    echo: "#9aa3a8",
   },
 };
 

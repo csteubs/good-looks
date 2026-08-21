@@ -14,10 +14,17 @@ import type { ProxySource, ProxyTraffic } from "../../shared/proxy-config.mjs";
 // the heal fixture and the renderer's locator renderings — see the header of
 // `shared/testid-attr.mjs`.
 import { testIdOverride, type TestIdAttributeOverride } from "../../shared/testid-attr.mjs";
+// How a variable's value is compared. In shared/ because the generator, the
+// injected replayer and the renderer's step list all have to mean the same
+// thing by "starts with" - see the header of shared/step-semantics.mjs.
+import { COMPARE_OPS } from "../../shared/step-semantics.mjs";
+import type { CompareOp } from "../../shared/step-semantics.mjs";
 
 export type { CostCurrency };
 export type { ProxySource, ProxyTraffic };
 export type { TestIdAttributeOverride };
+export type { CompareOp };
+export { COMPARE_OPS };
 
 export type StepType =
   | "goto"
@@ -114,6 +121,11 @@ export type StepType =
   // dialog nothing is listening for and a handler attached after the click
   // races the dialog it exists to answer (the download-arming argument).
   | "dialog"
+  // Write a line into the run log: the value of a variable, or any
+  // interpolated text. No assertion, never fails — the companion to a
+  // `capture` step, answering "what IS orderId at this point" without making
+  // the run depend on the answer.
+  | "echo"
   // Reload the current page. Recorded when the trainer sees a navigation that
   // lands on the URL it was already on; `goto` would also work, but it re-runs
   // the navigation the test may not have made and loses the distinction the
@@ -142,7 +154,18 @@ export type ConditionKind =
   | "checked"
   | "unchecked"
   | "urlContains"
-  | "titleContains";
+  | "titleContains"
+  // Compare a VARIABLE, the same way the `variable` assert kind does — reading
+  // `Step.captureVar`, `Step.compareOp` and `Step.value`. "Do A for admins and
+  // B otherwise" needed this: without it, the only way to branch on a captured
+  // or dataset value was two inverted `if` blocks that drift apart.
+  //
+  // Deliberately NOT added to WaitUntilKind. A wait polls for something ANOTHER
+  // agent changes, and nothing changes a variable while a step is waiting on it
+  // — only a later step assigns one. "Wait until orderId equals X" would either
+  // pass on the first poll or spin until it times out, which is a footgun with
+  // no use behind it.
+  | "variable";
 
 /**
  * Predicate a `wait` step blocks on until it holds (`Step.waitUntil`).
@@ -294,7 +317,18 @@ export type AssertKind =
   | "titleContains"
   // Computed CSS property, e.g. background-color is "rgb(0, 82, 204)". Reads
   // `Step.cssProp` / `Step.cssMatch`, with the expected value in `Step.value`.
-  | "css";
+  | "css"
+  // The only assert kind that looks at NOTHING on the page: it compares a
+  // VARIABLE's value against an expected one. Reads `Step.captureVar` for
+  // which variable, `Step.compareOp` for how, and `Step.value` for what
+  // (interpolatable, so one variable can be compared against another).
+  //
+  // It exists because every other half of the variable system was already
+  // built — `capture` steps write them, `api` steps extract JSON fields into
+  // them, datasets sweep them, flows bind them — and nothing could ever CHECK
+  // one. A test could read an order total off the page and carry it to the end
+  // without ever being able to say what it should be.
+  | "variable";
 
 /**
  * Pseudo-state a `state` step puts an element into (`Step.elementState`).
@@ -447,6 +481,11 @@ export interface Step {
    *  when it lapses. Absent still means Playwright's own default, so nothing
    *  already on disk changes shape. */
   timeoutMs?: number;
+  /** How a `variable` assertion or a `variable` condition compares. Absent
+   *  means "eq", which is what the pickers default to. Enum-guarded at the
+   *  boundary AND at emission: it SELECTS A MATCHER, so a value that got
+   *  through the boundary would have to be safe on the far side too. */
+  compareOp?: CompareOp;
   /** How a `fill` step delivers its value (default "fill"). See TypeMode —
    *  `sequential` fires per-character keyboard events and does NOT clear the
    *  field first. */
@@ -568,6 +607,7 @@ export interface RawStep {
   cssProp?: string;
   cssMatch?: CssMatch;
   elementState?: ElementState;
+  compareOp?: CompareOp;
   typeMode?: TypeMode;
   typeDelayMs?: number;
   count?: number;
@@ -1051,7 +1091,7 @@ export const STEP_TYPES: StepType[] = [
   "wait", "viewport", "if", "else", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
   "scroll", "download", "a11y", "upload", "api", "aiCheck", "group", "endGroup", "dialog",
   "teardown",
-  "reload",
+  "reload", "echo",
 ];
 
 export type DownloadMatch = "contains" | "exact";
@@ -1098,7 +1138,7 @@ export const DOWNLOAD_MATCHES: DownloadMatch[] = ["contains", "exact"];
 export const ASSERT_KINDS: AssertKind[] = [
   "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked",
   "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs",
-  "urlPathIs", "title", "titleContains", "css",
+  "urlPathIs", "title", "titleContains", "css", "variable",
 ];
 
 export const ELEMENT_STATES: ElementState[] = ["hover", "focus", "press", "release"];
@@ -1160,7 +1200,7 @@ export function isCssPropName(v: unknown): v is string {
 
 export const CONDITION_KINDS: ConditionKind[] = [
   "visible", "hidden", "exists", "enabled", "disabled", "checked", "unchecked",
-  "urlContains", "titleContains",
+  "urlContains", "titleContains", "variable",
 ];
 
 /** Deliberately a separate list from CONDITION_KINDS even though it contains
@@ -1464,6 +1504,8 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   if (elementState) out.elementState = elementState;
   const typeMode = oneOf(s.typeMode, TYPE_MODES);
   if (typeMode) out.typeMode = typeMode;
+  const compareOp = oneOf(s.compareOp, COMPARE_OPS);
+  if (compareOp) out.compareOp = compareOp;
 
   // The fields that reach the generator as bare numerals.
   const count = int(s.count, 0, 1_000_000);

@@ -14,6 +14,12 @@ import { BrowserWindow, logger, Menu, WebContentsView } from "@shell/backend";
 import type { MenuItemConstructorOptions, WebContentsNavigationEvent } from "@shell/backend";
 
 import { urlAssertPrefill } from "../../shared/url-assert.mjs";
+// The one definition of what "starts with" means for a variable — shared with
+// the generator and the renderer's step list. See shared/step-semantics.mjs.
+// The three steps that are about VARIABLES rather than about the page. Pure and
+// in its own module so every branch is exercisable without a window — the same
+// reason recorder-navigation.ts is.
+import { isVariableStep, runVariableStep } from "./variable-step.js";
 import { totpCode } from "../../shared/totp.mjs";
 import { normalizeSignatureHost, signatureForUrl } from "../../shared/shopify-signature.mjs";
 
@@ -567,6 +573,16 @@ async function runStep(
         },
       ],
     };
+  }
+
+  // The variable steps never reach the page. Dispatched AFTER resolution so a
+  // `${ref}` in the expected value is already resolved, and masked like every
+  // other result so a secret interpolated into it is not printed back.
+  if (isVariableStep(step)) {
+    return maskValues(
+      runVariableStep(step, resolved.step, ctx?.variables ?? session?.variables ?? []),
+      resolved.usedValues,
+    );
   }
 
   const result = maskValues(

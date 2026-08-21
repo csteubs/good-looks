@@ -64,6 +64,43 @@ export function matchesValue(
 /** `matchesValue` as source text, for embedding in an injected script. */
 export function matchSource(): string;
 
+/** How a VARIABLE's value is compared against an expected one. RAW —
+ *  case-sensitive, no whitespace normalization — because that is what the
+ *  emitted `toBe`/`toContain`/`toMatch` actually do. */
+export type CompareOp =
+  | "eq"
+  | "neq"
+  | "contains"
+  | "notContains"
+  | "startsWith"
+  | "notStartsWith"
+  | "endsWith"
+  | "notEndsWith"
+  | "gt"
+  | "lt"
+  | "gte"
+  | "lte"
+  | "matches";
+
+export const COMPARE_OPS: CompareOp[];
+
+/** The four that compare NUMBERS, through `Number()` on both sides. */
+export const NUMERIC_COMPARE_OPS: CompareOp[];
+
+/** Human phrasing for step rows and pickers — one spelling for every reader. */
+export const COMPARE_OP_LABEL: Record<CompareOp, string>;
+
+/** Apply a comparison. The one definition, shared by the generator's condition
+ *  expression, the injected replayer and the renderer's step list. */
+export function compareValues(
+  actual: string | null | undefined,
+  op: CompareOp,
+  expected: string | null | undefined,
+): boolean;
+
+/** `compareValues` as source text, for embedding in an injected script. */
+export function compareSource(): string;
+
 /** RegExp source (no flags) for a "URL path is" assertion — test against the
  *  full URL with the "i" flag. Query string and fragment are ignored, one
  *  trailing slash is tolerated. */

@@ -10,6 +10,79 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-21 — A variable assertion emits real matchers, and compares raw
+
+Every other half of the variable system was already built. `capture` steps
+write variables, `api` steps extract JSON fields into them, datasets sweep them,
+flows bind them — and nothing could ever CHECK one. A test could read an order
+total off the page and carry it to the end without being able to say what it
+should be.
+
+**Real Playwright matchers on the spec line, not a boolean helper.** The obvious
+shape is `await expect(glazeCompare(V.total, "eq", "49.99")).toBe(true)`, and it
+is wrong twice. Playwright reports an `expect` step located at the spec line —
+confirmed for these generic matchers, not assumed — so the run highlights the
+step that failed; and `toBe`/`toContain`/`toMatch` print the actual and expected
+values, where the wrapped boolean prints "expected false to be true" and the
+user has to open the spec to find out what was being compared. Passing the
+variable's name as `expect(value, message)` makes it the step's title, so the
+run log names it too.
+
+Two operators have no matcher and compile to a pattern instead: `startsWith`
+and `endsWith` become an anchored `regexPatternExpr` over the REGEX-ESCAPED
+value. Unescaped, a value of `4.9` would match `4X9`, which is the failure mode
+a green assertion hides best.
+
+**The comparison is RAW — case-sensitive, no whitespace normalization — and
+that is a reading, not a preference.** The kinder rules the page-facing kinds
+use come from Playwright's web-first matchers, which normalize whitespace and
+fix their own case rules. These matchers do not. Choosing kinder semantics here
+would have put `shared/step-semantics.mjs` back in the position it exists to end:
+a rule stated in one place that the generated spec does not implement. The
+consequence worth knowing is that a value captured from `textContent` carries
+the page's own whitespace, so `contains` is the forgiving operator and `eq` is
+not — said out loud in the composer rather than fixed by a hidden trim.
+
+**`waitUntil` does not get a `variable` member, and the omission is deliberate.**
+A wait polls for something ANOTHER agent changes. Nothing changes a variable
+while a step waits on it — only a later step assigns one — so "wait until
+orderId equals X" would either pass on the first poll or spin until it timed
+out. It is a footgun with no use behind it, and adding it because the assert and
+condition tables have the member would have been symmetry for its own sake.
+
+**The four numeric operators have no negated forms**, and that is what makes
+NaN safe. `Number("abc")` is NaN, and every comparison against NaN is false —
+including the readings that look like they should invert. With a "not less
+than" in the vocabulary, a value that is not a number at all would report TRUE.
+
+### 2026-08-21 — The trainer evaluates a variable step itself, and refuses out loud
+
+A variable step never reaches the injected replayer. The trainer evaluates it in
+the main process, in `main/services/variable-step.ts`.
+
+Two reasons. There is nothing page-side about comparing two strings the session
+already holds; and the injected script runs alongside an arbitrary website, so
+shipping a variable's value into the page to compare it there would hand that
+page the value. The module is PURE for the reason `recorder-navigation.ts` is:
+every branch is a decision the user sees the consequence of, and none of them
+should need an Electron window to exercise.
+
+It refuses rather than guesses in two cases, both reported with a reason:
+
+- a **secret**, because the trainer never reads a secret's value back into its
+  own output — the rule `maskValues` enforces everywhere else;
+- a **captured** variable with no fallback, because the trainer does not execute
+  a spec and nothing has captured anything yet.
+
+Comparing either against `""` would answer a question the user did not ask: an
+empty string is a value.
+
+**A CONDITION it cannot evaluate FAILS the step rather than reporting
+`met: false`.** That distinction is the whole point of the refusal. `met: false`
+skips the block, which reads on screen as "the condition did not hold" — a
+different statement from "I could not tell", and it would show the user a
+preview taking a path the run will not take.
+
 ### 2026-08-21 — A fill types character by character, and does not clear first
 
 A recorded fill emits `locator.fill()`: the whole string in one operation, one

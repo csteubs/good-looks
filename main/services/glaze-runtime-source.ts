@@ -25,7 +25,7 @@
 //    app's baseline bookkeeping can never disagree about what a key means.
 
 import { gateFailures } from "../../shared/a11y-rollup.mjs";
-import { reEscape, urlPathPattern } from "../../shared/step-semantics.mjs";
+import { compareValues, reEscape, urlPathPattern } from "../../shared/step-semantics.mjs";
 
 import { totpCode } from "../../shared/totp.mjs";
 
@@ -355,4 +355,26 @@ export const glazeReEscape = ${reEscape.toString()};
  *  opaque until the run supplies it.
  *  Do not edit here — edit shared/step-semantics.mjs. */
 export const glazeUrlPathPattern = ${urlPathPattern.toString()};
+
+/** Compare a variable's value, for a \`variable\` CONDITION.
+ *
+ *  The SHARED compareValues, embedded by toString(). A variable ASSERTION does
+ *  not come through here — it emits real Playwright matchers on the spec line,
+ *  so the run reports it as a step and the failure prints both values. A
+ *  condition has no such need: an \`if\` line is control flow, not a step. What
+ *  both DO need is to agree about what "starts with" means, which is why the
+ *  rule lives in one place and is embedded rather than retyped.
+ *  Do not edit here - edit shared/step-semantics.mjs. */
+export const glazeCompare = ${compareValues.toString()};
+
+/** Write a line into the run log.
+ *
+ *  stdout, because that is what the app's log capture already collects and
+ *  what appears in the run's console output beside the step that wrote it.
+ *  Deliberately NOT an assertion: an echo that could fail would be a strange
+ *  kind of assertion with no expected value, and the point is to answer "what
+ *  IS this variable here" without making the run depend on the answer. */
+export async function glazeEcho(message) {
+  process.stdout.write("[echo] " + String(message == null ? "" : message) + "\\n");
+}
 `;

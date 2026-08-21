@@ -93,6 +93,7 @@ const ASSERT_LABEL: Record<AssertKind, string> = {
   title: "Page title is",
   titleContains: "Page title contains",
   css: "Has CSS property",
+  variable: "Variable value",
 };
 
 // Order matters: index === commandId in the native "+ Add step" menu.
@@ -104,6 +105,7 @@ const ADD_STEP_KINDS: AddStepKind[] = [
   "wait",
   "goto",
   "reload",
+  "echo",
   "press",
   "find",
   "viewport",

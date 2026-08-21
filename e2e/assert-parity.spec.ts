@@ -31,7 +31,13 @@ import { expect, test, type Page } from "@playwright/test";
 import { buildReplayScript } from "../main/services/step-replayer.js";
 import { generateSpec } from "../main/services/script-generator.js";
 import { resolveStepForReplay } from "../main/recorder/types.js";
-import { reEscape, urlPathPattern } from "../shared/step-semantics.mjs";
+import {
+  COMPARE_OPS,
+  compareValues,
+  reEscape,
+  urlPathPattern,
+} from "../shared/step-semantics.mjs";
+import type { CompareOp } from "../shared/step-semantics.mjs";
 import { glazeRuntimeSource } from "../main/services/glaze-runtime-source.js";
 import type { Step, TestVariable } from "../main/recorder/types.js";
 
@@ -310,6 +316,114 @@ test("every assertion means the same thing to the trainer and to the run", async
 
   expect(disagreements, "the trainer and the run disagree about these steps").toEqual([]);
   expect(wrong, "these assertions do not do what the fixture says they should").toEqual([]);
+});
+
+/** The comparison rows, at module scope so the coverage guard below can read
+ *  which operators they cover. */
+const VARIABLE_CASES: { actual: string; op: CompareOp; expected: string; want: boolean }[] = [
+    { actual: "49.99", op: "eq", expected: "49.99", want: true },
+    { actual: "49.99", op: "eq", expected: "49.9", want: false },
+    { actual: "Checkout", op: "eq", expected: "checkout", want: false },
+    { actual: " Checkout ", op: "eq", expected: "Checkout", want: false },
+    { actual: "a  b", op: "eq", expected: "a b", want: false },
+    { actual: "49.99", op: "neq", expected: "49.9", want: true },
+    { actual: "49.99", op: "neq", expected: "49.99", want: false },
+    { actual: "AB-1234", op: "contains", expected: "B-12", want: true },
+    { actual: "AB-1234", op: "contains", expected: "zz", want: false },
+    { actual: "AB-1234", op: "notContains", expected: "zz", want: true },
+    { actual: "AB-1234", op: "notContains", expected: "B-12", want: false },
+    { actual: "AB-1234", op: "startsWith", expected: "AB-", want: true },
+    { actual: "AB-1234", op: "startsWith", expected: "B-", want: false },
+    { actual: "AB-1234", op: "notStartsWith", expected: "B-", want: true },
+    { actual: "AB-1234", op: "notStartsWith", expected: "AB-", want: false },
+    { actual: "AB-1234", op: "endsWith", expected: "234", want: true },
+    { actual: "AB-1234", op: "endsWith", expected: "AB", want: false },
+    { actual: "AB-1234", op: "notEndsWith", expected: "AB", want: true },
+    { actual: "AB-1234", op: "notEndsWith", expected: "234", want: false },
+    // The escaping row. Unescaped, `4.9` would match "4X9" too.
+    { actual: "4X9", op: "startsWith", expected: "4.9", want: false },
+    { actual: "4.9", op: "startsWith", expected: "4.9", want: true },
+    // Numbers, not text. As text, "10" sorts before "9".
+    { actual: "10", op: "gt", expected: "9", want: true },
+    { actual: "9", op: "gt", expected: "10", want: false },
+    { actual: "9", op: "lt", expected: "10", want: true },
+    { actual: "10", op: "gte", expected: "10", want: true },
+    { actual: "10", op: "lte", expected: "10", want: true },
+    { actual: "9.5", op: "gt", expected: "9.25", want: true },
+    // Not a number on either side. Every numeric comparison against NaN is
+    // false, which is why there are no negated numeric operators.
+    { actual: "abc", op: "gt", expected: "3", want: false },
+    { actual: "abc", op: "lt", expected: "3", want: false },
+    { actual: "3", op: "gte", expected: "abc", want: false },
+    { actual: "", op: "gt", expected: "3", want: false },
+    // A real regex, passed through unescaped because it already is one.
+    { actual: "AB-1234", op: "matches", expected: "^AB-\\d+$", want: true },
+    { actual: "ab-1234", op: "matches", expected: "^AB-\\d+$", want: false },
+    { actual: "AB-1234", op: "matches", expected: "\\d{4}", want: true },
+  ];
+
+/** Which operators the table above actually exercises. */
+const VARIABLE_PARITY_OPS: CompareOp[] = VARIABLE_CASES.map((c) => c.op);
+
+/**
+ * The VARIABLE assertion, whose two engines are not the two this file usually
+ * compares.
+ *
+ * A variable assert never reaches the injected replayer: the trainer evaluates
+ * it in the main process, because there is nothing page-side about comparing
+ * two strings the session already holds — and injecting would hand an untrusted
+ * page the value. So the trainer's verdict IS `compareValues`, one call with no
+ * other logic around it, and that is what the emitted matcher has to agree
+ * with.
+ *
+ * The rows below are the traps. `"10" > "9"` is false as text and true as
+ * numbers; a dot that reached a pattern unescaped would match any character;
+ * `"".slice(-0)` is the whole string rather than the empty one; and case and
+ * whitespace are deliberately NOT forgiven, because `toBe`/`toContain`/
+ * `toMatch` do not forgive them either.
+ */
+test("a variable assertion means the same thing to the trainer and to the run", async ({
+  page,
+}) => {
+  await page.goto(base);
+
+  const cases = VARIABLE_CASES;
+  const disagreements: string[] = [];
+  const wrong: string[] = [];
+
+  for (const c of cases) {
+    const label = `${JSON.stringify(c.actual)} ${c.op} ${JSON.stringify(c.expected)}`;
+    const vars: TestVariable[] = [{ name: "subject", kind: "plain", value: c.actual }];
+    const st = {
+      id: "v" + ++n,
+      type: "assert",
+      assert: "variable",
+      captureVar: "subject",
+      compareOp: c.op,
+      value: c.expected,
+    } as unknown as Step;
+
+    const fromSpec = await specVerdict(page, st, vars);
+    // The trainer's own verdict, reached the way the trainer reaches it.
+    const fromTrainer = compareValues(c.actual, c.op, c.expected);
+    if (fromSpec !== fromTrainer) {
+      disagreements.push(`${label}: the run says ${fromSpec}, the trainer says ${fromTrainer}`);
+    }
+    if (fromSpec !== c.want) {
+      wrong.push(`${label}: expected ${c.want}, the run says ${fromSpec}`);
+    }
+  }
+
+  expect(disagreements, "the trainer and the run disagree about these comparisons").toEqual([]);
+  expect(wrong, "these comparisons do not mean what they are supposed to").toEqual([]);
+});
+
+test("every comparison operator has a row above", () => {
+  // The guard on the guard. Derived from COMPARE_OPS rather than counted by
+  // hand: an operator added without a parity row is one whose two engines
+  // nothing compares, which is exactly the state this file exists to prevent.
+  const covered = new Set(VARIABLE_PARITY_OPS);
+  expect(COMPARE_OPS.filter((op) => !covered.has(op))).toEqual([]);
 });
 
 test("URL path assertions ignore query noise; whole-URL kinds do not", async ({ page }) => {

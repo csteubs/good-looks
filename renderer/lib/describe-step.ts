@@ -9,7 +9,13 @@ import {
   isCssPropName,
   MAX_TYPE_DELAY_MS,
 } from "./recorder-types";
-import { ASSERT_SEMANTICS, reEscape, textMatchExpr, urlPathExpr } from "../../shared/step-semantics.mjs";
+import {
+  ASSERT_SEMANTICS,
+  COMPARE_OP_LABEL,
+  reEscape,
+  textMatchExpr,
+  urlPathExpr,
+} from "../../shared/step-semantics.mjs";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import type { Locator, Step, StepType } from "./recorder-types";
 
@@ -115,6 +121,16 @@ function locatorBaseExpr(loc: Locator): string {
   }
 }
 
+/** Mirror of `describeVariableCheck` in main/services/script-generator.ts.
+ *  Shared by the `variable` assert kind and the `variable` condition, because
+ *  they are the same claim in two places. */
+export function describeVariableCheck(step: Step): string {
+  const name = step.captureVar || "variable";
+  const op = step.compareOp ?? "eq";
+  const label = COMPARE_OP_LABEL[op] ?? "equals";
+  return name + " " + label + " " + JSON.stringify(step.value ?? "");
+}
+
 function describeAssert(step: Step, target: string | null): string {
   const e = step.soft ? "expect.soft" : "expect";
   const o = optsExpr(timeoutParts(step));
@@ -141,6 +157,9 @@ function describeAssert(step: Step, target: string | null): string {
     if (!s || (step.value ?? "") === "") return "assert";
     return e + "(page).toHaveTitle" + callArgs([textMatchExpr(step.value ?? "", s)], o);
   }
+  // Before the target check: the one assert kind that looks at nothing on the
+  // page, so requiring a locator would describe every one of them as "assert".
+  if (step.assert === "variable") return describeVariableCheck(step);
   if (!target) return "assert";
   const x = e + "(" + target + ")";
   switch (step.assert) {
@@ -183,6 +202,8 @@ export function describeCondition(step: Step): string {
   const loc = step.locator;
   const el = loc ? "page." + locatorExpr(loc) : "element";
   switch (step.cond) {
+    case "variable":
+      return describeVariableCheck(step);
     case "urlContains":
       return "URL contains " + q(step.value ?? "");
     case "titleContains":
@@ -435,6 +456,8 @@ export function describeStep(step: Step): string {
       return target ? target + ".uncheck(" + optsExpr(timeoutParts(step)) + ")" : "uncheck";
     case "reload":
       return "page.reload(" + optsExpr(timeoutParts(step)) + ")";
+    case "echo":
+      return "echo " + JSON.stringify(step.text ?? step.value ?? "");
     case "press":
       return target
         ? target + ".press" + callArgs([q(step.value ?? "")], optsExpr(timeoutParts(step)))
