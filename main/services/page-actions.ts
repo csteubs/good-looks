@@ -28,6 +28,13 @@ export const LOCATOR_ACTIONS = [
   "dblclick",
   "fill",
   "press",
+  // `pressSequentially` is what a `fill` step emits in its per-character mode,
+  // and it has to be here for the same reason `fill` is: an action nothing
+  // wraps takes no screenshot and reports no step marker, so on a capture or
+  // crawl run the step would be invisible to the progress bar and have no
+  // visual baseline. `type` is its deprecated predecessor and stays listed for
+  // imported specs that still call it.
+  "pressSequentially",
   "type",
   "check",
   "uncheck",

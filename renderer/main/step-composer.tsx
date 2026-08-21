@@ -90,6 +90,7 @@ export type AddStepKind =
   | "press"
   | "find"
   | "viewport"
+  | "reload"
   | "scroll"
   | "capture"
   | "download"
@@ -113,6 +114,7 @@ export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   press: "Press key",
   find: "Find element",
   viewport: "Set viewport",
+  reload: "Reload the page",
   scroll: "Scroll",
   capture: "Capture a value",
   download: "Expect a download",
@@ -913,6 +915,10 @@ export function StepComposer({
         const p = RESIZE_PRESETS.find((v) => v.id === viewport);
         return [{ type: "viewport", width: p?.w ?? 1280, height: p?.h ?? 800 }];
       }
+      case "reload":
+        // No fields: a reload has nothing to configure. The per-step timeout,
+        // like every other step's, is set from the step row afterwards.
+        return [{ type: "reload" }];
       case "scroll": {
         if (scrollMode === "element") {
           // No target picked → refuse the submit, same rule as `find`: a
@@ -1390,6 +1396,14 @@ export function StepComposer({
               </Text>
             ) : null}
           </>
+        ) : null}
+
+        {kind === "reload" ? (
+          <Text variant="small" color="secondary">
+            Reload the current page (Playwright <code>page.reload()</code>), as if the user had
+            pressed ⌘R. The test carries on from whatever the reloaded page shows — anything the
+            page held only in memory is gone, which is usually the point of reloading.
+          </Text>
         ) : null}
 
         {kind === "viewport" ? (

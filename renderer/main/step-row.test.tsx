@@ -940,3 +940,129 @@ describe("the force toggle", () => {
     expect(seen).not.toContain("Ignore Actionability (force)");
   });
 });
+
+// ── The step-utilities menu's two new submenus ────────────────────────────
+//
+// These are real macOS menus (renderer/ui/native-menu.tsx), so their ITEMS
+// never enter the DOM and no Testing Library query can reach them. What can be
+// reached — and what can actually be wrong — is the handler behind the pick:
+// `Menu.popup` is an ordinary promise this test answers with the `commandId`
+// of a chosen label, which runs exactly the handler a real click would. Same
+// scaffolding, and same justification, as appearance-pane.test.tsx.
+//
+// The patches matter more than they look. "All at once" has to CLEAR
+// `typeMode` rather than store `"fill"`: a stored default would change the
+// shape of every fill in the library while regenerating byte-identically, so
+// nothing downstream would report it.
+
+describe("the text-entry and step-timeout submenus", () => {
+  interface Item {
+    label?: string;
+    commandId?: number;
+    submenu?: Item[];
+  }
+
+  /** Answer the native menu with the item whose label matches, looking inside
+   *  submenus — which is where both of these live. */
+  function pick(label: string) {
+    const popup = vi.fn(async ({ items }: { items: Item[] }) => {
+      const flat: Item[] = [];
+      const walk = (list: Item[]): void => {
+        for (const i of list) {
+          flat.push(i);
+          if (i.submenu) walk(i.submenu);
+        }
+      };
+      walk(items);
+      const hit = flat.find((i) => i.label === label);
+      if (!hit) {
+        throw new Error(
+          `no menu item labelled "${label}" — saw: ${flat.map((i) => i.label).join(" | ")}`,
+        );
+      }
+      return { commandId: hit.commandId };
+    });
+    (window as unknown as { glazeAPI: { Menu: unknown } }).glazeAPI = { Menu: { popup } };
+    return popup;
+  }
+
+  function openUtilities(s: Step) {
+    const onEdit = vi.fn();
+    render(<StepRow index={0} step={s} onEdit={onEdit} />);
+    fireEvent.click(screen.getByLabelText("Step utilities"));
+    return { onEdit };
+  }
+
+  const FILL = () => step({ type: "fill", locator: LOCATOR, value: "Lon" });
+
+  it("turns a fill into a per-character one", async () => {
+    pick("Character by character (appends)");
+    const { onEdit } = openUtilities(FILL());
+    await waitFor(() =>
+      expect(onEdit).toHaveBeenCalledWith({ typeMode: "sequential", typeDelayMs: undefined }),
+    );
+  });
+
+  it("offers a slow variant that carries a delay", async () => {
+    pick("Character by character, slowly (appends)");
+    const { onEdit } = openUtilities(FILL());
+    await waitFor(() =>
+      expect(onEdit).toHaveBeenCalledWith({ typeMode: "sequential", typeDelayMs: 40 }),
+    );
+  });
+
+  it("clears the mode rather than storing the default", async () => {
+    pick("All at once (default)");
+    const { onEdit } = openUtilities(
+      step({ type: "fill", locator: LOCATOR, value: "Lon", typeMode: "sequential", typeDelayMs: 40 }),
+    );
+    await waitFor(() =>
+      expect(onEdit).toHaveBeenCalledWith({ typeMode: undefined, typeDelayMs: undefined }),
+    );
+  });
+
+  it("sets a step timeout", async () => {
+    pick("15 seconds");
+    const { onEdit } = openUtilities(step({ type: "click", locator: LOCATOR }));
+    await waitFor(() => expect(onEdit).toHaveBeenCalledWith({ timeoutMs: 15_000 }));
+  });
+
+  // Its own test rather than a second half of the one above: two renders in one
+  // test leave `getByLabelText` matching both triggers, and an ambiguous query
+  // reports as "never rendered" rather than as the ambiguity it is.
+  it("clears the timeout with Default, rather than storing a number", async () => {
+    pick("Default");
+    const { onEdit } = openUtilities(step({ type: "click", locator: LOCATOR, timeoutMs: 15_000 }));
+    await waitFor(() => expect(onEdit).toHaveBeenCalledWith({ timeoutMs: undefined }));
+  });
+
+  it("offers the timeout on an assertion too", async () => {
+    pick("30 seconds");
+    const { onEdit } = openUtilities(step({ type: "assert", assert: "visible", locator: LOCATOR }));
+    await waitFor(() => expect(onEdit).toHaveBeenCalledWith({ timeoutMs: 30_000 }));
+  });
+
+  it("does not offer a timeout on a press with no locator", async () => {
+    // `page.keyboard.press` has no timeout option — there is no element to wait
+    // for — so offering one would promise something the run cannot honour.
+    const popup = pick("Default");
+    render(<StepRow index={0} step={step({ type: "press", value: "Escape" })} onEdit={vi.fn()} />);
+    const trigger = screen.queryByLabelText("Step utilities");
+    if (trigger) {
+      fireEvent.click(trigger);
+      await waitFor(() => expect(popup).toHaveBeenCalled());
+      const labels = (popup.mock.calls[0][0] as { items: Item[] }).items.map((i) => i.label);
+      expect(labels).not.toContain("Step timeout");
+    }
+  });
+
+  it("does not offer text entry on anything but a fill", async () => {
+    const popup = pick("Default");
+    render(<StepRow index={0} step={step({ type: "click", locator: LOCATOR })} onEdit={vi.fn()} />);
+    fireEvent.click(screen.getByLabelText("Step utilities"));
+    await waitFor(() => expect(popup).toHaveBeenCalled());
+    const labels = (popup.mock.calls[0][0] as { items: Item[] }).items.map((i) => i.label);
+    expect(labels).not.toContain("Text entry");
+    expect(labels).toContain("Step timeout");
+  });
+});

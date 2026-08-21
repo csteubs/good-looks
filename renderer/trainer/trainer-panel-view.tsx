@@ -118,6 +118,7 @@ const ADD_STEP_KINDS: AddStepKind[] = [
   "loop",
   "wait",
   "goto",
+  "reload",
   "press",
   "find",
   "viewport",

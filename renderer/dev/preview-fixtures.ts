@@ -205,6 +205,29 @@ export const TESTS: TestRecord[] = [
       // A positional-path locator — the recorder's last-resort shape — so the
       // fragility glyph and the detail view's rollup callout render.
       { type: "click", locator: { k: "xpath", v: "/html[1]/body[1]/div[3]/button[2]" } },
+      // The three input-fidelity shapes, which are only visible as a step row
+      // if a fixture carries one: a per-character fill (whose description says
+      // pressSequentially, not fill), the same with a delay, an action with its
+      // own timeout, and the reload step.
+      {
+        type: "fill",
+        locator: { k: "label", v: "City" },
+        value: "Lon",
+        typeMode: "sequential",
+      },
+      {
+        type: "fill",
+        locator: { k: "label", v: "Postcode" },
+        value: "SW1A",
+        typeMode: "sequential",
+        typeDelayMs: 40,
+      },
+      {
+        type: "click",
+        locator: { k: "role", role: "button", name: "Rebuild index" },
+        timeoutMs: 30_000,
+      },
+      { type: "reload" },
       // The teardown divider, with a step under it — the only way to see the
       // row that says everything below it survives a failure, and the only
       // place the divider's own styling is visible at all.

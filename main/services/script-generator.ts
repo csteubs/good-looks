@@ -16,6 +16,7 @@ import {
   isValidVariableName,
   MAX_FLOW_REPEAT,
   MAX_LOOP_COUNT,
+  MAX_TYPE_DELAY_MS,
   mapInterpolatable,
   toPlaywrightSameSite,
   VAR_REF_RE,
@@ -52,6 +53,59 @@ function num(v: unknown, fallback: number): string {
   // Integers only: `1e21` and `0.30000000000000004` are valid JS but neither is
   // a viewport or an element count anyone recorded.
   return String(Math.trunc(v));
+}
+
+/** The largest per-step timeout worth emitting, matching the cap
+ *  `normalizeRawStep` applies to `timeoutMs`. An hour is already longer than
+ *  any run this app will finish. */
+const MAX_STEP_TIMEOUT_MS = 3_600_000;
+
+/**
+ * A millisecond option, re-clamped at emission, or null when the step does not
+ * carry one.
+ *
+ * Re-clamped HERE and not merely at the capture boundary for `num()`'s own
+ * reason: `recorder:updateStep` copies its allowlisted fields without
+ * re-normalizing, and every test on disk is regenerated from its stored steps,
+ * so a value the boundary never saw can still reach this line. A negative is
+ * dropped rather than clamped to zero — `timeout: 0` means "wait forever" to
+ * Playwright, which is the opposite of what a negative was trying to say.
+ */
+function clampedMs(v: unknown, max: number): number | null {
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  const n = Math.trunc(v);
+  if (n < 0) return null;
+  return Math.min(n, max);
+}
+
+/**
+ * The trailing options object an action or assertion emits.
+ *
+ * FIXED KEY ORDER — `force`, then `delay`, then `timeout` — for two reasons.
+ * The parser reads the object back key by key, and an order that varied with
+ * which fields a step happened to carry would make the same step regenerate
+ * differently from one save to the next.
+ *
+ * Empty string when there is nothing to say, and every caller omits the
+ * argument entirely in that case, so a step carrying none of these options
+ * emits exactly the call it emitted before they existed — which is what keeps
+ * the whole library regenerating byte-identically.
+ */
+function optsExpr(parts: string[]): string {
+  return parts.length > 0 ? "{ " + parts.join(", ") + " }" : "";
+}
+
+/** `["timeout: 5000"]`, or `[]` when the step sets no timeout. */
+function timeoutParts(step: Step): string[] {
+  const ms = clampedMs(step.timeoutMs, MAX_STEP_TIMEOUT_MS);
+  return ms === null ? [] : ["timeout: " + String(ms)];
+}
+
+/** Render a call's argument list, dropping empties and appending the options
+ *  object only when it has something in it. */
+function callArgs(args: string[], opts: string): string {
+  const all = [...args.filter((a) => a !== ""), ...(opts !== "" ? [opts] : [])];
+  return "(" + all.join(", ") + ")";
 }
 
 /** Env var a secret variable's value arrives in. The name is already a valid
@@ -215,6 +269,11 @@ export function locatorExpr(loc: Locator): string {
 
 function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>): string | null {
   const e = step.soft ? "expect.soft" : "expect";
+  // Every web-first matcher takes the same trailing `{ timeout }`, so the step's
+  // own timeout is built once and threaded through `callArgs` below rather than
+  // spelled at each of the fifteen call sites. Absent — the overwhelming case —
+  // it is the empty string and every matcher emits exactly what it always did.
+  const o = optsExpr(timeoutParts(step));
   // Page-level assertions don't need an element locator.
   //
   // All four embed their expected value INSIDE a pattern, so none of them can
@@ -231,13 +290,13 @@ function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>
     // looks at it again. `shared/url-assert.mjs` already refuses to SUGGEST a
     // value it cannot stand behind; this refuses to GENERATE one.
     if ((step.value ?? "") === "") return null;
-    return "await " + e + "(page).toHaveURL(" + textMatchExpr(step.value ?? "", semantics, vars) + ");";
+    return "await " + e + "(page).toHaveURL" + callArgs([textMatchExpr(step.value ?? "", semantics, vars)], o) + ";";
   }
   if (step.assert === "urlPathIs") {
     // Same empty-value refusal as above: with no path, `urlPathPattern` builds
     // the site-root pattern, which asserts something the user never typed.
     if ((step.value ?? "") === "") return null;
-    return "await " + e + "(page).toHaveURL(" + urlPathExpr(step.value ?? "", vars) + ");";
+    return "await " + e + "(page).toHaveURL" + callArgs([urlPathExpr(step.value ?? "", vars)], o) + ";";
   }
   if (step.assert === "title" || step.assert === "titleContains") {
     const semantics = ASSERT_SEMANTICS[step.assert];
@@ -248,32 +307,32 @@ function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>
     // than an anchored pattern. It also keeps `${var}` working for the one
     // title kind whose semantics do not need a pattern.
     if (step.assert === "title")
-      return "await " + e + "(page).toHaveTitle(" + valueExpr(step.value, vars) + ");";
-    return "await " + e + "(page).toHaveTitle(" + textMatchExpr(step.value ?? "", semantics, vars) + ");";
+      return "await " + e + "(page).toHaveTitle" + callArgs([valueExpr(step.value, vars)], o) + ";";
+    return "await " + e + "(page).toHaveTitle" + callArgs([textMatchExpr(step.value ?? "", semantics, vars)], o) + ";";
   }
   if (!target) return null;
   const x = e + "(" + target + ")";
   switch (step.assert) {
     case "hidden":
-      return "await " + x + ".toBeHidden();";
+      return "await " + x + ".toBeHidden" + callArgs([], o) + ";";
     case "text":
-      return "await " + x + ".toContainText(" + valueExpr(step.text, vars) + ");";
+      return "await " + x + ".toContainText" + callArgs([valueExpr(step.text, vars)], o) + ";";
     case "exactText":
-      return "await " + x + ".toHaveText(" + valueExpr(step.text, vars) + ");";
+      return "await " + x + ".toHaveText" + callArgs([valueExpr(step.text, vars)], o) + ";";
     case "enabled":
-      return "await " + x + ".toBeEnabled();";
+      return "await " + x + ".toBeEnabled" + callArgs([], o) + ";";
     case "disabled":
-      return "await " + x + ".toBeDisabled();";
+      return "await " + x + ".toBeDisabled" + callArgs([], o) + ";";
     case "checked":
-      return "await " + x + ".toBeChecked();";
+      return "await " + x + ".toBeChecked" + callArgs([], o) + ";";
     case "unchecked":
-      return "await " + x + ".not.toBeChecked();";
+      return "await " + x + ".not.toBeChecked" + callArgs([], o) + ";";
     case "value":
-      return "await " + x + ".toHaveValue(" + valueExpr(step.value, vars) + ");";
+      return "await " + x + ".toHaveValue" + callArgs([valueExpr(step.value, vars)], o) + ";";
     case "attribute":
-      return "await " + x + ".toHaveAttribute(" + q(step.attr ?? "") + ", " + valueExpr(step.value, vars) + ");";
+      return "await " + x + ".toHaveAttribute" + callArgs([q(step.attr ?? ""), valueExpr(step.value, vars)], o) + ";";
     case "count":
-      return "await " + x + ".toHaveCount(" + num(step.count, 0) + ");";
+      return "await " + x + ".toHaveCount" + callArgs([num(step.count, 0)], o) + ";";
     case "css": {
       // `cssProp` is re-checked HERE and not merely at the capture boundary:
       // `recorder:updateStep` copies its allowlisted fields without
@@ -288,11 +347,11 @@ function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>
         step.cssMatch === "contains"
           ? "new RegExp(" + regexPatternExpr(step.value ?? "", vars) + ", \"i\")"
           : valueExpr(step.value, vars);
-      return "await " + x + ".toHaveCSS(" + q(prop) + ", " + expected + ");";
+      return "await " + x + ".toHaveCSS" + callArgs([q(prop), expected], o) + ";";
     }
     case "visible":
     default:
-      return "await " + x + ".toBeVisible();";
+      return "await " + x + ".toBeVisible" + callArgs([], o) + ";";
   }
 }
 
@@ -643,30 +702,70 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
       return "}";
     case "goto":
       return "await page.goto(" + valueExpr(step.url, vars) + ");";
-    case "click":
+    case "click": {
       // `force` skips Playwright's actionability checks — the per-step escape
       // for targets covered or animating BY DESIGN. `=== true`, not truthy: a
       // stored step predates the boundary knowing the field.
-      return target
-        ? "await " + target + ".click(" + (step.force === true ? "{ force: true }" : "") + ");"
-        : null;
-    case "fill":
-      return target ? "await " + target + ".fill(" + valueExpr(step.value, vars) + ");" : null;
+      if (!target) return null;
+      const opts = optsExpr([
+        ...(step.force === true ? ["force: true"] : []),
+        ...timeoutParts(step),
+      ]);
+      return "await " + target + ".click(" + opts + ");";
+    }
+    case "fill": {
+      if (!target) return null;
+      const value = valueExpr(step.value, vars);
+      // `sequential` is `pressSequentially`, emitted on the SPEC LINE rather
+      // than routed through a runtime helper like the multi-statement steps
+      // are. That is not a style choice: the step reporter drops any action
+      // whose location is outside the spec file, so a fill delivered from
+      // inside `glaze-runtime.mjs` would be reported by nothing on a plain run
+      // and the progress bar would stall on the step before it. One locator
+      // call on one line keeps it a real, highlightable step.
+      //
+      // It does NOT clear the field first — see TypeMode for why a clearing
+      // variant would cost a second Playwright action, and what to do instead.
+      if (step.typeMode === "sequential") {
+        const delay = clampedMs(step.typeDelayMs, MAX_TYPE_DELAY_MS);
+        const opts = optsExpr([
+          ...(delay === null ? [] : ["delay: " + String(delay)]),
+          ...timeoutParts(step),
+        ]);
+        return "await " + target + ".pressSequentially" + callArgs([value], opts) + ";";
+      }
+      return "await " + target + ".fill" + callArgs([value], optsExpr(timeoutParts(step))) + ";";
+    }
     case "select":
       return target
-        ? "await " + target + ".selectOption(" + valueExpr(step.value, vars) + ");"
+        ? "await " + target + ".selectOption" +
+            callArgs([valueExpr(step.value, vars)], optsExpr(timeoutParts(step))) + ";"
         : null;
     case "check":
-      return target ? "await " + target + ".check();" : null;
+      return target
+        ? "await " + target + ".check(" + optsExpr(timeoutParts(step)) + ");"
+        : null;
     case "uncheck":
-      return target ? "await " + target + ".uncheck();" : null;
+      return target
+        ? "await " + target + ".uncheck(" + optsExpr(timeoutParts(step)) + ");"
+        : null;
     case "press":
       // A key name is a Playwright keyboard token ("Enter", "Control+A"), not
       // free text, so it stays a literal — interpolating a variable into it
       // would produce a silently-ignored key press rather than an error.
+      //
+      // `page.keyboard.press` takes no timeout: it types wherever focus already
+      // is, so there is no element to wait for and Playwright's signature has
+      // no such option. Only the locator form carries one.
       return target
-        ? "await " + target + ".press(" + q(step.value ?? "") + ");"
+        ? "await " + target + ".press" +
+            callArgs([q(step.value ?? "")], optsExpr(timeoutParts(step))) + ";"
         : "await page.keyboard.press(" + q(step.value ?? "") + ");";
+    case "reload":
+      // The one page-level action a recording produces that is not a `goto`.
+      // Emitted with the same options object as the element actions so a slow
+      // reload can be given room without a wait step in front of it.
+      return "await page.reload(" + optsExpr(timeoutParts(step)) + ");";
     case "wait":
       return waitLine(step, target, vars);
     case "viewport":

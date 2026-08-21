@@ -113,7 +113,12 @@ export type StepType =
   // step that triggers the dialog, because Playwright auto-dismisses any
   // dialog nothing is listening for and a handler attached after the click
   // races the dialog it exists to answer (the download-arming argument).
-  | "dialog";
+  | "dialog"
+  // Reload the current page. Recorded when the trainer sees a navigation that
+  // lands on the URL it was already on; `goto` would also work, but it re-runs
+  // the navigation the test may not have made and loses the distinction the
+  // user made on screen — "I pressed refresh" is not "I typed this address".
+  | "reload";
 
 /** axe's impact scale, weakest first. An `a11y` gate step fails on violations
  *  AT OR ABOVE its `a11yImpact`; the order here is the comparison. */
@@ -314,6 +319,45 @@ export type ElementState = "hover" | "focus" | "press" | "release";
 /** How a `css` assertion compares the computed value against the expected one. */
 export type CssMatch = "is" | "contains";
 
+/**
+ * How a `fill` step delivers its value.
+ *
+ * `"fill"` is `locator.fill()`: the whole string is written in one operation
+ * and one `input` event is fired. It is the right default and stays the
+ * default, so every test already on disk regenerates byte-identically.
+ *
+ * `"sequential"` is `locator.pressSequentially()`: a `keydown`,
+ * `keypress`/`input` and `keyup` for EVERY character. It exists because a
+ * field with real keyboard handling — an autocomplete, a combobox, a masked or
+ * per-keystroke-validated input — never sees those events under `fill`, so the
+ * page under test does nothing and the step after it fails against a dropdown
+ * that never opened. Playwright's own guidance says the same: press keys one
+ * by one only when the page has special keyboard handling.
+ *
+ * THE ONE DIFFERENCE THAT MATTERS, and it is deliberately not hidden:
+ * `pressSequentially` does NOT clear the field first. Making it clear would
+ * take a second Playwright action, and the capture fixture keys screenshots by
+ * ACTION ORDER — a step performing two actions takes two shots and shifts
+ * every later step's visual baseline by one. So the recorder only chooses this
+ * mode on its own when the field was EMPTY as typing began (where it is exactly
+ * equivalent to `fill`), and the step row, the composer and `describeStep` all
+ * say out loud that it appends. To replace existing content, put a `fill` step
+ * with an empty value in front of it — a visible row that does a visible thing.
+ */
+export type TypeMode = "fill" | "sequential";
+
+export const TYPE_MODES: TypeMode[] = ["fill", "sequential"];
+
+export function isTypeMode(v: unknown): v is TypeMode {
+  return typeof v === "string" && (TYPE_MODES as string[]).includes(v);
+}
+
+/** Upper bound on a `sequential` fill's per-character delay, in ms. A bare
+ *  numeral in generated source, so it is clamped at the boundary AND at
+ *  emission. 60s of delay per character is already absurd; the cap exists so a
+ *  forged value cannot wedge a run for the whole test timeout. */
+export const MAX_TYPE_DELAY_MS = 60_000;
+
 export interface Step {
   id: string;
   type: StepType;
@@ -392,9 +436,29 @@ export interface Step {
    *  waitMs / a bare locator wait, which stay exactly as they were so every
    *  test already on disk regenerates byte-identically. */
   waitUntil?: WaitUntilKind;
-  /** how long a `waitUntil` step waits before failing, in ms. Reaches the
-   *  generator as a BARE NUMERAL — see normalizeRawStep's `int` note. */
+  /** How long this step waits before failing, in ms. Reaches the generator as
+   *  a BARE NUMERAL — see normalizeRawStep's `int` note.
+   *
+   *  Originally a `waitUntil`-only field, and widened (2026-08-21) to the
+   *  action and assertion steps, which emit it as `{ timeout: n }`. Before
+   *  that, "this button takes twelve seconds to appear" could only be said by
+   *  putting a whole separate wait step in front of the click — which asserts
+   *  something the user did not mean to assert and reports as its own failure
+   *  when it lapses. Absent still means Playwright's own default, so nothing
+   *  already on disk changes shape. */
   timeoutMs?: number;
+  /** How a `fill` step delivers its value (default "fill"). See TypeMode —
+   *  `sequential` fires per-character keyboard events and does NOT clear the
+   *  field first. */
+  typeMode?: TypeMode;
+  /** Milliseconds between characters for a `sequential` fill. Absent means no
+   *  delay (Playwright's default), which still fires every event — the delay
+   *  is for pages that debounce, not for the events themselves. Reaches the
+   *  generator as a BARE NUMERAL: the boundary REFUSES anything outside
+   *  [0, MAX_TYPE_DELAY_MS] (what `int` does for every numeric field), and
+   *  emission CLAMPS, because a stored step reaches the generator without
+   *  passing the boundary again. */
+  typeDelayMs?: number;
   /** what a `cookie` step does */
   cookieAction?: CookieAction;
   /** the cookie a `cookie` step sets or deletes (absent for clearAll) */
@@ -504,6 +568,8 @@ export interface RawStep {
   cssProp?: string;
   cssMatch?: CssMatch;
   elementState?: ElementState;
+  typeMode?: TypeMode;
+  typeDelayMs?: number;
   count?: number;
   width?: number;
   height?: number;
@@ -985,6 +1051,7 @@ export const STEP_TYPES: StepType[] = [
   "wait", "viewport", "if", "else", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
   "scroll", "download", "a11y", "upload", "api", "aiCheck", "group", "endGroup", "dialog",
   "teardown",
+  "reload",
 ];
 
 export type DownloadMatch = "contains" | "exact";
@@ -1395,6 +1462,8 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   if (cssMatch) out.cssMatch = cssMatch;
   const elementState = oneOf(s.elementState, ELEMENT_STATES);
   if (elementState) out.elementState = elementState;
+  const typeMode = oneOf(s.typeMode, TYPE_MODES);
+  if (typeMode) out.typeMode = typeMode;
 
   // The fields that reach the generator as bare numerals.
   const count = int(s.count, 0, 1_000_000);
@@ -1411,6 +1480,8 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   if (scrollY !== undefined) out.scrollY = scrollY;
   if (waitMs !== undefined) out.waitMs = waitMs;
   if (timeoutMs !== undefined) out.timeoutMs = timeoutMs;
+  const typeDelayMs = int(s.typeDelayMs, 0, MAX_TYPE_DELAY_MS);
+  if (typeDelayMs !== undefined) out.typeDelayMs = typeDelayMs;
   const loopCount = int(s.loopCount, 1, MAX_LOOP_COUNT);
   if (loopCount !== undefined) out.loopCount = loopCount;
   const downloadMatch = oneOf(s.downloadMatch, DOWNLOAD_MATCHES);

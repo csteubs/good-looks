@@ -690,11 +690,36 @@ export function buildReplayScript(step: Step): string {
         return { ok: true };
       }
       if (t === "fill") {
+        var fillValue = step.value || "";
+        // Per-character mode has to be previewed per character, or the preview
+        // is green for a reason the run will not reproduce: the WHOLE point of
+        // the mode is that the page sees a keydown/keypress/input/keyup for
+        // every character, and a page with real keyboard handling behaves
+        // differently under one bulk assignment. The trainer agreeing with the
+        // run about what a step MEANS is the property this app keeps having to
+        // re-establish; a shortcut here would break it in a new place.
+        //
+        // It does NOT clear the field first, exactly like the emitted
+        // pressSequentially. See TypeMode in main/recorder/types.ts.
+        if (step.typeMode === "sequential") {
+          el.focus();
+          for (var ci = 0; ci < fillValue.length; ci++) {
+            var ch = fillValue.charAt(ci);
+            el.dispatchEvent(new KeyboardEvent("keydown", { key: ch, bubbles: true }));
+            el.dispatchEvent(new KeyboardEvent("keypress", { key: ch, bubbles: true }));
+            try { el.value = (el.value == null ? "" : el.value) + ch; } catch (e) {}
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new KeyboardEvent("keyup", { key: ch, bubbles: true }));
+          }
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+          log("info", "typed " + fillValue.length + " character(s) one by one (appended — this mode does not clear the field)");
+          return { ok: true };
+        }
         el.focus();
-        try { el.value = step.value || ""; } catch (e) {}
+        try { el.value = fillValue; } catch (e) {}
         el.dispatchEvent(new Event("input", { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
-        log("info", "filled value=\\"" + (step.value || "") + "\\"");
+        log("info", "filled value=\\"" + fillValue + "\\"");
         return { ok: true };
       }
       if (t === "select") {
