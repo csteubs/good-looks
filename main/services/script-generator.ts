@@ -825,6 +825,7 @@ export function describeStep(step: Step): string {
   if (step.type === "aiCheck") return `AI check: ${JSON.stringify(step.text ?? "")}`;
   if (step.type === "group") return "group: " + (step.label ?? "");
   if (step.type === "endGroup") return "end group";
+  if (step.type === "teardown") return "teardown — everything below always runs";
   if (step.type === "dialog") {
     return step.dialogAction === "dismiss"
       ? "dismiss the next dialog"
@@ -1274,9 +1275,47 @@ export function generateSpecDetailed(
   const lineMap: Record<number, number> = {};
 
   // Track block nesting so conditional bodies are indented one level deeper.
+  // Initialised to `baseDepth` below, once the teardown split is known.
   let depth = 1; // base level: statements sit inside the test() callback
   const flowExtras = new Map<string, TestVariable>();
   const expanded = expandSteps(record.steps, opts, (i) => i, [], flowExtras);
+
+  // ── Teardown split ───────────────────────────────────────────────────────
+  //
+  // `teardownSplit` is the index in `expanded` of the divider that puts every
+  // step after it in a block that runs even when a step before it threw. It is
+  // computed here, before anything is emitted, because it decides the base
+  // indent of the WHOLE body.
+  //
+  // Two refusals, both emitted as a comment rather than silently honoured.
+  // A divider nested inside an `if` or `loop` cannot be a split: the block it
+  // opens would have to close across the enclosing block's brace, which is a
+  // syntax error, and a spec that does not parse is worse than a test with no
+  // teardown. A SECOND divider has no meaning either — the first already
+  // claimed "everything after this" — so it degrades to a comment instead of
+  // silently re-splitting and dropping the first block's steps.
+  const teardownRefusals = new Set<number>();
+  let teardownSplit = -1;
+  {
+    let nesting = 0;
+    for (let k = 0; k < expanded.length; k++) {
+      const e = expanded[k];
+      if (e.problem) continue;
+      const t = e.step.type;
+      if (t === "if" || t === "loop") nesting += 1;
+      else if (t === "endif" || t === "endLoop") nesting = Math.max(0, nesting - 1);
+      else if (t === "teardown") {
+        if (teardownSplit >= 0 || nesting > 0) teardownRefusals.add(k);
+        else teardownSplit = k;
+      }
+    }
+  }
+  const hasTeardown = teardownSplit >= 0;
+  // Everything sits one level deeper once the body is wrapped. `baseDepth` is
+  // the floor every block-closing `Math.max` uses — hard-coding 1 there would
+  // un-indent the first `}` of a block that closed inside the wrapper.
+  const baseDepth = hasTeardown ? 2 : 1;
+  depth = baseDepth;
 
   // The caller's declarations, plus the inlined flows' runtime-only variables
   // (secrets and captured values). The caller's own declaration of a name wins
@@ -1381,9 +1420,43 @@ export function generateSpecDetailed(
     return `const download${n} = page.waitForEvent("download", { timeout: ${timeout} });`;
   };
 
+  // The latch itself. `glTeardownError` holds the FIRST error either half
+  // threw, and the rethrow at the end is what keeps the test failing. A bare
+  // `try { … } finally { … }` was the obvious shape and is wrong: when the
+  // body has already thrown, a cleanup step that throws inside `finally`
+  // REPLACES that error, so the run reports "could not click Delete account"
+  // and the failure the user actually has to see is gone. Latching the first
+  // error and letting the second lose keeps the body's failure authoritative
+  // while still surfacing a teardown-only failure when the body passed.
+  if (hasTeardown) {
+    body.push("  let glTeardownError;");
+    body.push("  try {");
+  }
+
   let expandedIndex = -1;
   for (const { step, sourceIndex, problem, loop } of expanded) {
     expandedIndex += 1;
+    if (step.type === "teardown") {
+      if (teardownRefusals.has(expandedIndex)) {
+        // Named out loud. A divider that silently did nothing would leave the
+        // step list promising "everything below always runs" against a spec
+        // that makes no such promise.
+        record1(sourceIndex);
+        body.push(
+          "  ".repeat(depth) +
+            "// teardown divider ignored — " +
+            (teardownSplit >= 0 && teardownSplit !== expandedIndex
+              ? "this test already has one"
+              : "a divider cannot sit inside an if or repeat block"),
+        );
+        continue;
+      }
+      record1(sourceIndex);
+      body.push("  } catch (e) { glTeardownError = e; }");
+      body.push("  // ── teardown (always runs) ──");
+      body.push("  try {");
+      continue;
+    }
     for (const pending of armBefore.get(expandedIndex) ?? []) {
       record1(pending.sourceIndex);
       body.push("  ".repeat(depth) + armingLine(pending.n, pending.step));
@@ -1430,7 +1503,7 @@ export function generateSpecDetailed(
       }
       if (blockKinds[blockKinds.length - 1]?.kind === "loop") blockKinds.pop();
       loopNames.pop();
-      depth = Math.max(1, depth - 1);
+      depth = Math.max(baseDepth, depth - 1);
       record1(sourceIndex);
       body.push("  ".repeat(depth) + "}");
       continue;
@@ -1468,7 +1541,7 @@ export function generateSpecDetailed(
     if (loop === "close") {
       if (refusedLoops.has(step)) continue;
       if (blockKinds[blockKinds.length - 1]?.kind === "loop") blockKinds.pop();
-      depth = Math.max(1, depth - 1);
+      depth = Math.max(baseDepth, depth - 1);
       body.push("  ".repeat(depth) + "}");
       continue;
     }
@@ -1489,7 +1562,7 @@ export function generateSpecDetailed(
         continue;
       }
       top.elsed = true;
-      depth = Math.max(1, depth - 1);
+      depth = Math.max(baseDepth, depth - 1);
       record1(sourceIndex);
       body.push("  ".repeat(depth) + "} else {");
       depth += 1;
@@ -1576,7 +1649,7 @@ export function generateSpecDetailed(
       }
       continue;
     }
-    if (step.type === "endif") depth = Math.max(1, depth - 1);
+    if (step.type === "endif") depth = Math.max(baseDepth, depth - 1);
     if (step.type === "endif" && blockKinds[blockKinds.length - 1]?.kind === "if") blockKinds.pop();
     const indent = "  ".repeat(depth);
     // A trailing log statement (viewport only) travels with its step through
@@ -1620,8 +1693,17 @@ export function generateSpecDetailed(
   // `endLoop`, so the next round-trip restores the pair instead of losing it.
   while (loopNames.length > 0) {
     loopNames.pop();
-    depth = Math.max(1, depth - 1);
+    depth = Math.max(baseDepth, depth - 1);
     body.push("  ".repeat(depth) + "}");
+  }
+
+  if (hasTeardown) {
+    // `=== undefined` rather than a truthiness test: a thrown value can be
+    // falsy (`throw ""` is legal, and a library rejecting with `null` is not
+    // exotic), and a latch that reads that as "nothing failed" turns a real
+    // failure into a pass.
+    body.push("  } catch (e) { if (glTeardownError === undefined) glTeardownError = e; }");
+    body.push("  if (glTeardownError !== undefined) throw glTeardownError;");
   }
 
   const preamble = ['import { test, expect } from "@playwright/test";'];

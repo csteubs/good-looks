@@ -57,6 +57,7 @@ const SYNTAX: Record<SyntaxTheme, Record<StepType, string>> = {
     runFlow: "#b9a6e0",
     group: "#b9a6e0",
     endGroup: "#b9a6e0",
+    teardown: "#b9a6e0",
     wait: "#9aa3a8",
   },
 };

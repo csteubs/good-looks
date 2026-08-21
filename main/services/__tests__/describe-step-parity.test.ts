@@ -51,6 +51,7 @@ const cases: { label: string; step: Step }[] = [
   { label: "group", step: step({ type: "group", label: "Log in" }) },
   { label: "group with no label", step: step({ type: "group" }) },
   { label: "endGroup", step: step({ type: "endGroup" }) },
+  { label: "teardown", step: step({ type: "teardown" }) },
   { label: "dialog accept with text", step: step({ type: "dialog", dialogAction: "accept", value: "Jane" }) },
   { label: "dialog dismiss", step: step({ type: "dialog", dialogAction: "dismiss" }) },
   { label: "dialog with no action", step: step({ type: "dialog" }) },

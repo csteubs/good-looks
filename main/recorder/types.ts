@@ -100,6 +100,14 @@ export type StepType =
   // loop/endLoop; the label rides `label`.
   | "group"
   | "endGroup"
+  // Splits the test in two: everything BELOW this divider runs even when a
+  // step above it failed. A single divider rather than a `teardown`/`endTeardown`
+  // pair, because there is nothing after a teardown — the block is the rest of
+  // the test, so a closing half could only ever be redundant or contradictory.
+  // Emission is an error LATCH, not a bare `finally`: a cleanup step that
+  // throws inside `finally` replaces the failure the user actually needs to
+  // see. See `teardownSplit` in script-generator.ts.
+  | "teardown"
   // Arm the NEXT JavaScript dialog (alert/confirm/prompt): accept it —
   // with optional prompt text — or dismiss it. One-shot, armed BEFORE the
   // step that triggers the dialog, because Playwright auto-dismisses any
@@ -976,6 +984,7 @@ export const STEP_TYPES: StepType[] = [
   "goto", "click", "fill", "press", "select", "check", "uncheck", "assert",
   "wait", "viewport", "if", "else", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
   "scroll", "download", "a11y", "upload", "api", "aiCheck", "group", "endGroup", "dialog",
+  "teardown",
 ];
 
 export type DownloadMatch = "contains" | "exact";

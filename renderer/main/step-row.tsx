@@ -742,6 +742,7 @@ export function StepRow({
           step.type !== "endLoop" &&
           step.type !== "group" &&
           step.type !== "endGroup" &&
+          step.type !== "teardown" &&
           !(step.type === "state" && step.elementState === "press") ? (
             <button
               type="button"
@@ -797,7 +798,8 @@ export function StepRow({
               // the next round-trip.
               step.type !== "aiCheck" &&
               step.type !== "group" &&
-              step.type !== "endGroup";
+              step.type !== "endGroup" &&
+              step.type !== "teardown";
             const isFlowCall = step.type === "runFlow" && !!step.flowId;
             const canFlowArgs = onEdit && isFlowCall;
             const canOpenFlow = onOpenFlow && isFlowCall;

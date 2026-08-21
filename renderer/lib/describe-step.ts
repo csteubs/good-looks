@@ -295,6 +295,7 @@ export function describeStep(step: Step): string {
   if (step.type === "aiCheck") return `AI check: ${JSON.stringify(step.text ?? "")}`;
   if (step.type === "group") return "group: " + (step.label ?? "");
   if (step.type === "endGroup") return "end group";
+  if (step.type === "teardown") return "teardown — everything below always runs";
   if (step.type === "dialog") {
     return step.dialogAction === "dismiss"
       ? "dismiss the next dialog"

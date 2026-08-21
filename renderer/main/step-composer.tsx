@@ -100,6 +100,7 @@ export type AddStepKind =
   | "api"
   | "aiCheck"
   | "group"
+  | "teardown"
   | "dialog"
   | "fill";
 
@@ -122,6 +123,7 @@ export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   api: "API request",
   aiCheck: "AI visual check",
   group: "Group steps",
+  teardown: "Teardown (always runs)",
   dialog: "Handle next dialog",
   fill: "Fill with a variable",
 };
@@ -1028,6 +1030,11 @@ export function StepComposer({
         if (label === "") return null;
         return [{ type: "group", label }, { type: "endGroup" }];
       }
+      // A DIVIDER, so there is no closing half to insert with it — everything
+      // below the row is the teardown block. One per test; the generator
+      // refuses a second and says so in the spec.
+      case "teardown":
+        return [{ type: "teardown" }];
       case "dialog": {
         const step: RawStep = { type: "dialog", dialogAction };
         if (dialogAction === "accept" && dialogText !== "") step.value = dialogText;
@@ -1874,6 +1881,14 @@ export function StepComposer({
               />
             </Field>
           </>
+        ) : null}
+        {kind === "teardown" ? (
+          <Text size="small" className="text-secondary">
+            Splits the test: every step below this row runs even when a step above it
+            failed — cleanup that has to happen either way. The test still fails for the
+            original reason; a teardown step that fails on its own is reported too. One
+            per test, and it cannot sit inside an if or repeat block.
+          </Text>
         ) : null}
         {kind === "dialog" ? (
           <>
