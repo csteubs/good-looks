@@ -11,8 +11,9 @@
 //  • The prompt never said `title` is an EXACT whole-title match, and offered no
 //    `titleContains`, so "check the title mentions Checkout" had exactly one
 //    expressible answer and it was the one that fails on "Checkout | Acme".
-//  • `locatorToPrompt` dropped `.nth(k)`, so the model was shown a locator that
-//    could not produce the failure it was being asked to diagnose.
+//  • `locatorToPrompt` dropped `.nth(k)` — and, found later, the whole `ctx`
+//    chain — so the model was shown a locator that could not produce the
+//    failure it was being asked to diagnose.
 //
 // These are the same class of bug as the trainer/generator divergence this
 // branch fixed, one layer out: a second copy of a rule, with nothing comparing
@@ -141,6 +142,42 @@ describe("the model is shown the locator that actually ran", () => {
 
   it("omits it when there is none", () => {
     expect(locatorToPrompt({ k: "text", v: "Save" })).toBe('getByText("Save")');
+  });
+
+  // The pinned-context chain is the other half of the same bug: a step whose
+  // spec line is a chained locator was shown to the model as the bare target —
+  // a locator that matches MORE than the one that ran, and that hides the
+  // clauses (the container, its hasText) whose failure is the commonest reason
+  // such a step fails. Expected strings here are stated independently; the
+  // exhaustive agreement with the generator is pinned by
+  // main/services/__tests__/locator-prompt-parity.test.ts.
+  it("renders the pinned container and its hasText filter, in emission order", () => {
+    expect(
+      locatorToPrompt({
+        k: "role",
+        role: "button",
+        name: "Edit",
+        ctx: { within: { k: "testid", v: "billing" }, withinHasText: "Billing" },
+      }),
+    ).toBe('getByTestId("billing").filter({ hasText: "Billing" }).getByRole("button", { name: "Edit" })');
+  });
+
+  it("renders .and() predicates with their page. prefix, as the spec spells them", () => {
+    expect(
+      locatorToPrompt({ k: "text", v: "Edit", ctx: { and: [{ k: "css", v: "[data-qa='edit']" }] } }),
+    ).toBe('getByText("Edit").and(page.locator("[data-qa=\'edit\']"))');
+  });
+
+  it("keeps .nth(k) LAST, after the context chain — it indexes the narrowed set", () => {
+    expect(
+      locatorToPrompt({ k: "text", v: "Edit", nth: 1, ctx: { within: { k: "testid", v: "card" } } }),
+    ).toBe('getByTestId("card").getByText("Edit").nth(1)');
+  });
+
+  it("ignores withinHasText with no container, as the generator does", () => {
+    expect(locatorToPrompt({ k: "text", v: "Edit", ctx: { withinHasText: "Billing" } })).toBe(
+      'getByText("Edit")',
+    );
   });
 });
 

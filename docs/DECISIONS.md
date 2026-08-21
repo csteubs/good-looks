@@ -9403,3 +9403,65 @@ auto-capturing the user's own answer in the trainer needs a page-world
 wrap of window.confirm/prompt, which is a new injection surface to design
 deliberately rather than ride along here. The trainer preview narrates the
 step and tells the user to answer the live dialog themselves.
+## 2026-08-21 — The AI-debug prompts show a locator's pinned context
+
+**The bug.** `locatorToPrompt` (renderer/lib/llm-prompts.ts) renders a step's
+locator into every prompt that names one — the trainer's step-debug prompt,
+the run-debug structure payload's "locator that failed" and heal-candidate
+lines, and the generate-steps selector context. It rendered `.nth(k)` (added
+earlier for exactly this reason, and documented on the function) but not
+`ctx`, so a step whose spec line is
+`page.getByTestId("billing").filter({ hasText: "Billing" }).getByRole("button", { name: "Edit" })`
+was shown to the model as `getByRole("button", { name: "Edit" })`. That is a
+locator that cannot produce the failure being diagnosed: the commonest failure
+a chained step has is the container or its `hasText` no longer matching, and
+the model was never shown either clause. The bare target also matches more
+elements than the chain does, so the structure payload's match counts
+contradicted the error text sitting next to them.
+
+**The fix is delegation, not a third copy.** This work began on a tree where
+the renderer had no full-chain rendering at all, and the first version added
+the chain to `locatorToPrompt` directly, next to the file's own `locatorBase`
+transcription. It then collided with the step-list half of the same bug landing
+independently (#184 gave `describe-step.ts` a full `locatorExpr` mirror of the
+generator's, for the same reason: the step list was hiding exactly the
+disambiguation the user added). Two renderer copies of the chain grammar in one
+release is the drift this repo keeps re-learning, so `locatorToPrompt` now
+delegates to describe-step's `locatorExpr` and its private `locatorBase` copy
+is deleted. The delegation also picked up `.nth(-1)` handling for free — the
+prompt's own rendering predated "last match" and would have shown a forged
+`.nth(-7)` the generator floors to 0.
+
+**Pinned against the emitted line, not just the sibling function.**
+`describe-mirror.test.ts` (from #184) diffs the renderer's `locatorExpr`
+against the generator's function. The new
+`main/services/__tests__/locator-prompt-parity.test.ts` pins `locatorToPrompt`
+against the expression extracted from the line `generateSpec` actually emits —
+the describe-step-parity treatment, and deliberately one step stronger than a
+function-to-function diff: it holds even if the generator stops routing
+through `locatorExpr`, and it keeps holding if `locatorToPrompt` ever grows a
+prompt-specific rendering again. A `shared/` module (the heal-key.mjs shape)
+was considered and rejected: heal-key is in `shared/` because one consumer is
+source text embedded in a fixture, which cannot import anything, and because a
+drifted heal key has no observable artifact to compare short of running real
+Playwright. Here everything is importable in one test process and the emitted
+spec line is the ground truth. Moving the generator's `locatorExpr` into
+`shared/` would also have relocated the `num()` guard on `.nth` — one of the
+two independent guards `check:step-ingest` pins — for no added safety.
+
+**Degenerate shapes are pinned too.** `normalizeLocatorContext` keeps most
+malformed contexts from being stored, but the generator renders whatever the
+record on disk holds, so the parity rows include the shapes both sides must
+degrade on identically: `withinHasText` with no container (ignored), an empty
+`and` array (no-op), a container carrying its own `nth` (dropped by both —
+only the top-level locator's `nth` becomes source), and a forged `nth: -7`
+(floored to 0 by both).
+
+**Verified to fail first, twice.** Before the fix: three of the four new
+llm-knowledge.test.ts cases and nine of the ctx-carrying parity rows failed
+against the unfixed tree (12 failures), and every bare-kind and `.nth` row
+already passed, confirming the then-current `locatorBase` transcription had
+not drifted. After the rebase onto #184: the forged-negative parity row was
+run against the pre-delegation rendering and failed exactly there
+(`.nth(-7)` shown for a line that says `.nth(0)`) before the delegation made
+it pass.

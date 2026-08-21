@@ -149,6 +149,13 @@ function locatorBase(loc: Locator): string {
  * Also where a locator's user-pinned CONTEXT becomes source — see the chain
  * built below, and `check:locator-roundtrip`, which holds the property that
  * makes emitting one safe: everything written here can be read back.
+ *
+ * Mirrored in the renderer by `locatorExpr` in describe-step.ts, which both
+ * the step list and `locatorToPrompt` (the AI-debug prompts' promise of this
+ * exact expression) render through. Pinned twice: `describe-mirror.test.ts`
+ * diffs the mirror against this function, and
+ * __tests__/locator-prompt-parity.test.ts pins the prompt rendering against
+ * `generateSpec`'s emitted line — a clause added here needs a case in each.
  */
 export function locatorExpr(loc: Locator): string {
   let base = locatorBase(loc);
