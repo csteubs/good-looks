@@ -80,6 +80,8 @@ import {
   varRef,
 } from "../components/variable-picker";
 import { formatLocator, KIND_LABEL } from "./refine-selector-dialog";
+import { COMPARE_OP_LABEL, COMPARE_OPS } from "../../shared/step-semantics.mjs";
+import type { CompareOp } from "../../shared/step-semantics.mjs";
 
 export type AddStepKind =
   | "assertion"
@@ -91,6 +93,7 @@ export type AddStepKind =
   | "find"
   | "viewport"
   | "reload"
+  | "echo"
   | "scroll"
   | "capture"
   | "download"
@@ -115,6 +118,7 @@ export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   find: "Find element",
   viewport: "Set viewport",
   reload: "Reload the page",
+  echo: "Write to the run log",
   scroll: "Scroll",
   capture: "Capture a value",
   download: "Expect a download",
@@ -188,6 +192,10 @@ export const CONDITION_OPTIONS: { value: ConditionKind; label: string; page?: bo
   { value: "unchecked", label: "Element is unchecked" },
   { value: "urlContains", label: "Page URL contains", page: true },
   { value: "titleContains", label: "Page title contains", page: true },
+  // `page: true` reads as "needs no element", which is what it has always
+  // meant to the builder below — a variable condition looks at nothing on the
+  // page at all.
+  { value: "variable", label: "Variable value", page: true },
 ];
 
 // "Wait until" predicates. Element predicates resolve the picked locator; the
@@ -225,7 +233,7 @@ export const WAIT_UNTIL_OPTIONS: {
 // and the `find` below is looked up with a non-null assertion — so
 // `titleContains`, which shipped missing from this list alone, crashed the
 // whole panel from three working menus.
-type Need = "none" | "text" | "value" | "attr" | "count" | "css";
+type Need = "none" | "text" | "value" | "attr" | "count" | "css" | "variable";
 export const ASSERT_OPTIONS: {
   value: AssertKind;
   label: string;
@@ -254,6 +262,9 @@ export const ASSERT_OPTIONS: {
   { value: "urlIs", label: "URL is", need: "value", pageLevel: true },
   { value: "title", label: "Page title is", need: "value", pageLevel: true },
   { value: "titleContains", label: "Page title contains", need: "value", pageLevel: true },
+  // The one kind that looks at nothing on the page. `pageLevel` is the
+  // builder's name for "needs no element", which is exactly the case here.
+  { value: "variable", label: "Variable value", need: "variable", pageLevel: true },
 ];
 
 /**
@@ -726,6 +737,12 @@ export function StepComposer({
   const [scrollXDraft, setScrollXDraft] = React.useState("0");
   const [scrollYDraft, setScrollYDraft] = React.useState("0");
   const [captureVar, setCaptureVar] = React.useState("");
+  // The variable a `variable` assertion or condition reads, and how it
+  // compares. Shared by both kinds on purpose: they are the same claim, and a
+  // user who switches between them should not have to re-pick.
+  const [compareVar, setCompareVar] = React.useState("");
+  const [compareOp, setCompareOp] = React.useState<CompareOp>("eq");
+  const [echoText, setEchoText] = React.useState("");
   const [captureFrom, setCaptureFrom] = React.useState<CaptureSource>("text");
   const [captureAttr, setCaptureAttr] = React.useState("");
   const [flowId, setFlowId] = React.useState("");
@@ -915,6 +932,13 @@ export function StepComposer({
         const p = RESIZE_PRESETS.find((v) => v.id === viewport);
         return [{ type: "viewport", width: p?.w ?? 1280, height: p?.h ?? 800 }];
       }
+      case "echo": {
+        const text = echoText.trim();
+        // Nothing to say refuses the submit: an echo with no message writes a
+        // blank line into the run log, which is a step that looks added and
+        // says nothing.
+        return text ? [{ type: "echo", text }] : null;
+      }
       case "reload":
         // No fields: a reload has nothing to configure. The per-step timeout,
         // like every other step's, is set from the step row afterwards.
@@ -1073,7 +1097,16 @@ export function StepComposer({
         // between if and else run when the condition holds, steps between
         // else and end-if when it does not.
         const ifStep: RawStep = { type: "if", cond };
-        if (condOpt.page) {
+        if (cond === "variable") {
+          // No variable chosen refuses the WHOLE submit, the same rule the css
+          // assert applies: the boundary would drop `captureVar` and keep the
+          // rest, producing a condition that compares nothing and silently
+          // takes the same branch every run.
+          if (!compareVar) return null;
+          ifStep.captureVar = compareVar;
+          ifStep.compareOp = compareOp;
+          ifStep.value = value;
+        } else if (condOpt.page) {
           ifStep.value = value;
         } else {
           if (!locator) return null;
@@ -1103,6 +1136,12 @@ export function StepComposer({
           step.value = value;
         }
         if (opt.need === "count") step.count = Number(count) || 0;
+        if (opt.need === "variable") {
+          if (!compareVar) return null;
+          step.captureVar = compareVar;
+          step.compareOp = compareOp;
+          step.value = value;
+        }
         if (opt.need === "css") {
           // A malformed property refuses the WHOLE submit, the same rule the
           // wait dialog applies to a ticked box with no element. The boundary
@@ -1395,6 +1434,68 @@ export function StepComposer({
                 Fills with <code className="font-mono">{varRef(fillVar)}</code>.
               </Text>
             ) : null}
+          </>
+        ) : null}
+
+        {/* The variable comparison — shown for the `variable` assert kind and
+            the `variable` condition alike, because they are the same claim.
+            The expected value goes through the ordinary `value` field, so it
+            interpolates `${other}` like every other value in this dialog and
+            one variable can be compared against another. */}
+        {(kind === "assertion" && assert === "variable") ||
+        (kind === "condition" && cond === "variable") ? (
+          <>
+            <Field label="Variable" orientation="vertical">
+              <VariableChips
+                variables={variables}
+                selected={compareVar}
+                onPick={(name) => setCompareVar(name)}
+                emptyHint={
+                  onCreateVariable
+                    ? "This test declares no variables yet. Create one below."
+                    : "This test declares no variables yet. Add one on the Variables tab."
+                }
+              />
+            </Field>
+            <Field label="Comparison" orientation="vertical">
+              <Select value={compareOp} onValueChange={(v) => setCompareOp(v as CompareOp)}>
+                <SelectTrigger size="small">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {COMPARE_OPS.map((op) => (
+                    <SelectItem key={op} value={op}>
+                      {COMPARE_OP_LABEL[op]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Text variant="small" color="secondary">
+              Compares the variable&rsquo;s value as text, exactly as it is:{" "}
+              <strong>case matters and whitespace is not tidied up</strong>, because that is what
+              the generated check really does. The four numeric comparisons read both sides as
+              numbers, and a side that is not one fails the step rather than passing quietly.
+            </Text>
+          </>
+        ) : null}
+
+        {kind === "echo" ? (
+          <>
+            <Text variant="small" color="secondary">
+              Writes a line into the run log at this point &mdash; no assertion, and it can never
+              fail. The companion to a capture step: it answers &ldquo;what <em>is</em>{" "}
+              <code className="font-mono">{"${orderId}"}</code> here?&rdquo; without making the run
+              depend on the answer.
+            </Text>
+            <Field label="Message" orientation="vertical">
+              <Input
+                size="small"
+                value={echoText}
+                placeholder="order is ${orderId}"
+                onChange={(e) => setEchoText(e.target.value)}
+              />
+            </Field>
           </>
         ) : null}
 

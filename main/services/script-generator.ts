@@ -1,7 +1,16 @@
 // Convert recorded steps into a @playwright/test spec file.
 
 import { GLAZE_RUNTIME_FILE } from "./glaze-runtime-source.js";
-import { ASSERT_SEMANTICS, regexPatternExpr, textMatchExpr, urlPathExpr, WAIT_SEMANTICS } from "../../shared/step-semantics.mjs";
+import {
+  ASSERT_SEMANTICS,
+  COMPARE_OP_LABEL,
+  COMPARE_OPS,
+  NUMERIC_COMPARE_OPS,
+  regexPatternExpr,
+  textMatchExpr,
+  urlPathExpr,
+  WAIT_SEMANTICS,
+} from "../../shared/step-semantics.mjs";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import {
   cookieScopeIsValid,
@@ -21,7 +30,7 @@ import {
   toPlaywrightSameSite,
   VAR_REF_RE,
 } from "../recorder/types.js";
-import type { MatchSemantics } from "../../shared/step-semantics.mjs";
+import type { CompareOp, MatchSemantics } from "../../shared/step-semantics.mjs";
 import type {
   CookieSpec,
   Locator,
@@ -310,6 +319,10 @@ function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>
       return "await " + e + "(page).toHaveTitle" + callArgs([valueExpr(step.value, vars)], o) + ";";
     return "await " + e + "(page).toHaveTitle" + callArgs([textMatchExpr(step.value ?? "", semantics, vars)], o) + ";";
   }
+  // Before the target check, deliberately: this is the one assert kind that
+  // looks at nothing on the page, so requiring a locator would refuse every
+  // one of them.
+  if (step.assert === "variable") return variableAssertLine(step, vars);
   if (!target) return null;
   const x = e + "(" + target + ")";
   switch (step.assert) {
@@ -435,11 +448,127 @@ function containsExpr(subject: string, raw: string | undefined, semantics: Match
   return subj + ".toLowerCase().includes(" + lowered + ")";
 }
 
+/**
+ * The variable a `variable` assertion or condition reads, and how it compares.
+ *
+ * Re-validated HERE and not merely at the capture boundary, for `num()`'s
+ * reason: `recorder:updateStep` copies its allowlisted fields raw, and every
+ * test on disk is regenerated from its stored steps. `compareOp` SELECTS A
+ * MATCHER, and the variable NAME lands in source as an identifier, so both are
+ * checked again before either can reach a line.
+ */
+function variableSubject(step: Step): { name: string; op: CompareOp } | null {
+  const name = step.captureVar;
+  if (!isValidVariableName(name)) return null;
+  const op = (COMPARE_OPS as string[]).includes(step.compareOp ?? "")
+    ? (step.compareOp as CompareOp)
+    : "eq";
+  return { name, op };
+}
+
+/**
+ * The assertion line for a `variable` assert.
+ *
+ * REAL MATCHERS ON THE SPEC LINE, not a boolean helper wrapped in
+ * `expect(...).toBe(true)`. Two reasons, and both are about what the user sees
+ * when it fails. Playwright reports an `expect` step located at the spec line —
+ * verified, including for these generic matchers — so the run highlights the
+ * step that failed; and `toBe`/`toContain`/`toMatch` print the actual and
+ * expected values, where a wrapped boolean prints "expected false to be true"
+ * and the user has to open the spec to find out what was compared.
+ *
+ * `expect(value, message)` gives the step its TITLE, so the variable's name
+ * appears in the run log rather than an anonymous assertion.
+ *
+ * The semantics are RAW because that is what these matchers do — see the
+ * CompareOp block in shared/step-semantics.mjs for why this table does not
+ * borrow the kinder rules the page-facing kinds use.
+ */
+function variableAssertLine(step: Step, vars: ReadonlySet<string>): string | null {
+  const subject = variableSubject(step);
+  if (!subject) return null;
+  const { name, op } = subject;
+  const e = step.soft ? "expect.soft" : "expect";
+  const expected = valueExpr(step.value, vars);
+  const opts = optsExpr(timeoutParts(step));
+  // The message is the variable's own name: it is what the run log shows, and
+  // `q()` because a name reaching source unquoted is the shape of the original
+  // injection bug even when the grammar says it cannot contain a quote.
+  const subj = (isNumeric: boolean): string =>
+    e + "(" + (isNumeric ? "Number(V." + name + ")" : "V." + name) + ", " + q(name) + ")";
+
+  if ((NUMERIC_COMPARE_OPS as string[]).includes(op)) {
+    const matcher =
+      op === "gt"
+        ? "toBeGreaterThan"
+        : op === "lt"
+          ? "toBeLessThan"
+          : op === "gte"
+            ? "toBeGreaterThanOrEqual"
+            : "toBeLessThanOrEqual";
+    // `Number(...)` on BOTH sides, and a non-numeric one becomes NaN — which
+    // every one of these matchers reports as a failure naming the value.
+    // Silence would be the worst outcome: `"abc" > 3` quietly false reads
+    // exactly like a real comparison that did not hold.
+    return "await " + subj(true) + "." + matcher + callArgs(["Number(" + expected + ")"], opts) + ";";
+  }
+
+  switch (op) {
+    case "eq":
+      return "await " + subj(false) + ".toBe" + callArgs([expected], opts) + ";";
+    case "neq":
+      return "await " + subj(false) + ".not.toBe" + callArgs([expected], opts) + ";";
+    case "contains":
+      return "await " + subj(false) + ".toContain" + callArgs([expected], opts) + ";";
+    case "notContains":
+      return "await " + subj(false) + ".not.toContain" + callArgs([expected], opts) + ";";
+    case "matches":
+      // The user's own pattern, quoted as a STRING argument to `new RegExp` —
+      // never concatenated into a literal, where a `/` would end it early and
+      // the rest would be parsed as code.
+      return "await " + subj(false) + ".toMatch" + callArgs(["new RegExp(" + expected + ")"], opts) + ";";
+    default: {
+      // starts/ends with, and their negations. Playwright has no matcher for
+      // either, so they compile to an ANCHORED pattern over the reEscaped
+      // value — the same shape `textMatchExpr` uses, and the reason the value
+      // has to be escaped rather than interpolated.
+      const anchored = regexPatternExpr(
+        step.value ?? "",
+        vars,
+        op === "startsWith" || op === "notStartsWith" ? "^" : "",
+        op === "endsWith" || op === "notEndsWith" ? "$" : "",
+      );
+      const negated = op === "notStartsWith" || op === "notEndsWith";
+      return (
+        "await " +
+        subj(false) +
+        (negated ? ".not" : "") +
+        ".toMatch" +
+        callArgs(["new RegExp(" + anchored + ")"], opts) +
+        ";"
+      );
+    }
+  }
+}
+
 /** Build the boolean expression for an `if` step's condition. */
 function conditionExpr(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string {
   const loc = step.locator;
   const target = loc ? "page." + locatorExpr(loc) : "page.locator(\"html\")";
   switch (step.cond) {
+    case "variable": {
+      // A helper rather than an inline comparison, because thirteen operators
+      // inlined here would be a second spelling of `compareValues` — and the
+      // condition and the assertion disagreeing about what "starts with" means
+      // is precisely the class of bug shared/step-semantics.mjs exists to end.
+      // Unlike the assertion, this is not a reported step: an `if` line is
+      // control flow, and the generator has never emitted it as an await.
+      const subject = variableSubject(step);
+      if (!subject) return "false";
+      return (
+        "glazeCompare(V." + subject.name + ", " + q(subject.op) + ", " + valueExpr(step.value, vars) + ")"
+      );
+    }
     case "urlContains":
       return containsExpr("page.url()", step.value, WAIT_SEMANTICS.urlContains as MatchSemantics, vars);
     case "titleContains":
@@ -682,6 +811,13 @@ function ungeneratableReason(step: Step): string {
     }
     if (a === "css" && !isCssPropName(step.cssProp))
       return "the CSS property name is missing or not a valid kebab-case property";
+    // Checked before the locator rule below: a variable assertion looks at
+    // nothing on the page, so "needs an element" would be the wrong reason and
+    // would send the user looking for a target that was never required.
+    if (a === "variable")
+      return isValidVariableName(step.captureVar)
+        ? "this app could not turn it into a Playwright statement"
+        : "no variable was chosen to compare, or its name is not a valid identifier";
     if (!step.locator) return "this assertion needs an element and none was recorded";
   }
   if (step.type === "capture" && !step.captureVar) return "no variable name was set to capture into";
@@ -761,6 +897,11 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
         ? "await " + target + ".press" +
             callArgs([q(step.value ?? "")], optsExpr(timeoutParts(step))) + ";"
         : "await page.keyboard.press(" + q(step.value ?? "") + ");";
+    case "echo":
+      // One awaited helper line, like every other step whose natural spelling
+      // does not start with `await`. It never fails and never asserts — the
+      // point is a line in the run log next to the steps around it.
+      return "await glazeEcho(" + valueExpr(step.text ?? step.value, vars) + ");";
     case "reload":
       // The one page-level action a recording produces that is not a `goto`.
       // Emitted with the same options object as the element actions so a slow
@@ -922,6 +1063,11 @@ export function describeStep(step: Step): string {
   if (step.type === "endLoop") return "end repeat";
   // Kept in sync with the mirror in renderer/lib/describe-step.ts.
   if (step.type === "aiCheck") return `AI check: ${JSON.stringify(step.text ?? "")}`;
+  // A PHRASE, not the emitted matcher. `expect(V.total, "total").toBe("49.99")`
+  // names the mechanism; "total equals \"49.99\"" is the claim the user made.
+  // Kept in sync with the mirror in renderer/lib/describe-step.ts.
+  if (step.type === "assert" && step.assert === "variable") return describeVariableCheck(step);
+  if (step.type === "echo") return "echo " + JSON.stringify(step.text ?? step.value ?? "");
   if (step.type === "group") return "group: " + (step.label ?? "");
   if (step.type === "endGroup") return "end group";
   if (step.type === "teardown") return "teardown — everything below always runs";
@@ -982,6 +1128,18 @@ export function describeStep(step: Step): string {
     return "scroll to (" + num(step.scrollX, 0) + ", " + num(step.scrollY, 0) + ")";
   const line = stepLine(step);
   return line ? line.replace(/^await /, "").replace(/;$/, "") : step.type;
+}
+
+/** Readable phrasing of a variable check — used by BOTH the `variable` assert
+ *  kind and the `variable` condition, because they are the same claim in two
+ *  places and describing them differently is how a user comes to believe they
+ *  mean different things. Kept in sync with the mirror in
+ *  renderer/lib/describe-step.ts. */
+export function describeVariableCheck(step: Step): string {
+  const name = step.captureVar || "variable";
+  const op = step.compareOp ?? "eq";
+  const label = COMPARE_OP_LABEL[op] ?? "equals";
+  return name + " " + label + " " + JSON.stringify(step.value ?? "");
 }
 
 /** Readable phrasing of a `capture` step. Kept in sync with the mirror in
@@ -1049,6 +1207,8 @@ export function describeCondition(step: Step): string {
   const loc = step.locator;
   const el = loc ? "page." + locatorExpr(loc) : "element";
   switch (step.cond) {
+    case "variable":
+      return describeVariableCheck(step);
     case "urlContains":
       return "URL contains " + q(step.value ?? "");
     case "titleContains":
@@ -1443,6 +1603,7 @@ export function generateSpecDetailed(
   const needsTotp = variables.some((v) => v.kind === "secret" && v.totp);
   const needsAiCheck = expanded.some((e) => !e.problem && e.step.type === "aiCheck");
   const needsDialog = expanded.some((e) => !e.problem && e.step.type === "dialog");
+  const needsEcho = expanded.some((e) => !e.problem && e.step.type === "echo");
   // The preamble is built AFTER the body now — see the note above the
   // assembly at the end. Emission only needs `record1`, which records a
   // body-RELATIVE line and is resolved to an absolute one once the preamble's
@@ -1815,6 +1976,12 @@ export function generateSpecDetailed(
     ...(needsTotp ? ["glazeTotp"] : []),
     ...(needsAiCheck ? ["glazeAiCheck"] : []),
     ...(needsDialog ? ["glazeArmDialog"] : []),
+    ...(needsEcho ? ["glazeEcho"] : []),
+    // Asked of the EMITTED SOURCE for the same reason glazeReEscape is: only
+    // `conditionExpr` decides whether a variable condition compiled to a
+    // comparison at all (a step naming no valid variable degrades to `false`),
+    // and re-deriving that here would be a second spelling of the same rule.
+    ...(body.some((l) => l.includes("glazeCompare(")) ? ["glazeCompare"] : []),
     // Asked of the EMITTED SOURCE, not predicted from the steps.
     //
     // Only `regexPatternExpr` decides whether a value becomes a template with

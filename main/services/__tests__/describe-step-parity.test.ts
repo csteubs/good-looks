@@ -19,6 +19,7 @@ import { describe, expect, it } from "vitest";
 import { describeStep as backendDescribe } from "../script-generator.js";
 import { describeStep as rendererDescribe } from "../../../renderer/lib/describe-step.js";
 import { ASSERT_KINDS, ELEMENT_STATES, STEP_TYPES } from "../../recorder/types.js";
+import { COMPARE_OPS } from "../../../shared/step-semantics.mjs";
 import type { Step, StepType } from "../../recorder/types.js";
 import type { Step as RendererStep } from "../../../renderer/lib/recorder-types.js";
 
@@ -39,6 +40,8 @@ const cases: { label: string; step: Step }[] = [
   { label: "press with locator", step: step({ type: "press", locator: LOCATOR, value: "Enter" }) },
   { label: "press without locator", step: step({ type: "press", value: "Escape" }) },
   { label: "reload", step: step({ type: "reload" }) },
+  { label: "echo", step: step({ type: "echo", text: "order is ${orderId}" }) },
+  { label: "echo with nothing to say", step: step({ type: "echo" }) },
   { label: "reload with a timeout", step: step({ type: "reload", timeoutMs: 30_000 }) },
   // `force` was in the generated call and NOT in the renderer's step list until
   // 2026-08-21, so a step the user had marked "skip actionability checks" read
@@ -287,6 +290,34 @@ cases.push({
   step: step({ type: "assert", assert: "css", locator: LOCATOR, value: "red" }),
 });
 
+// Every comparison operator, on BOTH the `variable` assert and the `variable`
+// condition. They are the same claim in two places, and describing them
+// differently is how a user comes to believe they mean different things.
+//
+// DERIVED from COMPARE_OPS, not retyped — the same argument as ASSERT_KINDS
+// above: a list that must be remembered is not a guard.
+for (const op of COMPARE_OPS) {
+  cases.push({
+    label: `assert variable ${op}`,
+    step: step({ type: "assert", assert: "variable", captureVar: "orderTotal", compareOp: op, value: "49.99" }),
+  });
+  cases.push({
+    label: `if variable ${op}`,
+    step: step({ type: "if", cond: "variable", captureVar: "orderTotal", compareOp: op, value: "49.99" }),
+  });
+}
+// Degenerate shapes: no variable chosen, no operator chosen, a forged one.
+// Both sides must degrade identically rather than one throwing and the other
+// printing "undefined".
+cases.push({
+  label: "assert variable with no name or operator",
+  step: step({ type: "assert", assert: "variable", value: "49.99" }),
+});
+cases.push({
+  label: "assert variable with a forged operator",
+  step: step({ type: "assert", assert: "variable", captureVar: "x", compareOp: "nope" as never, value: "1" }),
+});
+
 // Every pseudo-state. `press`/`release` carry no locator on purpose, and that
 // is exactly the case where the two copies could disagree about what to print.
 for (const s of ELEMENT_STATES) {
@@ -315,6 +346,7 @@ const CONDITIONS = [
   "unchecked",
   "urlContains",
   "titleContains",
+  "variable",
 ] as const;
 
 for (const c of CONDITIONS) {

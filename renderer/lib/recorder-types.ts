@@ -16,6 +16,10 @@ export const DOWNLOAD_MATCHES: DownloadMatch[] = ["contains", "exact"];
  *  `sequential` fires per-character keyboard events and does NOT clear the
  *  field first; see the backend's TypeMode for the whole argument. */
 export type TypeMode = "fill" | "sequential";
+
+/** Mirror of CompareOp in shared/step-semantics.mjs, re-exported so the
+ *  renderer's own types do not have to reach across for it. */
+export type { CompareOp } from "../../shared/step-semantics.mjs";
 export const TYPE_MODES: TypeMode[] = ["fill", "sequential"];
 
 /** Mirror of MAX_TYPE_DELAY_MS in main/recorder/types.ts. */
@@ -64,11 +68,17 @@ export type StepType =
   // rather than a pair.
   | "teardown"
   | "dialog"
-  | "reload";
+  | "reload"
+  // A line in the run log — no assertion, never fails. Mirror of the
+  // main-process type.
+  | "echo";
 
 /** Predicate for an `if` step. Element conditions use `Step.locator`; page
  *  conditions (urlContains/titleContains) use `Step.value` as the substring. */
 export type ConditionKind =
+  // Compares a VARIABLE. Deliberately absent from WaitUntilKind — see the note
+  // in main/recorder/types.ts for why waiting on a variable has no meaning.
+  | "variable"
   | "visible"
   | "hidden"
   | "exists"
@@ -170,7 +180,10 @@ export type AssertKind =
   // the vocabulary was missing. See the note in main/recorder/types.ts.
   | "title"
   | "titleContains"
-  | "css";
+  | "css"
+  // Compares a VARIABLE's value, not anything on the page. See the note in
+  // main/recorder/types.ts.
+  | "variable";
 
 /**
  * Every assert kind, as a runtime list (mirror of `ASSERT_KINDS` in
@@ -187,7 +200,7 @@ export type AssertKind =
 export const ASSERT_KINDS: AssertKind[] = [
   "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked",
   "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs",
-  "urlPathIs", "title", "titleContains", "css",
+  "urlPathIs", "title", "titleContains", "css", "variable",
 ];
 
 /**
@@ -300,6 +313,8 @@ export interface Step {
   cssProp?: string;
   cssMatch?: CssMatch;
   elementState?: ElementState;
+  /** how a `variable` assertion or condition compares (mirror of main types) */
+  compareOp?: import("../../shared/step-semantics.mjs").CompareOp;
   /** how a `fill` step delivers its value, and the per-character delay for the
    *  `sequential` mode (mirror of main types). */
   typeMode?: TypeMode;
@@ -398,6 +413,8 @@ export interface RawStep {
   cssProp?: string;
   cssMatch?: CssMatch;
   elementState?: ElementState;
+  /** how a `variable` assertion or condition compares (mirror of main types) */
+  compareOp?: import("../../shared/step-semantics.mjs").CompareOp;
   /** how a `fill` step delivers its value, and the per-character delay for the
    *  `sequential` mode (mirror of main types). */
   typeMode?: TypeMode;

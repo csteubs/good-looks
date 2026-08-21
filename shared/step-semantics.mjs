@@ -115,6 +115,130 @@ export const WAIT_SEMANTICS = {
   value: { match: "exact", ...RAW_MATCH },
 };
 
+/**
+ * How a VARIABLE's value is compared against an expected one.
+ *
+ * A separate vocabulary from the tables above, and deliberately so: those
+ * describe what a step asks of the PAGE, and Playwright's web-first matchers
+ * fix their own case and whitespace rules. This one describes a comparison
+ * between two plain strings the run already holds — a captured value, a JSON
+ * field an API step pulled out, a dataset cell — so the semantics are the ones
+ * the emitted matcher really has, which is:
+ *
+ *   RAW. Case-sensitive, no whitespace normalization.
+ *
+ * That is not a preference, it is a reading of `toBe`, `toContain` and
+ * `toMatch`, none of which normalize anything. Choosing kinder semantics here
+ * would put this file back in the position it exists to end: a rule the
+ * generated spec does not actually implement. The consequence worth knowing is
+ * that a value captured from `textContent` carries the page's own whitespace,
+ * so `contains` is the forgiving operator and `eq` is not.
+ *
+ * @typedef {"eq"|"neq"|"contains"|"notContains"|"startsWith"|"notStartsWith"|"endsWith"|"notEndsWith"|"gt"|"lt"|"gte"|"lte"|"matches"} CompareOp
+ */
+
+/** Every comparison, in the order the pickers offer them. */
+export const COMPARE_OPS = [
+  "eq",
+  "neq",
+  "contains",
+  "notContains",
+  "startsWith",
+  "notStartsWith",
+  "endsWith",
+  "notEndsWith",
+  "gt",
+  "lt",
+  "gte",
+  "lte",
+  "matches",
+];
+
+/** The four that compare NUMBERS. Both sides go through `Number()`, and a side
+ *  that is not a number becomes NaN — which every comparison below reports as
+ *  false, and which the emitted matcher reports as a FAILURE naming the value.
+ *  Silence there would be the worst outcome: `"abc" > 3` quietly false reads
+ *  exactly like a real, meaningful comparison that did not hold. */
+export const NUMERIC_COMPARE_OPS = ["gt", "lt", "gte", "lte"];
+
+/** Human phrasing, for step rows and pickers. One spelling, so the trainer's
+ *  list and the composer's dropdown cannot describe an operator differently. */
+export const COMPARE_OP_LABEL = {
+  eq: "equals",
+  neq: "does not equal",
+  contains: "contains",
+  notContains: "does not contain",
+  startsWith: "starts with",
+  notStartsWith: "does not start with",
+  endsWith: "ends with",
+  notEndsWith: "does not end with",
+  gt: "is greater than",
+  lt: "is less than",
+  gte: "is at least",
+  lte: "is at most",
+  matches: "matches regex",
+};
+
+/**
+ * Apply a comparison. THE one definition — read by the generator's condition
+ * expression through the emitted runtime, by the trainer's injected replayer
+ * through `compareSource()`, and by the renderer's step list for its wording.
+ *
+ * SELF-CONTAINED, ES5, no closure references, for the same reason
+ * `matchesValue` is: `compareSource()` serializes it with `toString()` into a
+ * script injected beside an untrusted page.
+ *
+ * A `matches` pattern that does not compile is FALSE rather than an exception.
+ * The pattern is a value the user typed; a step that throws a SyntaxError deep
+ * inside a run reports as a crash rather than as an assertion that did not
+ * hold, and the generated matcher — where `new RegExp` is built by Playwright
+ * rather than here — surfaces it properly anyway.
+ *
+ * @param {string} actual
+ * @param {CompareOp} op
+ * @param {string} expected
+ * @returns {boolean}
+ */
+export function compareValues(actual, op, expected) {
+  var a = actual == null ? "" : String(actual);
+  var b = expected == null ? "" : String(expected);
+  if (op === "gt" || op === "lt" || op === "gte" || op === "lte") {
+    var na = Number(a);
+    var nb = Number(b);
+    // Every comparison against NaN is false, INCLUDING the negated readings —
+    // which is why there are no negated numeric operators to get wrong.
+    if (op === "gt") return na > nb;
+    if (op === "lt") return na < nb;
+    if (op === "gte") return na >= nb;
+    return na <= nb;
+  }
+  if (op === "matches") {
+    try {
+      return new RegExp(b).test(a);
+    } catch (err) {
+      return false;
+    }
+  }
+  if (op === "eq") return a === b;
+  if (op === "neq") return a !== b;
+  if (op === "contains") return a.indexOf(b) >= 0;
+  if (op === "notContains") return a.indexOf(b) < 0;
+  if (op === "startsWith") return a.slice(0, b.length) === b;
+  if (op === "notStartsWith") return a.slice(0, b.length) !== b;
+  // `"".slice(-0)` is the WHOLE string, not "" — the same trap `matchesValue`
+  // documents, and the reason both ends are spelled out rather than inferred.
+  if (op === "endsWith") return b === "" ? true : a.slice(a.length - b.length) === b;
+  if (op === "notEndsWith") return b === "" ? false : a.slice(a.length - b.length) !== b;
+  return false;
+}
+
+/** `compareValues` as source text, for embedding in the replayer's injected
+ *  script and in the emitted runtime. `toString()` rather than a second copy,
+ *  for the reason this whole module exists. */
+export function compareSource() {
+  return "var compareValues = " + compareValues.toString() + ";";
+}
+
 /** The assert kind a wait/condition predicate shares its semantics with. Used
  *  by the parity harness to prove the two tables agree where they overlap —
  *  "wait until the URL contains X" and "assert the URL contains X" differing by
