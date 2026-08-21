@@ -897,7 +897,11 @@ export function StepRow({
                   ) : null}
                   {canRefine ? (
                     <DropdownMenuItem onSelect={onRefine} icon="crosshair">
-                      Refine Selection
+                      {/* A drag is the one step with TWO elements, and this
+                          edits `locator` — the source. Saying so beats letting
+                          the user believe they refined "the element" and find
+                          the drop target unchanged. */}
+                      {step.type === "drag" ? "Refine Selection (drag source)" : "Refine Selection"}
                     </DropdownMenuItem>
                   ) : null}
                   {canFlowArgs ? (

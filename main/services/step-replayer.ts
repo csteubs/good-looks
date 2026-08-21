@@ -744,6 +744,62 @@ export function buildReplayScript(step: Step): string {
         log("info", "selected value=\\"" + hit.value + "\\"");
         return { ok: true };
       }
+      if (t === "dblclick") {
+        try { el.scrollIntoView({ block: "center" }); } catch (e) {}
+        // Both events, in the order a browser sends them. A page that listens
+        // for click twice and a page that listens for dblclick are both
+        // real, and a preview that fired only one of them would be green for a
+        // page the run treats differently.
+        el.click();
+        el.click();
+        el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));
+        log("info", "double-clicked");
+        return { ok: true };
+      }
+      if (t === "rightclick") {
+        try { el.scrollIntoView({ block: "center" }); } catch (e) {}
+        // contextmenu is what a right-click DOES to a page; the button-2
+        // mousedown/mouseup around it are what a page watching for the raw
+        // buttons sees. Playwright sends all three, so the preview does too.
+        el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 2 }));
+        el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 2 }));
+        el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+        log("info", "right-clicked");
+        return { ok: true };
+      }
+      if (t === "drag") {
+        // BOTH ends are resolved, strict-mode included. A drag that resolved
+        // only its source would report success for half a step, and the half it
+        // skipped is the one that decides where the thing lands.
+        var dRes = resolveOne(step.toLocator);
+        var dStrict = strictError(dRes);
+        if (dStrict) { log("error", "drop target: " + dStrict); return { ok: false, error: dStrict }; }
+        if (!dRes.el) { log("error", "Drop target not found"); return { ok: false, error: "Drop target not found" }; }
+        var dTo = dRes.el;
+        try { el.scrollIntoView({ block: "center" }); } catch (e) {}
+        // HTML5 drag events AND pointer events, because applications use one or
+        // the other and nothing in the DOM says which. Playwright's dragTo
+        // sends the pointer sequence; a page built on the HTML5 API needs the
+        // drag events, and sending both is what makes the preview agree with
+        // the run on more pages than either alone would.
+        var dt = null;
+        try { dt = new DataTransfer(); } catch (e) {}
+        var opts = function (extra) {
+          var o = { bubbles: true, cancelable: true };
+          if (dt) o.dataTransfer = dt;
+          for (var k in extra) o[k] = extra[k];
+          return o;
+        };
+        el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        try { el.dispatchEvent(new DragEvent("dragstart", opts({}))); } catch (e) {}
+        try { dTo.dispatchEvent(new DragEvent("dragover", opts({}))); } catch (e) {}
+        dTo.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, cancelable: true }));
+        try { dTo.dispatchEvent(new DragEvent("drop", opts({}))); } catch (e) {}
+        dTo.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+        try { el.dispatchEvent(new DragEvent("dragend", opts({}))); } catch (e) {}
+        log("info", "dragged onto <" + (dTo.tagName || "").toLowerCase() + ">");
+        return { ok: true };
+      }
       if (t === "check") { if (!el.checked) { el.click(); log("info", "checked"); } else log("info", "already checked"); return { ok: true }; }
       if (t === "uncheck") { if (el.checked) { el.click(); log("info", "unchecked"); } else log("info", "already unchecked"); return { ok: true }; }
       if (t === "press") {

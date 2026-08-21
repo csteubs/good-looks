@@ -126,6 +126,18 @@ export type StepType =
   // `capture` step, answering "what IS orderId at this point" without making
   // the run depend on the answer.
   | "echo"
+  // The three interactions mabl records that this recorder did not. All are
+  // ordinary element actions; what makes them worth naming as their own kinds
+  // rather than a modifier on `click` is that each emits a DIFFERENT Playwright
+  // call, and the parser has to be able to tell them apart on the way back.
+  //
+  // `drag` is the odd one: it is the only step that points at TWO elements, so
+  // it carries `toLocator` alongside `locator`. It stays ONE step rather than
+  // mabl's hold/release pair because a step must emit one awaited statement —
+  // two would shift every later step's screenshot and run highlight.
+  | "dblclick"
+  | "rightclick"
+  | "drag"
   // Reload the current page. Recorded when the trainer sees a navigation that
   // lands on the URL it was already on; `goto` would also work, but it re-runs
   // the navigation the test may not have made and loses the distinction the
@@ -481,6 +493,19 @@ export interface Step {
    *  when it lapses. Absent still means Playwright's own default, so nothing
    *  already on disk changes shape. */
   timeoutMs?: number;
+  /** Where a `drag` step drops what it picked up. The ONLY second locator in
+   *  the model, and every reader of `Step.locator` had to be asked, explicitly,
+   *  whether it meant "the target" or "every target":
+   *
+   *   • the generator emits `source.dragTo(target)` — both;
+   *   • Auto-Heal keys its map by locator and probes with the step's
+   *     FINGERPRINT, which is the source element's, so a drag heals its SOURCE
+   *     and never its target. That falls out with no code: the target's key is
+   *     simply not in the map. Said out loud in the heal journal's own terms
+   *     rather than left to be discovered;
+   *   • the trainer's replayer resolves both, because a drag that resolved only
+   *     its source would report success for half a step. */
+  toLocator?: Locator;
   /** How a `variable` assertion or a `variable` condition compares. Absent
    *  means "eq", which is what the pickers default to. Enum-guarded at the
    *  boundary AND at emission: it SELECTS A MATCHER, so a value that got
@@ -608,6 +633,8 @@ export interface RawStep {
   cssMatch?: CssMatch;
   elementState?: ElementState;
   compareOp?: CompareOp;
+  /** the drop target of a `drag` step (see Step.toLocator) */
+  toLocator?: Locator;
   typeMode?: TypeMode;
   typeDelayMs?: number;
   count?: number;
@@ -1091,7 +1118,7 @@ export const STEP_TYPES: StepType[] = [
   "wait", "viewport", "if", "else", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
   "scroll", "download", "a11y", "upload", "api", "aiCheck", "group", "endGroup", "dialog",
   "teardown",
-  "reload", "echo",
+  "reload", "echo", "dblclick", "rightclick", "drag",
 ];
 
 export type DownloadMatch = "contains" | "exact";
@@ -1472,6 +1499,10 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   const out: RawStep = { type };
   const locator = normalizeLocator(s.locator);
   if (locator) out.locator = locator;
+  // The same rebuild as `locator`, through the same function — a second
+  // locator on the boundary is a second chance to forget one.
+  const toLocator = normalizeLocator(s.toLocator);
+  if (toLocator) out.toLocator = toLocator;
 
   const value = str(s.value);
   const label = str(s.label);

@@ -454,6 +454,27 @@ export function describeStep(step: Step): string {
       return target ? target + ".check(" + optsExpr(timeoutParts(step)) + ")" : "check";
     case "uncheck":
       return target ? target + ".uncheck(" + optsExpr(timeoutParts(step)) + ")" : "uncheck";
+    case "dblclick":
+      // The bare TYPE NAME when there is no element, matching the `click` case
+      // above and the backend's own fallback. Prose here ("double-click") read
+      // as a different step from the backend's "dblclick" in exactly the place
+      // the two lists sit side by side.
+      return target ? target + ".dblclick(" + optsExpr(timeoutParts(step)) + ")" : "dblclick";
+    case "rightclick":
+      return target
+        ? target +
+            ".click(" +
+            optsExpr([
+              'button: "right"',
+              ...(step.force === true ? ["force: true"] : []),
+              ...timeoutParts(step),
+            ]) +
+            ")"
+        : "rightclick";
+    case "drag":
+      return target && step.toLocator
+        ? target + ".dragTo" + callArgs(["page." + locatorExpr(step.toLocator)], optsExpr(timeoutParts(step)))
+        : "drag";
     case "reload":
       return "page.reload(" + optsExpr(timeoutParts(step)) + ")";
     case "echo":

@@ -10,6 +10,77 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-21 — A drag is one step with two locators, and heals only its source
+
+`drag` is the first step in the model that points at TWO elements. mabl records
+the same gesture as a "click and hold" plus a "release", and that shape was
+rejected here for a structural reason rather than a stylistic one: a step emits
+exactly ONE awaited statement, because `generateSpecDetailed` records one spec
+line per step and the capture fixture keys screenshots by action order. Two
+statements would shift every later step's run highlight and visual baseline by
+one.
+
+So `Step.toLocator` sits beside `Step.locator`, and every reader of the latter
+had to be asked, explicitly, which one it meant:
+
+- the **generator** emits both, through the same `locatorExpr` — a second
+  locator is a second chance to interpolate one raw;
+- the **replayer** resolves both, strict-mode included. A drag that resolved
+  only its source would report success for half a step, and the half it skipped
+  is the one that decides where the thing lands;
+- **Auto-Heal heals the source and never the target.** The heal map is keyed by
+  locator and probes with the step's FINGERPRINT, which is the source element's;
+  there is no recorded identity for the drop target, so its key is simply not in
+  the map and the run-time fixture attempts nothing for it. That falls out with
+  no code at all, which is exactly why it is pinned by a test rather than left
+  to be discovered — and why the step row says "Refine Selection (drag source)"
+  instead of letting someone believe they refined "the element".
+
+Capture reads the POINTER sequence, not the HTML5 drag events. An application
+built on pointer events fires no drag events at all and would otherwise be
+unrecordable, and Playwright's own `dragTo` performs a pointer gesture — so the
+recorder and the runner agree about what a drag IS. The consequence, stated
+rather than hidden: a page built on `draggable=true` native drag-and-drop is not
+covered, because Chromium does not start native DnD from synthetic mouse input.
+
+Both of mabl's thresholds are adopted — the gesture must last ≥500ms and move
+≥20px. They are what stop an ordinary click, which is a pointerdown and a
+pointerup on the same spot, from being recorded as a degenerate drag onto
+whatever was underneath. The drop target comes from `elementFromPoint` at
+release rather than from `event.target`, because a dragged element usually
+follows the pointer and would otherwise be reported as its own target.
+
+### 2026-08-21 — A double-click withdraws its clicks; a right-click is recorded from the menu
+
+**The two clicks are recorded and then taken back.** A browser fires `click`
+twice before `dblclick`, and each of those clicks has already left the page —
+the console channel emits a click the instant it is captured, which is the whole
+fix for the click that navigates (DECISIONS 2026-08-13). Holding one back for a
+quarter-second to see whether a second follows would undo that fix to tidy up a
+step list. So the clicks go out, and `dblclick-supersede.ts` withdraws them at
+the single ingest when the double-click that claims them arrives.
+
+Two details it would be easy to get wrong. It matches on locator identity
+*including* `nth` — `healKeyFor` deliberately drops the index so an indexed step
+shares a key with the unindexed one it narrows, but here the index is exactly
+what tells row 1 from row 2, and a double-click on one row must not swallow a
+deliberate single click on another. And it removes from the INSERTION POINT
+rather than the end of the list, because the cursor can sit mid-list while a
+recording extends an existing test.
+
+**A right-click cannot be captured from the page.** That gesture already opens
+the trainer's own tools menu — assertions, waits, refine, "use variable" — and
+taking it over would cost the user every one of them. mabl resolves the same
+conflict with a Trainer preference, and a mode toggle was the obvious port. It
+was rejected as a worse answer than the one the gesture already offers: the
+action now lives IN that menu as **"Record a right-click here"**, which inserts
+the step directly rather than opening the composer, because there is nothing to
+configure. The user has right-clicked the element they mean; choosing the item
+says so. No mode to arm, forget, or leave armed.
+
+It carries no fingerprint, so such a step cannot auto-heal — the same trade
+every step authored from that menu already makes, and it is still refinable.
+
 ### 2026-08-21 — A variable assertion emits real matchers, and compares raw
 
 Every other half of the variable system was already built. `capture` steps

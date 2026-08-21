@@ -799,8 +799,13 @@ function commentSafe(text: string): string {
 function ungeneratableReason(step: Step): string {
   const needsLocator =
     step.type === "click" || step.type === "fill" || step.type === "select" ||
-    step.type === "check" || step.type === "uncheck";
+    step.type === "check" || step.type === "uncheck" ||
+    step.type === "dblclick" || step.type === "rightclick" || step.type === "drag";
   if (needsLocator && !step.locator) return "this step needs an element and none was recorded";
+  // Said separately from the rule above, because "needs an element" would send
+  // the user looking at the SOURCE, which is the half that is fine.
+  if (step.type === "drag" && !step.toLocator)
+    return "this drag has nothing to drop onto — no target element was recorded";
   if (step.type === "assert") {
     const a = step.assert;
     if (a === "url" || a === "urlEndsWith" || a === "urlIs" || a === "urlPathIs" || a === "title" || a === "titleContains") {
@@ -902,6 +907,28 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
       // does not start with `await`. It never fails and never asserts — the
       // point is a line in the run log next to the steps around it.
       return "await glazeEcho(" + valueExpr(step.text ?? step.value, vars) + ");";
+    case "dblclick":
+      return target ? "await " + target + ".dblclick(" + optsExpr(timeoutParts(step)) + ");" : null;
+    case "rightclick": {
+      // A click with a button, not a kind of its own to Playwright — so the
+      // options object is never empty, and `button: "right"` is what the parser
+      // reads back to tell it from an ordinary click.
+      if (!target) return null;
+      const opts = optsExpr([
+        'button: "right"',
+        ...(step.force === true ? ["force: true"] : []),
+        ...timeoutParts(step),
+      ]);
+      return "await " + target + ".click(" + opts + ");";
+    }
+    case "drag": {
+      // The only step that points at two elements. Both go through
+      // `locatorExpr`, so both are quoted the same way — a second locator is a
+      // second chance to interpolate one raw.
+      if (!target || !step.toLocator) return null;
+      const to = "page." + locatorExpr(step.toLocator);
+      return "await " + target + ".dragTo" + callArgs([to], optsExpr(timeoutParts(step))) + ";";
+    }
     case "reload":
       // The one page-level action a recording produces that is not a `goto`.
       // Emitted with the same options object as the element actions so a slow

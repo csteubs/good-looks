@@ -98,8 +98,24 @@ const service = read("services/recorder-service.ts");
     "ingestCapture admits through the ledger and records through recordCaptured",
   );
   // A step must never reach addStep straight off a channel.
+  //
+  // `recordCaptured`'s own body is excised before the scan rather than matched
+  // by one exact spelling of its single line. Everything inside it is provably
+  // fed by `normalizeRawSteps` — the two assertions above pin exactly that —
+  // so what is left to look for is an addStep somewhere ELSE taking a
+  // page-derived value. Pinning the line itself made this check fail the first
+  // time recordCaptured grew a second statement, which is a guard reporting
+  // its own brittleness rather than a real hole.
+  const recordCapturedBody = service.slice(
+    service.indexOf("function recordCaptured(steps: unknown[]): void {"),
+    service.indexOf("/** Take one arrival from either channel. */"),
+  );
   assert(
-    !/addStep\((?:step|entry|raw)\)/.test(service.replace(/normalizeRawSteps\(steps\)\) addStep\(step\)/g, "")),
+    recordCapturedBody.includes("normalizeRawSteps(steps)"),
+    "the excised region really is the normalized one",
+  );
+  assert(
+    !/addStep\((?:step|entry|raw)\)/.test(service.replace(recordCapturedBody, "")),
     "no channel calls addStep with an unnormalized page value",
   );
 }

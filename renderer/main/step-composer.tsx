@@ -94,6 +94,8 @@ export type AddStepKind =
   | "viewport"
   | "reload"
   | "echo"
+  | "dblclick"
+  | "rightclick"
   | "scroll"
   | "capture"
   | "download"
@@ -119,6 +121,8 @@ export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   viewport: "Set viewport",
   reload: "Reload the page",
   echo: "Write to the run log",
+  dblclick: "Double-click an element",
+  rightclick: "Right-click an element",
   scroll: "Scroll",
   capture: "Capture a value",
   download: "Expect a download",
@@ -958,6 +962,12 @@ export function StepComposer({
       }
       case "find":
         return locator ? [{ type: "assert", assert: "visible", locator }] : null;
+      // No target refuses the WHOLE submit, the same rule `find` applies: a
+      // click on nothing is not a smaller step, it is a broken one.
+      case "dblclick":
+        return locator ? [{ type: "dblclick", locator }] : null;
+      case "rightclick":
+        return locator ? [{ type: "rightclick", locator }] : null;
       case "fill": {
         // Both halves are required, and neither degrades usefully: a fill with
         // no target types into nothing, and a fill with no variable would write
@@ -1368,6 +1378,35 @@ export function StepComposer({
                 />
               </Field>
             ) : null}
+          </>
+        ) : null}
+
+        {kind === "dblclick" || kind === "rightclick" ? (
+          <>
+            <Text variant="small" color="secondary">
+              {kind === "dblclick" ? (
+                <>
+                  Double-click the element (Playwright <code>dblclick</code>). Recorded
+                  automatically too &mdash; the trainer withdraws the two single clicks the browser
+                  fires first.
+                </>
+              ) : (
+                <>
+                  Right-click the element (Playwright{" "}
+                  <code>click(&#123; button: &quot;right&quot; &#125;)</code>). It cannot be
+                  recorded by right-clicking in the training browser, because that gesture already
+                  opens the trainer&rsquo;s own tools menu &mdash; use{" "}
+                  <strong>Record a right-click here</strong> in that menu instead, or pick the
+                  element below.
+                </>
+              )}
+            </Text>
+            <TargetElementPicker
+              picked={picked}
+              onChange={setLocator}
+              onStartPick={onStartPick}
+              onClearPick={onClearPick}
+            />
           </>
         ) : null}
 

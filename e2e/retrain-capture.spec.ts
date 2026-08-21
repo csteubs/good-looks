@@ -249,3 +249,108 @@ test("replaying the test moves the insert cursor past what it replayed", async (
     await pages.close();
   }
 });
+
+// ── The wider action vocabulary: a double-click and a drag ─────────────────
+//
+// Both are claims about a SEQUENCE the browser produces, and only a real one
+// produces it. `main/recorder/recorded-actions.dom.test.ts` covers the same
+// ground against jsdom with SYNTHESIZED events; what that cannot answer is
+// whether a genuine double-click — two real clicks and then a dblclick, at real
+// speed — comes out as ONE step, or as the three the page actually fired.
+
+/** A page with something to double-click and something to drag. Served fresh
+ *  so the gestures below act on known geometry rather than on whatever the
+ *  three-page fixture above happens to be showing. */
+async function serveBoard(): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end(
+      '<!doctype html><title>board</title>' +
+        '<button id="row" data-testid="row" style="position:absolute;left:0;top:0;width:120px;height:40px">Row</button>' +
+        '<div id="card" data-testid="card" style="position:absolute;left:0;top:80px;width:80px;height:60px;background:#ddd">Card</div>' +
+        '<div id="done" data-testid="done" style="position:absolute;left:300px;top:80px;width:120px;height:60px;background:#eee">Done</div>',
+    );
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}/`,
+    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+  };
+}
+
+async function stepTypes(window: AppFixtures["window"]): Promise<string[]> {
+  return (await invoke<Step[]>(window, "recorder:getSteps")).map((s) => s.type);
+}
+
+test("a real double-click records ONE step, not the two clicks the browser fired first", async ({
+  app,
+  window,
+}) => {
+  const site = await serveBoard();
+  try {
+    await invoke(window, "recorder:start", { url: site.url, name: "dblclick" });
+    await waitForPageReady(window);
+    const browser = trainingPage(app)!;
+    await browser.waitForLoadState("domcontentloaded");
+
+    await browser.dblclick("#row");
+
+    // The two clicks leave the page BEFORE the dblclick does — that is the fix
+    // for the click that navigates, and it must not be undone by holding one
+    // back. So they arrive, and are withdrawn when the double-click claims
+    // them. Polling for stability rather than for a first sighting: a snapshot
+    // taken between the second click and the dblclick would see them.
+    await expect
+      .poll(() => stepTypes(window), { timeout: 15_000 })
+      .toEqual(["goto", "dblclick"]);
+
+    await invoke(window, "recorder:discardExit");
+  } finally {
+    await site.close();
+  }
+});
+
+test("a real drag records one drag step with both ends", async ({ app, window }) => {
+  const site = await serveBoard();
+  try {
+    await invoke(window, "recorder:start", { url: site.url, name: "drag" });
+    await waitForPageReady(window);
+    const browser = trainingPage(app)!;
+    await browser.waitForLoadState("domcontentloaded");
+
+    // A real pointer gesture, slow enough and far enough to clear both
+    // thresholds. Steps in the middle, because a single jump from press to
+    // release is not what a person's hand does and not what an application
+    // built on pointermove would see.
+    const from = (await browser.locator("#card").boundingBox())!;
+    const to = (await browser.locator("#done").boundingBox())!;
+    await browser.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await browser.mouse.down();
+    for (let i = 1; i <= 6; i++) {
+      await browser.mouse.move(
+        from.x + ((to.x - from.x) * i) / 6 + 20,
+        from.y + ((to.y - from.y) * i) / 6 + 20,
+      );
+      await browser.waitForTimeout(120);
+    }
+    await browser.mouse.up();
+
+    await expect
+      .poll(
+        async () => {
+          const steps = await invoke<Step[]>(window, "recorder:getSteps");
+          const drag = steps.find((s) => s.type === "drag") as
+            | (Step & { toLocator?: { v?: string } })
+            | undefined;
+          return drag ? [drag.locator?.v, drag.toLocator?.v] : null;
+        },
+        { timeout: 15_000 },
+      )
+      .toEqual(["card", "done"]);
+
+    await invoke(window, "recorder:discardExit");
+  } finally {
+    await site.close();
+  }
+});

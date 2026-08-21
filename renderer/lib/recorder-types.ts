@@ -71,7 +71,12 @@ export type StepType =
   | "reload"
   // A line in the run log — no assertion, never fails. Mirror of the
   // main-process type.
-  | "echo";
+  | "echo"
+  // The three interactions the recorder gained on 2026-08-21. `drag` is the
+  // only step that points at TWO elements — see Step.toLocator in main types.
+  | "dblclick"
+  | "rightclick"
+  | "drag";
 
 /** Predicate for an `if` step. Element conditions use `Step.locator`; page
  *  conditions (urlContains/titleContains) use `Step.value` as the substring. */
@@ -315,6 +320,8 @@ export interface Step {
   elementState?: ElementState;
   /** how a `variable` assertion or condition compares (mirror of main types) */
   compareOp?: import("../../shared/step-semantics.mjs").CompareOp;
+  /** the drop target of a `drag` step (mirror of main types) */
+  toLocator?: Locator;
   /** how a `fill` step delivers its value, and the per-character delay for the
    *  `sequential` mode (mirror of main types). */
   typeMode?: TypeMode;
@@ -415,6 +422,8 @@ export interface RawStep {
   elementState?: ElementState;
   /** how a `variable` assertion or condition compares (mirror of main types) */
   compareOp?: import("../../shared/step-semantics.mjs").CompareOp;
+  /** the drop target of a `drag` step (mirror of main types) */
+  toLocator?: Locator;
   /** how a `fill` step delivers its value, and the per-character delay for the
    *  `sequential` mode (mirror of main types). */
   typeMode?: TypeMode;
