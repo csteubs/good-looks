@@ -10,6 +10,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
   DropdownMenuTrigger,
 } from "@ui";
 import { Check, ChevronDown, ChevronRight, GripVertical, Loader2, MoreHorizontal, Pencil, Play, TriangleAlert, Variable, X } from "lucide-react";
@@ -166,6 +167,41 @@ function nativeMenu(): NativeMenu {
  * without re-typing it — the same reason `DOCK_TOOLTIP` is exported.
  */
 export const INSERT_HERE = "New steps go here";
+
+/**
+ * How a `fill` step delivers its text, as the three choices worth offering.
+ *
+ * Exported so a test can assert the copy without driving the menu: these are
+ * native macOS menu items (see renderer/ui/native-menu.tsx), so their labels
+ * never enter the DOM and no Testing Library query can reach them.
+ *
+ * "Appends" is in the label on purpose. `pressSequentially` does not clear the
+ * field first, and a user who picks this mode for a field that already has
+ * text needs to know that before the run tells them — see TypeMode in
+ * main/recorder/types.ts for why clearing would cost a second Playwright
+ * action.
+ */
+export const TYPE_ENTRY_CHOICES: {
+  label: string;
+  sequential: boolean;
+  delayMs: number;
+}[] = [
+  { label: "All at once (default)", sequential: false, delayMs: 0 },
+  { label: "Character by character (appends)", sequential: true, delayMs: 0 },
+  { label: "Character by character, slowly (appends)", sequential: true, delayMs: 40 },
+];
+
+/** Per-step timeouts worth offering. `null` is "use Playwright's default",
+ *  which is the absence of the field rather than a number. Exported for the
+ *  same reason as TYPE_ENTRY_CHOICES. */
+export const STEP_TIMEOUT_CHOICES: { label: string; ms: number | null }[] = [
+  { label: "Default", ms: null },
+  { label: "5 seconds", ms: 5_000 },
+  { label: "15 seconds", ms: 15_000 },
+  { label: "30 seconds", ms: 30_000 },
+  { label: "1 minute", ms: 60_000 },
+  { label: "5 minutes", ms: 300_000 },
+];
 
 /**
  * Thin clickable strip between rows that moves the insert cursor.
@@ -804,7 +840,34 @@ export function StepRow({
             const canFlowArgs = onEdit && isFlowCall;
             const canOpenFlow = onOpenFlow && isFlowCall;
             const canUnwrap = onUnwrapFlow && isFlowCall;
-            if (!canRefine && !canContinue && !canFlowArgs && !canOpenFlow && !canUnwrap)
+            // How a fill delivers its text. Only a fill has the choice, and
+            // only a fill that HAS a target — page.keyboard has no field to
+            // type into character by character.
+            const canTypeMode = !!onEdit && step.type === "fill" && !!step.locator;
+            // Which steps can carry their own timeout: the ones that emit a
+            // Playwright call with an options object. A `press` without a
+            // locator is excluded because page.keyboard.press has no timeout
+            // option — there is no element for it to wait on.
+            const canTimeout =
+              !!onEdit &&
+              (step.type === "assert" ||
+                step.type === "reload" ||
+                ((step.type === "click" ||
+                  step.type === "fill" ||
+                  step.type === "select" ||
+                  step.type === "check" ||
+                  step.type === "uncheck" ||
+                  step.type === "press") &&
+                  !!step.locator));
+            if (
+              !canRefine &&
+              !canContinue &&
+              !canFlowArgs &&
+              !canOpenFlow &&
+              !canUnwrap &&
+              !canTypeMode &&
+              !canTimeout
+            )
               return null;
             return (
               <DropdownMenu>
@@ -870,6 +933,51 @@ export function StepRow({
                     >
                       Ignore Actionability (force)
                     </DropdownMenuCheckboxItem>
+                  ) : null}
+                  {/* How the text is delivered. "All at once" is `fill()` and
+                      stays the default; the per-character modes emit
+                      `pressSequentially`, which fires a real keydown/input/keyup
+                      for every character — the only way an autocomplete or a
+                      masked field sees the typing at all. The label says
+                      "appends" because that mode does NOT clear the field
+                      first; see TypeMode in main/recorder/types.ts. */}
+                  {canTypeMode ? (
+                    <DropdownMenuSub label="Text entry">
+                      {TYPE_ENTRY_CHOICES.map((c) => (
+                        <DropdownMenuCheckboxItem
+                          key={c.label}
+                          checked={
+                            (step.typeMode === "sequential") === c.sequential &&
+                            (c.sequential ? (step.typeDelayMs ?? 0) === c.delayMs : true)
+                          }
+                          onCheckedChange={() =>
+                            onEdit?.({
+                              typeMode: c.sequential ? "sequential" : undefined,
+                              typeDelayMs: c.sequential && c.delayMs > 0 ? c.delayMs : undefined,
+                            })
+                          }
+                        >
+                          {c.label}
+                        </DropdownMenuCheckboxItem>
+                      ))}
+                    </DropdownMenuSub>
+                  ) : null}
+                  {/* Presets, not a free number field. The need this answers is
+                      "give this one slow step more room", and every preset is a
+                      value someone would actually pick. A hand-edited spec can
+                      still carry any number — the parser reads it back. */}
+                  {canTimeout ? (
+                    <DropdownMenuSub label="Step timeout">
+                      {STEP_TIMEOUT_CHOICES.map((c) => (
+                        <DropdownMenuCheckboxItem
+                          key={c.label}
+                          checked={(step.timeoutMs ?? null) === c.ms}
+                          onCheckedChange={() => onEdit?.({ timeoutMs: c.ms ?? undefined })}
+                        >
+                          {c.label}
+                        </DropdownMenuCheckboxItem>
+                      ))}
+                    </DropdownMenuSub>
                   ) : null}
                 </DropdownMenuContent>
               </DropdownMenu>

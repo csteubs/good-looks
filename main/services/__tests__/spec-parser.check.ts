@@ -107,24 +107,43 @@ assertEqual(richParsed.steps[16]?.soft, true, "soft assertion flag round-trips")
 
 // ── 4. A genuinely unmappable statement is flagged, not silently dropped ──
 //
-// `.hover()` used to sit in this list. It is now a real `state` step, so this
-// section pins the OTHER half of that change: `reload()` still counts as a
-// skip, and the hover is parsed rather than merely stopping being counted.
+// Two statements have graduated OUT of this section, and the graduations are
+// the point: `.hover()` became a `state` step, and `page.reload()` became a
+// `reload` step (2026-08-21). Each time, this check went red rather than
+// quietly keeping a stale example — which is what it is for. `page.goBack()`
+// is the current stand-in: a real Playwright call with no counterpart in the
+// step model, so it must be COUNTED as a skip rather than vanishing.
 const unmappable = [
   'import { test, expect } from "@playwright/test";',
   "",
   'test("weird", async ({ page }) => {',
   '  await page.goto("https://example.com");',
-  "  await page.reload();",
+  "  await page.goBack();",
   '  await page.getByRole("button", { name: "Go" }).hover();',
   "});",
   "",
 ].join("\n");
 const unmappableParsed = parseSpecDetailed(unmappable);
 assertEqual(unmappableParsed.steps.length, 2, "the goto and the hover are both kept");
-assertEqual(unmappableParsed.skipped, 1, "only reload() is counted as skipped");
+assertEqual(unmappableParsed.skipped, 1, "only goBack() is counted as skipped");
 assertEqual(unmappableParsed.steps[1]?.type, "state", "hover() parses as a state step");
 assertEqual(unmappableParsed.steps[1]?.elementState, "hover", "hover() keeps its state");
+
+// And the half that used to live here: a reload IS a step now, and reads back
+// as one rather than as a skip.
+const reloadParsed = parseSpecDetailed(
+  [
+    'import { test, expect } from "@playwright/test";',
+    "",
+    'test("reload", async ({ page }) => {',
+    '  await page.goto("https://example.com");',
+    "  await page.reload();",
+    "});",
+    "",
+  ].join("\n"),
+);
+assertEqual(reloadParsed.steps.map((s) => s.type).join(","), "goto,reload", "reload() is a step");
+assertEqual(reloadParsed.skipped, 0, "…and is not counted as a skip");
 
 // A NESTED page call nobody round-trips must still be COUNTED. Before the
 // fallback learned about dotted paths, `page.mouse.move(...)` matched no branch

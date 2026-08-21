@@ -28,6 +28,7 @@ const SYNTAX: Record<SyntaxTheme, Record<StepType, string>> = {
   phosphor: {
     // Navigation and lifecycle — the frame around a test.
     goto: "#7fd6b0",
+    reload: "#7fd6b0",
     viewport: "#7fd6b0",
     cookie: "#7fd6b0",
     capture: "#7fd6b0",

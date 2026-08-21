@@ -124,6 +124,10 @@ const KEEP_FAMILIES: { reason: string; members: string[] }[] = [
       "DropdownMenuContent",
       "DropdownMenuItem",
       "DropdownMenuSeparator",
+      // Same family, same reason: it renders `null` and is read by
+      // `Menu.popup` in native-menu.tsx to build a real macOS submenu. Added
+      // 2026-08-21 for the step row's "Text entry" and "Step timeout" menus.
+      "DropdownMenuSub",
       "DropdownMenuTrigger",
       "CustomContextMenu",
       "CustomContextMenuContent",

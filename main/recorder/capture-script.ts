@@ -1427,6 +1427,64 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
     push(withFp({ type: "click", locator: locatorFor(clickTarget) }, clickTarget));
   }
 
+  // ── Per-character typing detection ──────────────────────────────────────
+  //
+  // A recorded fill emits locator.fill(), which writes the whole string in
+  // ONE operation and fires ONE input event. A field with real keyboard
+  // handling — an autocomplete, a combobox, a datalist-backed input — never
+  // sees the keystrokes, so its dropdown never opens and the step that clicks
+  // an option fails against a list that was never rendered. Playwright's own
+  // docs say the same thing from the other side: press keys one by one only
+  // when the page has special keyboard handling.
+  //
+  // Two conditions, and the SECOND is what makes this safe to do automatically.
+  // The emitted pressSequentially does not clear the field first (see
+  // TypeMode in main/recorder/types.ts), so choosing it for a field that
+  // already had text would change what the step does. Requiring the field to
+  // have been EMPTY when the user focused it makes the two modes exactly
+  // equivalent, and leaves every other fill recording precisely as before.
+  var focusedField = null;
+  var valueAtFocus = null;
+
+  function onFocusIn(e) {
+    var el = e.target;
+    if (!el || el.nodeType !== 1) return;
+    focusedField = el;
+    try {
+      valueAtFocus = typeof el.value === "string" ? el.value : null;
+    } catch (err) {
+      valueAtFocus = null;
+    }
+  }
+
+  /** Does this field look like it drives something off the keystrokes? */
+  function keyboardDriven(el) {
+    try {
+      var tag = el.tagName ? el.tagName.toLowerCase() : "";
+      var ty = tag === "input" ? (el.getAttribute("type") || "text").toLowerCase() : "";
+      // FREE-TEXT kinds only. A date, number, colour or range input parses its
+      // whole value at once, so typing it character by character is a
+      // different operation — it can leave the field half-parsed or empty,
+      // which would be a worse bug than the one this fixes.
+      var freeText = ["text", "search", "email", "tel", "url", "password"];
+      if (tag !== "textarea" && !(tag === "input" && freeText.indexOf(ty) >= 0)) return false;
+      // A datalist is keyboard-filtered by the browser itself.
+      if (el.getAttribute("list")) return true;
+      if (el.getAttribute("aria-autocomplete")) return true;
+      var role = el.getAttribute("role");
+      if (role === "combobox" || role === "searchbox") return true;
+      // The hand-rolled combobox: a listbox this input controls, whose
+      // expanded state changes as you type.
+      if (el.getAttribute("aria-expanded") !== null && el.getAttribute("aria-controls")) return true;
+      var p = el.parentElement;
+      for (var d = 0; d < 3 && p; d++) {
+        if (p.getAttribute && p.getAttribute("role") === "combobox") return true;
+        p = p.parentElement;
+      }
+    } catch (err) {}
+    return false;
+  }
+
   function onChange(e) {
     if (isPaused() || assertMode()) return;
     var el = e.target;
@@ -1443,12 +1501,22 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
         push(withFp({ type: el.checked ? "check" : "uncheck", locator: locatorFor(el) }, el));
         return;
       }
-      push(withFp({ type: "fill", locator: locatorFor(el), value: el.value }, el));
+      push(withFp(fillStep(el), el));
       return;
     }
     if (tag === "textarea") {
-      push(withFp({ type: "fill", locator: locatorFor(el), value: el.value }, el));
+      push(withFp(fillStep(el), el));
     }
+  }
+
+  /** The fill step for a field, in the mode that reproduces what the page
+   *  actually saw. See keyboardDriven above for both conditions. */
+  function fillStep(el) {
+    var step = { type: "fill", locator: locatorFor(el), value: el.value };
+    if (focusedField === el && valueAtFocus === "" && keyboardDriven(el)) {
+      step.typeMode = "sequential";
+    }
+    return step;
   }
 
   function onKeydown(e) {
@@ -1470,6 +1538,10 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
   var onChangeOnce = once(onChange);
   var onKeydownOnce = once(onKeydown);
   var onPointerDownOnce = once(onPointerDown);
+  // Not wrapped in once(): the value at focus is read, not pushed as a step,
+  // so a second delivery is idempotent rather than a duplicate.
+  window.addEventListener("focusin", onFocusIn, true);
+  document.addEventListener("focusin", onFocusIn, true);
   window.addEventListener("click", onClickOnce, true);
   window.addEventListener("change", onChangeOnce, true);
   window.addEventListener("keydown", onKeydownOnce, true);

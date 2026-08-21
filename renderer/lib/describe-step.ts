@@ -2,13 +2,60 @@
 // leading `await`/trailing `;`), for display in the UI. Mirrors the backend
 // script generator so what the user sees matches the generated script.
 
-import { API_METHODS, DEFAULT_WAIT_TIMEOUT_MS, ELEMENT_STATES, isCssPropName } from "./recorder-types";
+import {
+  API_METHODS,
+  DEFAULT_WAIT_TIMEOUT_MS,
+  ELEMENT_STATES,
+  isCssPropName,
+  MAX_TYPE_DELAY_MS,
+} from "./recorder-types";
 import { ASSERT_SEMANTICS, reEscape, textMatchExpr, urlPathExpr } from "../../shared/step-semantics.mjs";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import type { Locator, Step, StepType } from "./recorder-types";
 
 function q(s: string): string {
   return JSON.stringify(s ?? "");
+}
+
+/** Mirror of `clampedMs` in main/services/script-generator.ts. typeof-checked
+ *  for the same reason the scroll branch below is: a stored step can carry a
+ *  forged string in a numeric field, and it must not reach UI copy. */
+function clampedMs(v: unknown, max: number): number | null {
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  const n = Math.trunc(v);
+  if (n < 0) return null;
+  return Math.min(n, max);
+}
+
+/** Mirror of `optsExpr` in main/services/script-generator.ts — same fixed key
+ *  order, and the same rule that an empty object is omitted entirely. This
+ *  string is what the user reads in the step list and the generator's is what
+ *  actually runs; the two disagreeing is the failure this file exists to
+ *  avoid. */
+function optsExpr(parts: string[]): string {
+  return parts.length > 0 ? "{ " + parts.join(", ") + " }" : "";
+}
+
+/** Mirror of `timeoutParts`, with the same 1h cap. */
+function timeoutParts(step: Step): string[] {
+  const ms = clampedMs(step.timeoutMs, 3_600_000);
+  return ms === null ? [] : ["timeout: " + String(ms)];
+}
+
+/** Mirror of `num` in main/services/script-generator.ts: a numeric field is
+ *  rendered as an integer or as the fallback, never as whatever a forged step
+ *  happens to be carrying. The scroll branch below has always done this by
+ *  hand; `toHaveCount` had not, so a stored `count: "2); …"` reached UI copy
+ *  verbatim while the generated spec said `toHaveCount(0)`. */
+function numExpr(v: unknown, fallback: number): string {
+  if (typeof v !== "number" || !Number.isFinite(v)) return String(fallback);
+  return String(Math.trunc(v));
+}
+
+/** Mirror of `callArgs`. */
+function callArgs(args: string[], opts: string): string {
+  const all = [...args.filter((a) => a !== ""), ...(opts !== "" ? [opts] : [])];
+  return "(" + all.join(", ") + ")";
 }
 
 /** Mirror of `locatorExpr` in main/services/script-generator.ts — keep in
@@ -70,6 +117,7 @@ function locatorBaseExpr(loc: Locator): string {
 
 function describeAssert(step: Step, target: string | null): string {
   const e = step.soft ? "expect.soft" : "expect";
+  const o = optsExpr(timeoutParts(step));
   // The page-level kinds build their pattern with the SHARED helper, off the
   // SHARED table, because this string is what the user reads in the step list
   // and the generator's is what actually runs. Those two disagreeing is the
@@ -78,55 +126,55 @@ function describeAssert(step: Step, target: string | null): string {
   if (step.assert === "url" || step.assert === "urlEndsWith" || step.assert === "urlIs") {
     const s = ASSERT_SEMANTICS[step.assert];
     if (!s || (step.value ?? "") === "") return "assert";
-    return e + "(page).toHaveURL(" + textMatchExpr(step.value ?? "", s) + ")";
+    return e + "(page).toHaveURL" + callArgs([textMatchExpr(step.value ?? "", s)], o);
   }
   if (step.assert === "urlPathIs") {
     if ((step.value ?? "") === "") return "assert";
-    return e + "(page).toHaveURL(" + urlPathExpr(step.value ?? "") + ")";
+    return e + "(page).toHaveURL" + callArgs([urlPathExpr(step.value ?? "")], o);
   }
   if (step.assert === "title") {
     if ((step.value ?? "") === "") return "assert";
-    return e + "(page).toHaveTitle(" + q(step.value ?? "") + ")";
+    return e + "(page).toHaveTitle" + callArgs([q(step.value ?? "")], o);
   }
   if (step.assert === "titleContains") {
     const s = ASSERT_SEMANTICS.titleContains;
     if (!s || (step.value ?? "") === "") return "assert";
-    return e + "(page).toHaveTitle(" + textMatchExpr(step.value ?? "", s) + ")";
+    return e + "(page).toHaveTitle" + callArgs([textMatchExpr(step.value ?? "", s)], o);
   }
   if (!target) return "assert";
   const x = e + "(" + target + ")";
   switch (step.assert) {
     case "hidden":
-      return x + ".toBeHidden()";
+      return x + ".toBeHidden" + callArgs([], o);
     case "text":
-      return x + ".toContainText(" + q(step.text ?? "") + ")";
+      return x + ".toContainText" + callArgs([q(step.text ?? "")], o);
     case "exactText":
-      return x + ".toHaveText(" + q(step.text ?? "") + ")";
+      return x + ".toHaveText" + callArgs([q(step.text ?? "")], o);
     case "enabled":
-      return x + ".toBeEnabled()";
+      return x + ".toBeEnabled" + callArgs([], o);
     case "disabled":
-      return x + ".toBeDisabled()";
+      return x + ".toBeDisabled" + callArgs([], o);
     case "checked":
-      return x + ".toBeChecked()";
+      return x + ".toBeChecked" + callArgs([], o);
     case "unchecked":
-      return x + ".not.toBeChecked()";
+      return x + ".not.toBeChecked" + callArgs([], o);
     case "value":
-      return x + ".toHaveValue(" + q(step.value ?? "") + ")";
+      return x + ".toHaveValue" + callArgs([q(step.value ?? "")], o);
     case "attribute":
-      return x + ".toHaveAttribute(" + q(step.attr ?? "") + ", " + q(step.value ?? "") + ")";
+      return x + ".toHaveAttribute" + callArgs([q(step.attr ?? ""), q(step.value ?? "")], o);
     case "count":
-      return x + ".toHaveCount(" + (step.count ?? 0) + ")";
+      return x + ".toHaveCount" + callArgs([numExpr(step.count, 0)], o);
     case "css": {
       if (!isCssPropName(step.cssProp)) return "assert";
       const expected =
         step.cssMatch === "contains"
           ? "new RegExp(" + q(reEscape(step.value ?? "")) + ", \"i\")"
           : q(step.value ?? "");
-      return x + ".toHaveCSS(" + q(step.cssProp) + ", " + expected + ")";
+      return x + ".toHaveCSS" + callArgs([q(step.cssProp), expected], o);
     }
     case "visible":
     default:
-      return x + ".toBeVisible()";
+      return x + ".toBeVisible" + callArgs([], o);
   }
 }
 
@@ -356,23 +404,47 @@ export function describeStep(step: Step): string {
   switch (step.type) {
     case "goto":
       return "page.goto(" + q(step.url ?? "") + ")";
-    case "click":
-      return target ? target + ".click()" : "click";
-    case "fill":
-      return target ? target + ".fill(" + q(step.value ?? "") + ")" : "fill";
+    case "click": {
+      if (!target) return "click";
+      // `force` is rendered here for the first time (2026-08-21). It was in the
+      // generated call and not in the step list, so a step the user had marked
+      // "skip actionability checks" read as an ordinary click on screen.
+      return target + ".click(" + optsExpr([
+        ...(step.force === true ? ["force: true"] : []),
+        ...timeoutParts(step),
+      ]) + ")";
+    }
+    case "fill": {
+      if (!target) return "fill";
+      if (step.typeMode === "sequential") {
+        const delay = clampedMs(step.typeDelayMs, MAX_TYPE_DELAY_MS);
+        return target + ".pressSequentially" + callArgs([q(step.value ?? "")], optsExpr([
+          ...(delay === null ? [] : ["delay: " + String(delay)]),
+          ...timeoutParts(step),
+        ]));
+      }
+      return target + ".fill" + callArgs([q(step.value ?? "")], optsExpr(timeoutParts(step)));
+    }
     case "select":
-      return target ? target + ".selectOption(" + q(step.value ?? "") + ")" : "select";
+      return target
+        ? target + ".selectOption" + callArgs([q(step.value ?? "")], optsExpr(timeoutParts(step)))
+        : "select";
     case "check":
-      return target ? target + ".check()" : "check";
+      return target ? target + ".check(" + optsExpr(timeoutParts(step)) + ")" : "check";
     case "uncheck":
-      return target ? target + ".uncheck()" : "uncheck";
+      return target ? target + ".uncheck(" + optsExpr(timeoutParts(step)) + ")" : "uncheck";
+    case "reload":
+      return "page.reload(" + optsExpr(timeoutParts(step)) + ")";
     case "press":
       return target
-        ? target + ".press(" + q(step.value ?? "") + ")"
+        ? target + ".press" + callArgs([q(step.value ?? "")], optsExpr(timeoutParts(step)))
         // "page." prefix matters: the generated spec emits
         // await page.keyboard.press(...), and the backend's describeStep
         // (script-generator.ts) says so too. Dropping it made the trainer's
         // step list disagree with run logs for the same step.
+        //
+        // No timeout either: page.keyboard.press has no such option, because
+        // there is no element to wait for.
         : "page.keyboard.press(" + q(step.value ?? "") + ")";
     case "wait":
       if (typeof step.waitMs === "number") return "page.waitForTimeout(" + step.waitMs + ")";

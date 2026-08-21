@@ -10,6 +10,117 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-21 — A fill types character by character, and does not clear first
+
+A recorded fill emits `locator.fill()`: the whole string in one operation, one
+`input` event. A field with real keyboard handling — an autocomplete, a
+combobox, a datalist-backed input, a masked or per-keystroke-validated field —
+never sees the keystrokes, so its dropdown never opens. The failure then lands
+on the NEXT step, which clicks a suggestion in a list that was never rendered,
+against an element that really is absent. Nothing about the recording looks
+wrong, and the error names the wrong step.
+
+`Step.typeMode: "sequential"` emits `pressSequentially`, which fires a real
+keydown/keypress/input/keyup for every character. Playwright's own docs say the
+same thing from the other side: press keys one by one only when the page has
+special keyboard handling.
+
+**It is emitted on the SPEC LINE, not through a runtime helper**, and that was
+not the obvious choice. Every other multi-statement step in this app —
+`glazeCapture`, `glazeScrollTo`, `glazeApiRequest` — is a helper call, because a
+step must emit exactly one awaited line. A helper was tried here and rejected:
+`step-reporter-source.ts` drops any Playwright step whose `location.file` is not
+the spec, so a fill delivered from inside `glaze-runtime.mjs` is reported by
+NOTHING on a plain run. The progress bar would stall on the step before it,
+which is the same class of bug as the reporter's own missing `expect` category.
+One locator call on one line keeps it a real, highlightable step, and
+`pressSequentially` joins `page-actions.ts`'s LOCATOR_ACTIONS so the capture and
+settle fixtures wrap it like any other action.
+
+**The cost of that choice is that it does not clear the field**, and the cost is
+paid out loud rather than hidden. `pressSequentially` appends. Clearing would
+need a second Playwright action (`fill("")`, `clear()`, `selectText()`), and the
+capture fixture keys screenshots by ACTION ORDER — a step performing two actions
+takes two shots and shifts every later step's visual baseline by one. So:
+
+- the capture script chooses this mode **only when the field was EMPTY as the
+  user focused it**, where the two modes are exactly equivalent. That check is
+  what makes automatic selection safe, not the autocomplete detection;
+- the step row's menu item, the composer's copy and both `describeStep` copies
+  say "appends";
+- replacing existing content is a `fill` step with an empty value in front of
+  it — a visible row doing a visible thing.
+
+The trainer's injected replayer types per character too. That is not politeness:
+the app's recurring failure is a preview that is green for a reason the run
+cannot reproduce, and a preview firing one bulk `input` against an autocomplete
+would be exactly that.
+
+`e2e/input-fidelity.spec.ts` is where this is settled, because every claim here
+is about what a browser does. Its fixture opens its list only after more than
+one keystroke, so the `fill` row and the `sequential` row are the same step
+against the same page with opposite outcomes — the bug and the fix, side by
+side.
+
+### 2026-08-21 — A per-step timeout, and why an options object we cannot read is a skip
+
+`timeoutMs` existed only on `waitUntil` steps. Saying "this button takes twelve
+seconds to appear" therefore meant putting a whole separate wait step in front
+of the click — which asserts something the user did not mean to assert, and
+reports as its own failure when it lapses rather than as the click's. It is now
+allowed on every action and assertion, emitted as `{ timeout: n }`.
+
+Three things fell out of doing it:
+
+**A fixed key order.** `force`, then `delay`, then `timeout`. Not tidiness: the
+parser reads the object back key by key, and an order that varied with which
+fields a step happened to carry would make the same step regenerate differently
+from one save to the next.
+
+**Absence has to mean absence.** A step with no options emits no argument at
+all, not `{}`. Otherwise the whole library changes shape the first time it is
+regenerated.
+
+**An options object we do not model is a SKIP, not a lenient read.** This
+tightened existing behaviour. The assertion parser used to ignore extra
+arguments, so an imported `expect(x).toBeVisible({ visible: false })` — which
+asserts the element is NOT visible — came back as an ordinary `visible` assert
+and regenerated as its own opposite. `parseTrailingOptions` returns null for any
+key or value shape the generator never writes, the statement is left
+unclassified, and that surfaces as `stepsDiverged`: an honest signal instead of
+a silent inversion. The same rule refuses `force: false` (never emitted, so
+reading it would grow a field) and `delay` on anything but a per-character fill
+(a click's `delay` is how long the button stays down, which is not a typing
+delay).
+
+The e2e rows are two identical steps differing only in the number, one with a
+500ms timeout and one with 8s, against an element that appears after 2s. A test
+that merely found `{ timeout: 500 }` in the source would pass with the argument
+in the wrong position and ignored.
+
+### 2026-08-21 — Reload is a step, recorded from the keypress and not from the navigation
+
+mabl records reload as an ordinary action, and this app could not express it at
+all. `reload` is now a StepType emitting `page.reload()`.
+
+**It is handled in `runStep`, not in the injected replayer**, for the reason
+`viewport` and `cookie` already are: the replay script runs INSIDE the page it
+would be reloading, so a `location.reload()` from there tears down the context
+that has to report the result. The page's webContents does it from outside and
+survives, bounded by the same `LOAD_TIMEOUT_MS` the first load uses.
+
+**It is captured from `before-input-event`, not from
+`performance.navigation.type`.** The latter would have been less code and is
+what most recorders reach for — and it would see EVERY reload, including the
+ones a site performs on itself after a login. Those are not steps the user took,
+and recording them makes the run reload twice: once because the site does, once
+because the test says to. A ⌘R/Ctrl+R/F5 keypress in the training window is
+unambiguous, and it fits the rule the URL strip already follows — a navigation
+the recorder did not cause is a navigation it does not record.
+
+The event is not `preventDefault()`-ed. The reload still happens exactly as the
+user expects; the recorder only notices it.
+
 ### 2026-08-20 — Variables inside a regex-backed assertion, escaped at run time
 
 Seven step kinds embed their expected value in a `RegExp` rather than comparing

@@ -471,6 +471,41 @@ async function runStep(
     // page's size and the window's content box also holds the URL strip.
     return applyViewportStep(pageResizeHost(), step, (script) => wc.executeJavaScript(script));
   }
+  if (step.type === "reload") {
+    // Handled here rather than in the injected replayer for the same reason
+    // `viewport` and `cookie` are: the script runs INSIDE the page it would be
+    // reloading, so a `location.reload()` from there tears down the very
+    // context that has to report the result. The page's webContents does it
+    // from outside and survives.
+    const reloadWc = pageWc();
+    if (!reloadWc) {
+      return {
+        ok: false,
+        error: "Recorder window is not open.",
+        logs: [
+          { i: 0, t: Date.now(), level: "error", m: "Reload skipped — the recorder window is not open." },
+        ],
+      };
+    }
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      reloadWc.once("did-finish-load", finish);
+      reloadWc.once("did-fail-load", finish);
+      // Bounded like the first load's wait: a page that never settles must not
+      // hang the replay loop, and the step has still done what it was asked to.
+      setTimeout(finish, LOAD_TIMEOUT_MS);
+      reloadWc.reload();
+    });
+    return {
+      ok: true,
+      logs: [{ i: 0, t: Date.now(), level: "info", m: "reloaded the page" }],
+    };
+  }
   if (step.type === "cookie") {
     // The trainer window can close mid-replay (the loops elsewhere guard for
     // exactly this), so don't assert it's alive — report a clean failure
@@ -2153,6 +2188,27 @@ export const recorderService = {
       );
     }
 
+    // A reload the USER asked for, recorded as a step.
+    //
+    // `before-input-event` and not `performance.navigation.type` in the capture
+    // script, though the latter would also see a reload: it would see EVERY
+    // reload, including the ones the site does to itself after a login. Those
+    // are not steps the user performed, and recording them would make the run
+    // reload twice — once because the site does, once because the test says to.
+    // A keypress in the training window is unambiguous.
+    //
+    // The event is not preventDefault()-ed: the reload still happens, exactly
+    // as it does for the user watching. This only notices it.
+    wc.on("before-input-event", (_event, input) => {
+      if (input.type !== "keyDown") return;
+      const key = String(input.key ?? "");
+      const isReloadKey =
+        key === "F5" || ((input.control || input.meta) && (key === "r" || key === "R"));
+      if (!isReloadKey) return;
+      if (!session || session.paused) return;
+      addStep({ type: "reload" });
+    });
+
     wc.on("did-navigate", () => {
       void drain();
       broadcastTrainingUrl();
@@ -2932,6 +2988,12 @@ export const recorderService = {
           "waitMs",
           "waitUntil",
           "timeoutMs",
+          // Copied raw like the rest, which is why the generator re-guards
+          // both: `typeMode` is compared against the one string it acts on
+          // rather than switched over, and `typeDelayMs` goes through
+          // `clampedMs` before it can reach a bare numeral in the source.
+          "typeMode",
+          "typeDelayMs",
           "loopCount",
           "soft",
           "force",

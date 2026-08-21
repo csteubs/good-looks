@@ -32,6 +32,7 @@ import {
   MAX_STRUCTURE_MATCHES,
   MAX_STRUCTURE_STEPS,
   MAX_STEPS_PER_DRAIN,
+  MAX_TYPE_DELAY_MS,
   normalizePickedElement,
   normalizeRawStep,
   normalizeRawSteps,
@@ -570,6 +571,96 @@ function main(): void {
       normalizeRawStep({ type: "wait", waitUntil: "visible", timeoutMs: 2500 })?.timeoutMs,
       2500,
       "…while a real timeout survives",
+    );
+  }
+
+  // ── 4d. The typing-mode fields ───────────────────────────────────────────
+  //
+  // BOTH halves, independently, because they fail differently. `typeDelayMs`
+  // is a numeral field reaching `{ delay: … }`, the same sink shape that made
+  // `count` an RCE. `typeMode` is an enum that SELECTS A PLAYWRIGHT METHOD, so
+  // a value the boundary let through would have to be safe at emission too —
+  // and it is, because the generator compares it against the one string it
+  // acts on rather than switching over it.
+  {
+    assertEqual(
+      normalizeRawStep({ type: "fill", typeDelayMs: NODE_CODE })?.typeDelayMs,
+      undefined,
+      "a forged typeDelayMs is dropped at the boundary",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "fill", typeDelayMs: -1 })?.typeDelayMs,
+      undefined,
+      "a negative typing delay is dropped",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "fill", typeDelayMs: MAX_TYPE_DELAY_MS + 1 })?.typeDelayMs,
+      undefined,
+      "a delay past the cap is dropped",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "fill", typeDelayMs: 40 })?.typeDelayMs,
+      40,
+      "…while a real delay survives",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "fill", typeMode: "sneaky" })?.typeMode,
+      undefined,
+      "an unknown typeMode is dropped at the boundary",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "fill", typeMode: "sequential" })?.typeMode,
+      "sequential",
+      "…while a real one survives",
+    );
+
+    // And the generator's own half: a stored step reaches it WITHOUT passing
+    // the boundary again (`recorder:updateStep` copies raw, and every test on
+    // disk is regenerated from its steps), so both fields are re-guarded at
+    // emission — the delay clamped, the mode compared rather than dispatched.
+    const forgedDelay = specFor([
+      {
+        id: "s",
+        timestamp: 0,
+        type: "fill",
+        locator: { k: "testid", v: "f" },
+        value: "x",
+        typeMode: "sequential",
+        typeDelayMs: NODE_CODE as unknown as number,
+      },
+    ]);
+    assert(
+      !forgedDelay.includes("child_process") && forgedDelay.includes('.pressSequentially("x");'),
+      "the generator drops a forged typing delay rather than emitting it",
+    );
+    const overCap = specFor([
+      {
+        id: "s",
+        timestamp: 0,
+        type: "fill",
+        locator: { k: "testid", v: "f" },
+        value: "x",
+        typeMode: "sequential",
+        typeDelayMs: MAX_TYPE_DELAY_MS * 1000,
+      },
+    ]);
+    assert(
+      overCap.includes(`{ delay: ${MAX_TYPE_DELAY_MS} }`),
+      "the generator re-clamps a delay the boundary never saw",
+    );
+    const forgedMode = specFor([
+      {
+        id: "s",
+        timestamp: 0,
+        type: "fill",
+        locator: { k: "testid", v: "f" },
+        value: "x",
+        typeMode: 'x"); require("child_process"); ("' as never,
+      },
+    ]);
+    assert(
+      forgedMode.includes('.fill("x");') && !forgedMode.includes("child_process"),
+      "an unknown typeMode falls back to fill() instead of reaching source",
     );
   }
 

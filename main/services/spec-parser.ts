@@ -281,6 +281,104 @@ function parseTimeoutOption(s: string): number | null {
   return m ? parseInt(m[1], 10) : null;
 }
 
+/** Option keys each emitted call may carry, kept apart on purpose: `force` is
+ *  a click-only escape and `delay` means something only to a per-character
+ *  fill, so accepting either anywhere else would read back a call the
+ *  generator cannot re-emit. */
+const CLICK_OPTION_KEYS: ReadonlySet<string> = new Set(["force", "timeout"]);
+const TYPE_OPTION_KEYS: ReadonlySet<string> = new Set(["delay", "timeout"]);
+const TIMEOUT_OPTION_KEYS: ReadonlySet<string> = new Set(["timeout"]);
+
+interface TrailingOptions {
+  /** the argument text with the options object (and its comma) removed */
+  before: string;
+  force: boolean;
+  delay: number | null;
+  timeout: number | null;
+}
+
+/**
+ * Read the trailing `{ … }` an action or assertion emits, key by key.
+ *
+ * Returns **null** when the call carries an options object this parser does not
+ * model — an unknown key, or a value shape the generator never writes — so the
+ * caller counts the statement as a foreign refinement and SKIPS it. That is the
+ * discipline `parseApiOptions` already applies, and the same one the exact-match
+ * `{ force: true }` test applied before options widened past that single shape.
+ * Round-tripping an option we do not understand is the worse failure: the step
+ * comes back looking ordinary and REGENERATES without it, so an imported
+ * `toBeVisible({ visible: false })` would silently invert into an assertion
+ * that the element IS visible.
+ *
+ * A call with no options object is not a refusal — it returns the zero value
+ * with `before` as the whole argument text, which is the overwhelming case.
+ *
+ * The trailing object is found by walking back from the final `}` to the `{`
+ * that balances it, then requiring that what precedes it is either nothing or a
+ * comma. A brace inside an earlier string argument is never reached: the walk
+ * stops at the FIRST balancing `{`, which is the options object's own.
+ */
+function parseTrailingOptions(
+  argsStr: string,
+  allowed: ReadonlySet<string>,
+): TrailingOptions | null {
+  const none: TrailingOptions = { before: argsStr, force: false, delay: null, timeout: null };
+  const trimmed = argsStr.trim();
+  if (!trimmed.endsWith("}")) return none;
+
+  let depth = 0;
+  let open = -1;
+  for (let k = trimmed.length - 1; k >= 0; k--) {
+    const ch = trimmed[k];
+    if (ch === "}") depth += 1;
+    else if (ch === "{") {
+      depth -= 1;
+      if (depth === 0) {
+        open = k;
+        break;
+      }
+    }
+  }
+  if (open < 0) return none;
+  const head = trimmed.slice(0, open).replace(/\s+$/, "");
+  if (head !== "" && !head.endsWith(",")) return none;
+
+  const out: TrailingOptions = {
+    before: head.replace(/,$/, ""),
+    force: false,
+    delay: null,
+    timeout: null,
+  };
+  const inner = trimmed.slice(open + 1, trimmed.length - 1);
+  let j = 0;
+  while (j < inner.length) {
+    const keyM = inner.slice(j).match(/^[\s,]*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*/);
+    if (!keyM) {
+      if (inner.slice(j).trim() === "") break;
+      return null;
+    }
+    const key = keyM[1];
+    if (!allowed.has(key)) return null;
+    const at = j + keyM[0].length;
+    const valM = inner.slice(at).match(/^(true|false|\d+)/);
+    if (!valM) return null;
+    const raw = valM[1];
+    if (key === "force") {
+      // `force: false` is the default said out loud. The generator never emits
+      // it, so reading it back would grow a field on regeneration.
+      if (raw !== "true") return null;
+      out.force = true;
+    } else {
+      if (!/^\d+$/.test(raw)) return null;
+      const n = parseInt(raw, 10);
+      if (key === "delay") out.delay = n;
+      else out.timeout = n;
+    }
+    j = at + raw.length;
+  }
+  return out;
+}
+
 /** Unescape a JS string-literal payload (\\n, \\t, \\", \\', \\`, \\\\). */
 function unescapeLit(s: string): string {
   return s
@@ -482,6 +580,10 @@ function makeStep(type: StepType, partial: Partial<Step>): Step {
 const LOCATOR_ACTIONS = [
   "click",
   "fill",
+  // BEFORE "press", and that order is load-bearing: these names are joined
+  // into a regex alternation, and a shorter alternative listed first would
+  // match the "press" of "pressSequentially" and then fail on the rest.
+  "pressSequentially",
   "selectOption",
   "check",
   "uncheck",
@@ -551,19 +653,36 @@ function locatorActionStep(locator: Locator, action: string, argsStr: string): S
   const typeMap: Record<string, StepType> = {
     click: "click",
     fill: "fill",
+    // A per-character fill is the same STEP as a fill — one `fill` step whose
+    // `typeMode` says how it is delivered — so it reads back as one, not as a
+    // step kind of its own. Anything else would give the model two ways to say
+    // "put this text in this field".
+    pressSequentially: "fill",
     selectOption: "select",
     check: "check",
     uncheck: "uncheck",
     press: "press",
   };
-  // `.click({ force: true })` — the actionability escape. Only the exact
-  // options object the generator emits reads back; anything else in a click's
-  // args is a foreign refinement and falls through unclassified below.
-  const force = action === "click" && /^\s*\{\s*force:\s*true\s*\}\s*$/.test(argsStr);
-  const value = parseValueArg(argsStr);
+  // The trailing options object, read key by key. `null` means the call carries
+  // something this parser does not model, which falls through unclassified
+  // below rather than round-tripping into a step that would regenerate without
+  // it — the discipline the exact-match `{ force: true }` test applied before
+  // options widened past that single shape.
+  const allowed =
+    action === "click"
+      ? CLICK_OPTION_KEYS
+      : action === "pressSequentially"
+        ? TYPE_OPTION_KEYS
+        : TIMEOUT_OPTION_KEYS;
+  const opts = parseTrailingOptions(argsStr, allowed);
+  if (opts === null) return null;
+  const value = parseValueArg(opts.before);
   return makeStep(typeMap[action], {
     locator,
-    ...(force ? { force: true } : {}),
+    ...(opts.force ? { force: true } : {}),
+    ...(action === "pressSequentially" ? { typeMode: "sequential" as const } : {}),
+    ...(opts.delay !== null ? { typeDelayMs: opts.delay } : {}),
+    ...(opts.timeout !== null ? { timeoutMs: opts.timeout } : {}),
     ...(value !== null ? { value: unescapeLit(value) } : {}),
   });
 }
@@ -1296,6 +1415,23 @@ function parseBody(
       continue;
     }
 
+    // page.reload()
+    const reloadM = rest.match(/^[\s;]*(?:await\s+|return\s+)?page\.reload\s*\(/);
+    if (reloadM) {
+      const openIdx = i + reloadM[0].length - 1;
+      const close = matchParen(src, openIdx);
+      if (close < 0) break;
+      const opts = parseTrailingOptions(src.slice(openIdx + 1, close), TIMEOUT_OPTION_KEYS);
+      // A reload carrying options this parser does not model (`waitUntil`, say,
+      // which an imported spec may well use) is left unclassified rather than
+      // read back as a plain reload that would regenerate without them.
+      if (opts !== null) {
+        steps.push(makeStep("reload", opts.timeout !== null ? { timeoutMs: opts.timeout } : {}));
+        i = close + 1;
+        continue;
+      }
+    }
+
     // page.keyboard.press("…")
     const kbM = rest.match(/^[\s;]*(?:await\s+|return\s+)?page\.keyboard\.press\s*\(/);
     if (kbM) {
@@ -1464,7 +1600,19 @@ function parseBody(
           const aOpen = close + 1 + after.indexOf("(", pageAssertM[0].length - 1);
           const aClose = matchParen(src, aOpen);
           if (aClose >= 0) {
-            const argStr = src.slice(aOpen + 1, aClose).trim();
+            // The trailing `{ timeout }` is peeled off BEFORE the argument is
+            // classified, so the pattern-shape tests below read the value the
+            // generator wrote and nothing else. An options object we do not
+            // model makes the whole statement foreign — see
+            // parseTrailingOptions for why reading it back would be worse.
+            const pOpts = parseTrailingOptions(src.slice(aOpen + 1, aClose), TIMEOUT_OPTION_KEYS);
+            if (pOpts === null) {
+              skipped++;
+              i = isWait ? lineEnd : aClose + 1;
+              continue;
+            }
+            const tOpt = pOpts.timeout !== null ? { timeoutMs: pOpts.timeout } : {};
+            const argStr = pOpts.before.trim();
             // A RegExp argument means the generator embedded the user's literal
             // value in a pattern, and the anchors say which kind it was:
             // `^…$` exact, `…$` ends-with, bare substring. Both matchers use
@@ -1482,7 +1630,7 @@ function parseBody(
             if (pathCallM && pageAssertM[1] === "toHaveURL") {
               const pathValue = regexPatternFromTemplate(pathCallM[1]);
               if (pathValue !== null) {
-                emit("urlPathIs", { ...(soft ? { soft: true } : {}) }, { value: pathValue });
+                emit("urlPathIs", { ...(soft ? { soft: true } : {}) }, { value: pathValue, ...tOpt });
                 i = isWait ? lineEnd : aClose + 1;
                 continue;
               }
@@ -1527,7 +1675,7 @@ function parseBody(
                 emit(
                   "urlPathIs",
                   { ...(soft ? { soft: true } : {}) },
-                  { value: middle === "" ? "/" : reUnescape(middle) },
+                  { value: middle === "" ? "/" : reUnescape(middle), ...tOpt },
                 );
                 i = isWait ? lineEnd : aClose + 1;
                 continue;
@@ -1556,7 +1704,7 @@ function parseBody(
               // anything. `urlEndsWith` and `urlIs` had been drifting this way
               // since they were written; only the wait path was ever correct,
               // and only because it was the only one passing `isWait`.
-              emit(assert, { ...(soft ? { soft: true } : {}) }, { value: reUnescape(bare) });
+              emit(assert, { ...(soft ? { soft: true } : {}) }, { value: reUnescape(bare), ...tOpt });
               i = isWait ? lineEnd : aClose + 1;
               continue;
             }
@@ -1571,8 +1719,8 @@ function parseBody(
               assert,
               { ...(soft ? { soft: true } : {}) },
               value !== null
-                ? { value: isWait ? reUnescape(unescapeLit(value)) : unescapeLit(value) }
-                : {},
+                ? { value: isWait ? reUnescape(unescapeLit(value)) : unescapeLit(value), ...tOpt }
+                : tOpt,
             );
             i = isWait ? lineEnd : aClose + 1;
             continue;
@@ -1595,9 +1743,12 @@ function parseBody(
           const aOpen = close + 1 + after.indexOf("(", notM[0].length - 1);
           const aClose = matchParen(src, aOpen);
           if (aClose >= 0) {
-            emit("unchecked", base);
-            i = isWait ? lineEnd : aClose + 1;
-            continue;
+            const nOpts = parseTrailingOptions(src.slice(aOpen + 1, aClose), TIMEOUT_OPTION_KEYS);
+            if (nOpts !== null) {
+              emit("unchecked", base, nOpts.timeout !== null ? { timeoutMs: nOpts.timeout } : {});
+              i = isWait ? lineEnd : aClose + 1;
+              continue;
+            }
           }
         }
 
@@ -1608,37 +1759,48 @@ function parseBody(
           const method = assertM[1];
           const aOpen = close + 1 + after.indexOf("(", assertM[0].length - 1);
           const aClose = matchParen(src, aOpen);
-          if (aClose >= 0) {
-            const argsStr = src.slice(aOpen + 1, aClose);
+          const aOpts =
+            aClose >= 0
+              ? parseTrailingOptions(src.slice(aOpen + 1, aClose), TIMEOUT_OPTION_KEYS)
+              : null;
+          // A null here means the call carries an options object this parser
+          // does not model, so the statement is left unclassified — which
+          // surfaces as `stepsDiverged` rather than as an assertion that
+          // quietly regenerates without the option. `toBeVisible({ visible:
+          // false })` is the case that matters: read leniently it would come
+          // back as its own opposite.
+          if (aClose >= 0 && aOpts !== null) {
+            const argsStr = aOpts.before;
+            const tOpt = aOpts.timeout !== null ? { timeoutMs: aOpts.timeout } : {};
             switch (method) {
               case "toBeVisible":
-                emit("visible", base);
+                emit("visible", base, tOpt);
                 break;
               case "toBeHidden":
-                emit("hidden", base);
+                emit("hidden", base, tOpt);
                 break;
               case "toBeEnabled":
-                emit("enabled", base);
+                emit("enabled", base, tOpt);
                 break;
               case "toBeDisabled":
-                emit("disabled", base);
+                emit("disabled", base, tOpt);
                 break;
               case "toBeChecked":
-                emit("checked", base);
+                emit("checked", base, tOpt);
                 break;
               case "toContainText": {
                 const text = parseValueArg(argsStr);
-                emit("text", base, text !== null ? { text: unescapeLit(text) } : {});
+                emit("text", base, text !== null ? { text: unescapeLit(text), ...tOpt } : tOpt);
                 break;
               }
               case "toHaveText": {
                 const text = parseValueArg(argsStr);
-                emit("exactText", base, text !== null ? { text: unescapeLit(text) } : {});
+                emit("exactText", base, text !== null ? { text: unescapeLit(text), ...tOpt } : tOpt);
                 break;
               }
               case "toHaveValue": {
                 const value = parseValueArg(argsStr);
-                emit("value", base, value !== null ? { value: unescapeLit(value) } : {});
+                emit("value", base, value !== null ? { value: unescapeLit(value), ...tOpt } : tOpt);
                 break;
               }
               case "toHaveAttribute": {
@@ -1646,13 +1808,13 @@ function parseBody(
                 emit(
                   "attribute",
                   base,
-                  m2 ? { attr: unescapeLit(m2[1]), value: unescapeLit(m2[2]) } : {},
+                  m2 ? { attr: unescapeLit(m2[1]), value: unescapeLit(m2[2]), ...tOpt } : tOpt,
                 );
                 break;
               }
               case "toHaveCount": {
                 const numM = argsStr.match(/-?\d+/);
-                emit("count", base, numM ? { count: parseInt(numM[0], 10) } : {});
+                emit("count", base, numM ? { count: parseInt(numM[0], 10), ...tOpt } : tOpt);
                 break;
               }
               case "toHaveCSS": {
@@ -1686,6 +1848,7 @@ function parseBody(
                       // next regeneration and the pattern would drift a backslash
                       // further from the value on every round trip.
                       value: reUnescape(patt),
+                      ...tOpt,
                     });
                     break;
                   }
@@ -1695,8 +1858,8 @@ function parseBody(
                   "css",
                   base,
                   m3
-                    ? { cssProp: unescapeLit(m3[1]), cssMatch: "is", value: unescapeLit(m3[2]) }
-                    : {},
+                    ? { cssProp: unescapeLit(m3[1]), cssMatch: "is", value: unescapeLit(m3[2]), ...tOpt }
+                    : tOpt,
                 );
                 break;
               }

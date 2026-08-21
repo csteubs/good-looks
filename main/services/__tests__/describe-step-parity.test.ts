@@ -38,6 +38,72 @@ const cases: { label: string; step: Step }[] = [
   { label: "uncheck", step: step({ type: "uncheck", locator: { k: "testid", v: "c" } }) },
   { label: "press with locator", step: step({ type: "press", locator: LOCATOR, value: "Enter" }) },
   { label: "press without locator", step: step({ type: "press", value: "Escape" }) },
+  { label: "reload", step: step({ type: "reload" }) },
+  { label: "reload with a timeout", step: step({ type: "reload", timeoutMs: 30_000 }) },
+  // `force` was in the generated call and NOT in the renderer's step list until
+  // 2026-08-21, so a step the user had marked "skip actionability checks" read
+  // on screen as an ordinary click. There was no case here to catch it.
+  { label: "click forced", step: step({ type: "click", locator: LOCATOR, force: true }) },
+  // The per-step timeout, on one action of each arity: no argument, one
+  // argument, and the click that can carry `force` alongside it. The key ORDER
+  // is part of what these pin — both copies must say `{ force: true, timeout: … }`.
+  { label: "click with a timeout", step: step({ type: "click", locator: LOCATOR, timeoutMs: 15_000 }) },
+  {
+    label: "click forced with a timeout",
+    step: step({ type: "click", locator: LOCATOR, force: true, timeoutMs: 15_000 }),
+  },
+  {
+    label: "fill with a timeout",
+    step: step({ type: "fill", locator: { k: "label", v: "Email" }, value: "a@b.c", timeoutMs: 9000 }),
+  },
+  { label: "check with a timeout", step: step({ type: "check", locator: { k: "testid", v: "c" }, timeoutMs: 9000 }) },
+  // A forged timeout must degrade to "no option" on BOTH sides rather than one
+  // of them printing it into the step list.
+  {
+    label: "click with a forged timeout",
+    step: step({ type: "click", locator: LOCATOR, timeoutMs: "5000); require(\"fs\")" as never }),
+  },
+  { label: "click with a negative timeout", step: step({ type: "click", locator: LOCATOR, timeoutMs: -1 }) },
+  // Per-character fill, with and without a delay, and with the delay forged.
+  {
+    label: "fill sequential",
+    step: step({ type: "fill", locator: { k: "label", v: "City" }, value: "Lon", typeMode: "sequential" }),
+  },
+  {
+    label: "fill sequential with a delay",
+    step: step({
+      type: "fill",
+      locator: { k: "label", v: "City" },
+      value: "Lon",
+      typeMode: "sequential",
+      typeDelayMs: 40,
+    }),
+  },
+  {
+    label: "fill sequential with a delay and a timeout",
+    step: step({
+      type: "fill",
+      locator: { k: "label", v: "City" },
+      value: "Lon",
+      typeMode: "sequential",
+      typeDelayMs: 40,
+      timeoutMs: 9000,
+    }),
+  },
+  {
+    label: "fill sequential with a forged delay",
+    step: step({
+      type: "fill",
+      locator: { k: "label", v: "City" },
+      value: "Lon",
+      typeMode: "sequential",
+      typeDelayMs: "40); require(\"fs\")" as never,
+    }),
+  },
+  // A `press` step without a locator types wherever focus is, so it has no
+  // timeout to give — both sides must drop it rather than one inventing an
+  // option page.keyboard.press does not have.
+  { label: "press without locator, with a timeout", step: step({ type: "press", value: "Escape", timeoutMs: 9000 }) },
   { label: "wait ms", step: step({ type: "wait", waitMs: 500 }) },
   { label: "wait for locator", step: step({ type: "wait", locator: LOCATOR }) },
   { label: "viewport", step: step({ type: "viewport", width: 1024, height: 768 }) },
@@ -164,6 +230,20 @@ for (const a of ASSERTS) {
       type: "assert",
       assert: a,
       locator: LOCATOR,
+      text: "some text",
+      value: "expected",
+      attr: "data-x",
+      cssProp: "background-color",
+      count: 2,
+    }),
+  });
+  cases.push({
+    label: `assert ${a} (with a timeout)`,
+    step: step({
+      type: "assert",
+      assert: a,
+      locator: LOCATOR,
+      timeoutMs: 7500,
       text: "some text",
       value: "expected",
       attr: "data-x",

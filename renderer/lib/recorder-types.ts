@@ -12,6 +12,15 @@ export type { ProxySource, ProxyTraffic };
 export type DownloadMatch = "contains" | "exact";
 export const DOWNLOAD_MATCHES: DownloadMatch[] = ["contains", "exact"];
 
+/** How a `fill` step delivers its value — mirror of main/recorder/types.ts.
+ *  `sequential` fires per-character keyboard events and does NOT clear the
+ *  field first; see the backend's TypeMode for the whole argument. */
+export type TypeMode = "fill" | "sequential";
+export const TYPE_MODES: TypeMode[] = ["fill", "sequential"];
+
+/** Mirror of MAX_TYPE_DELAY_MS in main/recorder/types.ts. */
+export const MAX_TYPE_DELAY_MS = 60_000;
+
 /** axe impact scale, weakest first — mirror of main/recorder/types.ts. */
 export const DIALOG_ACTIONS = ["accept", "dismiss"] as const;
 export type DialogAction = (typeof DIALOG_ACTIONS)[number];
@@ -54,7 +63,8 @@ export type StepType =
   // Mirror of the main-process type; see there for why it is a divider
   // rather than a pair.
   | "teardown"
-  | "dialog";
+  | "dialog"
+  | "reload";
 
 /** Predicate for an `if` step. Element conditions use `Step.locator`; page
  *  conditions (urlContains/titleContains) use `Step.value` as the substring. */
@@ -290,6 +300,10 @@ export interface Step {
   cssProp?: string;
   cssMatch?: CssMatch;
   elementState?: ElementState;
+  /** how a `fill` step delivers its value, and the per-character delay for the
+   *  `sequential` mode (mirror of main types). */
+  typeMode?: TypeMode;
+  typeDelayMs?: number;
   count?: number;
   width?: number;
   height?: number;
@@ -384,6 +398,10 @@ export interface RawStep {
   cssProp?: string;
   cssMatch?: CssMatch;
   elementState?: ElementState;
+  /** how a `fill` step delivers its value, and the per-character delay for the
+   *  `sequential` mode (mirror of main types). */
+  typeMode?: TypeMode;
+  typeDelayMs?: number;
   count?: number;
   width?: number;
   height?: number;
