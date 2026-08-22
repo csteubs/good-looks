@@ -22,7 +22,7 @@ import {
 } from "./capture-script.js";
 import { parseCaptureMessage, parseDrainPayload } from "./capture-channel.js";
 import { normalizeRawStep } from "./types.js";
-import type { RawStep } from "./types.js";
+import type { OverlayRule, RawStep } from "./types.js";
 
 /** The session nonce the harness installs the script with. Exported so a test
  *  can prove a message carries it — the page's own scripts run in a different
@@ -53,7 +53,11 @@ const NONCE = CAPTURE_NONCE;
  * injected code never reads, leaving the age check unexercised and the test
  * green.
  */
-export function captureHarness(html: string, clock: { now(): number } = Date) {
+export function captureHarness(
+  html: string,
+  clock: { now(): number } = Date,
+  overlayRules: readonly OverlayRule[] = [],
+) {
   const frame = document.createElement("iframe");
   document.body.appendChild(frame);
   const win = frame.contentWindow as Window & typeof globalThis;
@@ -66,11 +70,30 @@ export function captureHarness(html: string, clock: { now(): number } = Date) {
 
   doc.documentElement.setAttribute(ATTR_PAUSED, "0");
   doc.documentElement.setAttribute(ATTR_ASSERT, "");
-  new Function("window", "document", "console", "Date", buildCaptureScript(NONCE))(
+  // `MutationObserver` and `setInterval` are handed in for the same reason
+  // `window` and `document` are: the overlay watcher uses both, and resolved
+  // lexically they would come from the OUTER realm rather than the iframe's —
+  // which is the difference between observing this page and observing the
+  // test runner's own document.
+  new Function(
+    "window",
+    "document",
+    "console",
+    "Date",
+    "MutationObserver",
+    "setInterval",
+    "clearInterval",
+    "setTimeout",
+    buildCaptureScript(NONCE, [], overlayRules),
+  )(
     win,
     doc,
     console,
     clock,
+    win.MutationObserver,
+    win.setInterval.bind(win),
+    win.clearInterval.bind(win),
+    win.setTimeout.bind(win),
   );
 
   const parsed = () =>
@@ -137,12 +160,31 @@ export function captureHarness(html: string, clock: { now(): number } = Date) {
     /** What the backend does on every dom-ready, and after a drain that found
      *  no capture state. */
     reinject(): void {
-      new Function("window", "document", "console", "Date", buildCaptureScript(NONCE))(
+      new Function(
+        "window",
+        "document",
+        "console",
+        "Date",
+        "MutationObserver",
+        "setInterval",
+        "clearInterval",
+        "setTimeout",
+        buildCaptureScript(NONCE, [], overlayRules),
+      )(
         win,
         doc,
         console,
         clock,
+        win.MutationObserver,
+        win.setInterval.bind(win),
+        win.clearInterval.bind(win),
+        win.setTimeout.bind(win),
       );
+    },
+    /** The element the overlay watcher would act on, and whether it has. */
+    overlaySuppress(): number {
+      const gl = (win as unknown as Record<string, { suppress?: number }>)[WORLD_STATE_KEY];
+      return gl?.suppress ?? 0;
     },
   };
 }

@@ -43,9 +43,13 @@
 //     losing.
 
 import { normalizeTestIdAttributes, testIdOverride, TESTID_ATTRIBUTE_OVERRIDES } from "../../shared/testid-attr.mjs";
+// The overlay watcher and its visibility rule, as source. Shared with the
+// run's dismissal fixture so a rule means the same thing in both — see the
+// header of `shared/overlay-rules.mjs`.
+import { overlayVisibleSource, watcherSource } from "../../shared/overlay-rules.mjs";
 import { CAPTURE_MESSAGE_PREFIX } from "./capture-channel.js";
 import { CSS_ASSERT_PROPS } from "./types.js";
-import type { Locator } from "./types.js";
+import type { Locator, OverlayRule } from "./types.js";
 
 /**
  * Where capture state lives, in the recorder's isolated world.
@@ -997,7 +1001,11 @@ export const DOM_HELPERS = `
  * Plain string (not type-checked against the Node backend lib). No backticks or
  * ${…} inside except the interpolations spelled out here.
  */
-export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[] = []): string {
+export function buildCaptureScript(
+  nonce: string,
+  extraTestIdAttributes: string[] = [],
+  overlayRules: readonly OverlayRule[] = [],
+): string {
   // Interpolated into an INJECTED script, so the list is re-normalized here
   // regardless of what the caller read from settings — one grammar, spelled
   // in shared/testid-attr.mjs, gates every path an attribute name takes into
@@ -1030,6 +1038,13 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
       x: Math.max(0, Math.round(window.scrollX || 0)),
       y: Math.max(0, Math.round(window.scrollY || 0)),
     },
+    // Depth of "a click the RECORDER caused, not the user". Raised by the
+    // overlay watcher around its own click and lowered after; \`push\` drops
+    // anything captured while it is up. A counter rather than a flag because
+    // a rule's click can synchronously reveal a second overlay whose rule
+    // fires from inside the same sweep, and a flag would be cleared by the
+    // inner one while the outer click is still in flight.
+    suppress: 0,
   };
   window.${WORLD_STATE_KEY} = gl;
 
@@ -1099,6 +1114,12 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
   // step exactly once and in the order it was captured, however the two
   // deliveries interleave — see CaptureLedger.
   function push(step) {
+    // A step the recorder itself caused is not a step the user recorded. The
+    // overlay watcher clicks in this same isolated world, so its click reaches
+    // these listeners exactly like a real one; suppressing at the ONE egress
+    // is what keeps "dismissed an overlay" from silently becoming a recorded
+    // click on a banner the test will never see again.
+    if (gl.suppress > 0) return;
     // A scroll the user performed since the last recorded position becomes an
     // explicit step BEFORE the step that needed it. Only element-bearing steps
     // owe one: a goto or keyboard press does not depend on where the page is
@@ -1735,6 +1756,36 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
   // one. The handler never calls preventDefault: a recorder that made the site
   // prompt "Leave site?" would be worse than the bug it is fixing.
   window.addEventListener("pagehide", flushPendingDown, true);
+
+  // ----- Standing overlay rules -----
+  //
+  // Folded into THIS script rather than injected separately, which buys three
+  // properties for free: the \`window.__glCapture\` guard above makes it
+  // exactly-once per document, the backend's re-injection on a missing capture
+  // state heals it too, and it runs in the same isolated world as \`push\` — so
+  // it can suppress the step its own click would otherwise record.
+  //
+  // Reactive, not preventative: injection happens at \`dom-ready\`, which is
+  // document END, so a banner rendered during parse is briefly on screen
+  // before this runs. That is the right trade for a TRAINER — the user is
+  // watching a real browser, and a recorder that suppressed page content
+  // before it painted would be recording against a page no visitor sees.
+  ${overlayVisibleSource()}
+  ${watcherSource()}
+  try {
+    gl.stopOverlayWatcher = installOverlayWatcher(${JSON.stringify(overlayRules.map((r) => ({ id: r.id, target: r.target })))}, function () {
+      // Raised across the click and lowered on the next macrotask rather than
+      // immediately: a framework that dispatches its own click asynchronously
+      // off ours would otherwise land after the counter dropped and be
+      // recorded as a user step. The watchdog is what stops a page that never
+      // yields from muting capture for the rest of the session.
+      gl.suppress++;
+      var released = false;
+      var release = function () { if (!released) { released = true; gl.suppress--; } };
+      try { setTimeout(release, 0); } catch (e) { release(); }
+      try { setTimeout(function () { release(); }, 1000); } catch (e) {}
+    });
+  } catch (e) {}
 })();
 `;
 }

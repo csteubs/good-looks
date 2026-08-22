@@ -26,6 +26,7 @@ import type {
   StepStructure,
   LogSearchResult,
   Locator,
+  OverlayRule,
   RawStep,
   ProxyVerifyResult,
   RecorderSettings,
@@ -667,6 +668,18 @@ export const api = {
      *  run that isn't a recorded failure or a reason that doesn't exist. */
     setFailureReason: (id: string, reasonId: string | null) =>
       ipc().invoke<RunRecord>("runs:setFailureReason", { id, reasonId }),
+  },
+  /** Standing overlay dismissal rules — "on this host, click this away
+   *  whenever it appears". Managed from Settings, taught from the trainer. */
+  overlayRules: {
+    list: () => ipc().invoke<OverlayRule[]>("overlayRules:list"),
+    /** `url` is the page the rule was taught on; the backend derives the host
+     *  from it, so the renderer never has to agree about what a host is. */
+    create: (url: string, label: string, target: Locator) =>
+      ipc().invoke<OverlayRule>("overlayRules:create", { url, label, target }),
+    update: (id: string, patch: { label?: string; disabled?: boolean }) =>
+      ipc().invoke<OverlayRule | null>("overlayRules:update", { id, ...patch }),
+    remove: (id: string) => ipc().invoke<boolean>("overlayRules:remove", { id }),
   },
   failureReasons: {
     /** The whole vocabulary — built-ins plus every custom reason, disabled

@@ -33,6 +33,7 @@ export type PaneId =
   | "storage"
   | "stats"
   | "failure-reasons"
+  | "overlay-rules"
   | "cost"
   | "ai"
   | "alerts"
@@ -111,6 +112,15 @@ export const PANES: readonly PaneDef[] = [
     id: "failure-reasons",
     title: "Failure reasons",
     subtitle: "The labels failed runs are filed under, and who assigns them.",
+    group: "Testing",
+  },
+  {
+    // Beside Auto-Heal, because both are standing behaviours the app applies to
+    // a run rather than settings a test carries: one repairs a locator that
+    // moved, the other clicks away something that got in front of it.
+    id: "overlay-rules",
+    title: "Overlay rules",
+    subtitle: "Banners and pop-ups to click away automatically, per site.",
     group: "Testing",
   },
   {
@@ -579,6 +589,14 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     pane: "failure-reasons",
     label: "Custom reasons",
     keywords: "failure reason custom label rename disable vocabulary",
+  },
+
+  // Overlay rules
+  {
+    id: "overlay-rules-what",
+    pane: "overlay-rules",
+    label: "How they work",
+    keywords: "overlay rule dismiss banner popup cookie consent modal interstitial gdpr cmp close",
   },
 
   // Alerts

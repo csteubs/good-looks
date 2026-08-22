@@ -83,8 +83,11 @@ describe("the wiring the unit tests cannot reach", () => {
     expect(calls.length).toBe(2);
     expect(captureFixtureSource).toContain('testInfo.status !== "passed"');
     // The extension gate must include the save flag, or a toggles-off login
-    // test never gets the extended fixture at all.
-    expect(captureFixtureSource).toMatch(/SIG_ON \|\| SAVE_STATE\) \? base\.extend/);
+    // test never gets the extended fixture at all. Anchored on SAVE_STATE
+    // being the LAST disjunct rather than on the whole expression: every
+    // fixture added since has inserted its own flag ahead of it, and pinning
+    // the full list made this fail for the one reason it does not care about.
+    expect(captureFixtureSource).toMatch(/\|\| SAVE_STATE\) \? base\.extend/);
   });
 
   it("the generated config starts from GLAZE_STORAGE_STATE when set, untouched otherwise", () => {

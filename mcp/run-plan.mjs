@@ -15,6 +15,7 @@
 // writes. Every one of them failed quietly — the run executed, passed or
 // failed, and said nothing about what it had skipped.
 
+import { armedRulesFor } from "../shared/overlay-rules.mjs";
 import { normalizeSignatureHost, signatureState } from "../shared/shopify-signature.mjs";
 import { manualProxyFor, playwrightProxyEnv, proxySettingsFrom } from "../shared/proxy-config.mjs";
 import { slowMoFor } from "../shared/run-pacing.mjs";
@@ -192,7 +193,7 @@ export function sanitizeOutput(output) {
 export function describeRun(
   test,
   settings = {},
-  { speed, timeoutMs, timeoutRaised, signatures = [], nowMs = Date.now() } = {},
+  { speed, timeoutMs, timeoutRaised, signatures = [], overlayRules = [], nowMs = Date.now() } = {},
 ) {
   const wants = {
     screenshots: test?.captureArtifacts ?? settings.defaultCaptureArtifacts ?? false,
@@ -224,6 +225,19 @@ export function describeRun(
     skipped.push(
       "Crawl page-settling — the slower step delay applied, but no waiting for load, network " +
         "quiet and paint after each action.",
+    );
+  }
+  // Standing overlay rules. Named only when one actually applies to this
+  // test's host — a blanket "overlay rules do not run here" on every run of
+  // every test is the kind of caveat people learn to skip past, and then miss
+  // the one time it matters.
+  const armedHere = armedRulesFor(overlayRules, test?.url ?? "");
+  if (armedHere.length > 0) {
+    const named = armedHere.map((r) => r.label || r.host).join(", ");
+    skipped.push(
+      `Overlay rules (${named}) — this server writes no fixtures, so the banner they dismiss ` +
+        "is left on the page here. A step that acts on something the banner covers can fail " +
+        "in this run and pass in an app run of the same test.",
     );
   }
   const secrets = secretVariableNames(test);

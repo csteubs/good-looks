@@ -164,6 +164,22 @@ function readSignatures() {
 }
 
 
+/** The app's standing overlay rules.
+ *
+ *  Read for the same reason the signature register is: so a run can SAY what it
+ *  did not do. This server writes no fixtures, so a rule that dismisses a
+ *  consent banner in an app run does not fire here — and a run that fails on an
+ *  element the banner is covering fails with nothing pointing at the cause.
+ *
+ *  Through `shared/overlay-rules.mjs` rather than a local copy of the matching
+ *  rule. Both processes read this file, and a second spelling of "does this
+ *  rule apply to this URL" is the drift that has already cost this repo three
+ *  bugs — see the header of `mcp/data-dir.mjs`. */
+function readOverlayRules() {
+  const rules = readJsonFile(dataDir, "recorder/overlay-rules.json", []);
+  return Array.isArray(rules) ? rules : [];
+}
+
 /** Persist a batch in the SAME file and shape the app's batch-history-store
  *  uses, so a batch run from an MCP client shows up in the app's Batch view. */
 function saveBatchRecord(record) {
@@ -701,6 +717,7 @@ server.registerTool(
                 timeoutMs: result.timeoutMs,
                 timeoutRaised: result.timeoutRaised,
                 signatures: readSignatures(),
+                overlayRules: readOverlayRules(),
               }),
               outputTail,
             },
@@ -1254,6 +1271,7 @@ async function runBatchTool({ testIds, tag, group, browser, datasetIds, allDatas
             timeoutMs: 0,
             timeoutRaised: false,
             signatures,
+            overlayRules: readOverlayRules(),
           }).skipped ?? [],
       ),
     ),

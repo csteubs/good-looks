@@ -10,6 +10,82 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-22 — Overlay rules: a standing dismissal, because a step cannot express "whenever this appears"
+
+A consent modal does not appear once. It is re-injected by a third-party script
+on EVERY document, so a dismissal placed at one point in a step list is correct
+exactly until the next navigation.
+
+**Three cheaper answers were measured against ritual.com first, and two of them
+are what anybody would reach for.** Replaying the click works and the banner
+returns on the next `goto`. Recording the consent DECISION does not work at all:
+`setConsentPreferences` with every category denied left the banner up, before
+and after navigating. And carrying the cookies does not work either — a fresh
+context seeded with all 48 cookies from a context that had already dismissed it,
+the three `datagrail_*` ones included, still showed the banner. So the app's
+existing `saveSession` / `useSessionFrom` machinery and the `cookie` step cannot
+solve this; the decision is not reconstructible from client cookies.
+
+**What the capture fix already bought, stated honestly.** With the shadow-DOM
+capture bug fixed the same day, one correctly-recorded click on the banner's
+close control dismisses it for the rest of that test — verified across two
+further navigations. The user's reported symptom "it reappears on every
+navigation" was a CONSEQUENCE of the capture bug: the old step clicked the
+modal's backdrop, so nothing was ever dismissed. Two gaps remain, and they are
+what this feature is for. Playwright gives every test a fresh context, so test
+two sees the banner again and every test needs its own dismissal step. And an
+overlay can arrive mid-test: ritual.com's Klaviyo modal appears about eight
+seconds into a visit, full-viewport at z-index 90000, long after any
+top-of-test step has run.
+
+**One resolver, not two.** The trainer resolves a rule inside a live Electron
+page; the run resolves one inside a Playwright worker's init script. The obvious
+build is a resolver on each side, and it is the failure `assert-parity.spec.ts`
+exists to prevent one level down — two implementations agreeing on the day they
+are written. Instead `watcherSource()` in `shared/overlay-rules.mjs` is
+interpolated into both, and both hosts supply the SAME `matchesFor` from
+`UNIQUENESS_HELPERS` — including its shadow piercing, which matters more here
+than anywhere, because the banners this exists for are usually web components.
+`check:overlay-rules` fails if a second copy appears.
+
+**`addInitScript`, not an action wrapper.** Every other run-time fixture patches
+actions, so it runs at step boundaries. That is the wrong shape: the Klaviyo
+modal does not wait for a step, and a wrapper catches it on the next action —
+which is exactly the action it would have blocked.
+
+**The clicked-set is not optional, and the first draft said it was.** The
+argument was that idempotency is structural: a rule targets the control that
+dismisses the overlay, so one click removes what the rule matches. Measured, that
+is false — Klaviyo's close button is removed about 600ms AFTER the click, and the
+sweep runs on every mutation batch plus a 500ms poll. One dismissal produced
+SEVEN clicks. Harmless there, but a control that toggles rather than closes would
+have been clicked back open. Each ELEMENT is now clicked at most once, tracked by
+node identity in a WeakSet — identity rather than a per-rule flag is what keeps a
+legitimately re-injected banner working, since the new banner is a new node.
+
+**The watcher's own click must not become a step.** In the trainer it runs in the
+same isolated world as the capture listeners, so its click reaches them exactly
+like a user's. Unsuppressed, teaching a rule appends a click on the banner to the
+test being recorded — a step whose target the rule itself removes before it can
+ever run. The guard is a counter at `push`, the file's single egress, and it is a
+counter rather than a flag because one rule's click can synchronously reveal a
+second overlay whose rule fires from inside the same sweep.
+
+**Rejected: hiding instead of clicking.** A hidden banner is still in the
+accessibility tree and still counted by an `a11y` step, and a run that deletes
+page content is a run whose screenshots stop describing the site.
+
+**Rejected: xpath targets.** An absolute path encodes the DOM as it stood when
+the rule was taught, and a third-party CMP's position among its siblings is
+exactly what moves between a recording session and a fresh cache-less run.
+
+**Per-host and machine-local, with the cost said out loud.** A pop-up is a
+property of the site, and a copy on every test that visits it is a copy that
+drifts. The consequence is that a test depending on a rule behaves differently on
+a machine without it — so every run reports which rules were ARMED, and the MCP
+server reads the same file through the same shared matcher to say that its runs
+do not enforce them.
+
 ### 2026-08-22 — The recorder could not see inside a web component
 
 Every click inside an open shadow root was recorded as a click on the shadow
