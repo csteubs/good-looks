@@ -2352,6 +2352,21 @@ export interface RunRecord {
   /** The triage signal that argued for an automatic assignment — the label's
    *  own evidence. Absent on manual assignments. */
   failureReasonSignal?: string;
+  /**
+   * Label of the step this run failed at, when it is known.
+   *
+   * PERSISTED SO IT OUTLIVES THE PROCESS THAT COMPUTED IT. The runner has
+   * always derived this — it is what the desktop notification and the alert
+   * webhook name — but it lived in a local variable and went away with the run.
+   * A report emitted later therefore had to say `exit 1` and a path, which is
+   * an outcome rather than a diagnosis. See R13.
+   *
+   * ONLY ON A RUN THAT WROTE A REPLAY, which is any run with capture, healing,
+   * a11y or log recording on (`artifactRun` in playwright-runner). A plain
+   * failed run has no per-step outcome to read, so this is absent rather than
+   * guessed at — and absent means unknown, never "the first step".
+   */
+  failedStepLabel?: string;
   /** Distinguishes a real test "run" (default) from a "baseline-update" event
    *  logged when the user accepts screenshots as new baselines. Baseline-update
    *  records are excluded from the pass/fail charts but shown in the history

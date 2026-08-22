@@ -1774,6 +1774,10 @@ export const playwrightRunner = {
               aiChecksFailed,
               aiChecksUnevaluated,
               replayOfRunId,
+              // Derived above from the replay, and until now it lived and died
+              // in this function — the notification and the alert named the
+              // step and nothing that outlived the process could.
+              failedStepLabel: failedLabel,
             },
             logText,
           );

@@ -19,6 +19,11 @@ export interface EmitRun {
   durationMs?: number;
   logFile?: string;
   runBrowser?: string;
+  /** Label of the step the run failed at, when the run wrote a replay. */
+  failedStepLabel?: string;
+  /** Resolved NAME of the run's failure reason, not its id — the emitters are
+   *  pure and cannot reach the custom-reason store to look one up. */
+  failureReason?: string;
 }
 
 /** A row out of the metrics DB. Deliberately open — the emitters write whatever

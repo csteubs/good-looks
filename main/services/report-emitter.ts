@@ -33,6 +33,8 @@ import { stepDurations } from "../../shared/metrics-query.mjs";
 import { metricsStore } from "./metrics-store.js";
 import { runHistoryStore } from "./run-history-store.js";
 import { redactWithSnapshot } from "./secret-redaction.js";
+import { failureReasonStore } from "./failure-reason-store.js";
+import { resolveFailureReason } from "../../shared/failure-reasons.mjs";
 
 export interface EmitResult {
   /** Where it landed, or null when the user cancelled the save dialog. */
@@ -221,9 +223,19 @@ export function buildReport(
   // record and not on `EmitRun` — casting first would leave the scope reading a
   // field the type says is not there.
   const runIds = scope.runIds ? new Set(scope.runIds) : null;
+  // The reason is stored as an ID and resolved at display time, so that a
+  // renamed custom reason updates every historical run. A report is a display,
+  // so it resolves too — and the emitters cannot do it themselves, being pure
+  // and unable to reach the store. Read once for the whole report rather than
+  // per run.
+  const customReasons = failureReasonStore.list();
   const runs = runHistoryStore
     .listLive()
-    .filter((r) => inScope(r, scope, runIds)) as unknown as EmitRun[];
+    .filter((r) => inScope(r, scope, runIds))
+    .map((r) => {
+      const reason = resolveFailureReason(r.failureReasonId, customReasons);
+      return reason ? { ...r, failureReason: reason.name } : r;
+    }) as unknown as EmitRun[];
   switch (emitterId) {
     case "junit":
       return { text: junitXml(runs, { redact: redactWithSnapshot }), count: runs.length };

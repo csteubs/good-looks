@@ -46,6 +46,12 @@ vi.mock("../../shared/metrics-query.mjs", () => ({
 // The real one reads an encrypted store that only the app process can open. A
 // fixed replacement is enough to answer the question this file asks, which is
 // whether the unattended path redacts AT ALL.
+// The reason is stored as an ID; the report resolves it to a NAME because a
+// renamed custom reason must update every historical run. The emitters are pure
+// and cannot reach this store, so the resolution has to happen here.
+vi.mock("./failure-reason-store.js", () => ({
+  failureReasonStore: { list: () => [{ id: "custom-1", name: "Vendor outage" }] },
+}));
 vi.mock("./secret-redaction.js", () => ({
   redactWithSnapshot: (text: string) => text.split("hunter2-secret").join("••••"),
 }));
@@ -210,5 +216,32 @@ describe("emitReportTo — the unattended destination", () => {
     expect(() => emitReportTo("junit", join(dir, "missing", "x.xml"))).toThrow(
       /Could not write that file/,
     );
+  });
+});
+
+describe("buildReport — the failure reason (R13)", () => {
+  it("resolves a custom reason's ID to its NAME, since the emitters cannot", () => {
+    h.runs = [
+      run({ testName: "Checkout", status: "failed", exitCode: 1, failureReasonId: "custom-1" }),
+    ];
+    expect(buildReport("ticket").text).toContain("Vendor outage");
+  });
+
+  it("resolves a built-in reason without the store knowing about it", () => {
+    h.runs = [
+      run({ testName: "Checkout", status: "failed", exitCode: 1, failureReasonId: "regression" }),
+    ];
+    // A REAL built-in id, asserted on the NAME. Using an id that does not exist
+    // would resolve to null, print nothing, and pass this test for the wrong
+    // reason — the vacuous-assertion trap.
+    const text = buildReport("ticket").text;
+    expect(text).toContain("Site regression");
+  });
+
+  it("leaves the reason out entirely when the run has none", () => {
+    h.runs = [run({ testName: "Checkout", status: "failed", exitCode: 3 })];
+    const text = buildReport("junit").text;
+    expect(text).toContain("exit 3");
+    expect(text).not.toContain("undefined");
   });
 });

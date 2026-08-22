@@ -540,6 +540,8 @@ export const runHistoryStore = {
       shotCount?: number;
       /** id of the run this one re-executed, when it's a re-run */
       replayOfRunId?: string;
+      /** label of the step the run failed at, when a replay was written */
+      failedStepLabel?: string;
     },
     logText: string,
   ): RunRecord {
@@ -596,6 +598,11 @@ export const runHistoryStore = {
       ...(run.aiChecksUnevaluated ? { aiChecksUnevaluated: run.aiChecksUnevaluated } : {}),
       ...(run.datasetId ? { datasetId: run.datasetId } : {}),
       ...(run.datasetName ? { datasetName: run.datasetName } : {}),
+      // Absent when unknown rather than empty. Only a run that wrote a replay
+      // has a per-step outcome to read, so "" here would claim the run failed
+      // at a step with no name — which reads as a bug in the label rather than
+      // as the absence of one.
+      ...(run.failedStepLabel ? { failedStepLabel: run.failedStepLabel } : {}),
     };
 
     const all = readAll();
