@@ -711,6 +711,70 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       }
       return test;
     },
+    /** The origin picker and the rewrite, mirroring the real handlers closely
+     *  enough that the panel's two states — "nothing points there" and "N
+     *  fields rewritten" — can both be seen in a tab. The transform itself is
+     *  NOT reimplemented here: a second copy of the rule is how the preview
+     *  comes to show something the app does not do. */
+    "tests:originsIn": (p) => {
+      const test = findTest(p?.id);
+      if (!test) return [];
+      const counts = new Map<string, number>();
+      for (const step of test.steps ?? []) {
+        const url = (step as { url?: string }).url;
+        if (typeof url !== "string" || !/^https?:\/\//i.test(url)) continue;
+        try {
+          const { origin } = new URL(url);
+          counts.set(origin, (counts.get(origin) ?? 0) + 1);
+        } catch {
+          /* not a URL */
+        }
+      }
+      // The test's own site first, matching the real handler: "the site
+      // address" means the site the test is about, not the host its steps
+      // happen to mention most.
+      let preferred = "";
+      try {
+        preferred = new URL(String(test.url ?? "")).origin;
+      } catch {
+        /* no usable url */
+      }
+      return [...counts.entries()]
+        .map(([origin, count]) => ({ origin, count }))
+        .sort((a, b) => {
+          if (preferred) {
+            if (a.origin === preferred && b.origin !== preferred) return -1;
+            if (b.origin === preferred && a.origin !== preferred) return 1;
+          }
+          return b.count - a.count || a.origin.localeCompare(b.origin);
+        });
+    },
+    "tests:parameteriseOrigin": (p) => {
+      const test = findTest(p?.id);
+      if (!test) return undefined;
+      const origin = String(p?.origin ?? "");
+      const name = typeof p?.name === "string" && p.name.trim() ? p.name.trim() : "SITE_URL";
+      let rewritten = 0;
+      for (const step of test.steps ?? []) {
+        const s = step as { url?: string };
+        if (typeof s.url === "string" && s.url.startsWith(origin)) {
+          const rest = s.url.slice(origin.length);
+          if (rest === "" || /^[/?#]/.test(rest)) {
+            s.url = "${" + name + "}" + rest;
+            rewritten++;
+          }
+        }
+      }
+      const vars = test.variables ?? [];
+      const reusedVariable = vars.some((v) => v.name === name);
+      if (!reusedVariable) {
+        test.variables = [
+          ...vars,
+          { name, kind: "plain", value: origin, description: "The site address this test runs against." },
+        ] as NonNullable<TestRecord["variables"]>;
+      }
+      return { test, rewritten, reusedVariable, name };
+    },
     "tests:setSession": (p) => {
       const test = findTest(p?.id);
       if (!test) return undefined;
