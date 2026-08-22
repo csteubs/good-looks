@@ -80,6 +80,7 @@ import type {
   RunReplay,
   RunReplaySummary,
   ScriptCheckResult,
+  ScriptPreview,
   SecretStatus,
   TestRecord,
   TestVariable,
@@ -676,6 +677,40 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
         };
       }
       return { ok: true, errors: [], tests, durationMs: 410 };
+    },
+    /** The real handler runs the spec parser. The preview draws the parse-
+     *  coverage gutter from line shapes instead: an `await page.…` statement
+     *  is a step, `page.mouse`/`page.keyboard` calls are the parser's known
+     *  misses, and the first miss that is not in the fixture's own script
+     *  counts as new. Enough to see the gutter and the confirmation. */
+    "tests:previewScript": (p): ScriptPreview => {
+      const source = String(p?.source ?? "");
+      const stepRanges: { from: number; to: number }[] = [];
+      const skippedRanges: { from: number; to: number }[] = [];
+      const newlySkipped: string[] = [];
+      let offset = 0;
+      for (const line of source.split("\n")) {
+        const m = line.match(/^(\s*)(await page\.[\w.]+\(.*\);?)\s*$/);
+        if (m) {
+          const from = offset + m[1].length;
+          const to = from + m[2].length;
+          if (/^await page\.(mouse|keyboard|clock)\./.test(m[2])) {
+            skippedRanges.push({ from, to });
+            if (!/Step \d+|\/\/ …generated/.test(m[2])) newlySkipped.push(m[2].replace(/;$/, ""));
+          } else {
+            stepRanges.push({ from, to });
+          }
+        }
+        offset += line.length + 1;
+      }
+      return {
+        tracked: !findTest(p?.id)?.sourceDir,
+        steps: stepRanges.length,
+        skipped: skippedRanges.length,
+        stepRanges,
+        skippedRanges,
+        newlySkipped,
+      };
     },
     "tests:rename": (p) => {
       const test = findTest(p?.id);

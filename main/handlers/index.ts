@@ -73,6 +73,7 @@ import { refreshSecretSnapshot } from "../services/secret-redaction.js";
 import { shopifySignatureStore } from "../services/shopify-signature-store.js";
 import { parseSpecDetailed } from "../services/spec-parser.js";
 import { checkTestScript } from "../services/script-check.js";
+import { SCRIPT_CHANGED_ON_DISK } from "../../shared/script-save.mjs";
 import { activeProviderEndpoint, llmService } from "../services/llm-service.js";
 import { proxyPasswordStore } from "../services/proxy-password-store.js";
 import {
@@ -1168,14 +1169,93 @@ export function registerHandlers(): void {
     return rec;
   };
 
+  /** Refuse a write to a test whose recording session is open. The trainer
+   *  regenerates the spec from the session's steps when it finishes
+   *  (`recorderService.finalize`) and resets `scriptEdited`, so a script or
+   *  step list written underneath it is discarded minutes later with nothing
+   *  on screen saying so. The detail view cannot show this state — it is
+   *  unmounted while a session is live — which is why the refusal is here. */
+  const refuseIfRecording = (id: string): void => {
+    if (recorderService.sessionTestId() === id) {
+      throw new Error(
+        "A recording session for this test is open. Finish it in the trainer before saving the script — the trainer regenerates the script when it stops.",
+      );
+    }
+  };
+
   ipcMain.handle(
     "tests:updateScript",
-    async (_e, params: { id: string; source: string; origin?: unknown }) => {
+    async (_e, params: { id: string; source: string; origin?: unknown; base?: unknown }) => {
+      refuseIfRecording(params.id);
+      // `base` is the script the editor STARTED from. When it no longer
+      // matches the file, something else wrote in between — an AI fix landing
+      // unattended, a flow edit regenerating this caller, a heal, an external
+      // editor — and saving would overwrite that with a draft built on the
+      // old text. Compared as text, not by a revision number: a number has to
+      // be bumped by every writer, and the writers that bypass the record
+      // (`regenerateCallers` rewrites spec files only) are exactly the ones a
+      // counter misses. The text is the fact.
+      if (typeof params.base === "string") {
+        let current = "";
+        try {
+          current = testStore.readScript(params.id);
+        } catch {
+          current = "";
+        }
+        if (current !== params.base) {
+          throw new Error(SCRIPT_CHANGED_ON_DISK);
+        }
+      }
       return writeTestScript(
         params.id,
         params.source,
         normalizeScriptChangeOrigin(params.origin),
       );
+    },
+  );
+
+  /** A statement's text for comparing one script's misses with another's:
+   *  trimmed, without the trailing `;` the parser's skip branch consumes and
+   *  its step branches leave behind. */
+  const statementText = (src: string, r: { from: number; to: number }): string =>
+    src.slice(r.from, r.to).trim().replace(/;\s*$/, "");
+
+  /** What saving `source` over this test's script WOULD do, without doing it:
+   *  the steps the parser would read back, where it read each from, where it
+   *  could not, and which of those misses are NEW against the stored script.
+   *  The Script IDE draws its parse-coverage gutter from the ranges and asks
+   *  for confirmation only over `newlySkipped` — an imported spec or a hand-
+   *  written block that was already unmapped does not prompt on every save.
+   *  `tracked` says whether a save would re-parse the steps at all: an
+   *  imported test and a test that calls flows keep their steps (see
+   *  writeTestScript), so for them the gutter is information, not a warning. */
+  ipcMain.handle(
+    "tests:previewScript",
+    async (_e, params: { id: string; source: unknown }) => {
+      const rec = testStore.get(params.id);
+      if (!rec) throw new Error("Test not found: " + params.id);
+      const source = typeof params.source === "string" ? params.source : "";
+      const draft = parseSpecDetailed(source);
+      const tracked = !rec.sourceDir && !rec.steps.some((s) => s.type === "runFlow");
+      let storedSkipped = new Set<string>();
+      try {
+        const stored = testStore.readScript(rec.id);
+        const parsed = parseSpecDetailed(stored);
+        storedSkipped = new Set(parsed.skippedRanges.map((r) => statementText(stored, r)));
+      } catch {
+        storedSkipped = new Set();
+      }
+      const newlySkipped = draft.skippedRanges
+        .map((r) => statementText(source, r))
+        .filter((text) => !storedSkipped.has(text));
+      return {
+        tracked,
+        steps: draft.steps.length,
+        skipped: draft.skipped,
+        stepRanges: draft.stepRanges,
+        skippedRanges: draft.skippedRanges,
+        newlySkipped,
+      };
     },
   );
 
@@ -1289,6 +1369,7 @@ export function registerHandlers(): void {
   ipcMain.handle(
     "tests:updateSteps",
     async (_e, params: { id: string; steps: Step[]; regenerate?: boolean }) => {
+      refuseIfRecording(params.id);
       const rec = testStore.get(params.id);
       if (!rec) throw new Error("Test not found: " + params.id);
       // The second way a step list reaches the generator, so it gets the same

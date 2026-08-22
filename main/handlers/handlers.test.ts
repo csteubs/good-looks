@@ -14,7 +14,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   invokeHandler,
@@ -24,6 +24,8 @@ import {
 import { MAX_GROUP_LENGTH } from "../recorder/types.js";
 import { registerHandlers } from "./index.js";
 import { testStore } from "../services/test-store.js";
+import { recorderService } from "../services/recorder-service.js";
+import { SCRIPT_CHANGED_ON_DISK } from "../../shared/script-save.mjs";
 import { runHistoryStore } from "../services/run-history-store.js";
 import { batchHistoryStore } from "../services/batch-history-store.js";
 import { aiDebugStore } from "../services/ai-debug-store.js";
@@ -2312,6 +2314,125 @@ describe("tests:checkScript", () => {
 
   it("refuses an unknown test", async () => {
     await expect(invokeHandler("tests:checkScript", { id: "t-nope", source: GOOD })).rejects.toThrow(
+      /Test not found/,
+    );
+  });
+});
+
+describe("tests:updateScript — the stale-draft refusal", () => {
+  const V1 = 'import { test } from "@playwright/test";\ntest("v1", async ({ page }) => {\n  await page.goto("https://example.com");\n});\n';
+  const V2 = V1.replace('"v1"', '"v2"');
+  const DRAFT = V1.replace('"v1"', '"draft"');
+
+  function seed(id: string): TestRecord {
+    const rec = seedTest(id);
+    fs.mkdirSync(path.dirname(rec.scriptPath), { recursive: true });
+    fs.writeFileSync(rec.scriptPath, V1);
+    return rec;
+  }
+
+  it("writes when the draft's base is still the file", async () => {
+    const rec = seed("t-stale-1");
+    await invokeHandler("tests:updateScript", { id: rec.id, source: DRAFT, base: V1 });
+    expect(fs.readFileSync(rec.scriptPath, "utf-8")).toBe(DRAFT);
+  });
+
+  it("refuses, and writes nothing, when the file moved on underneath the draft", async () => {
+    const rec = seed("t-stale-2");
+    // Something else — a flow edit regenerating this caller, a heal, an AI fix
+    // landing unattended — wrote V2 after the editor loaded V1.
+    fs.writeFileSync(rec.scriptPath, V2);
+    await expect(
+      invokeHandler("tests:updateScript", { id: rec.id, source: DRAFT, base: V1 }),
+    ).rejects.toThrow(SCRIPT_CHANGED_ON_DISK);
+    expect(fs.readFileSync(rec.scriptPath, "utf-8")).toBe(V2);
+    expect(testStore.get(rec.id)?.scriptEdited).toBeUndefined();
+  });
+
+  it("a save without a base overwrites — that is what Overwrite means", async () => {
+    const rec = seed("t-stale-3");
+    fs.writeFileSync(rec.scriptPath, V2);
+    await invokeHandler("tests:updateScript", { id: rec.id, source: DRAFT });
+    expect(fs.readFileSync(rec.scriptPath, "utf-8")).toBe(DRAFT);
+  });
+
+  it("a non-string base is ignored rather than compared", async () => {
+    const rec = seed("t-stale-4");
+    await invokeHandler("tests:updateScript", { id: rec.id, source: DRAFT, base: 42 });
+    expect(fs.readFileSync(rec.scriptPath, "utf-8")).toBe(DRAFT);
+  });
+});
+
+describe("writes refused while a recording session holds the test", () => {
+  it("refuses a script write and a step write for the session's test, and no other", async () => {
+    const rec = seedTest("t-live-1");
+    fs.mkdirSync(path.dirname(rec.scriptPath), { recursive: true });
+    fs.writeFileSync(rec.scriptPath, "// v1\n");
+    const other = seedTest("t-live-2");
+    fs.writeFileSync(other.scriptPath, "// v1\n");
+    const spy = vi.spyOn(recorderService, "sessionTestId").mockReturnValue("t-live-1");
+    try {
+      await expect(
+        invokeHandler("tests:updateScript", { id: "t-live-1", source: "// v2\n" }),
+      ).rejects.toThrow(/recording session for this test is open/);
+      await expect(
+        invokeHandler("tests:updateSteps", { id: "t-live-1", steps: [] }),
+      ).rejects.toThrow(/recording session for this test is open/);
+      expect(fs.readFileSync(rec.scriptPath, "utf-8")).toBe("// v1\n");
+      // The refusal is per test: another test saves as usual.
+      await invokeHandler("tests:updateScript", { id: "t-live-2", source: "// v2\n" });
+      expect(fs.readFileSync(other.scriptPath, "utf-8")).toBe("// v2\n");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("tests:previewScript", () => {
+  const STORED =
+    'import { test, expect } from "@playwright/test";\n' +
+    'test("t", async ({ page }) => {\n' +
+    '  await page.goto("https://example.com");\n' +
+    "  await page.mouse.move(1, 2);\n" +
+    "});\n";
+
+  it("reports the parse of a draft with ranges, and only the NEW misses as newlySkipped", async () => {
+    const rec = seedTest("t-preview-1");
+    fs.mkdirSync(path.dirname(rec.scriptPath), { recursive: true });
+    fs.writeFileSync(rec.scriptPath, STORED);
+    const draft = STORED.replace("});", '  await page.keyboard.down("Shift");\n  await page.getByTestId("go").click();\n});');
+    const preview = await invokeHandler<{
+      tracked: boolean;
+      steps: number;
+      skipped: number;
+      stepRanges: { from: number; to: number }[];
+      skippedRanges: { from: number; to: number }[];
+      newlySkipped: string[];
+    }>("tests:previewScript", { id: rec.id, source: draft });
+    expect(preview.tracked).toBe(true);
+    expect(preview.steps).toBe(2);
+    expect(preview.skipped).toBe(2);
+    expect(preview.stepRanges).toHaveLength(2);
+    expect(preview.skippedRanges).toHaveLength(2);
+    // `page.mouse.move` was already unmapped in the stored script — not news.
+    expect(preview.newlySkipped).toEqual(['await page.keyboard.down("Shift")']);
+    // A preview writes nothing.
+    expect(fs.readFileSync(rec.scriptPath, "utf-8")).toBe(STORED);
+  });
+
+  it("says an imported test's steps are not tracked by a save", async () => {
+    const rec = seedTest("t-preview-2", { sourceDir: "/somewhere/else" });
+    fs.mkdirSync(path.dirname(rec.scriptPath), { recursive: true });
+    fs.writeFileSync(rec.scriptPath, STORED);
+    const preview = await invokeHandler<{ tracked: boolean }>("tests:previewScript", {
+      id: rec.id,
+      source: STORED,
+    });
+    expect(preview.tracked).toBe(false);
+  });
+
+  it("refuses an unknown test", async () => {
+    await expect(invokeHandler("tests:previewScript", { id: "t-nope", source: "" })).rejects.toThrow(
       /Test not found/,
     );
   });

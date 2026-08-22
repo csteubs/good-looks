@@ -47,6 +47,8 @@ import { EditStepsView } from "./edit-steps-view";
 import { RunOutput } from "./run-output";
 import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import { ScriptEditor, ScriptView, lineStartOffset } from "./script-view";
+import { markScriptDirty } from "../lib/script-buffer";
+import { SCRIPT_CHANGED_ON_DISK, isScriptChangedOnDisk } from "../../shared/script-save.mjs";
 import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
 import { HealsPanel } from "./heals-panel";
@@ -117,6 +119,16 @@ interface ScriptCheckState {
 
 const IDLE_CHECK: ScriptCheckState = { status: "idle", errors: [] };
 
+/** The body of the divergence question: the first few statements the parser
+ *  will not map, then what that costs. The script runs as written either
+ *  way — what changes is that the Steps tab stops tracking those lines. */
+function describeDiverge(newlySkipped: string[]): string {
+  const shown = newlySkipped.slice(0, 3).map((t) => `“${t}”`);
+  const more = newlySkipped.length - shown.length;
+  const list = shown.join(", ") + (more > 0 ? ` and ${more} more` : "");
+  return `The parser can't map ${list} back to a step. The script still runs exactly as written; the Steps tab just won't show or track ${newlySkipped.length === 1 ? "that line" : "those lines"} until the test is retrained or its script regenerated.`;
+}
+
 export function TestDetailView() {
   const { id } = useParams({ from: "/test/$id" });
   const navigate = useNavigate();
@@ -134,6 +146,27 @@ export function TestDetailView() {
   // draft that does not load yet is still theirs to keep.
   const [scriptCheck, setScriptCheck] = React.useState<ScriptCheckState>(IDLE_CHECK);
   const scriptTextareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  // The script the draft STARTED from. Sent with every save so the backend
+  // can refuse a draft built on text that something else has since replaced
+  // (an AI fix landing unattended, a flow edit regenerating this caller, a
+  // heal). `staleOpen` is that refusal, with Reload and Overwrite as the two
+  // ways past it. `divergeConfirm` is the other question a save can raise —
+  // statements the parser will not map back to steps — asked only for misses
+  // the stored script did not already have.
+  const [scriptBase, setScriptBase] = React.useState("");
+  const [staleOpen, setStaleOpen] = React.useState(false);
+  const [divergeConfirm, setDivergeConfirm] = React.useState<{
+    newlySkipped: string[];
+    overwrite: boolean;
+  } | null>(null);
+  // The dirty registry is what holds an unattended AI apply off a test whose
+  // draft is open (ai-debug-store.tsx). Cleared when editing ends, and on
+  // unmount, so a draft abandoned by navigating away does not pin the test.
+  const scriptDirty = editingScript && scriptDraft !== scriptBase;
+  React.useEffect(() => {
+    markScriptDirty(id, scriptDirty);
+    return () => markScriptDirty(id, false);
+  }, [id, scriptDirty]);
   const [editingSteps, setEditingSteps] = React.useState(false);
   // Edited steps waiting on the "what about the script?" question. Only set for
   // a test whose script isn't generated from its steps; null the rest of the
@@ -613,17 +646,63 @@ export function TestDetailView() {
       });
   };
 
-  /** Write the draft over the script. No verification here — the callers
-   *  decide what has to be true first. */
-  const writeScriptDraft = async () => {
-    // No origin: a hand edit the user is looking at as they save it. The
-    // backend defaults to exactly that, but saying it here is what keeps the
-    // Heals tab's labels honest if the default ever changes.
-    await api.tests.updateScript(id, scriptDraft, { by: "manual", reviewed: true });
+  /** Write the draft over the script. No load check here — the callers
+   *  decide whether that has to be true first — but two questions of its own:
+   *  will the parser lose statements it could map before (asked once, over
+   *  the new misses only), and is the draft still built on the file as it is
+   *  (refused by the backend; answered with Reload or Overwrite). */
+  const writeScriptDraft = async (opts: { overwrite?: boolean; confirmedDiverge?: boolean } = {}) => {
+    if (!opts.confirmedDiverge) {
+      try {
+        const preview = await api.tests.previewScript(id, scriptDraft);
+        if (preview.tracked && preview.newlySkipped.length > 0) {
+          setDivergeConfirm({ newlySkipped: preview.newlySkipped, overwrite: Boolean(opts.overwrite) });
+          return;
+        }
+      } catch {
+        // A preview that could not run must not stand between the user and
+        // their save; the divergence banner still reports it afterwards.
+      }
+    }
+    try {
+      // No origin: a hand edit the user is looking at as they save it. The
+      // backend defaults to exactly that, but saying it here is what keeps the
+      // Heals tab's labels honest if the default ever changes.
+      await api.tests.updateScript(
+        id,
+        scriptDraft,
+        { by: "manual", reviewed: true },
+        opts.overwrite ? undefined : scriptBase,
+      );
+    } catch (err) {
+      if (isScriptChangedOnDisk(err)) {
+        setStaleOpen(true);
+        return;
+      }
+      toast.error(err instanceof Error ? err.message : String(err));
+      return;
+    }
     qc.invalidateQueries({ queryKey: ["script", id] });
     qc.invalidateQueries({ queryKey: ["test", id] });
     qc.invalidateQueries({ queryKey: ["script-changes", id] });
     setEditingScript(false);
+    setScriptCheck(IDLE_CHECK);
+  };
+
+  /** The way back from a stale draft that keeps the file's side: fetch the
+   *  script as it is now and start the draft over from it. */
+  const reloadScript = async () => {
+    setStaleOpen(false);
+    let fresh = "";
+    try {
+      fresh = await api.tests.getScript(id);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    qc.setQueryData(["script", id], fresh);
+    setScriptDraft(fresh);
+    setScriptBase(fresh);
     setScriptCheck(IDLE_CHECK);
   };
 
@@ -687,8 +766,16 @@ export function TestDetailView() {
     if (editingScript) {
       // Unchecked on purpose: this path exists so the edit is not LOST to the
       // regeneration that follows, and a draft the CLI rejects is still the
-      // edit the user made.
-      await writeScriptDraft();
+      // edit the user made. The divergence question is moot here too — the
+      // trainer regenerates the steps it is about to edit. A stale draft
+      // still stops: the dialog it opens is the answer, and the trainer is
+      // not started over a refusal.
+      await writeScriptDraft({ confirmedDiverge: true });
+      if (scriptDraft !== scriptBase && editingScript) {
+        // writeScriptDraft returned without closing the editor — it refused.
+        setTrainerConfirmOpen(false);
+        return;
+      }
     }
     start(test.url, test.name, test.id);
     // The composed `Dialog` never closes itself on a resolved confirm — callers
@@ -1247,6 +1334,7 @@ export function TestDetailView() {
                     <Btn
                       onClick={() => {
                         setScriptDraft(scriptQuery.data ?? "");
+                        setScriptBase(scriptQuery.data ?? "");
                         setScriptCheck(IDLE_CHECK);
                         setEditingScript(true);
                       }}
@@ -1288,6 +1376,43 @@ export function TestDetailView() {
               ) : (
                 <ScriptView code={scriptQuery.data ?? ""} />
               )}
+              <Dialog
+                open={staleOpen}
+                onOpenChange={setStaleOpen}
+                title="The script changed on disk"
+                description={SCRIPT_CHANGED_ON_DISK}
+                confirmLabel="Overwrite with my draft"
+                confirmVariant="destructive"
+                onConfirm={() => {
+                  setStaleOpen(false);
+                  void writeScriptDraft({ overwrite: true, confirmedDiverge: true });
+                }}
+                destructiveAction={{
+                  label: "Reload (discard draft)",
+                  onClick: () => void reloadScript(),
+                }}
+              />
+              <Dialog
+                open={divergeConfirm !== null}
+                onOpenChange={(open) => {
+                  if (!open) setDivergeConfirm(null);
+                }}
+                title={
+                  divergeConfirm && divergeConfirm.newlySkipped.length === 1
+                    ? "One statement won't become a step"
+                    : `${divergeConfirm?.newlySkipped.length ?? 0} statements won't become steps`
+                }
+                description={describeDiverge(divergeConfirm?.newlySkipped ?? [])}
+                confirmLabel="Save anyway"
+                confirmVariant="accent"
+                onConfirm={() => {
+                  const pending = divergeConfirm;
+                  setDivergeConfirm(null);
+                  if (pending) {
+                    void writeScriptDraft({ overwrite: pending.overwrite, confirmedDiverge: true });
+                  }
+                }}
+              />
             </TabsContent>
             {imported ? null : (
               <TabsContent value="variables" className="min-h-0 flex-1">

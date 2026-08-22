@@ -27,6 +27,7 @@ import {
   stepSessionKey,
   type StartDecision,
 } from "../lib/ai-debug-sessions";
+import { isScriptDirty } from "../lib/script-buffer";
 import { extractCorrectedScript } from "../lib/parse-llm-response";
 import type {
   AiDebugHistoryRecord,
@@ -416,6 +417,11 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
         meta.scriptHash != null &&
         ctx?.kind === "run" &&
         hashScript(ctx.script) === meta.scriptHash;
+      // A draft open in the Script tab is the newer fact about this script
+      // than the fix: landing the fix would make the user's next Save a
+      // stale-draft refusal, which is the first they would hear of it. Held
+      // for review instead; the toast below names the test.
+      const bufferDirty = isScriptDirty(meta.testId);
       if (
         auto &&
         !meta.superseded &&
@@ -423,7 +429,8 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
         corrected &&
         ctx?.kind === "run" &&
         ctx.onApplyScript &&
-        fresh
+        fresh &&
+        !bufferDirty
       ) {
         try {
           // `reviewed: false` is the whole point of this path: the fix landed

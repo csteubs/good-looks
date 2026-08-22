@@ -45,6 +45,9 @@ function isInsideScripts(p: string): boolean {
   return resolved === root || resolved.startsWith(root + path.sep);
 }
 
+/** Serial for the scratch name a script write renames into place. */
+let writeSeq = 0;
+
 function readAll(): TestRecord[] {
   try {
     const raw = fs.readFileSync(indexFile(), "utf-8");
@@ -171,7 +174,21 @@ export const testStore = {
     const p =
       existing && isInsideScripts(existing) ? existing : scriptPathFor(id);
     fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, source, "utf-8");
+    // Write-then-rename, not truncate-then-write: a run's Playwright process
+    // may be reading this exact file, and the Script IDE's stale check reads
+    // it back on every save. Neither must ever see a half-written spec.
+    const tmp = `${p}.${process.pid}.${writeSeq++}.tmp`;
+    try {
+      fs.writeFileSync(tmp, source, "utf-8");
+      fs.renameSync(tmp, p);
+    } catch (err) {
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch {
+        /* ignore */
+      }
+      throw err;
+    }
     return p;
   },
 

@@ -15,6 +15,7 @@ import type {
   ScriptChangeListEntry,
   ScriptChangeSource,
   ScriptCheckResult,
+  ScriptPreview,
   SecretStatus,
   FlowScopeCommit,
   TestVariable,
@@ -276,8 +277,13 @@ export const api = {
     /** `origin` says who made the change, for the script-change journal. Absent
      *  means a manual edit the user watched land — the behaviour every caller
      *  had before the journal existed. */
-    updateScript: (id: string, source: string, origin?: ScriptChangeSource) =>
-      ipc().invoke<TestRecord>("tests:updateScript", { id, source, origin }),
+    updateScript: (id: string, source: string, origin?: ScriptChangeSource, base?: string) =>
+      ipc().invoke<TestRecord>("tests:updateScript", { id, source, origin, base }),
+    /** What saving `source` WOULD do to the steps, without doing it: how
+     *  many the parser reads back, where each came from, where it gave up,
+     *  and which of those misses are new against the stored script. */
+    previewScript: (id: string, source: string) =>
+      ipc().invoke<ScriptPreview>("tests:previewScript", { id, source }),
     /** Load a DRAFT of the script through the real Playwright CLI without
      *  saving it: syntax, imports, duplicate titles, a file with no tests.
      *  Not a type check — see main/services/script-check.ts. */

@@ -854,6 +854,27 @@ export interface ScriptCheckError {
   snippet?: string;
 }
 
+/** A half-open character range [from, to) into a script (mirror of
+ *  main/services/spec-parser.ts `SourceRange`). */
+export interface SourceRange {
+  from: number;
+  to: number;
+}
+
+/** What `tests:previewScript` answers: the parse a save would perform, with
+ *  positions. `tracked` is false when a save keeps the stored steps anyway
+ *  (an imported test, a test that calls flows). `newlySkipped` holds the
+ *  statements the parser cannot map that the stored script did not already
+ *  have — the only ones worth asking about before a save. */
+export interface ScriptPreview {
+  tracked: boolean;
+  steps: number;
+  skipped: number;
+  stepRanges: SourceRange[];
+  skippedRanges: SourceRange[];
+  newlySkipped: string[];
+}
+
 /** What `tests:checkScript` answers: whether the real Playwright CLI could
  *  load and collect the draft, and what it found. `tests` are the test()
  *  calls it collected, with their lines. */
