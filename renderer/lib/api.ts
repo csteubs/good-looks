@@ -339,6 +339,18 @@ export const api = {
       ipc().invoke<TestRecord>("tests:setA11yChecks", { id, a11yChecks }),
     setVariables: (id: string, variables: TestVariable[]) =>
       ipc().invoke<TestRecord>("tests:setVariables", { id, variables }),
+    /** Site addresses this test's steps refer to, most-used first. */
+    originsIn: (id: string) =>
+      ipc().invoke<{ origin: string; count: number }[]>("tests:originsIn", { id }),
+    /** Declare a variable holding `origin` and point every URL on it there.
+     *  Backend-only and atomic — see the handler for why it is not two calls. */
+    parameteriseOrigin: (id: string, origin: string, name?: string) =>
+      ipc().invoke<{
+        test: TestRecord;
+        rewritten: number;
+        reusedVariable: boolean;
+        name: string;
+      }>("tests:parameteriseOrigin", { id, origin, name }),
     // One-way: a secret's value crosses renderer→backend and never comes back.
     setSecret: (id: string, name: string, value: string) =>
       ipc().invoke<SecretStatus>("tests:setSecret", { id, name, value }),

@@ -291,11 +291,42 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["test", test.id] });
     void qc.invalidateQueries({ queryKey: ["tests"] });
+    // The origins query reads the STEPS, which a rewrite changes without
+    // changing their count — so nothing else here would refetch it, and the
+    // "this test points at …" offer would stay on screen after it had been
+    // taken. Found by pressing the button in the preview and watching it
+    // survive its own success.
+    void qc.invalidateQueries({ queryKey: ["originsIn", test.id] });
   };
 
   const saveVariables = useMutation({
     mutationFn: (next: TestVariable[]) => api.tests.setVariables(test.id, next),
     onSuccess: invalidate,
+    onError: (err: unknown) => toast.error(String(err)),
+  });
+
+  // Which site addresses this test's steps still point at LITERALLY. Read from
+  // the backend rather than recomputed here: the rule for "a URL on this
+  // origin" is a boundary rule (it decides what gets rewritten into generated
+  // source), and a second copy of it in the renderer is how the button comes to
+  // offer an origin the backend then refuses.
+  const origins = useQuery({
+    queryKey: ["originsIn", test.id],
+    queryFn: () => api.tests.originsIn(test.id),
+  });
+  const topOrigin = (origins.data ?? [])[0];
+
+  const parameterise = useMutation({
+    mutationFn: (origin: string) => api.tests.parameteriseOrigin(test.id, origin),
+    onSuccess: (result) => {
+      invalidate();
+      setVars(result.test.variables ?? []);
+      toast.success(
+        `${result.rewritten} ${result.rewritten === 1 ? "place" : "places"} now use ` +
+          "${" + result.name + "}" +
+          (result.reusedVariable ? " (existing variable reused)." : "."),
+      );
+    },
     onError: (err: unknown) => toast.error(String(err)),
   });
 
@@ -469,6 +500,29 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
             the training browser&apos;s right-click menu offers <em>Use variable…</em> on the field
             you are filling.
           </Text>
+          {/* ── Re-point the whole test ──────────────────────────────
+              A recorded test navigates to the ABSOLUTE address it was recorded
+              against, so Playwright's own baseURL cannot move it — verified
+              against the real CLI. What does move it is this: declare the
+              address as a variable, and every URL on it follows. The default
+              keeps a plain run identical, so the button is safe to press. */}
+          {topOrigin && !test.scriptEdited ? (
+            <div className="flex items-center gap-2">
+              <Text size="small" className="text-secondary flex-1">
+                This test points at <code className="font-mono">{topOrigin.origin}</code> in{" "}
+                {topOrigin.count} {topOrigin.count === 1 ? "place" : "places"}. Make it a variable
+                to run the same test against staging or a preview build.
+              </Text>
+              <Button
+                size="small"
+                variant="secondary"
+                disabled={parameterise.isPending}
+                onClick={() => parameterise.mutate(topOrigin.origin)}
+              >
+                Use a variable for the site address
+              </Button>
+            </div>
+          ) : null}
 
           {/* Stated here rather than only on the row that has it, because the
               decision this warns about is made BEFORE any row exists: "Value"

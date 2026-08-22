@@ -56,6 +56,12 @@ import { importDatasetCsvFile } from "../services/dataset-csv.js";
 import { stageUploadFile } from "../services/upload-store.js";
 import { clearSessionState, sessionStateInfo } from "../services/session-state-store.js";
 import { normalizeBaseUrl } from "../services/imported-config.js";
+import {
+  DEFAULT_ORIGIN_VARIABLE,
+  originOf,
+  originsIn,
+  parameteriseOrigin,
+} from "../services/origin-variable.js";
 import { testSecretsStore } from "../services/test-secrets-store.js";
 import { healJournalStore } from "../services/heal-journal-store.js";
 import {
@@ -677,6 +683,62 @@ export function registerHandlers(): void {
   // raw input and renders whatever comes back, so the two sides cannot disagree
   // about what a valid variable name is. That matters more here than for tags —
   // a name that isn't a JS identifier would emit a spec that doesn't parse.
+  /**
+   * Turn a test's baked-in site address into a variable it can be re-pointed by.
+   *
+   * BACKEND-ONLY, and atomic on purpose. The rewrite touches both the steps and
+   * the variables, and the spec is regenerated from the pair — doing it as two
+   * IPC calls from the renderer would leave a window where the steps reference
+   * `${SITE_URL}` and nothing declares it, which generates a spec that navigates
+   * to the literal text `${SITE_URL}/cart`.
+   *
+   * The origin is REBUILT through `originOf` rather than trusted: it arrives
+   * from the renderer and ends up as a variable value in generated source.
+   */
+  ipcMain.handle(
+    "tests:parameteriseOrigin",
+    async (_e, params: { id: string; origin: unknown; name?: unknown }) => {
+      const rec = testStore.get(params.id);
+      if (!rec) throw new Error("Test not found: " + params.id);
+      // A hand-edited script is the source of truth and is never regenerated,
+      // so rewriting the steps would silently change nothing that runs. Refuse
+      // rather than report a rewrite the run will not honour.
+      if (rec.scriptEdited) {
+        throw new Error(
+          "This test's script has been edited by hand, so its steps no longer drive the run. Edit the script directly.",
+        );
+      }
+      const origin = typeof params.origin === "string" ? originOf(params.origin) : null;
+      if (!origin || origin !== params.origin) {
+        throw new Error("That is not a site address this can rewrite.");
+      }
+      const name =
+        typeof params.name === "string" && params.name.trim()
+          ? params.name.trim()
+          : DEFAULT_ORIGIN_VARIABLE;
+      const out = parameteriseOrigin(rec.steps, rec.variables ?? [], origin, name);
+      if (out.rewritten === 0) {
+        throw new Error(`Nothing in this test points at ${origin}.`);
+      }
+      rec.steps = out.steps;
+      rec.variables = out.variables;
+      rec.updatedAt = Date.now();
+      rec.scriptPath = testStore.regenerateScript(rec);
+      testStore.save(rec);
+      return { test: rec, rewritten: out.rewritten, reusedVariable: out.reusedVariable, name };
+    },
+  );
+
+  /** Which site addresses a test's steps refer to, and how many fields carry
+   *  each — so the picker can name the number of edits about to happen. */
+  ipcMain.handle("tests:originsIn", async (_e, params: { id: string }) => {
+    const rec = testStore.get(params.id);
+    if (!rec) throw new Error("Test not found: " + params.id);
+    // The test's own URL is the hint: "the site address" means the site this
+    // test is about, not whichever host its steps happen to mention most.
+    return originsIn(rec.steps, originOf(rec.url ?? ""));
+  });
+
   ipcMain.handle(
     "tests:setVariables",
     async (_e, params: { id: string; variables: unknown }) => {
