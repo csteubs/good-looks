@@ -334,6 +334,10 @@ export const RUNS: RunRecord[] = [
     // real app derives both from the same run; a fixture that disagrees with
     // itself teaches the preview to lie about exactly what the screen reports.
     a11yNewSteps: 1,
+    // The majority case, and the one that must NOT draw a chip — a fixture
+    // where every run is chipped would make the column look right while the
+    // rule it demonstrates (mark the runs nobody watched) does nothing.
+    trigger: "manual",
   },
   {
     id: "r-2",
@@ -356,6 +360,9 @@ export const RUNS: RunRecord[] = [
     failureReasonId: "regression",
     failureReasonBy: "auto",
     failureReasonSignal: "page-error",
+    // An agent's run, and the reason the chip exists: nothing else in this row
+    // — engine, speed, capture, outcome — says a person was not there.
+    trigger: "mcp",
   },
   {
     id: "r-3",
@@ -371,6 +378,10 @@ export const RUNS: RunRecord[] = [
     logBytes: 4_610,
     runBrowser: "chromium",
     speed: "medium",
+    // Deliberately the SAME test as r-1, so the preview shows the pairing the
+    // field was added for: two runs identical in every column but who started
+    // them.
+    trigger: "schedule",
   },
   // One batch of the same test across the three browsers, with webkit failing.
   // Here so the sidebar's blended verdict dot has something to draw in the
@@ -392,6 +403,11 @@ export const RUNS: RunRecord[] = [
     runBrowser: browser,
     speed: "medium" as const,
     batchId: "b-1",
+    // NO `trigger` on purpose. These stand for the runs already on disk when
+    // the field shipped — unknowable, and shown as a blank rather than guessed
+    // at. Without a row in this state the preview cannot show the difference
+    // between "manual" and "nobody knows", which is the distinction the chip's
+    // absence has to carry.
   })),
 ];
 

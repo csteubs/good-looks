@@ -93,6 +93,7 @@ function makeFake(opts: {
     browser?: string;
     runHeadless?: boolean;
     headed?: boolean;
+    trigger?: string;
   }[] = [];
   /** how many runs are in flight at once, and the high-water mark */
   let live = 0;
@@ -132,8 +133,8 @@ function makeFake(opts: {
   const deps: BatchDeps = {
     getTestName: (id) => (id in names ? names[id] : `Test ${id}`),
     getDatasets: (id) => datasets[id] ?? [],
-    startRun: ({ testId, datasetId, vars, browser, runHeadless, headed }) => {
-      startedWithDataset.push({ testId, datasetId, vars, browser, runHeadless, headed });
+    startRun: ({ testId, datasetId, vars, browser, runHeadless, headed, trigger }) => {
+      startedWithDataset.push({ testId, datasetId, vars, browser, runHeadless, headed, trigger });
       if (throwOnStart.has(testId)) throw new Error(`cannot start ${testId}`);
       if (busy.has(testId)) {
         // No new run started — and, like the real runner, a stale promise for
@@ -2050,6 +2051,45 @@ async function main(): Promise<void> {
       seen.push(item);
     });
     assert(seen.join(",") === "1,2", `MCP pool survives a throwing item (got ${seen.join(",")})`);
+  }
+
+  // ── The trigger reaches every run, not just the batch record ───────
+  //
+  // The scheduler is the only caller that passes one, and it passes it to the
+  // BATCH — so if this stopped being threaded through to each `startRun`, a
+  // Routine's overnight runs would go back to reading as manual in run history
+  // and nothing would look broken. The batch record's own stamp would still be
+  // there, which is exactly why that is not enough: batch history is capped and
+  // pruned on its own schedule, so a run outlives the batch that explains it.
+  {
+    const fake = makeFake({});
+    const runner = createBatchRunner(fake.deps);
+    runner.start({ testIds: ["a", "b"], trigger: "schedule" });
+    await tick();
+    fake.finish("a", 0);
+    await tick();
+    fake.finish("b", 0);
+    await tick();
+    assert(
+      fake.startedWithDataset.length === 2 &&
+        fake.startedWithDataset.every((r) => r.trigger === "schedule"),
+      `a batch's trigger reaches EVERY run it starts (got ${fake.startedWithDataset.map((r) => String(r.trigger)).join(",")})`,
+    );
+  }
+  // Absent stays absent rather than becoming "manual" here: the runner defaults
+  // at its own entry point, so a value invented in the middle would hide a
+  // caller that forgot to say.
+  {
+    const fake = makeFake({});
+    const runner = createBatchRunner(fake.deps);
+    runner.start({ testIds: ["a"] });
+    await tick();
+    fake.finish("a", 0);
+    await tick();
+    assert(
+      fake.startedWithDataset[0]?.trigger === undefined,
+      "a batch with no trigger passes none — the runner's own default is the single place that decides",
+    );
   }
 
   if (failures > 0) {

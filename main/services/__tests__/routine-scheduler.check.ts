@@ -117,6 +117,13 @@ function harness(opts: {
     "the batch is stamped with the routine, so its history lands under the right job",
   );
   assert(h.started[0].captureArtifacts === true, "the routine's own defaults come across");
+  // WITHOUT THIS the run is written to history looking exactly like a person
+  // pressing Run — `routineId` says which job, never whether anyone was there,
+  // and a Routine has a manual path (`routines:run`) that stamps the same id.
+  assert(
+    h.started[0].trigger === "schedule",
+    "every run it produces is stamped `schedule`, so an overnight failure is not read as someone debugging",
+  );
 }
 
 // ── The stamp is written for every outcome ───────────────────────────
@@ -181,6 +188,26 @@ function harness(opts: {
   assert(
     h.started.length === 0 && h.saved.length === 0,
     "asking what was missed starts nothing and writes nothing — a suite that seizes the machine on launch is how people turn scheduling off",
+  );
+}
+
+// ── Accepting a missed occurrence is still the SCHEDULE running it ───
+//
+// The judgement call in `trigger`, pinned so it is a decision rather than an
+// accident. The launch prompt asks the user to let a run that was ALREADY DUE
+// happen late; it does not make them the person who chose to run it. Recording
+// that as `manual` would file a Routine's overnight failures alongside someone
+// debugging at their desk — which is the exact confusion the field exists to
+// end. It falls out of `fire` going through the same `fireRoutine`, which is
+// also what keeps a scheduled run headless.
+{
+  const missed = routine({ lastScheduledRunAt: at(2026, 7, 11, 9, 30) });
+  const h = harness({ routines: [missed], now: at(2026, 7, 12, 14, 1) });
+  routineScheduler.fire(missed, h.deps);
+  assert(h.started.length === 1, "accepting a missed occurrence starts it");
+  assert(
+    h.started[0].trigger === "schedule",
+    "…and it is stamped `schedule`, not `manual` — the user consented to a late run, they did not schedule it",
   );
 }
 

@@ -2522,6 +2522,15 @@ export const recorderService = {
       const message = `The training window couldn't open for ${url}.`;
       logger.error("recorder", "Trainer window failed to open", { url, testId });
       // Log to run history so the failure is visible in Stats.
+      //
+      // DELIBERATELY NO `trigger`, and no browser, speed or capture either.
+      // This is a diagnostic row, not a run: no Playwright process was spawned
+      // and no spec executed, which is what `exitCode: -1` says. `manual` would
+      // assert that a person ran a test that never ran — the vocabulary in
+      // `shared/run-trigger.mjs` defines it as Run / Re-run / Run batch / Run on
+      // a Routine. The runner's entry-point default covers every record that IS
+      // a run; this is the caller the store's contract calls one that genuinely
+      // does not know.
       try {
         const logText = `${message}\n\nThe training browser window did not open. This can happen on a slow network, a redirect loop, or if the site is unreachable.\n\nTry again, or check Stats → Run history for more details.`;
         runHistoryStore.append(

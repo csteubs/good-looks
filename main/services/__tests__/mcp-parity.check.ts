@@ -72,6 +72,7 @@ import { resolveTestTimeoutMs, CRAWL_MIN_TEST_TIMEOUT_MS } from "../../../shared
 import { playwrightConfigSource } from "../../../shared/playwright-config-source.mjs";
 import { buildQueue } from "../../../shared/batch-queue.mjs";
 import { routineRunPlan } from "../../../shared/routine-plan.mjs";
+import { RUN_TRIGGERS, normalizeRunTrigger } from "../../../shared/run-trigger.mjs";
 import type { Step, TestVariable } from "../../recorder/types.js";
 
 let failures = 0;
@@ -1088,6 +1089,81 @@ function codeOnly(source: string): string {
   assert(
     electronDefaultDir(appName(process.cwd()), "linux").includes("Good Looks!"),
     "mcp: …and it still resolves off macOS, which is what lets CI boot the server",
+  );
+}
+
+// ── 14. An MCP-driven run says so on the record ───────────────────────
+//
+// `trigger` is what stops an agent-driven run reading, in the app's own history,
+// exactly like a person pressing Run. This server writes run-history.json
+// DIRECTLY — it shares no line of playwright-runner.ts — so nothing but the
+// literal in its record decides the answer.
+//
+// The failure this is written against is a typo, and it is silent in the worst
+// direction: `run-history-store` narrows an unrecognised trigger to `undefined`
+// rather than carrying it, so `trigger: "MCP"` would not throw, would not warn,
+// and would write every agent-driven run as unattributed — indistinguishable
+// from a run recorded before the field existed. The check therefore does not
+// match a string; it runs what the source writes through the APP'S OWN
+// normalizer, which is the function that would have dropped it.
+
+{
+  const mcpSrc = codeOnly(readFileSync(resolve(process.cwd(), "mcp/server.mjs"), "utf8"));
+
+  // Scoped to `executeTest`'s record literal, not the file — the lesson from
+  // the `routineId` assertion in section 11. Several tools RETURN a `trigger`
+  // in their JSON response, and reporting how a run started is not the same
+  // fact as recording it; a whole-file search would stay green with the record
+  // stamp deleted. `saveRunRecord(` is where the literal is handed off.
+  // `saveRunRecord` is searched for FROM the literal's start, not from zero —
+  // the function is DEFINED a hundred lines above the literal that calls it, so
+  // an unanchored indexOf returns an end before the start and slices to "".
+  const recordStart = mcpSrc.indexOf("const record = {");
+  const recordSrc = mcpSrc.slice(recordStart, mcpSrc.indexOf("saveRunRecord(", recordStart));
+  assert(
+    recordSrc.length > 0 && recordSrc.includes("testTimeoutMs"),
+    "mcp: isolated executeTest's record literal (the trigger assertions read only it)",
+  );
+
+  const written = /\btrigger:\s*"([^"]*)"/.exec(recordSrc)?.[1];
+  assert(
+    written !== undefined,
+    "mcp: the run record stamps a trigger — without it an agent's run looks manual",
+  );
+  // The whole point: the value the APP will accept, checked by the app's
+  // function rather than by a second copy of the vocabulary here.
+  assert(
+    normalizeRunTrigger(written) === "mcp",
+    "mcp: the stamped trigger survives run-history-store's narrowing as \"mcp\"",
+  );
+  assert(
+    RUN_TRIGGERS.includes("mcp"),
+    "mcp: \"mcp\" is in the shared vocabulary, so the CLI adds its own in one place",
+  );
+
+  // The other half of the parity, and the reason this lives HERE rather than in
+  // a check of its own: a trigger only tells the two writers apart if BOTH
+  // write one. The app's runner has no unit test — it spawns real processes —
+  // so its record write is read as source, scoped to the `append` call the same
+  // way the MCP's is scoped to its literal.
+  const appSrc = codeOnly(readFileSync(resolve(process.cwd(), "main/services/playwright-runner.ts"), "utf8"));
+  const appendStart = appSrc.indexOf("runHistoryStore.append(");
+  const appendSrc = appSrc.slice(appendStart, appSrc.indexOf("logText,", appendStart));
+  assert(
+    appendStart > -1 && appendSrc.includes("startedAt"),
+    "app: isolated the runner's run-history append (the trigger assertion reads only it)",
+  );
+  // Defaulted AT THE ENTRY POINT, so an absent trigger in history means
+  // "predates the field" and never "a caller forgot". Without the default,
+  // every hand-started run in the app goes back to unattributed — and nothing
+  // about that looks broken.
+  assert(
+    /trigger:\s*params\.trigger\s*\?\?\s*"manual"/.test(appendSrc),
+    "app: the runner stamps a trigger on every run, defaulting to manual",
+  );
+  assert(
+    normalizeRunTrigger("manual") === "manual",
+    "app: …and that default is a trigger the store will accept",
   );
 }
 

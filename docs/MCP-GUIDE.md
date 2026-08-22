@@ -173,6 +173,13 @@ app.* Every `run_test` response carries a `fixtures` field naming exactly what
 was skipped — the assistant should read it before drawing a conclusion from a
 failure.
 
+**A run started from here is marked as such in the app.** Its record carries
+`trigger: "mcp"`, and Stats draws a small marker on the row. This is deliberate
+and it is not about blame: an MCP run skips the fixtures listed above, so
+knowing which runs came from an assistant is what stops a fixture-free failure
+being read as a regression in the site. Runs recorded before this existed carry
+no marker — absent means unknown, never "somebody ran it by hand".
+
 **Tests with secret variables can't run from here.** Secret values are encrypted
 through the OS keychain and only the app can decrypt them. `run_test` refuses
 such a test and says so; `run_batch` and `run_routine` skip it with a note rather

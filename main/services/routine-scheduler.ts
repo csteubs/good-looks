@@ -114,6 +114,14 @@ export function fireRoutine(routine: Routine, deps: SchedulerDeps = realDeps): F
   const started = deps.startBatch({
     testIds: plan.testIds,
     routineId: routine.id,
+    // The ONE caller that must say this, and the reason the field exists. Both
+    // routes into this function are the schedule running the job: the timer's
+    // `tick`, and `routineScheduler.fire` accepting an occurrence missed while
+    // the app was closed. The prompt asks the user to let a SCHEDULED run
+    // happen late — it does not make them the one who chose to run it, and
+    // recording it as `manual` would put a routine's overnight failures into
+    // the same bucket as someone debugging at their desk.
+    trigger: "schedule",
     captureArtifacts: plan.captureArtifacts,
     // Belt as well as braces: every entry is already headless via the plan, and
     // this is the fallback for a test the runner finds no entry for.
