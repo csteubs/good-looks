@@ -109,6 +109,15 @@
     "check:overlay-rules": "esbuild main/services/__tests__/overlay-rules.check.ts --bundle --platform=node --format=cjs --alias:@shell/backend=./main/services/__tests__/shell-backend-stub.ts --external:electron --outfile=node_modules/.cache/overlay-rules.check.cjs && node node_modules/.cache/overlay-rules.check.cjs"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "6.20.3",
+    "@codemirror/commands": "6.11.0",
+    "@codemirror/lang-javascript": "6.2.5",
+    "@codemirror/language": "6.12.4",
+    "@codemirror/lint": "6.9.7",
+    "@codemirror/search": "6.7.1",
+    "@codemirror/state": "6.7.1",
+    "@codemirror/view": "6.43.9",
+    "@lezer/highlight": "1.2.3",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@playwright/test": "1.62.1",
     "@radix-ui/colors": "^3.0.0",
@@ -118,6 +127,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
+    "codemirror": "6.0.2",
     "lucide-react": "^0.542.0",
     "pixelmatch": "5.3.0",
     "pngjs": "7.0.0",
@@ -174,8 +184,7 @@
       "!mcp/**/*.check.mjs",
       "shared/**/*",
       "!node_modules/.cache/**"
-
-  ],
+    ],
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build-icon.icns",
