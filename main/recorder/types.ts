@@ -2353,6 +2353,28 @@ export interface RunRecord {
    *  own evidence. Absent on manual assignments. */
   failureReasonSignal?: string;
   /**
+   * How this run ENDED, when it did not end on its own.
+   *
+   * `status` answers "did it pass", derived from the exit code and nothing
+   * else — so a run the user stopped, and a run whose process was killed for
+   * outrunning its budget, both land in "failed" beside a genuine assertion
+   * failure. They are not the same event, and the difference is invisible in
+   * every surface that counts runs.
+   *
+   * IT MATTERS MOST TO THE FLAKE VERDICT. `analyseFlake` counts transitions
+   * between consecutive runs, so pressing Stop mid-run inserts a "failed"
+   * between two passes and manufactures two transitions out of a keystroke.
+   * Do that three times over a week on a test with eight runs and the
+   * Stability panel calls it flaky — the one verdict that sends someone
+   * hunting for a race condition that does not exist.
+   *
+   * Absent for a run that ended by itself, which is almost all of them. Only
+   * "user" is excluded from flake analysis: a process timeout IS a real
+   * failure of that run — the test hung — and hiding it would be the opposite
+   * mistake.
+   */
+  endedBy?: "user" | "process-timeout";
+  /**
    * Label of the step this run failed at, when it is known.
    *
    * PERSISTED SO IT OUTLIVES THE PROCESS THAT COMPUTED IT. The runner has

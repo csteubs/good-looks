@@ -542,6 +542,8 @@ export const runHistoryStore = {
       replayOfRunId?: string;
       /** label of the step the run failed at, when a replay was written */
       failedStepLabel?: string;
+      /** how the run ended, when it did not end on its own */
+      endedBy?: "user" | "process-timeout";
     },
     logText: string,
   ): RunRecord {
@@ -603,6 +605,9 @@ export const runHistoryStore = {
       // at a step with no name — which reads as a bug in the label rather than
       // as the absence of one.
       ...(run.failedStepLabel ? { failedStepLabel: run.failedStepLabel } : {}),
+      // Absent is the ordinary case — a run that ended by itself. Writing a
+      // value there would claim every historical run had been examined.
+      ...(run.endedBy ? { endedBy: run.endedBy } : {}),
     };
 
     const all = readAll();

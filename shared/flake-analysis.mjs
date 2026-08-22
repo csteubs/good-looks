@@ -133,7 +133,22 @@ function analyseDatasets(runs) {
 export function analyseFlake(records, details = []) {
   const detailById = new Map(details.map((d) => [d.runId, d]));
   // Baseline-update events aren't executions and would distort every count.
-  const runs = records.filter((r) => (r.kind ?? "run") === "run");
+  //
+  // A run the USER stopped is excluded for the same reason, one step further
+  // on: it is an execution, but its outcome is a keystroke rather than evidence
+  // about the test. Because this function counts TRANSITIONS between
+  // consecutive runs, a stop inserted between two passes manufactures two of
+  // them — so three interrupted runs over a week are enough to move an
+  // eight-run test to "flaky", which is the one verdict that sends someone
+  // hunting for a race condition that is not there.
+  //
+  // `process-timeout` is deliberately NOT excluded. That run really did fail:
+  // the test outran its budget and hung, which is exactly the kind of
+  // intermittent behaviour this analysis exists to surface. Dropping it would
+  // be the opposite mistake — hiding a real flake rather than inventing one.
+  const runs = records.filter(
+    (r) => (r.kind ?? "run") === "run" && r.endedBy !== "user",
+  );
 
   const byTest = new Map();
   for (const r of runs) {

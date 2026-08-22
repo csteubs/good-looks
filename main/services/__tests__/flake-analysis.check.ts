@@ -102,6 +102,56 @@ function verdictOf(records: RunRecord[], details: RunDetail[] = []): StabilityVe
 }
 
 function main(): void {
+  // ── a run the user stopped is not evidence (R19) ─────────────────────────
+  //
+  // The bug: `status` comes from the exit code alone, so pressing Stop lands a
+  // "failed" beside a genuine assertion failure. This function counts
+  // TRANSITIONS between consecutive runs, so one stop between two passes
+  // manufactures TWO of them — and three interrupted runs over a week move an
+  // otherwise stable test to "flaky", the one verdict that sends someone
+  // hunting for a race condition that does not exist.
+  {
+    // Eight passes with three stops interleaved. Every "failure" here is a
+    // keystroke.
+    const stopped = history("stops", "PPFPPFPPF", (i) =>
+      i === 2 || i === 5 || i === 8 ? { endedBy: "user" } : {},
+    );
+    assert(
+      verdictOf(stopped) === "stable",
+      `a test whose only failures were user stops is stable (got ${verdictOf(stopped)})`,
+    );
+
+    // The same history WITHOUT the marker is what the panel used to show, and
+    // is the failure this guards. Asserted explicitly so the fixture cannot
+    // quietly stop exercising the difference.
+    const unmarked = history("unmarked", "PPFPPFPPF");
+    assert(
+      verdictOf(unmarked) === "flaky",
+      `…and is read as flaky when the stops are not marked (got ${verdictOf(unmarked)})`,
+    );
+
+    // A process timeout is NOT excluded. That run really did fail — the test
+    // outran its budget and hung — which is exactly the intermittent behaviour
+    // this analysis exists to surface. Dropping it would hide a real flake
+    // rather than invent one.
+    const timedOut = history("timeouts", "PPFPPFPPF", (i) =>
+      i === 2 || i === 5 || i === 8 ? { endedBy: "process-timeout" } : {},
+    );
+    assert(
+      verdictOf(timedOut) === "flaky",
+      `a process timeout still counts as a failure (got ${verdictOf(timedOut)})`,
+    );
+
+    // Excluded runs must not be counted anywhere, including in the sample size
+    // the verdict is gated on. Four runs of which three were stopped is ONE
+    // real run, and one run cannot support a verdict.
+    const mostlyStopped = history("thin", "PFFF", (i) => (i > 0 ? { endedBy: "user" } : {}));
+    assert(
+      verdictOf(mostlyStopped) === "unknown",
+      `stopped runs do not pad the sample size (got ${verdictOf(mostlyStopped)})`,
+    );
+  }
+
   // ── transitions, the actual measure ──────────────────────────────────────
   assertEqual(countTransitions(["passed", "passed", "passed"]), 0, "no transitions when nothing changes");
   assertEqual(countTransitions(["passed", "failed", "passed", "failed"]), 3, "every flip counts");
