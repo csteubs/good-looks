@@ -780,6 +780,42 @@ recorder's navigation guards are written against. The wrapper is a function
 returning an instance rather than a subclass — Electron's `BrowserWindow` is
 native-backed and cannot be `extend`ed.
 
+### `main/shell/stdio-guard.ts`
+Makes writing to stdout/stderr unable to kill the app, and is imported for
+effect by `logger.ts` (`guardStdio()` at module load, `writeSafely` around the
+console write). **The bug: the logger could crash the process it was logging
+for.** `log()` wrapped its file write in a best-effort `try/catch` — the file's
+header promises "a full disk must not take the recorder down with it" — and left
+the console write bare beside it. stdout is a **socket** whenever the app was
+launched by another process (a terminal, a script, an agent's shell), so when
+that parent exits and the app does not, every later log line writes to a dead
+pipe and Electron shows "Uncaught Exception: write EPIPE". Once that happens
+every `logger.*` call throws, which turns the logger into a landmine on exactly
+the error paths that exist to report failures.
+
+**Two guards, because Node delivers the error two ways** and the obvious
+one-line fix only covers one. An EPIPE noticed while the write is being
+dispatched comes straight back out of `console.log` (the reported stack) and a
+`try/catch` catches it; one noticed afterwards arrives as an `error` EVENT on
+the stream, where no `try/catch` can see it and an unhandled `error` throws from
+the event loop. Reproducing the orphaned-parent case produces the second kind.
+Separate from `logger.ts` because it is a process-level policy rather than a
+logging detail — and because `logger.ts` imports `electron`, which nothing in
+`vitest.config.ts` aliases, so a test cannot load it; this module imports
+nothing. `guardStdio` is idempotent (a listener per call would trip Node's
+max-listeners warning, which prints to the broken stream) and tolerates a
+`null` stream, which is what a detached-stdio launch produces.
+
+Covered by `main/shell/stdio-guard.test.ts` for what a unit test can settle, and
+by `check:logger-epipe` for what it cannot: the async half arrives from the
+event loop of a process whose parent has exited, so the check spawns a real
+writer, orphans it behind a short-lived launcher, and watches it survive.
+**It carries a control row** — the unguarded shape must actually die — because
+destroying the read end from the test process does NOT break the pipe (Node
+keeps buffering), which is how a first draft passed while proving nothing. Two
+source assertions tie the proven mechanism to the code that runs, since the bug
+was a bare console call sitting next to a guarded one.
+
 ### `main/shell/user-data.ts`
 Decides where the app's data lives, and must run as the **first statement** in
 `main/index.ts` — before the module-scope reconciliation and migration passes

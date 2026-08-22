@@ -2,13 +2,23 @@
 //   logger.info(scope, message, meta?)
 //
 // Console in dev, plus an append-only file under userData/logs so the packaged
-// app (no terminal attached) still leaves a trail. File writes are best-effort
-// and never throw: a full disk must not take the recorder down with it.
+// app (no terminal attached) still leaves a trail. BOTH writes are best-effort
+// and never throw: a full disk must not take the recorder down with it, and
+// neither must a closed pipe — see stdio-guard.ts for why the console half
+// needs two different guards to hold that promise.
 
 import * as fs from "fs";
 import * as path from "path";
 
 import { app } from "electron";
+
+import { guardStdio, writeSafely } from "./stdio-guard.js";
+
+// Installed at module load, which is as early as anything in the main process
+// runs: this file is imported by nearly everything. An `error` event on stdout
+// that arrives before the guard is attached is an uncaught exception, so the
+// call belongs here rather than behind an init function someone must remember.
+guardStdio();
 
 type Level = "debug" | "info" | "warn" | "error";
 
@@ -45,7 +55,14 @@ function fileStream(): fs.WriteStream | null {
 
 function log(level: Level, scope: string, message: string, meta?: unknown): void {
   const text = line(level, scope, message, meta);
-  (level === "error" ? console.error : level === "warn" ? console.warn : console.log)(text);
+  // BOTH writes are best-effort now. This one used to be bare, so a console
+  // whose pipe had closed — the ordinary state once the terminal that launched
+  // the app has gone — threw out of every logger call and put an "Uncaught
+  // Exception: write EPIPE" dialog in front of the user. See stdio-guard.ts.
+  writeSafely(
+    level === "error" ? console.error : level === "warn" ? console.warn : console.log,
+    text,
+  );
   try {
     fileStream()?.write(text + "\n");
   } catch {

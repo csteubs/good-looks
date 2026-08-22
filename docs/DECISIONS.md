@@ -10,6 +10,58 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-22 — The logger could crash the process it was logging for
+
+A packaged app showed "A JavaScript error occurred in the main process —
+Uncaught Exception: Error: write EPIPE", repeatedly, from `console.log` inside
+`logger.log`.
+
+**The asymmetry was already visible in the file.** `log()` wrapped its file
+write in a best-effort `try/catch`, and `logger.ts`'s own header explains why:
+"a full disk must not take the recorder down with it". The console write two
+lines above it was bare. The principle was stated and then applied to one of the
+two writes.
+
+**stdout is a socket more often than a terminal.** Whenever the app is launched
+by another process — a terminal session, a build script, an agent's shell — its
+stdout is a socketpair owned by that parent. When the parent exits and the app
+does not, the read end closes and every later log line writes to a dead pipe. So
+this is not an exotic failure: it is the ordinary end state of "start the app
+from a terminal, then close the terminal". The user hit it repeatedly.
+
+**The consequence worth naming is not the dialog.** Once stdout is dead, EVERY
+`logger.*` call throws. An error handler that logs — which is most of them —
+then raises a second exception on top of the one it was reporting, so the
+logger becomes a landmine on precisely the paths that exist to surface
+failures, and the original error is lost behind an EPIPE.
+
+**Two guards, and the obvious one-line fix is not enough.** Node delivers this
+error both ways. An EPIPE noticed while the write is being dispatched throws
+straight back out through `console.log` — that is the stack the user reported,
+and a `try/catch` catches it. An EPIPE noticed after dispatch arrives as an
+`error` EVENT on the stream, and an unhandled `error` event throws from the
+event loop where no `try/catch` is on the stack. Reproducing the orphaned-parent
+case produces the second kind; the reported dialog is the first. Guarding only
+the synchronous half would have left the dialog appearing exactly as often, for
+a reason the fix appeared to have addressed — which is the worst outcome
+available, because it would have been believed fixed.
+
+**Not in `logger.ts`.** It is a process-level policy: anything in the main
+process that writes to stdout meets the same dead socket. It is also the only
+way to test it — `logger.ts` imports `electron`, nothing in `vitest.config.ts`
+aliases that, so no vitest file can load it, whereas `stdio-guard.ts` imports
+nothing.
+
+**The check needed a control row, and finding out why cost the first draft.**
+Destroying the pipe's read end from the test process does not produce EPIPE —
+Node keeps buffering and the child writes on happily. The check passed while
+proving nothing. What actually breaks the pipe is the owning process EXITING,
+so the writer has to be orphaned by a parent that goes away, and that parent
+cannot be the check itself (it has to survive to read the verdict) — hence a
+short-lived launcher in between. The control row asserts the UNGUARDED shape
+really does die in this harness, so the guarded row cannot go quietly vacuous
+if the mechanism ever stops reproducing.
+
 ### 2026-08-22 — Who started a run, on one axis, recorded now because it cannot be recorded later
 
 R33 of [plans/test-runner-improvements.md](plans/test-runner-improvements.md),
