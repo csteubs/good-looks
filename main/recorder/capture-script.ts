@@ -149,6 +149,22 @@ export const MAX_UNIQUENESS_SCAN = 6000;
 export const UNCAPPED_SCAN = 1_000_000;
 
 /**
+ * How many OPEN shadow roots a scan will descend into before giving up.
+ *
+ * Separate from `MAX_UNIQUENESS_SCAN` because it bounds a different thing: that
+ * one caps elements looked at, this one caps the roots looked *inside*. A
+ * component-heavy page reaches a hundred roots without being large — ritual.com
+ * is 2755 elements and 101 roots — so a shared cap would either starve the
+ * element budget or leave the root walk unbounded.
+ *
+ * Above this many roots the answer is the same as above the element cap:
+ * "assume ambiguous", which costs an `.nth()` rather than a stall on the click
+ * path. The walk itself measured 0.18ms on that page, so the cap is a backstop
+ * against a pathological document, not a budget the normal case spends.
+ */
+export const MAX_SHADOW_ROOTS = 400;
+
+/**
  * `matchesFor(loc, root)` — the elements a recorded locator would resolve to.
  *
  * ── Why this has to exist ──────────────────────────────────────────────────
@@ -258,14 +274,61 @@ export const UNIQUENESS_HELPERS = `
    *  not, and inheriting it there would make a large page's elements invisible
    *  to a preview that a real run resolves perfectly well. */
   var GL_SCAN_LIMIT = ${MAX_UNIQUENESS_SCAN};
+  var GL_SHADOW_LIMIT = ${MAX_SHADOW_ROOTS};
 
+  /** Every OPEN shadow root reachable from \`root\`, outermost first, bounded.
+   *
+   *  CLOSED roots are deliberately absent: script cannot reach them, and
+   *  neither can Playwright, so leaving them out is what keeps the two
+   *  agreeing rather than an omission. */
+  function shadowRootsIn(root, acc) {
+    var all;
+    try { all = root.querySelectorAll("*"); } catch (e) { return acc; }
+    for (var i = 0; i < all.length; i++) {
+      var sr = all[i].shadowRoot;
+      if (!sr) continue;
+      acc.push(sr);
+      if (acc.length >= GL_SHADOW_LIMIT) return acc;
+      shadowRootsIn(sr, acc);
+      if (acc.length >= GL_SHADOW_LIMIT) return acc;
+    }
+    return acc;
+  }
+
+  /** The elements a CSS selector resolves to, PIERCING open shadow roots.
+   *
+   *  Playwright's selector engines pierce open shadow roots; \`document
+   *  .querySelectorAll\` does not. An oracle built on the bare call therefore
+   *  grades a perfectly good locator as matching NOTHING — the exact inversion
+   *  of the testid-attribute bug, and the same consequence: the trainer and the
+   *  run disagree about a step, so the number on screen is not the number the
+   *  spec will see. Measured on ritual.com, whose consent banner is a shadow
+   *  host: \`button.dg-button.accept_all\` was 0 here and 1 in real Playwright.
+   *
+   *  XPath is NOT routed through this and must not be — \`document.evaluate\`
+   *  cannot cross a shadow boundary, and Playwright's xpath engine is the one
+   *  engine that does not pierce either. Leaving that arm document-only is
+   *  what keeps IT in agreement. */
   function scanAll(selector) {
+    var out;
     try {
-      var list = document.querySelectorAll(selector);
-      return Array.prototype.slice.call(list, 0, GL_SCAN_LIMIT);
+      out = Array.prototype.slice.call(document.querySelectorAll(selector), 0, GL_SCAN_LIMIT);
     } catch (e) {
+      // An invalid selector is invalid in every root; a partial scan would
+      // report a count rather than the "cannot answer" this really is.
       return [];
     }
+    if (out.length >= GL_SCAN_LIMIT) return out;
+    var roots = shadowRootsIn(document, []);
+    for (var r = 0; r < roots.length; r++) {
+      var hits;
+      try { hits = roots[r].querySelectorAll(selector); } catch (e) { continue; }
+      for (var j = 0; j < hits.length; j++) {
+        out.push(hits[j]);
+        if (out.length >= GL_SCAN_LIMIT) return out;
+      }
+    }
+    return out;
   }
 
   /** What a locator resolves to IGNORING its context. Split out because
@@ -897,6 +960,29 @@ export const DOM_HELPERS = `
     }
     return parts.join(" > ");
   }
+
+  /** The topmost element at a point, DESCENDING into open shadow roots.
+   *
+   *  \`document.elementFromPoint\` stops at the shadow HOST — it reports the
+   *  custom element, never the button inside it. Each root is asked again at
+   *  the same coordinates until one stops handing back a new host, which is
+   *  how the DOM exposes this; there is no composed variant of the call.
+   *
+   *  The guard is \`next !== node\`: a root whose own host fills the point
+   *  answers with that host and would otherwise spin. Depth is bounded for the
+   *  same reason the scans are — this runs on a user gesture. */
+  function deepElementFromPoint(x, y) {
+    var node = null;
+    try { node = document.elementFromPoint(x, y); } catch (e) { return null; }
+    for (var depth = 0; depth < 20; depth++) {
+      if (!node || !node.shadowRoot) break;
+      var next = null;
+      try { next = node.shadowRoot.elementFromPoint(x, y); } catch (e) { break; }
+      if (!next || next === node) break;
+      node = next;
+    }
+    return node;
+  }
 `;
 
 /**
@@ -1254,6 +1340,35 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
     return !!(el && el.getAttribute && el.getAttribute("data-pw-refine-box"));
   }
 
+  /** The element the user actually interacted with.
+   *
+   *  NOT \`e.target\`. These listeners are attached to \`window\` and
+   *  \`document\`, and an event crossing a shadow boundary is RETARGETED on the
+   *  way out: by the time it reaches a document-level listener, \`e.target\` is
+   *  the shadow HOST, not the thing that was clicked. \`composedPath()[0]\` is
+   *  the real element, and Playwright's own recorder resolves it the same way.
+   *
+   *  What that cost: every click inside a web component recorded as a click on
+   *  the component's container. On a page whose consent modal is a shadow host
+   *  the step then clicks the modal's backdrop — it replays, it passes, and it
+   *  dismisses nothing. Silent, because a step that does nothing looks exactly
+   *  like a step that worked. Any site built on custom elements has the same
+   *  hole: ritual.com puts its cart drawer and its product forms behind one.
+   *
+   *  Falls back to \`e.target\` where \`composedPath\` is unavailable (older
+   *  engines, synthetic events dispatched by a page) rather than dropping the
+   *  event — the old behaviour is wrong for shadow content and right for
+   *  everything else. */
+  function evTarget(e) {
+    try {
+      if (typeof e.composedPath === "function") {
+        var path = e.composedPath();
+        if (path && path.length && path[0] && path[0].nodeType === 1) return path[0];
+      }
+    } catch (err) {}
+    return e.target;
+  }
+
   // assert-mode hover highlight
   var lastHi = null;
   function clearHi() {
@@ -1263,7 +1378,7 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
     }
   }
   function onOver(e) {
-    var el = e.target;
+    var el = evTarget(e);
     if (!el || el.nodeType !== 1 || isOverlay(el)) return;
     if (refineMode()) { showBox(el); return; }
     if (!assertMode()) return;
@@ -1322,7 +1437,7 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
   }
 
   function onPointerDown(e) {
-    var t = e.target;
+    var t = evTarget(e);
     var el = t && t.nodeType === 1 ? t : null;
     if (!el) return;
     keepInWindow(el);
@@ -1376,7 +1491,7 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
     // record one for it.
     pendingDown = null;
 
-    var target = e.target;
+    var target = evTarget(e);
     var el = target && target.nodeType === 1 ? target : (target ? target.parentElement : null);
     if (!el) return;
 
@@ -1447,7 +1562,7 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
   var valueAtFocus = null;
 
   function onFocusIn(e) {
-    var el = e.target;
+    var el = evTarget(e);
     if (!el || el.nodeType !== 1) return;
     focusedField = el;
     try {
@@ -1487,7 +1602,7 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
 
   function onChange(e) {
     if (isPaused() || assertMode()) return;
-    var el = e.target;
+    var el = evTarget(e);
     if (!el || el.nodeType !== 1) return;
     var tag = el.tagName.toLowerCase();
     if (tag === "select") {
@@ -1525,7 +1640,7 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
   // backend withdraws them when this arrives - see dropClicksSupersededBy.
   function onDblClick(e) {
     if (isPaused() || assertMode()) return;
-    var el = e.target;
+    var el = evTarget(e);
     if (!el || el.nodeType !== 1) return;
     var target = interactiveTarget(el);
     push(withFp({ type: "dblclick", locator: locatorFor(target) }, target));
@@ -1545,7 +1660,7 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
 
   function onPointerDownForDrag(e) {
     if (isPaused() || assertMode()) return;
-    var el = e.target;
+    var el = evTarget(e);
     if (!el || el.nodeType !== 1) { dragFrom = null; return; }
     dragFrom = { el: el, x: e.clientX, y: e.clientY, t: Date.now() };
   }
@@ -1563,7 +1678,7 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
     // often follows the pointer, and it would then be reported as its own drop
     // target - a drag onto itself, which is a step that does nothing.
     var to = null;
-    try { to = document.elementFromPoint(e.clientX, e.clientY); } catch (err) {}
+    to = deepElementFromPoint(e.clientX, e.clientY);
     if (!to || to.nodeType !== 1) return;
     var src = interactiveTarget(from.el);
     var dst = interactiveTarget(to);
@@ -1572,12 +1687,12 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
   }
 
   function onKeydown(e) {
-    var kt = e.target;
+    var kt = evTarget(e);
     if (kt && kt.nodeType === 1) keepInWindow(kt);
     if (isPaused() || assertMode()) return;
     var k = e.key;
     if (k === "Enter" || k === "Escape") {
-      var el = e.target;
+      var el = evTarget(e);
       var loc = el && el.nodeType === 1 ? locatorFor(el) : null;
       var step = { type: "press", value: k };
       if (loc) step.locator = loc;
@@ -1698,7 +1813,7 @@ export const PICK_AT_POINT_SCRIPT = `
   ${DOM_HELPERS}
   ${UNIQUENESS_HELPERS}
   ${PICKED_HELPERS}
-  var el = document.elementFromPoint(x, y);
+  var el = deepElementFromPoint(x, y);
   if (!el || el.nodeType !== 1) return "";
   // Skip our own overlay elements.
   if (el.getAttribute && el.getAttribute("data-pw-refine-box")) return "";

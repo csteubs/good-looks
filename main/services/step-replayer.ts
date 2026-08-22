@@ -250,6 +250,20 @@ export function buildReplayScript(step: Step): string {
       // <button> — and the event still reaches the element. Only something
       // OUTSIDE the subtree is an interception.
       if (hit === el || el.contains(hit)) return null;
+      // Nor is the element's own SHADOW HOST an interception, though
+      // \`contains\` says it is: \`elementFromPoint\` stops at the host, so an
+      // element inside an open shadow root is always "covered" by the
+      // component it lives in. Reported literally, that turns every control in
+      // a web component into a false occlusion — and on the pages where this
+      // check earns its keep, the consent modal IS a shadow host, so the
+      // warning would name the banner as covering its own Accept button.
+      var host = el;
+      for (var up = 0; up < 20 && host; up++) {
+        var root = host.getRootNode ? host.getRootNode() : null;
+        host = root && root.host ? root.host : null;
+        if (!host) break;
+        if (hit === host || host === el) return null;
+      }
       return hit;
     } catch (e) {
       return null;

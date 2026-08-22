@@ -455,6 +455,60 @@ describe("download steps in the preview", () => {
   });
 });
 
+describe("occlusion inside a web component", () => {
+  // `elementFromPoint` stops at the shadow HOST — it cannot report an element
+  // inside an open shadow root. Taken literally that makes every control in a
+  // web component permanently "covered" by the component it lives in, and the
+  // pages where the occlusion check earns its keep are exactly the ones that
+  // break: a consent modal that IS a shadow host would be reported as covering
+  // its own Accept button. The step then fails in the trainer for a reason
+  // that does not exist.
+  function stubTopmost(el: Element | null): void {
+    (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null })
+      .elementFromPoint = () => el;
+  }
+
+  it("does not report an element's own shadow host as covering it", () => {
+    document.body.innerHTML = '<aside id="banner" class="dg-consent-banner"></aside>';
+    const host = document.getElementById("banner") as HTMLElement;
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = '<button data-testid="accept">Accept All</button>';
+    // What a browser really answers at that point: the host, not the button.
+    stubTopmost(host);
+
+    const r = run(step({ type: "click", locator: { k: "testid", v: "accept" } }));
+    expect(r.ok).toBe(true);
+  });
+
+  it("does not report an outer host as covering content nested two roots deep", () => {
+    document.body.innerHTML = '<div id="outer"></div>';
+    const outerHost = document.getElementById("outer") as HTMLElement;
+    const outer = outerHost.attachShadow({ mode: "open" });
+    outer.innerHTML = '<div id="mid"></div>';
+    const midHost = outer.getElementById("mid") as HTMLElement;
+    const inner = midHost.attachShadow({ mode: "open" });
+    inner.innerHTML = '<button data-testid="deep">Deep</button>';
+    stubTopmost(outerHost);
+
+    const r = run(step({ type: "click", locator: { k: "testid", v: "deep" } }));
+    expect(r.ok).toBe(true);
+  });
+
+  it("still refuses a click on shadow content covered by an UNRELATED overlay", () => {
+    // The check must not be blunted into never firing: a real cover is still a
+    // real cover when the target happens to live in a shadow root.
+    document.body.innerHTML =
+      '<div id="host"></div><div id="banner" class="cookie-bar">Accept cookies</div>';
+    const host = document.getElementById("host") as HTMLElement;
+    host.attachShadow({ mode: "open" }).innerHTML = '<button data-testid="b">Buy</button>';
+    stubTopmost(document.getElementById("banner"));
+
+    const r = run(step({ type: "click", locator: { k: "testid", v: "b" } }));
+    expect(r.ok).toBe(false);
+    expect(why(r)).toMatch(/intercepts pointer events/i);
+  });
+});
+
 describe("force clicks in the preview", () => {
   it("ignores the cover when the step opted out of the check, and says so", () => {
     // The run skips actionability for a force click, so failing here would be

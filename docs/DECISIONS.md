@@ -10,6 +10,58 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-22 — The recorder could not see inside a web component
+
+Every click inside an open shadow root was recorded as a click on the shadow
+HOST. Two independent causes, both silent, both reached from the same page.
+
+**Retargeting.** The capture listeners are on `window` and `document`. An event
+crossing a shadow boundary is retargeted on the way out, so `e.target` at a
+document-level listener is the component, never the control. `composedPath()[0]`
+is the real element and the capture script never called it — Playwright's own
+recorder does, which is what made the gap findable.
+
+**The oracle.** `matchesFor` graded candidate locators with
+`document.querySelectorAll`, which stops at the shadow boundary. Playwright's
+selector engines pierce open roots. So the trainer scored a locator the run
+resolves perfectly well as matching NOTHING. That is the test-id attribute bug
+of 2026-08-14 pointing the other way, and it is why the fix went into `scanAll`
+— the single choke point `UNIQUENESS_HELPERS` gives the capture script, the heal
+probe and the step replayer at once.
+
+**Why it was invisible.** Measured against ritual.com, whose DataGrail consent
+modal is `<aside class="dg-consent-banner">` with an open shadow root: the old
+capture recorded `css: html > body > aside`, which **resolves to exactly one
+element**. Nothing anywhere reports a problem. The step replays green, passes on
+every run, and clicks the modal's backdrop — so the banner stays up and
+obscures whatever the test needed next. A step that does nothing looks exactly
+like a step that worked. The same page carries 28 custom elements: its cart
+drawer and product forms were equally unrecordable, so this was never really
+about cookie banners.
+
+**Closed roots are deliberately not scanned.** Script cannot reach them and
+neither can Playwright, so skipping them is what keeps the two agreeing.
+**XPath is deliberately not piercing** for the same reason inverted:
+`document.evaluate` cannot cross a boundary and Playwright's xpath engine is the
+one engine that does not pierce either, so leaving that arm document-only is
+what keeps IT in agreement.
+
+**Cost.** The root walk measured 0.18ms on that page (2755 elements, 101 shadow
+roots), and a deep scan 0.2–0.3ms more than a flat one. That is why there is no
+cache: the click path can afford the honest answer, and a cache keyed on a
+mutating DOM is a correctness risk bought with nothing.
+
+`deepElementFromPoint` fixes the same blind spot on the two paths that ask what
+is under the cursor — the right-click "pick element here" and the drag-release
+target — since `document.elementFromPoint` also stops at the host.
+
+`occludedBy` in the step replayer needed the converse guard. It reports what is
+covering an element, and `elementFromPoint` answering with the host meant every
+control inside a component read as covered by the component it lives in. On the
+pages where that check earns its keep this is acute: the consent modal IS a
+shadow host, so the trainer would have reported the banner as covering its own
+Accept button.
+
 ### 2026-08-22 — An MCP run was deleting 49,000 run records, and nothing could see it
 
 `mcp/server.mjs` and `runHistoryStore.append` both append to
