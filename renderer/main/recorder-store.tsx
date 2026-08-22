@@ -27,6 +27,7 @@ import type {
   RunBrowser,
   Step,
   VariableKind,
+  VerifiedStepsResult,
 } from "../lib/recorder-types";
 
 export type RunStepStatus = "running" | "passed" | "failed";
@@ -217,10 +218,13 @@ interface RecorderContextValue {
   exitFlowScope: () => Promise<void>;
   /** Move the insert cursor within the open scope. */
   setFlowCursor: (index: number) => void;
-  /** Insert a batch of AI-generated steps and mark what landed as new, so the
-   *  step list can glow it. Separate from `insertStep` because only this path
-   *  produces steps the user did not write themselves. */
-  insertGeneratedSteps: (steps: RawStep[]) => Promise<void>;
+  /** Run a batch of AI-proposed steps against the live page, inserting each
+   *  only once it has worked (grouped under `label`, the prompt), and mark what
+   *  landed as new so the step list can glow it. Separate from `insertStep`
+   *  because only this path produces steps the user did not write themselves
+   *  — and the only path that VERIFIES before inserting. Resolves with what
+   *  happened to each step; the dialog renders that as its activity log. */
+  verifyGeneratedSteps: (steps: RawStep[], label: string) => Promise<VerifiedStepsResult>;
   reorderStep: (id: string, toIndex: number) => void;
   updateStep: (id: string, patch: Partial<Step>) => void;
   /** Declare a variable on the live session, so a step composed here can
@@ -836,25 +840,29 @@ export function RecorderProvider({
     void api.recorder.setFlowCursor(index);
   }, []);
 
-  const insertGeneratedSteps = React.useCallback(async (steps: RawStep[]) => {
-    const before = liveStepsRef.current;
-    // Sequential, not `forEach`: each insert lands at the session cursor and
-    // advances it, so firing them concurrently leaves the order up to whichever
-    // IPC call the backend happens to service first.
-    for (const step of steps) {
-      await api.recorder.insertStep(step);
-    }
-    // Re-read rather than waiting for the `recorder:steps` push. The push and
-    // the invoke reply are different channels with no ordering guarantee
-    // between them, and the diff needs the settled list — if it ran a beat
-    // early it would mark only the first of the inserted steps.
-    const after = await api.recorder.getSteps().catch(() => null);
-    if (!after) return;
-    receiveSteps(after);
-    // Normalization backend-side can drop a step the model produced, so this
-    // diffs what actually landed instead of assuming all of `steps` did.
-    setNewStepIds(computeNewStepIds(before, after));
-  }, [receiveSteps]);
+  const verifyGeneratedSteps = React.useCallback(
+    async (steps: RawStep[], label: string) => {
+      const before = liveStepsRef.current;
+      // One IPC call: the backend runs the steps in order against the live
+      // page and inserts each as it works, so ordering is its problem and not
+      // a race between invokes here.
+      const outcome = await api.recorder.verifySteps(steps, label);
+      // Re-read rather than waiting for the `recorder:steps` push. The push
+      // and the invoke reply are different channels with no ordering guarantee
+      // between them, and the diff needs the settled list — if it ran a beat
+      // early it would mark only the first of the inserted steps.
+      const after = await api.recorder.getSteps().catch(() => null);
+      if (after) {
+        receiveSteps(after);
+        // What actually landed — a failed step and everything after it did
+        // not, and normalization can drop one the model produced — so this
+        // diffs the list instead of assuming all of `steps` did.
+        setNewStepIds(computeNewStepIds(before, after));
+      }
+      return outcome;
+    },
+    [receiveSteps],
+  );
   const addVariable = React.useCallback(
     async (v: { name: string; kind: VariableKind; value?: string }) => {
       // The reply IS the new state, applied here rather than waiting for the
@@ -976,7 +984,7 @@ export function RecorderProvider({
     enterFlowScope,
     exitFlowScope,
     setFlowCursor,
-    insertGeneratedSteps,
+    verifyGeneratedSteps,
     reorderStep,
     updateStep,
     addVariable,

@@ -399,6 +399,26 @@ async function tryHeal(
 }
 
 /** Shape every replay path expects back from a step, whichever mechanism ran it. */
+/** One AI-proposed step's fate. `ran` means it was executed against the live
+ *  page and worked; `unchecked` means the replayer declined to run it (a
+ *  `goto`, a structural half, a step whose meaning only exists at run time) and
+ *  it was inserted anyway; `failed` means it ran and did not work, and nothing
+ *  after it was attempted. */
+export interface VerifiedStepResult {
+  label: string;
+  status: "ran" | "unchecked" | "failed";
+  detail?: string;
+}
+
+export interface VerifiedStepsResult {
+  /** how many PROPOSED steps made it into the step list — the group markers
+   *  wrapped around them are structure, not steps the model wrote */
+  inserted: number;
+  results: VerifiedStepResult[];
+  /** set only when nothing could be attempted at all */
+  error?: string;
+}
+
 interface ReplayStepResult {
   ok: boolean;
   error?: string;
@@ -2904,6 +2924,94 @@ export const recorderService = {
       broadcastState();
     }
     return currentState();
+  },
+
+  /**
+   * Run AI-proposed steps against the LIVE page, one at a time, inserting each
+   * only once it has actually worked — and stopping at the first that has not.
+   *
+   * THE DIFFERENCE THIS MAKES. The generate-steps dialog has always turned a
+   * prompt into steps and inserted all of them unverified, which is the same
+   * shape as pasting a guess into the list: the model names an element that may
+   * not exist, and the user finds out on the next run, several steps away from
+   * the cause. The trainer has had per-step replay the whole time. Running each
+   * proposed step as it lands is the difference between "the model suggests"
+   * and "the agent did it" — and it is also what makes the steps AFTER the
+   * first one meaningful, because each runs against the page the previous one
+   * left behind rather than against the page the model imagined.
+   *
+   * CAPTURE IS SUSPENDED for the whole run, the same as any other replay: these
+   * are real clicks in a live recording session, and with capture on the
+   * trainer would record each one AGAIN alongside the step it just inserted.
+   *
+   * A step the replayer declines to run — a `goto`, a structural `if`, a step
+   * whose meaning only exists at run time — reports `ok` with a note. Those are
+   * inserted and reported as UNCHECKED rather than as passed: saying a step was
+   * verified when nothing verified it is the failure this whole method exists
+   * to remove.
+   *
+   * WHAT LANDS IS GROUPED, under `label` (the prompt). Step groups are markers
+   * (#208), so this is one `group` row before the first step that worked and
+   * one `endGroup` after the last — inserted lazily, so a run whose FIRST step
+   * fails leaves the list exactly as it found it rather than holding an empty
+   * group. mabl's agent bundles its output the same way, and it is what tells
+   * a reader, weeks later, which steps a model wrote and from what.
+   *
+   * ON A FAILURE THE STEPS THAT WORKED STAY. Each of them ran against the real
+   * page and did what it said; they are better evidence than anything the
+   * user would type in their place. The group is closed behind them so the
+   * list stays well-formed, and the dialog's activity log says where the run
+   * stopped — the prefix is the agent's work, the remainder is the user's.
+   */
+  async verifyAndInsertSteps(raws: unknown[], label?: string): Promise<VerifiedStepsResult> {
+    const results: VerifiedStepResult[] = [];
+    if (!session) return { inserted: 0, results, error: "No active recording session." };
+    const page = pageWc();
+    if (!page) return { inserted: 0, results, error: "Recorder window is not open." };
+    const wc = pageExecutor(page);
+    // Through the same boundary every other arrival goes through — per step,
+    // with `normalizeRawStep`, as `insertStep` does. These steps came from a
+    // model, which is not the page but is not the user either, and the
+    // generator cannot tell the difference. (The plural `normalizeRawSteps`
+    // is the PAGE channel's single ingest, pinned by check:capture-egress.)
+    commitFlowScope();
+
+    let inserted = 0;
+    await withCaptureSuspended(async () => {
+      for (const input of raws) {
+        if (!session || !pageAlive()) break;
+        const raw = normalizeRawStep(input);
+        if (!raw) continue;
+        const candidate: Step = { id: randomUUID(), timestamp: Date.now(), ...raw };
+        // `desc`, not `label` — that name is the group's, and shadowing it here
+        // once put the first step's description on the group row.
+        const desc = describeStep(candidate);
+        let outcome: ReplayStepResult;
+        try {
+          outcome = await runStep(wc, candidate);
+        } catch (err) {
+          outcome = { ok: false, error: String(err) };
+        }
+        if (!outcome.ok) {
+          // STOP. Everything after this was written against a page state that
+          // never happened, so inserting it would fill the list with steps the
+          // model believed in and nothing has stood behind.
+          results.push({ label: desc, status: "failed", detail: outcome.error ?? "the step did not run" });
+          break;
+        }
+        // `ok` with a note means the replayer declined rather than succeeded.
+        results.push(
+          outcome.error
+            ? { label: desc, status: "unchecked", detail: outcome.error }
+            : { label: desc, status: "ran" },
+        );
+        if (inserted === 0 && label) recorderService.insertStep({ type: "group", label });
+        recorderService.insertStep(raw);
+        inserted++;
+      }
+    });
+    if (inserted > 0 && label) recorderService.insertStep({ type: "endGroup" });
+    return { inserted, results };
   },
 
   /**

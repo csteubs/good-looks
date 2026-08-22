@@ -1871,6 +1871,27 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     // NOT pretend to capture, and the banner still says so.
     "recorder:getSteps": () => (recorderPreview() ? structuredClone(TESTS[0].steps) : []),
     "recorder:getDebugLogs": () => [],
+    // AI-proposed steps, "verified" against a page that does not exist here.
+    // A stated outcome — the first works, the second does not, the rest were
+    // never attempted — so the generate-steps dialog's activity log, which only
+    // appears on a failure, can be SEEN in the preview. Nothing is inserted.
+    "recorder:verifySteps": (p) => {
+      const steps = Array.isArray(p?.steps) ? (p.steps as { type?: string }[]) : [];
+      const name = (s: { type?: string } | undefined) => s?.type ?? "step";
+      if (steps.length === 0) return { inserted: 0, results: [] };
+      if (steps.length === 1) return { inserted: 1, results: [{ label: name(steps[0]), status: "ran" }] };
+      return {
+        inserted: 1,
+        results: [
+          { label: name(steps[0]), status: "ran" },
+          {
+            label: name(steps[1]),
+            status: "failed",
+            detail: "No element matches — the preview has no page to try it on.",
+          },
+        ],
+      };
+    },
     // Element context. The picker's live readout asks the page how many
     // elements the CURRENT selection matches; there is no page here, so the
     // answer comes from the fixture's own per-signal counts. Several ticked
@@ -2201,15 +2222,12 @@ function stopFakeRun(
  * added for: a locator that matched several elements, which the model cannot
  * resolve without being shown the page.
  */
-function startFakeChat(emit: (channel: string, value: unknown) => void): { requestId: string } {
+function startFakeChat(
+  emit: (channel: string, value: unknown) => void,
+  params?: Payload,
+): { requestId: string } {
   const requestId = "preview-llm-1";
-  const reply =
-    "The click failed because getByRole(\"button\", { name: \"Pause\" }) matched 10 " +
-    "elements, so Playwright refused to guess which one you meant. I can see that " +
-    "it is ambiguous, but not which of the ten is the video player's pause " +
-    "button.\n\n```glaze-request\n" +
-    '{"need": ["structure"], "why": "to see which elements matched and pick the right one"}' +
-    "\n```";
+  const reply = isGenerateStepsRequest(params) ? GENERATED_STEPS_REPLY : DEBUG_REPLY;
   // Chunked, so the preview shows the streaming path rather than a reply that
   // appears whole. The request block is only parsed once `llm:done` lands —
   // a half-streamed fence is not a request.
@@ -2220,6 +2238,41 @@ function startFakeChat(emit: (channel: string, value: unknown) => void): { reque
   setTimeout(() => emit("llm:done", { requestId }), 120 * (chunks.length + 1));
   return { requestId };
 }
+
+/** The generate-steps dialog's request, told apart by its system prompt — the
+ *  one that asks for the recorder's own step model as JSON. Matched on the
+ *  opening clause rather than imported, because the prompt is not exported
+ *  and the preview must not become a reason to export it. */
+function isGenerateStepsRequest(params?: Payload): boolean {
+  const messages = Array.isArray(params?.messages) ? (params.messages as { role?: string; content?: string }[]) : [];
+  return messages.some(
+    (m) => m.role === "system" && typeof m.content === "string" && m.content.includes("Turn a natural-language description into an ordered list of test STEPS"),
+  );
+}
+
+/** What the generate-steps dialog receives: three steps, as the prompt asks
+ *  for them. Paired with the bridge's `recorder:verifySteps` answer — the first
+ *  works, the second does not — so "Try 3 steps" shows the activity log. */
+const GENERATED_STEPS_REPLY =
+  "Here are the steps:\n\n```json\n" +
+  JSON.stringify(
+    [
+      { type: "click", locator: { k: "role", role: "button", name: "Add to cart" } },
+      { type: "click", locator: { k: "role", role: "link", name: "Checkout" } },
+      { type: "assert", assert: "visible", locator: { k: "text", v: "Order total" } },
+    ],
+    null,
+    2,
+  ) +
+  "\n```\n";
+
+const DEBUG_REPLY =
+    "The click failed because getByRole(\"button\", { name: \"Pause\" }) matched 10 " +
+    "elements, so Playwright refused to guess which one you meant. I can see that " +
+    "it is ambiguous, but not which of the ten is the video player's pause " +
+    "button.\n\n```glaze-request\n" +
+    '{"need": ["structure"], "why": "to see which elements matched and pick the right one"}' +
+    "\n```";
 
 export interface PreviewBridgeOptions {
   /** Pace of the scripted run, in ms per event — two per step, one for done.
@@ -2278,7 +2331,7 @@ export function installPreviewBridge(options: PreviewBridgeOptions = {}): Previe
     diagnostics.calls.push(channel);
     if (channel === "runner:run") return startFakeRun(args[0] as Payload, state, emit, runTickMs);
     if (channel === "runner:stop") return stopFakeRun(args[0] as Payload, emit);
-    if (channel === "llm:chat") return startFakeChat(emit);
+    if (channel === "llm:chat") return startFakeChat(emit, args[0] as Payload);
     // Refine mode, which in the real app pauses the session and waits for the
     // user to click an element in the training browser. There is no training
     // browser here, so the pick is delivered on a timer — without it neither

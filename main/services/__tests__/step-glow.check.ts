@@ -122,20 +122,26 @@ for (const rel of consumers) {
   );
 }
 
-// ── 4. Generated steps take the tracked insert path ──────────────────
+// ── 4. Generated steps take the tracked (and verifying) insert path ───
+//
+// Since 2026-08-22 the dialog VERIFIES proposed steps against the live page
+// through `verifyGeneratedSteps`, which is also the path that marks what
+// landed as new. A dialog wired to anything else would either insert
+// unverified or land its steps unmarked — both silent.
 
 for (const rel of ["renderer/main/recording-view.tsx", "renderer/trainer/trainer-panel-view.tsx"]) {
   const src = read(rel);
   const dialog = src.slice(src.indexOf("<GenerateStepsDialog"));
-  const onInsert = dialog.slice(dialog.indexOf("onInsert="), dialog.indexOf("/>"));
+  assert(dialog.includes("onVerify="), `${rel}: GenerateStepsDialog is given onVerify`);
+  const onVerify = dialog.slice(dialog.indexOf("onVerify="), dialog.indexOf("/>"));
   assert(
-    /insertGeneratedSteps/.test(onInsert),
-    `${rel}: GenerateStepsDialog inserts via insertGeneratedSteps`,
+    /verifyGeneratedSteps/.test(onVerify),
+    `${rel}: GenerateStepsDialog verifies and inserts via verifyGeneratedSteps`,
   );
   assert(
-    !/\binsertStep\b/.test(onInsert),
-    `${rel}: GenerateStepsDialog does NOT use the plain insertStep — that path clears the ` +
-      "highlight rather than setting it, so the generated steps would land unmarked",
+    !/\binsertStep\b/.test(onVerify) && !/\binsertGeneratedSteps\b/.test(onVerify),
+    `${rel}: GenerateStepsDialog does NOT use a plain insert — that path inserts unverified, ` +
+      "and the plain insertStep also clears the highlight rather than setting it",
   );
 }
 

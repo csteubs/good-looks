@@ -10,6 +10,70 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-22 — AI-proposed steps are tried on the live page before they are inserted
+
+Round 3, Phase 4 — mabl's agent mode. The generate-steps dialog has always
+turned a prompt into steps and inserted all of them unverified, which is the
+same shape as pasting a guess into the list: the model names an element that
+may not exist, and the user finds out on the next run, several steps away from
+the cause. The trainer has had per-step replay the whole time.
+
+**Each proposed step now runs where it lands** (`verifyAndInsertSteps`), against
+the page the previous one left behind rather than the page the model imagined,
+and is inserted only once it has worked. The first that does not stops the
+rest: everything after it was written against a page state that never
+happened, so inserting it would fill the list with steps the model believed in
+and nothing has stood behind. Capture is suspended for the run — these are real
+clicks in a live session, and with capture on the trainer would record each
+one again beside the step it just inserted.
+
+**Three verdicts, not two.** `ran` is a step that executed and worked. `failed`
+is one that executed and did not. `unchecked` is a step the replayer DECLINED
+to run — a `goto`, a structural half, a step whose meaning only exists at run
+time — and it is inserted but never called verified, because saying a step was
+checked when nothing checked it is the exact claim this feature exists to stop
+making. The dialog's activity log (mabl's agent activity view) shows the three
+as distinct words.
+
+**What worked stays, grouped under the prompt.** On a failure the steps that
+ran are kept — each did what it said against the real page, which is better
+evidence than anything the user would type in their place — and they are
+wrapped in a step group (#208's markers) named after the prompt, closed behind
+the last one so the list stays well-formed. The group is written lazily, on the
+first step that works, so a run whose first step fails leaves the list exactly
+as it found it. The alternative, rolling the prefix back, was rejected: it
+throws away verified work to tidy a list the user is about to edit anyway, and
+the log already says where the run stopped.
+
+**The dialog stays open on a failure**, because its whole value at that moment
+is the log saying which step broke and why; closing over it would put the user
+back where they started with a half-filled list. It does not offer to try the
+same list again — a second try would run, and insert, the prefix a second time
+— so the button stays down until the user regenerates.
+
+**The store's `insertGeneratedSteps` is gone**, replaced by `verifyGeneratedSteps`:
+one IPC call rather than one insert per step, so ordering is the backend's and
+not a race between invokes, and the same re-read-and-diff afterwards so what
+landed glows. `check:step-glow` now pins that the dialog is wired to the
+verifying path.
+
+**Where the proof lives.** The backend half is `e2e/verified-steps.spec.ts`,
+driven through the real app: a stated step list — one that resolves, one that
+cannot — against a live session on a real page, asserting what was inserted,
+what the page shows, and that the verified click was recorded once and not
+again by capture. The model is not in that loop on purpose: the decision under
+test is what the app does with a list, and a stated list is exactly the list a
+model produces on a page it half understood. The dialog half is
+`generate-steps-dialog.test.tsx` with the outcome stated through `onVerify`.
+One bug the spec found before it ever saw a model: the loop's `label` shadowed
+the group's, and the group row carried the first step's description.
+
+**Left for later.** The plan's `parse-llm-response` drops-`ctx` defect had
+already been fixed (#179). Verification runs steps for real, so a step with a
+side effect (a purchase, a delete) is performed during verification exactly as
+it would be during replay — the same trade every replay in the trainer makes,
+and the reason the dialog says "Try", not "Add".
+
 ### 2026-08-22 — A step inside a web component says so, and three more places the trainer and the run disagreed
 
 The rest of the shadow DOM phase after #229. What shipped there made a click
@@ -74,6 +138,7 @@ revert.
 **Left alone, on purpose.** Closed roots: neither engine reaches them, and a
 row pins that both say nothing. A click on a host whose root is closed records
 the host, and that is correct — it is the element the page exposes.
+
 
 ### 2026-08-22 — A base URL cannot re-point a recorded test, so the origin becomes a variable instead
 

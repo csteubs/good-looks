@@ -212,7 +212,7 @@ export function TrainerPanelView() {
     enterFlowScope,
     exitFlowScope,
     setFlowCursor,
-    insertGeneratedSteps,
+    verifyGeneratedSteps,
     reorderStep,
     updateStep,
     setCursor,
@@ -826,7 +826,7 @@ export function TrainerPanelView() {
         open={aiOpen}
         url={state.url}
         onOpenChange={setAiOpen}
-        onInsert={(steps) => void insertGeneratedSteps(steps)}
+        onVerify={verifyGeneratedSteps}
       />
 
       {/* `refiningStepId` is per-WINDOW state in the store, which is exactly why

@@ -58,7 +58,7 @@ const actions = {
   setAssert: vi.fn(),
   deleteStep: vi.fn(),
   insertStep: vi.fn(),
-  insertGeneratedSteps: vi.fn(async () => {}),
+  verifyGeneratedSteps: vi.fn(async () => ({ inserted: 0, results: [] })),
   reorderStep: vi.fn(),
   updateStep: vi.fn(),
   applyHeal: vi.fn(),
