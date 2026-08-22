@@ -19,6 +19,10 @@ export interface FlakeRun {
   startedAt: number;
   /** "baseline-update" events are not executions and are filtered out. */
   kind?: string;
+  /** How the run ended when it did not end on its own. `"user"` runs are
+   *  filtered out — their outcome is a keystroke, not evidence about the test.
+   *  `"process-timeout"` is kept: that run really did fail. */
+  endedBy?: "user" | "process-timeout";
   datasetId?: string;
   datasetName?: string;
 }

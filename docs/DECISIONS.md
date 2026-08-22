@@ -10,6 +10,46 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-21 — A stopped run is not evidence, and the reason outlives the handle
+
+R19 of [plans/test-runner-improvements.md](plans/test-runner-improvements.md).
+`status` came from the exit code and nothing else, so a run the user stopped and
+a run killed for outrunning its budget both landed in "failed" beside a genuine
+assertion failure.
+
+**The cost was the flake verdict, which is the one that sends someone hunting.**
+`analyseFlake` counts TRANSITIONS between consecutive runs, so a stop between
+two passes manufactures two of them out of a keystroke. Three interrupted runs
+over a week move an eight-run test to "flaky" — a verdict that means "go and
+find the race condition", about a test that has none. `endedBy` is now on the
+`RunRecord` and `"user"` runs are filtered out of the analysis alongside
+baseline-update events, which were already excluded for the same reason: they
+are not evidence about the test.
+
+**`"process-timeout"` is deliberately NOT excluded.** That run really did fail —
+the test hung — and that is exactly the intermittent behaviour the analysis
+exists to surface. Excluding it would be the opposite mistake: hiding a real
+flake rather than inventing one. Both directions are pinned, because
+over-excluding is the likelier error to make while fixing the under-excluding
+one.
+
+**The reason lives beside the handle, not on it.** The obvious design is a field
+on `RunHandle`, and it is wrong: `stop()` deletes the handle immediately and
+`isRunning` is a poll the Stop button reads, so keeping the handle alive to
+carry a reason would make the button lag until the killed process actually
+closed — trading a data bug for a UI one. `endReasons` is a separate map that
+outlives the handle by the moment the teardown needs, and is cleared at the
+start of every `runCli`. That clear is load-bearing: `runCli` is also how a
+missing browser gets installed, under the SAME runId, so an install that timed
+out would otherwise attribute its death to the test run that followed it.
+
+**`killRun` exists so the ordering cannot be got wrong at a call site.** The
+reason must be recorded BEFORE the signal — `close` fires asynchronously and the
+teardown reads the map, so a reason set afterwards can lose the race. The
+failure would be silent and would look exactly like an ordinary failed run,
+which is the state the field was added to distinguish. Two call sites doing it
+by hand is two chances; one function is none.
+
 ### 2026-08-21 — A report says which step failed, and the log still does not travel
 
 R13 of [plans/test-runner-improvements.md](plans/test-runner-improvements.md).

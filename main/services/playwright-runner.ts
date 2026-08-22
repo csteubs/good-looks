@@ -98,6 +98,36 @@ interface RunHandle {
 
 const runs = new Map<string, RunHandle>();
 
+/**
+ * Why a run was killed, for the teardown that writes its RunRecord.
+ *
+ * SEPARATE FROM `runs` ON PURPOSE. The obvious place is a field on the handle,
+ * but `stop()` deletes the handle immediately and `isRunning` is a poll the
+ * renderer's Stop button reads — so keeping the handle alive to carry a reason
+ * would make the button lag until the killed process actually closed. The
+ * reason has to outlive the handle by a moment, so it lives beside it.
+ *
+ * Cleared at the start of every `runCli`, which is what stops an install that
+ * timed out from attributing its death to the test run that follows it on the
+ * same runId.
+ */
+const endReasons = new Map<string, "user" | "process-timeout">();
+
+/**
+ * Kill a run and record WHY, in that order.
+ *
+ * One function rather than two call sites doing it by hand, because the order
+ * is a race and getting it wrong is silent: `close` fires asynchronously and
+ * the run's teardown reads `endReasons`, so a reason recorded after the signal
+ * can lose to the read it exists for. The result would be a run that looks
+ * like an ordinary failure — which is exactly the state this whole field was
+ * added to distinguish.
+ */
+function killRun(runId: string, child: ChildProcess, reason: "user" | "process-timeout"): void {
+  endReasons.set(runId, reason);
+  child.kill("SIGKILL");
+}
+
 /** Completion promises for runs currently in flight, keyed by runId, resolving
  *  to the Playwright exit code. `runs` only holds an entry while the child
  *  process is alive — it's empty during setup (browser install, spec
@@ -1034,6 +1064,11 @@ function runCli(
     // ELECTRON_RUN_AS_NODE makes that binary behave as plain node for the
     // child, so the Playwright CLI runs exactly as it would under `node`.
     // Without it this spawn would launch a second instance of the app.
+    // A stale reason here would belong to a PREVIOUS invocation on this runId —
+    // `runCli` is also how a missing browser gets installed, and that install
+    // runs under the same id. An install that timed out must not make the test
+    // run that follows it look like it timed out too.
+    endReasons.delete(runId);
     const child = spawn(process.execPath, [cliPath, ...args], {
       cwd,
       env: { ...env, ELECTRON_RUN_AS_NODE: "1" },
@@ -1042,7 +1077,7 @@ function runCli(
 
     const timer = setTimeout(() => {
       emitOutput(runId, "system", "\nTimed out — stopping test run.\n");
-      child.kill("SIGKILL");
+      killRun(runId, child, "process-timeout");
     }, processTimeoutMs);
 
     child.stdout?.on("data", (d: Buffer) => {
@@ -1582,6 +1617,10 @@ export const playwrightRunner = {
       } catch (err) {
         emitOutput(runId, "system", "\nError: " + String(err) + "\n");
       } finally {
+        // Read and cleared together — the map must not outlive the run it
+        // describes, or the next run on this id inherits the reason.
+        const endedBy = endReasons.get(runId);
+        endReasons.delete(runId);
         runs.delete(runId);
         // Remove the temp capture spec (best-effort).
         if (tempSpecPath) {
@@ -1778,6 +1817,7 @@ export const playwrightRunner = {
               // in this function — the notification and the alert named the
               // step and nothing that outlived the process could.
               failedStepLabel: failedLabel,
+              endedBy,
             },
             logText,
           );
@@ -1893,7 +1933,10 @@ export const playwrightRunner = {
   stop(runId: string): void {
     const handle = runs.get(runId);
     if (handle) {
-      handle.child.kill("SIGKILL");
+      // The reason lives outside the handle, which goes on the next line: the
+      // run's own teardown writes the RunRecord and needs to know a person
+      // ended this rather than an assertion.
+      killRun(runId, handle.child, "user");
       runs.delete(runId);
     }
   },
