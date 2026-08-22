@@ -2095,6 +2095,13 @@ function defaultFor(channel: string): unknown {
  * Nothing real happens: no browser, no Playwright, no file written. The banner
  * says so, permanently.
  */
+/** Pending ticks of each scripted run, so `runner:stop` can cancel them. The
+ *  real Stop is a SIGKILL: the reporter dies with the step it opened still
+ *  open, and no `end` for it ever arrives. The preview has to leave that step
+ *  open too, or the one state Stop produces — a run that finished on a step
+ *  nothing closed — is unreachable in a tab. */
+const pendingRunTicks = new Map<string, ReturnType<typeof setTimeout>[]>();
+
 function startFakeRun(
   payload: Payload,
   state: ReturnType<typeof seed>,
@@ -2114,9 +2121,11 @@ function startFakeRun(
     stored && stored.status !== "passed" ? Math.min(steps.length - 1, Math.max(0, steps.length - 2)) : -1;
 
   let at = 0;
+  const ticks: ReturnType<typeof setTimeout>[] = [];
+  pendingRunTicks.set(runId, ticks);
   const later = (fn: () => void) => {
     at += tickMs;
-    setTimeout(fn, at);
+    ticks.push(setTimeout(fn, at));
   };
 
   emit("runner:output", { runId, chunk: `Running ${steps.length} steps…\n` });
@@ -2141,13 +2150,14 @@ function startFakeRun(
     // run".
     if (index === failAt) break;
   }
-  later(() =>
+  later(() => {
+    pendingRunTicks.delete(runId);
     emit("runner:done", {
       runId,
       code: failAt === -1 ? 0 : 1,
       recordId: stored?.id,
-    }),
-  );
+    });
+  });
   // The real runner persists the record and then broadcasts `runs:changed`,
   // which is what refreshes the six run-derived caches (see
   // `renderer/lib/run-derived-cache.ts`). Omitting it here made the preview
@@ -2156,6 +2166,25 @@ function startFakeRun(
   // nothing in a tab could make the event happen.
   later(() => emit("runs:changed", {}));
   return { runId };
+}
+
+/** Stop a scripted run where it stands. Cancels every tick still pending and
+ *  reports the run done with a non-zero code — and deliberately NO `end` for
+ *  the step that was in flight, which is what the real runner's SIGKILL
+ *  leaves behind. A preview that tidily closed the step first would be unable
+ *  to show the bug Stop used to cause: a finished run whose last step kept
+ *  its spinner. Nothing to stop is a no-op, as `runner:stop` is in the app. */
+function stopFakeRun(
+  payload: Payload,
+  emit: (channel: string, value: unknown) => void,
+): void {
+  const runId = String(payload?.runId ?? "");
+  const ticks = pendingRunTicks.get(runId);
+  if (!ticks) return;
+  pendingRunTicks.delete(runId);
+  for (const t of ticks) clearTimeout(t);
+  emit("runner:output", { runId, chunk: "\nStopped by user.\n" });
+  emit("runner:done", { runId, code: -1 });
 }
 
 /**
@@ -2248,6 +2277,7 @@ export function installPreviewBridge(options: PreviewBridgeOptions = {}): Previe
   const invoke = async (channel: string, ...args: unknown[]): Promise<unknown> => {
     diagnostics.calls.push(channel);
     if (channel === "runner:run") return startFakeRun(args[0] as Payload, state, emit, runTickMs);
+    if (channel === "runner:stop") return stopFakeRun(args[0] as Payload, emit);
     if (channel === "llm:chat") return startFakeChat(emit);
     // Refine mode, which in the real app pauses the session and waits for the
     // user to click an element in the training browser. There is no training

@@ -31,6 +31,34 @@ import type {
 
 export type RunStepStatus = "running" | "passed" | "failed";
 
+/** The per-step map as a run LEAVES it: nothing is still `running`.
+ *
+ *  A step's status comes from a `begin`/`end` pair the reporter writes, and the
+ *  `end` is not guaranteed to arrive. Stop sends SIGKILL, so the reporter is
+ *  dead before it can close the step it opened; a browser crash or a
+ *  process-timeout kill ends the same way. Without this the row kept its
+ *  spinner after the run had finished — cyan rail, `Loader2` turning, no red on
+ *  the description — and the AI debug prompt (which reads the earliest `failed`
+ *  index) had no failing step to point at.
+ *
+ *  The exit code decides the settled value. Non-zero: the open step is the one
+ *  that was under way when the run died, which is the failing step. Zero: the
+ *  run passed, so whatever it was doing passed with it — marking it failed
+ *  would put a red row under a green verdict. Steps that never began stay
+ *  absent; they did not run, and an unmarked row is how that is shown. */
+export function settleStepStatus(
+  stepStatus: Record<number, RunStepStatus>,
+  code: number,
+): Record<number, RunStepStatus> {
+  let settled: Record<number, RunStepStatus> | null = null;
+  for (const [key, status] of Object.entries(stepStatus)) {
+    if (status !== "running") continue;
+    if (!settled) settled = { ...stepStatus };
+    settled[Number(key)] = code === 0 ? "passed" : "failed";
+  }
+  return settled ?? stepStatus;
+}
+
 /** How long a replayed step's pass/fail outline stays on its row.
  *
  *  Deliberately the same 2500ms as the per-row replay tint in step-row.tsx, so
@@ -471,7 +499,17 @@ export function RecorderProvider({
       ({ runId, code, recordId }) => {
         setRuns((prev) => {
           const cur = prev[runId] ?? { lines: [], running: false, code, stepStatus: {}, startedAt: Date.now() };
-          return { ...prev, [runId]: { ...cur, running: false, code, recordId, finishedAt: Date.now() } };
+          return {
+            ...prev,
+            [runId]: {
+              ...cur,
+              running: false,
+              code,
+              recordId,
+              finishedAt: Date.now(),
+              stepStatus: settleStepStatus(cur.stepStatus, code),
+            },
+          };
         });
       },
     );
