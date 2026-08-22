@@ -87,6 +87,30 @@
   --gl-sel-bg: rgba(255, 255, 255, 0.055);
   --gl-sel-ring: rgba(255, 255, 255, 0.16);
 
+  /* ── Code ──────────────────────────────────────────────────────────────
+     Syntax colour for the Script IDE (B-phase, 2026-08-22). The one place
+     the palette spends colour on something that is not an outcome, and it
+     is bounded: these are read only inside `.gl-script-ide`, never by chrome.
+     Every hue is kept BELOW the status hues in saturation and clear of them
+     in angle — keywords sit between cyan and violet, strings between phos
+     and tx-1, numbers between amber and tx-1 — so a red gutter number or a
+     phosphor run marker beside the code still reads as the only coloured
+     thing that means something. Comments and punctuation are the text ramp
+     dimmed, not a hue.
+
+     `--gl-code-size`/`--gl-code-line` are the ONE pair the editor's two
+     layers (gutter and content) are sized from; `check:script-ide-layout`
+     refuses a literal px in either. */
+  --gl-code-kw: #a9b8ff;
+  --gl-code-str: #b9d8a5;
+  --gl-code-num: #f2c48f;
+  --gl-code-lit: #cdb8ff;
+  --gl-code-cmt: rgba(233, 237, 238, 0.45);
+  --gl-code-punct: rgba(233, 237, 238, 0.6);
+  --gl-code-active: rgba(255, 255, 255, 0.035);
+  --gl-code-size: 13px;
+  --gl-code-line: 18px;
+
   /* ── AI ────────────────────────────────────────────────────────────────
      AI IS NOT A STATUS, SO IT GETS A TREATMENT RATHER THAN A COLOUR — the
      holo gradient, on borders and small marks only.

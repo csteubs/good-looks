@@ -33,6 +33,7 @@
 @import "./theme/shell.css";
 @import "./theme/shared.css";
 @import "./theme/screens.css";
+@import "./theme/editor.css";
 
 /* Tell Tailwind to scan all local renderer window files for class names */
 @source "./**/*.{ts,tsx}";

@@ -285,6 +285,7 @@ function walk(dir: string, out: string[] = []): string[] {
     "shell.css",
     "shared.css",
     "screens.css",
+    "editor.css",
   ]) {
     assert(
       new RegExp(`@import\\s+"\\./theme/${sheet.replace(".", "\\.")}"`).test(styles),
