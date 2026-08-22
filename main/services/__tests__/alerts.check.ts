@@ -34,6 +34,7 @@ import { insightsSlackUrlStore } from "../insights/insights-slack-url-store.js";
 import { setEncryptionAvailable } from "./shell-backend-stub.js";
 import { recorderSettingsStore } from "../recorder-settings-store.js";
 import { shopifySignatureStore } from "../shopify-signature-store.js";
+import { DEEP_LINK_SCHEME, parseDeepLink } from "../../../shared/deep-link.mjs";
 import { hostOfUrl, validateWebhookUrl } from "../webhook-url-store.js";
 import { webhookUrlStore } from "../webhook-url-store.js";
 
@@ -50,7 +51,7 @@ function assert(condition: boolean, label: string): void {
 
 // ── Clean runs stay quiet ────────────────────────────────────────────
 assert(
-  buildAlertPayload({ kind: "run", testName: "T", status: "passed", changedSteps: 0 }) === null,
+  buildAlertPayload({ kind: "run", testId: "t1", runId: "r1", testName: "T", status: "passed", changedSteps: 0 }) === null,
   "a passing run with no visual change produces NO alert",
 );
 assert(
@@ -66,6 +67,8 @@ assert(
 // ── Problems do alert ────────────────────────────────────────────────
 const failedRun = buildAlertPayload({
   kind: "run",
+  testId: "t1",
+  runId: "r1",
   testName: "Checkout",
   status: "failed",
   changedSteps: 0,
@@ -81,6 +84,8 @@ assert(failedRun!.detail.browser === "firefox", "detail carries the browser");
 
 const changedRun = buildAlertPayload({
   kind: "run",
+  testId: "t1",
+  runId: "r1",
   testName: "Home",
   status: "passed",
   changedSteps: 2,
@@ -128,6 +133,8 @@ const SECRET = "hunter2-SUPERSECRET";
 const planted: Alert[] = [
   {
     kind: "run",
+    testId: "t1",
+    runId: "r1",
     testName: "Login",
     status: "failed",
     changedSteps: 0,
@@ -168,6 +175,10 @@ const SAFE_RUN_KEYS = new Set([
   "failedStep",
   "durationMs",
   "browser",
+  // Both app-minted ids, and a URL built only from them. Neither carries page
+  // content, a log line or a path on disk.
+  "runId",
+  "link",
 ]);
 assert(
   Object.keys(failedRun!.detail).every((k) => SAFE_RUN_KEYS.has(k)),
@@ -186,6 +197,55 @@ const SAFE_BATCH_KEYS = new Set([
 assert(
   Object.keys(failedBatch!.detail).every((k) => SAFE_BATCH_KEYS.has(k)),
   `batch detail contains only known-safe keys (got ${Object.keys(failedBatch!.detail).join(",")})`,
+);
+
+// ── The deep link (R30) ──────────────────────────────────────────────
+//
+// The link is the field that turns a notification into a jump, so its ABSENCE
+// is a silent regression: the message still reads correctly and still names the
+// failing step, and the only thing missing is the ability to act on it.
+//
+// Its shape matters more than its presence. This payload is the app's one
+// automatic egress, and it goes to an endpoint the user configured but does not
+// control the reading of. A link is the natural place for an http URL to appear
+// by accident — so assert not merely that a link is there, but that it is a
+// `goodlooks://` URL and nothing else.
+
+assert(
+  typeof failedRun!.detail.link === "string" && failedRun!.detail.link.length > 0,
+  "a failed run's detail carries a link",
+);
+assert(
+  String(failedRun!.detail.link).startsWith(`${DEEP_LINK_SCHEME}://`),
+  `the link is a ${DEEP_LINK_SCHEME}:// URL — an http link in this payload would be ` +
+    "a route out of the machine that nothing else in the app opens",
+);
+assert(
+  !/https?:\/\//.test(JSON.stringify(failedRun!.detail)),
+  "no http(s) URL rides anywhere in the run detail",
+);
+assert(
+  failedRun!.text.includes(String(failedRun!.detail.link)),
+  "…and the link is in the text too, since most webhook consumers render only that",
+);
+
+// Paired with the parser, so the two cannot drift into producing links that
+// open nothing. `buildDeepLink` and `parseDeepLink` live together in shared/
+// for exactly this reason; this is the assertion that keeps them honest at the
+// one call site that sends a link off the machine.
+{
+  const target = parseDeepLink(String(failedRun!.detail.link));
+  assert(
+    target !== null && target.testId === "t1" && target.runId === "r1",
+    `the emitted link parses back to the run it names (got ${JSON.stringify(target)})`,
+  );
+}
+
+// A visual-change alert is not a failure and still deserves the jump.
+assert(
+  typeof changedRun!.detail.link === "string" &&
+    String(changedRun!.detail.link).startsWith(`${DEEP_LINK_SCHEME}://`),
+  "a visual-change run carries a link too",
 );
 
 // ── Slack/Discord compatibility ──────────────────────────────────────

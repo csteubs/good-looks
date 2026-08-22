@@ -1847,6 +1847,11 @@ export const playwrightRunner = {
         if (!params.batchId) {
           void sendAlert({
             kind: "run",
+            testId: rec.id,
+            // The RUN's id, not `runId` — that is the test id, which every run
+            // of this test shares, and a link built from it would open the
+            // newest run rather than the one that fired this alert.
+            runId: recordId,
             testName: rec.name,
             status: runStatus,
             changedSteps,

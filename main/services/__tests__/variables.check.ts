@@ -195,6 +195,8 @@ async function main(): Promise<void> {
   // ── 5. A secret never reaches the outgoing webhook ───────────────────────
   const payload = buildAlertPayload({
     kind: "run",
+    testId: "t1",
+    runId: "r1",
     testName: "login",
     status: "failed",
     changedSteps: 0,

@@ -10,6 +10,49 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-21 — The run alert carries a link, and the ids that build it are required
+
+R30 of [plans/test-runner-improvements.md](plans/test-runner-improvements.md).
+The alert webhook is the app's one automatic egress, and it described a failure
+without offering any way to reach it: at 09:00 a `❌ Checkout failed — Failed at:
+Click Place order` meant opening the app, finding the test in the library rail,
+opening the run panel and scrolling the history table for the 02:00 run.
+
+**`testId` and `runId` are REQUIRED on `RunAlert`, not optional.** The link is
+the entire point of the change, and its absence is a silent regression — the
+message still reads correctly and still names the failing step; only the ability
+to act on it goes missing. Making the ids optional would have compiled at every
+call site and produced a payload that looks right. Making them required turned
+the question over to the type-checker, which immediately named all three fixtures
+that had to be updated.
+
+**The run id is `recordId`, not `runId`.** Inside `playwright-runner` the
+variable called `runId` is the TEST's id, which every run of that test shares —
+a link built from it would open the newest run rather than the one that fired
+the alert. The two are one identifier apart and the wrong one produces a link
+that works, which is why the check round-trips the emitted URL through
+`parseDeepLink` and asserts the ids come back in the right fields. That
+assertion was verified by swapping them: nothing else goes red.
+
+**The step is deliberately not in the link, even when `failedLabel` is known.**
+`buildDeepLink` takes ids; `failedLabel` is a human-readable string, not a
+stepId. A link that selects the run is correct, and one that guessed at a step
+would open the wrong row confidently.
+
+**`check:alerts` grew with the payload, which is the standing rule for this
+file.** The detail's key set is closed by design, so adding two keys means
+widening `SAFE_RUN_KEYS` — and a widened allowlist is exactly where a future
+field slips in unexamined. The new assertions therefore say more than "a link is
+present": the link must be a `goodlooks://` URL, and NO http(s) URL may appear
+anywhere in the detail. A link field is the natural place for an outbound URL to
+appear by accident, and this payload goes to an endpoint the user configured but
+does not control the reading of.
+
+**Not extended to the batch alert.** A batch has no single run to select, and
+there is no deep-link route for a batch — inventing one to make the two alerts
+symmetrical would add a route to the parser (which is the app's whole
+untrusted-input surface) for a link nobody asked for.
+
 ### 2026-08-21 — A report can name which runs it covers, and be written without a person
 
 R1 of [plans/test-runner-improvements.md](plans/test-runner-improvements.md).
