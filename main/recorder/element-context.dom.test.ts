@@ -258,6 +258,23 @@ describe("buildPicked — the signals offered, and their prices", () => {
     expect(s?.count, "scoping to the billing card leaves one Edit button").toBe(1);
   });
 
+  it("offers a landmark by its tag, not only by an explicit role attribute", () => {
+    // GL_SCOPE_ROLES always listed navigation and main; roleOf only derived a
+    // role from five tags, so a bare <nav> was never offered as a container
+    // and the user was left with the section's class names.
+    install(`
+      <nav><button>Edit</button></nav>
+      <main><button>Edit</button></main>
+    `);
+    const p = pick(document.querySelector("nav button"));
+    const s = signal(p, "within", "nav");
+    expect(s, "a <nav> with no role attribute is offered as a container").toBeDefined();
+    // No name: navigation is not a name-from-content role, so the container
+    // must not carry the button's text as its name.
+    expect(s?.ctx.within).toEqual({ k: "role", role: "navigation" });
+    expect(s?.count, "scoping to the nav leaves one Edit button").toBe(1);
+  });
+
   it("prices a signal that does NOT disambiguate honestly", () => {
     // `class="btn edit"` is on both buttons. Offering it without a count would
     // invite the user to pin a property that narrows nothing — and because

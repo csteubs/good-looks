@@ -31,7 +31,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { buildCaptureScript, WORLD_STATE_KEY } from "./capture-script.js";
+import { buildCaptureScript, DOM_HELPERS, UNIQUENESS_HELPERS, WORLD_STATE_KEY } from "./capture-script.js";
 import { normalizeRawSteps } from "./types.js";
 import type { Locator } from "./types.js";
 import { generateSpec } from "../services/script-generator.js";
@@ -106,18 +106,73 @@ function countMatches(loc: Locator): number {
     return hits.filter((el) => !hits.some((o) => o !== el && el.contains(o))).length;
   }
   if (loc.k === "xpath") return 1; // positional by construction
-  // role: the tags roleOf() derives from, plus explicit roles.
-  return [...document.querySelectorAll("[role],a[href],button,input,select,textarea")].filter(
-    (el) => {
-      const tag = el.tagName.toLowerCase();
-      const role =
-        el.getAttribute("role") ??
-        (tag === "a" && el.hasAttribute("href") ? "link" : tag === "button" ? "button" : "");
-      if (role !== loc.role) return false;
-      if (!loc.name) return true;
-      return has(el.getAttribute("aria-label") ?? el.textContent, loc.name);
-    },
-  ).length;
+  // role: judged by a SEPARATE reading of Playwright's table — a switch on the
+  // tag, and the name-from-content rule as a list of its own — so a mistake in
+  // the script's table cannot be mirrored here. Only the tags the rows below
+  // use; the browser's own answer for the whole table is e2e/assert-parity.
+  const implicitRole = (el: Element): string => {
+    const tag = el.tagName.toLowerCase();
+    switch (tag) {
+      case "a":
+        return el.hasAttribute("href") ? "link" : "";
+      case "button":
+        return "button";
+      case "h1":
+      case "h2":
+      case "h3":
+      case "h4":
+      case "h5":
+      case "h6":
+        return "heading";
+      case "img":
+        return el.getAttribute("alt") === "" ? "presentation" : "img";
+      case "li":
+        return "listitem";
+      case "nav":
+        return "navigation";
+      case "main":
+        return "main";
+      case "p":
+        return "paragraph";
+      case "ul":
+      case "ol":
+        return "list";
+      case "input": {
+        const ty = (el as HTMLInputElement).type;
+        if (ty === "search") return "searchbox";
+        if (ty === "checkbox" || ty === "radio") return ty;
+        if (ty === "submit" || ty === "button") return "button";
+        return "textbox";
+      }
+      case "select":
+        return "combobox";
+      case "textarea":
+        return "textbox";
+      default:
+        return "";
+    }
+  };
+  // Playwright's allowsNameFromContent — the roles whose name is their text.
+  const NAMED_BY_CONTENT = new Set(["button", "heading", "link", "option", "cell", "row", "checkbox", "radio", "tab", "menuitem"]);
+  return [...document.querySelectorAll("*")].filter((el) => {
+    const role = el.getAttribute("role") ?? implicitRole(el);
+    if (role !== loc.role) return false;
+    if (!loc.name) return true;
+    const name =
+      el.getAttribute("aria-label") ??
+      (el.tagName === "IMG" ? el.getAttribute("alt") : NAMED_BY_CONTENT.has(role) ? el.textContent : "");
+    return has(name, loc.name);
+  }).length;
+}
+
+/** The page-side resolver as the replayer and the heal probe run it, for the
+ *  rows that ask which element a role resolves to rather than what a click
+ *  records. Same strings the capture script is built from. */
+function resolve(loc: Locator): Element[] {
+  const fn = eval(
+    `(function () { ${DOM_HELPERS} ${UNIQUENESS_HELPERS} return matchesFor; })()`,
+  ) as (l: Locator) => Element[];
+  return fn(loc);
 }
 
 /** The one property that matters: whatever locator was recorded, Playwright
@@ -336,5 +391,101 @@ describe("the generated spec", () => {
     const hostile = { k: "text", v: "x", nth: "0); process.exit(1); (" } as unknown as Locator;
     const spec = specFor(hostile);
     expect(spec).not.toContain("process.exit");
+  });
+});
+
+// ── The roles Playwright derives from a tag ───────────────────────────────
+//
+// Until 2026-08-22 `roleOf` knew five tags. An <h1> had no role, so a click
+// on it recorded a positional path and an assertion on it a substring of its
+// text — and the substring was a strict-mode violation the moment the page
+// held another element containing the word. Playwright's own error named the
+// locator it would have used: getByRole('heading', { name: 'Mountain' }).
+//
+// The table is a transcription, and a transcription's failure mode is silent:
+// a wrong entry verifies as unique against itself. The fast half is here; the
+// browser's own answer for every conditional entry is e2e/assert-parity.
+
+describe("the roles Playwright derives from a tag", () => {
+  it("records a heading by role and name where its text is a substring of other text", () => {
+    // The shape that failed against unsplash.com: a heading above two tag
+    // links whose text contains the word. getByText("Mountain") resolves to
+    // all three; the heading's role identifies it on its own.
+    install(`
+      <main>
+        <h1>Mountain</h1>
+        <a href="/s/mountains">mountains</a>
+        <a href="/s/mountain-peak">mountain peak</a>
+      </main>
+    `);
+    const loc = clickAndCapture(document.querySelector("h1"));
+    expect(loc).toEqual({ k: "role", role: "heading", name: "Mountain" });
+    expectRunnable(loc);
+  });
+
+  it("records an image by role and alt", () => {
+    install(`<img alt="A tiger" src="data:,"><img alt="A lion" src="data:,">`);
+    const loc = clickAndCapture(document.querySelector("img"));
+    expect(loc).toEqual({ k: "role", role: "img", name: "A tiger" });
+    expectRunnable(loc);
+  });
+
+  it("does not name a list item by its content, because Playwright does not", () => {
+    // listitem is not a name-from-content role: getByRole("listitem", { name:
+    // "Beta" }) would verify unique against a table that said otherwise and
+    // match nothing in the run. The text locator is the one that runs.
+    install(`<ul><li>Alpha</li><li>Beta</li></ul>`);
+    const loc = clickAndCapture(document.querySelectorAll("li")[1]);
+    expect(loc).toEqual({ k: "text", v: "Beta" });
+    expectRunnable(loc);
+  });
+
+  it("does not turn an ambiguous paragraph into an indexed role locator", () => {
+    // Every <p> has the paragraph role now. A nameless getByRole("paragraph")
+    // .nth(1) is the positional path with a better-looking name — an index
+    // into DOM order, breaking the same way — so what the recorder wrote
+    // before is what it still writes: the unique positional path, which its
+    // existing rule prefers over an indexed text locator.
+    install(`<p>Same</p><p>Same</p>`);
+    const loc = clickAndCapture(document.querySelectorAll("p")[1]);
+    expect(loc?.k, "no role locator for a paragraph").not.toBe("role");
+    expect(loc).toEqual({ k: "css", v: "html > body > p:nth-of-type(2)" });
+    expectRunnable(loc);
+  });
+
+  it("a header inside a landmark is not a banner; one outside is", () => {
+    install(`
+      <header id="top">Site</header>
+      <main><header id="inner">Section</header></main>
+    `);
+    const banners = resolve({ k: "role", role: "banner" });
+    expect(banners.map((el) => el.id)).toEqual(["top"]);
+  });
+
+  it("a section is a region only with an accessible name, a form a form only with one", () => {
+    install(`
+      <section id="anon"><p>a</p></section>
+      <section id="named" aria-label="Billing"><p>b</p></section>
+      <form id="plain"><input></form>
+      <form id="labelled" aria-label="Search"><input></form>
+    `);
+    expect(resolve({ k: "role", role: "region" }).map((el) => el.id)).toEqual(["named"]);
+    expect(resolve({ k: "role", role: "form" }).map((el) => el.id)).toEqual(["labelled"]);
+  });
+
+  it("an alt=\"\" image is presentation, not img", () => {
+    install(`<img id="deco" alt="" src="data:,"><img id="photo" alt="A photo" src="data:,">`);
+    expect(resolve({ k: "role", role: "img" }).map((el) => el.id)).toEqual(["photo"]);
+  });
+
+  it("table headers and cells take the roles the table's own role gives them", () => {
+    install(`
+      <table><tr><th id="col" scope="col">Name</th><th id="row" scope="row">R</th><td id="cell">v</td></tr></table>
+      <table role="grid"><tr><td id="gridcell">g</td></tr></table>
+    `);
+    expect(resolve({ k: "role", role: "columnheader" }).map((el) => el.id)).toEqual(["col"]);
+    expect(resolve({ k: "role", role: "rowheader" }).map((el) => el.id)).toEqual(["row"]);
+    expect(resolve({ k: "role", role: "cell" }).map((el) => el.id)).toEqual(["cell"]);
+    expect(resolve({ k: "role", role: "gridcell" }).map((el) => el.id)).toEqual(["gridcell"]);
   });
 });

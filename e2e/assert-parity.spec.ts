@@ -46,6 +46,21 @@ const FIXTURE = `<!doctype html>
 <body>
   <h1 data-testid="heading">Checkout</h1>
   <p data-testid="ws">  spaced   out  </p>
+  <!-- Roles Playwright derives from a TAG. The heading beside a link that
+       contains its word is the shape that failed against unsplash.com. -->
+  <h2 data-testid="h-mountain">Mountain</h2>
+  <a href="#mountains">mountains</a>
+  <ul><li data-testid="li-one">North item</li></ul>
+  <nav data-testid="nav-main"><a href="#n">Nav link</a></nav>
+  <header data-testid="hdr-top">Top header</header>
+  <main data-testid="main"><header data-testid="hdr-inner">Inner header</header></main>
+  <section data-testid="sec-anon"><span>anon section</span></section>
+  <section data-testid="sec-named" aria-label="Named section"><span>named section</span></section>
+  <form data-testid="form-anon"><input aria-label="Plain field" /></form>
+  <form data-testid="form-named" aria-label="Named form"><input aria-label="Labelled field" /></form>
+  <img data-testid="img-deco" alt="" width="8" height="8" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" />
+  <img data-testid="img-named" alt="A photo" width="8" height="8" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" />
+  <table><thead><tr><th scope="col" data-testid="th-col">Column name</th></tr></thead><tbody><tr><td data-testid="td-plain">cell value</td></tr></tbody></table>
   <button data-testid="only">Save</button>
   <button data-testid="dupe-a">Duplicate</button>
   <button data-testid="dupe-b">Duplicate label</button>
@@ -291,6 +306,26 @@ function rows(origin: string): Row[] {
     { label: "a multiple select is a listbox", step: s({ assert: "visible", locator: { k: "role", role: "listbox", name: "Pick tags" } }), expected: true },
     { label: "a size>1 select is NOT a combobox", step: s({ assert: "visible", locator: { k: "role", role: "combobox", name: "Pick a region" } }), expected: false },
     { label: "count with a unique testid", step: s({ assert: "count", count: 1, locator: { k: "testid", v: "only" } }), expected: true },
+
+    // ---- roles Playwright derives from a TAG ------------------------------
+    // `roleOf` is a transcription of Playwright's element-to-role table, and
+    // a transcription verifies as unique against itself. These rows are the
+    // real browser saying which entries hold — the conditional ones most of
+    // all. Strict mode does the counting: a `true` row on a bare role means
+    // EXACTLY one element carries it, so "a top-level header is a banner"
+    // also proves the header inside <main> is not.
+    { label: "a heading is found by role and name beside a link containing the word", step: s({ assert: "visible", locator: { k: "role", role: "heading", name: "Mountain" } }), expected: true },
+    { label: "…where the substring text locator resolves to both and is refused", step: s({ assert: "visible", locator: { k: "text", v: "Mountain" } }), expected: false },
+    { label: "a list item takes no name from its content", step: s({ assert: "visible", locator: { k: "role", role: "listitem", name: "North item" } }), expected: false },
+    { label: "a bare list item resolves", step: s({ assert: "visible", locator: { k: "role", role: "listitem" } }), expected: true },
+    { label: "a <nav> is a navigation landmark", step: s({ assert: "visible", locator: { k: "role", role: "navigation" } }), expected: true },
+    { label: "a top-level header is a banner, and one inside main is not", step: s({ assert: "visible", locator: { k: "role", role: "banner" } }), expected: true },
+    { label: "a section is a region only with an accessible name", step: s({ assert: "visible", locator: { k: "role", role: "region" } }), expected: true },
+    { label: "a form is a form only with an accessible name", step: s({ assert: "visible", locator: { k: "role", role: "form" } }), expected: true },
+    { label: "an alt=\"\" image is presentation, so exactly one img remains", step: s({ assert: "visible", locator: { k: "role", role: "img" } }), expected: true },
+    { label: "an image is named by its alt", step: s({ assert: "visible", locator: { k: "role", role: "img", name: "A photo" } }), expected: true },
+    { label: "a th with scope=col is a columnheader", step: s({ assert: "visible", locator: { k: "role", role: "columnheader", name: "Column name" } }), expected: true },
+    { label: "a td is a cell, named by its content", step: s({ assert: "visible", locator: { k: "role", role: "cell", name: "cell value" } }), expected: true },
   ];
 }
 

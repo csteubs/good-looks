@@ -374,10 +374,10 @@ export const UNIQUENESS_HELPERS = `
         );
       }
       if (loc.k === "role") {
-        // Explicit roles plus the tags roleOf() derives one from — the same set,
-        // so nothing roleOf can name is missed and the whole document is not
-        // walked for a role query.
-        var cands = scanAll("[role],a[href],button,input,select,textarea");
+        // Explicit roles plus every tag roleOf() can derive THIS role from —
+        // the selector comes from the same table roleOf reads, so nothing it
+        // can name is missed and the whole document is not walked for one.
+        var cands = scanAll(roleScanSelector(loc.role));
         return cands.filter(function (el) {
           if (roleOf(el) !== loc.role) return false;
           if (!loc.name) return true;
@@ -540,7 +540,7 @@ export const PICKED_HELPERS = `
     if (ph) out.push({ k: "placeholder", v: ph });
     var t = txt(el);
     if (t && t.length <= 40) out.push({ k: "text", v: t });
-    if (role && !nm) out.push({ k: "role", role: role });
+    if (role && !nm && bareRoleOk(role)) out.push({ k: "role", role: role });
     out.push({ k: "css", v: cssPath(el) });
     out.push({ k: "xpath", v: xpathFor(el) });
     return out;
@@ -856,6 +856,227 @@ export const DOM_HELPERS = `
     return al ? al.trim() : "";
   }
 
+  // ----- Roles, transcribed from PLAYWRIGHT's mapping -----
+  //
+  // Not from the ARIA spec, and the difference is not academic: getByRole is
+  // what the generated test runs against, so Playwright's table is the ground
+  // truth even where it departs from HTML-AAM. Every deviation here is a
+  // locator that records cleanly, verifies as unique against this same
+  // function, previews green in the trainer — and then matches nothing in the
+  // run. The whole path is self-consistent and wrong together, which is why a
+  // deviation survives: matchesFor grades uniqueness with this function, so
+  // the recorder is grading its own homework. Until 2026-08-22 the table held
+  // five tags, and an <h1> had no role at all — so a click on it recorded a
+  // positional path and an assertion on it a substring of its text, with
+  // getByRole("heading", { name }) never offered.
+  //
+  // Kept deliberately parallel to kImplicitRoleByTagName (and inputTypeToRole
+  // beside it) in playwright-core/lib/generated/injectedScriptSource.js, so a
+  // future reader can diff the two. A string is an unconditional role; a
+  // function decides at the element. The authority on whether an entry holds
+  // is e2e/assert-parity.spec.ts, where a real browser answers.
+
+  /** Landmarks that stop a header/footer inside them from being banner /
+   *  contentinfo — Playwright's kAncestorPreventingLandmark, verbatim. */
+  var GL_LANDMARK_BLOCKERS =
+    "article:not([role]), aside:not([role]), main:not([role]), nav:not([role]), section:not([role]), " +
+    "[role=article], [role=complementary], [role=main], [role=navigation], [role=region]";
+
+  /** The global aria-* attributes that make an alt="" image an img rather
+   *  than presentation — Playwright's kGlobalAriaAttributes, the entries that
+   *  apply to an image. */
+  var GL_GLOBAL_ARIA = [
+    "aria-atomic", "aria-busy", "aria-controls", "aria-current", "aria-describedby",
+    "aria-details", "aria-dropeffect", "aria-flowto", "aria-grabbed", "aria-hidden",
+    "aria-keyshortcuts", "aria-label", "aria-labelledby", "aria-live", "aria-owns",
+    "aria-relevant", "aria-roledescription"
+  ];
+
+  function hasExplicitName(el) {
+    return el.hasAttribute("aria-label") || el.hasAttribute("aria-labelledby");
+  }
+  function hasGlobalAria(el) {
+    for (var i = 0; i < GL_GLOBAL_ARIA.length; i++) {
+      if (el.hasAttribute(GL_GLOBAL_ARIA[i])) return true;
+    }
+    return false;
+  }
+  function hasTabIndex(el) {
+    return !isNaN(Number(String(el.getAttribute("tabindex"))));
+  }
+
+  /** Nearest ancestor matching sel, stepping out of an open shadow root to
+   *  its host the way Playwright's closestCrossShadow does. Starts ABOVE the
+   *  element: every caller asks about an ancestor. */
+  function closestAbove(el, sel) {
+    var node = el.parentElement || (el.parentNode && el.parentNode.host) || null;
+    while (node) {
+      if (node.nodeType === 1 && node.matches && node.matches(sel)) return node;
+      node = node.parentElement || (node.parentNode && node.parentNode.host) || null;
+    }
+    return null;
+  }
+
+  function cellRole(el) {
+    var table = closestAbove(el, "table");
+    var tr = table ? (table.getAttribute("role") || "") : "";
+    return tr === "grid" || tr === "treegrid" ? "gridcell" : "cell";
+  }
+
+  function inputRole(el) {
+    // The IDL property, not the attribute: el.type normalises an unknown or
+    // absent type to "text", which is what Playwright reads.
+    var ty = String(el.type || "text").toLowerCase();
+    // A text-ish input wired to a <datalist> is a combobox, not a textbox.
+    if (ty === "search") return el.hasAttribute("list") ? "combobox" : "searchbox";
+    if (ty === "email" || ty === "tel" || ty === "text" || ty === "url" || ty === "") {
+      var listId = el.getAttribute("list");
+      var listEl = listId ? document.getElementById(listId) : null;
+      return listEl && listEl.tagName === "DATALIST" ? "combobox" : "textbox";
+    }
+    // The only input with no role at all. Everything else has one.
+    if (ty === "hidden") return "";
+    // A file input is a BUTTON to Playwright, which is genuinely surprising
+    // and is why it is spelled out rather than left to the table below.
+    if (ty === "file") return "button";
+    if (ty === "checkbox") return "checkbox";
+    if (ty === "radio") return "radio";
+    if (ty === "number") return "spinbutton";
+    if (ty === "range") return "slider";
+    if (ty === "button" || ty === "image" || ty === "reset" || ty === "submit") return "button";
+    // password, date, datetime-local, month, week, time, color — Playwright's
+    // fallback, and the reason the spec-accurate "no role" answer is wrong here.
+    return "textbox";
+  }
+
+  var GL_IMPLICIT_ROLES = {
+    a: function (e) { return e.hasAttribute("href") ? "link" : ""; },
+    area: function (e) { return e.hasAttribute("href") ? "link" : ""; },
+    article: "article",
+    aside: "complementary",
+    blockquote: "blockquote",
+    button: "button",
+    caption: "caption",
+    code: "code",
+    datalist: "listbox",
+    dd: "definition",
+    del: "deletion",
+    details: "group",
+    dfn: "term",
+    dialog: "dialog",
+    dt: "term",
+    em: "emphasis",
+    fieldset: "group",
+    figure: "figure",
+    footer: function (e) { return closestAbove(e, GL_LANDMARK_BLOCKERS) ? "" : "contentinfo"; },
+    form: function (e) { return hasExplicitName(e) ? "form" : ""; },
+    h1: "heading", h2: "heading", h3: "heading", h4: "heading", h5: "heading", h6: "heading",
+    header: function (e) { return closestAbove(e, GL_LANDMARK_BLOCKERS) ? "" : "banner"; },
+    hr: "separator",
+    html: "document",
+    img: function (e) {
+      return e.getAttribute("alt") === "" && !e.getAttribute("title") && !hasGlobalAria(e) && !hasTabIndex(e)
+        ? "presentation"
+        : "img";
+    },
+    input: inputRole,
+    ins: "insertion",
+    li: "listitem",
+    main: "main",
+    mark: "mark",
+    math: "math",
+    menu: "list",
+    meter: "meter",
+    nav: "navigation",
+    ol: "list",
+    optgroup: "group",
+    option: "option",
+    output: "status",
+    p: "paragraph",
+    progress: "progressbar",
+    section: function (e) { return hasExplicitName(e) ? "region" : ""; },
+    // A select is a listbox when it shows more than one row — which is
+    // multiple OR size > 1, NOT just multiple. A <select size="4"> is the
+    // everyday version and it is a listbox.
+    select: function (e) { return e.multiple || e.size > 1 ? "listbox" : "combobox"; },
+    strong: "strong",
+    sub: "subscript",
+    sup: "superscript",
+    svg: "img",
+    table: "table",
+    tbody: "rowgroup",
+    td: function (e) { return cellRole(e); },
+    textarea: "textbox",
+    tfoot: "rowgroup",
+    th: function (e) {
+      var scope = e.getAttribute("scope");
+      if (scope === "col") return "columnheader";
+      if (scope === "row") return "rowheader";
+      return cellRole(e);
+    },
+    thead: "rowgroup",
+    time: "time",
+    tr: "row",
+    ul: "list"
+  };
+
+  /** The element's ARIA role, as Playwright's getByRole computes it. */
+  function roleOf(el) {
+    var explicit = el.getAttribute ? el.getAttribute("role") : null;
+    if (explicit) return explicit;
+    var tag = el.tagName ? el.tagName.toLowerCase() : "";
+    var entry = Object.prototype.hasOwnProperty.call(GL_IMPLICIT_ROLES, tag) ? GL_IMPLICIT_ROLES[tag] : "";
+    return typeof entry === "function" ? entry(el) : entry;
+  }
+
+  /** The selector a role scan starts from: every tag whose implicit role is
+   *  (or can be) the one asked for, plus anything with an explicit role.
+   *  Derived from the table rather than written beside it, so a tag cannot be
+   *  added to one and missed by the other — and so a scan for "heading" walks
+   *  six tags rather than the document. */
+  var glRoleSelectors = {};
+  function roleScanSelector(role) {
+    if (glRoleSelectors[role]) return glRoleSelectors[role];
+    var parts = ["[role]"];
+    for (var tag in GL_IMPLICIT_ROLES) {
+      if (!Object.prototype.hasOwnProperty.call(GL_IMPLICIT_ROLES, tag)) continue;
+      var entry = GL_IMPLICIT_ROLES[tag];
+      if (entry === role || typeof entry === "function") parts.push(tag);
+    }
+    glRoleSelectors[role] = parts.join(",");
+    return glRoleSelectors[role];
+  }
+
+  /** Roles whose accessible name comes from their CONTENT — Playwright's
+   *  allowsNameFromContent, the "always" list. Every other role is named only
+   *  by aria-label / aria-labelledby (alt for an image, title last). Without
+   *  this rule the table above would name a list item by its text, and
+   *  getByRole("listitem", { name }) verifies unique here and matches NOTHING
+   *  in the run — the deviation the comment on the table warns about. */
+  var GL_NAME_FROM_CONTENT = [
+    "button", "cell", "checkbox", "columnheader", "gridcell", "heading", "link", "menuitem",
+    "menuitemcheckbox", "menuitemradio", "option", "radio", "row", "rowheader", "switch", "tab",
+    "tooltip", "treeitem"
+  ];
+
+  /** Roles the table derives for ordinary content and structure — paragraphs,
+   *  list items, cells, landmarks — which are never offered as a NAMELESS
+   *  locator. getByRole("paragraph").nth(7) is the positional path the
+   *  recorder falls to today with a better-looking name: an index into DOM
+   *  order, breaking the same way. A NAMED one is still offered wherever the
+   *  role takes a name (a heading, a cell). */
+  var GL_BARE_ROLE_SKIP = [
+    "paragraph", "strong", "emphasis", "code", "mark", "insertion", "deletion", "subscript",
+    "superscript", "time", "term", "definition", "blockquote", "caption", "figure", "separator",
+    "document", "list", "listitem", "rowgroup", "row", "cell", "gridcell", "columnheader",
+    "rowheader", "table", "group", "article", "region", "main", "navigation", "banner",
+    "contentinfo", "complementary", "form", "math", "meter", "status", "progressbar", "heading",
+    "presentation", "none"
+  ];
+  function bareRoleOk(role) {
+    return !!role && GL_BARE_ROLE_SKIP.indexOf(role) < 0;
+  }
+
   function accName(el) {
     var al = el.getAttribute ? el.getAttribute("aria-label") : null;
     if (al) return al.trim();
@@ -864,80 +1085,18 @@ export const DOM_HELPERS = `
       var r = document.getElementById(lb);
       if (r) return txt(r);
     }
-    var t = txt(el);
-    if (t && t.length <= 80) return t;
+    var tag = el.tagName ? el.tagName.toLowerCase() : "";
+    if (tag === "img" || tag === "area" || (tag === "input" && String(el.type).toLowerCase() === "image")) {
+      var alt = el.getAttribute("alt");
+      if (alt) return alt.trim();
+    }
+    var role = roleOf(el);
+    if (!role || GL_NAME_FROM_CONTENT.indexOf(role) >= 0) {
+      var t = txt(el);
+      if (t && t.length <= 80) return t;
+    }
     var title = el.getAttribute ? el.getAttribute("title") : null;
     return title ? title.trim() : "";
-  }
-
-  /** The element's ARIA role, as Playwright's \`getByRole\` computes it.
-   *
-   *  Every deviation here is a locator that RECORDS cleanly, verifies as
-   *  unique against this same function, previews green in the trainer — and
-   *  then matches nothing in the run, because Playwright consults the real role
-   *  mapping. The whole path is self-consistent and wrong together, which is
-   *  why it survived: \`matchesFor\` validates uniqueness with this function, so
-   *  the recorder was grading its own homework.
-   *
-   *  The input types below were all collapsed to "textbox". They are reached
-   *  whenever a control has no label and no placeholder, which is exactly the
-   *  case where a role locator is the last legible option before xpath. */
-  /** The element's ARIA role, transcribed from PLAYWRIGHT's mapping.
-   *
-   *  Not from the ARIA spec, and the difference is not academic. Playwright's
-   *  \`getByRole\` is what the generated test runs against, so its table is the
-   *  ground truth here even where it departs from HTML-AAM — and it does: an
-   *  \`input[type=password]\` has no implicit role in the spec, but Playwright
-   *  falls back to "textbox" for every input type it does not name, so a
-   *  \`getByRole("textbox")\` DOES find one. Writing the spec-correct answer
-   *  here would have removed a role locator that works.
-   *
-   *  Kept deliberately parallel to
-   *  playwright-core/lib/generated/injectedScriptSource.js (search for
-   *  \`inputTypeToRole\`), so a future reader can diff the two.
-   *
-   *  Every deviation is a locator that records cleanly, verifies as unique
-   *  against this same function, previews green — and matches nothing in the
-   *  run, because \`matchesFor\` grades uniqueness with this function too. The
-   *  recorder was marking its own homework. \`e2e/assert-parity.spec.ts\` is
-   *  what checks the answers against a real browser. */
-  function roleOf(el) {
-    var explicit = el.getAttribute ? el.getAttribute("role") : null;
-    if (explicit) return explicit;
-    var tag = el.tagName.toLowerCase();
-    if (tag === "a" && el.hasAttribute("href")) return "link";
-    if (tag === "button") return "button";
-    // A select is a listbox when it shows more than one row — which is
-    // \`multiple\` OR \`size > 1\`, NOT just \`multiple\`. A \`<select size="4">\`
-    // is the everyday version and it is a listbox.
-    if (tag === "select") return el.multiple || el.size > 1 ? "listbox" : "combobox";
-    if (tag === "textarea") return "textbox";
-    if (tag === "input") {
-      // The IDL property, not the attribute: \`el.type\` normalises an unknown
-      // or absent type to "text", which is what Playwright reads.
-      var ty = String(el.type || "text").toLowerCase();
-      // A text-ish input wired to a <datalist> is a combobox, not a textbox.
-      if (ty === "search") return el.hasAttribute("list") ? "combobox" : "searchbox";
-      if (ty === "email" || ty === "tel" || ty === "text" || ty === "url" || ty === "") {
-        var listId = el.getAttribute("list");
-        var listEl = listId ? document.getElementById(listId) : null;
-        return listEl && listEl.tagName === "DATALIST" ? "combobox" : "textbox";
-      }
-      // The only input with no role at all. Everything else has one.
-      if (ty === "hidden") return "";
-      // A file input is a BUTTON to Playwright, which is genuinely surprising
-      // and is why it is spelled out rather than left to the table below.
-      if (ty === "file") return "button";
-      if (ty === "checkbox") return "checkbox";
-      if (ty === "radio") return "radio";
-      if (ty === "number") return "spinbutton";
-      if (ty === "range") return "slider";
-      if (ty === "button" || ty === "image" || ty === "reset" || ty === "submit") return "button";
-      // password, date, datetime-local, month, week, time, color — Playwright's
-      // fallback, and the reason the spec-accurate "no role" answer is wrong here.
-      return "textbox";
-    }
-    return "";
   }
 
   function cssPath(el) {
@@ -1229,7 +1388,7 @@ export function buildCaptureScript(
       if (role && nm) out.push({ k: "role", role: role, name: nm });
       var t = txt(el);
       if (t && t.length <= 40) out.push({ k: "text", v: t });
-      if (role && !nm) out.push({ k: "role", role: role });
+      if (role && !nm && bareRoleOk(role)) out.push({ k: "role", role: role });
     }
 
     out.push({ k: "css", v: cssPath(el) });
