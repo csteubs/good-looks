@@ -4,19 +4,26 @@
 // invalid draft must not fall back to a candidate silently), and applying
 // hands the parent exactly the typed locator.
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 import type { PickedElement } from "../lib/recorder-types";
+import { api } from "../lib/api";
+import { ambiguousTargetHint } from "./element-context-picker";
 import { RefineSelectorDialog } from "./refine-selector-dialog";
 
 vi.mock("../lib/api", () => ({
   api: {
     recorder: {
-      countMatches: async () => 1,
+      countMatches: vi.fn(async () => 1),
     },
   },
 }));
+
+beforeEach(() => {
+  vi.mocked(api.recorder.countMatches).mockReset();
+  vi.mocked(api.recorder.countMatches).mockResolvedValue(1);
+});
 
 const PICKED: PickedElement = {
   tag: "button",
@@ -107,5 +114,36 @@ describe("position among matches", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Auto" }));
     fireEvent.click(confirmButton());
     expect(onApply).toHaveBeenCalledWith({ k: "role", role: "button", name: "Submit" });
+  });
+});
+
+describe("the match-count gate", () => {
+  // The same rule the composer applies (step-composer-count-gate.test.tsx):
+  // this dialog is the other way an ambiguous locator gets written.
+  it("disables Update while the chosen locator matches several elements, and says so", async () => {
+    vi.mocked(api.recorder.countMatches).mockResolvedValue(2);
+    const { onApply } = renderDialog();
+    await screen.findByText(ambiguousTargetHint(2));
+    expect(confirmButton().disabled).toBe(true);
+    fireEvent.click(confirmButton());
+    expect(onApply).not.toHaveBeenCalled();
+  });
+
+  it("lifts the refusal once a position is chosen", async () => {
+    vi.mocked(api.recorder.countMatches).mockResolvedValue(2);
+    const { onApply } = renderDialog();
+    await screen.findByText(ambiguousTargetHint(2));
+    fireEvent.click(screen.getByText("Last"));
+    await waitFor(() => expect(confirmButton().disabled).toBe(false));
+    fireEvent.click(confirmButton());
+    expect(onApply).toHaveBeenCalledWith({ k: "role", role: "button", name: "Submit", nth: -1 });
+  });
+
+  it("never blocks on a count it could not take", async () => {
+    vi.mocked(api.recorder.countMatches).mockResolvedValue(-1);
+    renderDialog();
+    await waitFor(() => expect(api.recorder.countMatches).toHaveBeenCalled());
+    await waitFor(() => expect(confirmButton().disabled).toBe(false));
+    expect(screen.queryByText(/the run would refuse it/)).toBeNull();
   });
 });

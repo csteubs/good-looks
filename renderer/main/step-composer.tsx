@@ -71,7 +71,7 @@ import { buildStateSteps, type StatePick } from "../lib/element-states";
 import { collectFlowArgs, FlowArgsFields } from "./flow-args-fields";
 import { clampViewportAxis, RESIZE_PRESETS } from "../lib/viewport-presets";
 import { CustomLocatorField } from "./custom-locator-field";
-import { ElementContextPicker } from "./element-context-picker";
+import { ambiguousTargetHint, ElementContextPicker } from "./element-context-picker";
 import { PositionField } from "./position-field";
 import {
   NewVariableButton,
@@ -708,6 +708,36 @@ export function StepComposer({
   onCreateVariable?: (v: { name: string; kind: VariableKind; value: string }) => Promise<void>;
 }) {
   const [locator, setLocator] = React.useState<Locator | null>(null);
+  // How many elements the locator about to be submitted matches on the live
+  // page, or null while unknown. Asked for every emitted locator that carries
+  // no position: a locator matching several elements is a strict-mode
+  // violation the run refuses, and the picker's own readout answers a
+  // different question (how far the CONTEXT narrows the semantic base) — this
+  // one is about the locator the step will actually hold, whichever
+  // candidate it is. An indexed locator is skipped: the index IS the answer.
+  const [matchCount, setMatchCount] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    if (!locator || typeof locator.nth === "number") {
+      setMatchCount(null);
+      return;
+    }
+    let cancelled = false;
+    setMatchCount(null);
+    // Through a resolved promise, so a host whose bridge throws (or lacks the
+    // call) lands in the catch as "could not count" rather than as a render
+    // error — the gate must degrade to open, never to a crashed panel.
+    void Promise.resolve()
+      .then(() => api.recorder.countMatches(locator))
+      .then((n) => {
+        if (!cancelled) setMatchCount(n);
+      })
+      .catch(() => {
+        if (!cancelled) setMatchCount(-1);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [locator]);
   const [assert, setAssert] = React.useState<AssertKind>("visible");
   const [cond, setCond] = React.useState<ConditionKind>("visible");
   const [text, setText] = React.useState("");
@@ -1178,11 +1208,26 @@ export function StepComposer({
   }
 
   const steps = build();
+  // A locator that matches several elements is refused here, with the count,
+  // rather than recorded and refused by the run — where it fails against a
+  // page the user is no longer looking at. Only MORE than one blocks: zero
+  // may be a hand-typed locator for an element the page shows later (the
+  // custom field exists for exactly those), and -1 is the page failing to
+  // answer, which must never read as a verdict. And only when a built step
+  // actually carries the locator — a page-level step beside a stale pick is
+  // not a step about that element.
+  const ambiguousTarget =
+    matchCount !== null &&
+    matchCount > 1 &&
+    steps !== null &&
+    steps.some((s) => s.locator !== undefined && s.locator === locator)
+      ? matchCount
+      : null;
   // The panel is inline, so it can say what it would add BEFORE you press
   // anything — a modal with a permanently-enabled confirm can afford to fail
   // silently on submit because it stays open; a panel sitting in the list
   // cannot, and should not have to.
-  const ready = steps !== null && steps.length > 0;
+  const ready = steps !== null && steps.length > 0 && ambiguousTarget === null;
 
   function submit() {
     if (!ready) return;
@@ -2227,6 +2272,11 @@ export function StepComposer({
         ) : null}
       </div>
       <div className="gl-composer-foot">
+        {ambiguousTarget !== null ? (
+          <Text variant="small" color="tertiary" className="min-w-0 flex-1" data-gl="ambiguous-target">
+            {ambiguousTargetHint(ambiguousTarget)}
+          </Text>
+        ) : null}
         {/* Disabled until the step is actually buildable, and the reason is
             worth a sentence: `build()` returns null for a half-filled form —
             a wait with no element, a capture with no variable name, a CSS

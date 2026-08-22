@@ -7,10 +7,11 @@ import * as React from "react";
 import { Badge, Dialog, Text } from "@ui";
 
 import { CustomLocatorField } from "./custom-locator-field";
-import { ElementContextPicker } from "./element-context-picker";
+import { ambiguousTargetHint, ElementContextPicker } from "./element-context-picker";
 import { PositionField } from "./position-field";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import type { Locator, LocatorContext, PickedElement } from "../lib/recorder-types";
+import { api } from "../lib/api";
 
 /** Playwright-style label for a locator candidate. */
 export function formatLocator(l: Locator): string {
@@ -84,12 +85,10 @@ export function RefineSelectorDialog({
   const candidates = picked.candidates ?? [];
   const cssEntries = Object.entries(picked.css ?? {});
 
-  function apply() {
+  /** The locator Update would write right now, or null for an invalid draft. */
+  function compose(): Locator | null {
     const loc = selected === "custom" ? customLoc : candidates[selected];
-    if (!loc) {
-      onClose();
-      return;
-    }
+    if (!loc) return null;
     // Context rides on the locator, so it is applied here rather than as a
     // second patch — `updateStep` drops a step's fingerprint when its locator
     // changes, and two separate writes would make that fire twice for one edit.
@@ -98,6 +97,47 @@ export function RefineSelectorDialog({
     else delete next.ctx;
     if (nth !== null) next.nth = nth;
     else delete next.nth;
+    return next;
+  }
+
+  // How many elements that locator matches on the live page — the same gate
+  // the composer applies, for the same reason: this dialog is the other way
+  // an ambiguous locator gets written, and one that matches several elements
+  // is refused by the run against a page nobody is looking at. Skipped for an
+  // indexed locator (the position is the answer); more than one blocks; zero
+  // and "could not count" (-1) never do.
+  const [matchCount, setMatchCount] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    const next = compose();
+    if (!next || typeof next.nth === "number") {
+      setMatchCount(null);
+      return;
+    }
+    let cancelled = false;
+    setMatchCount(null);
+    // Through a resolved promise, so a host whose bridge throws (or lacks the
+    // call) lands in the catch as "could not count" — see the composer.
+    void Promise.resolve()
+      .then(() => api.recorder.countMatches(next))
+      .then((n) => {
+        if (!cancelled) setMatchCount(n);
+      })
+      .catch(() => {
+        if (!cancelled) setMatchCount(-1);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // `compose` reads exactly these, plus `picked` through `candidates`.
+  }, [selected, customLoc, ctx, nth, picked]);
+  const ambiguous = matchCount !== null && matchCount > 1 ? matchCount : null;
+
+  function apply() {
+    const next = compose();
+    if (!next) {
+      onClose();
+      return;
+    }
     onApply(next);
     onClose();
   }
@@ -110,7 +150,7 @@ export function RefineSelectorDialog({
       size="large"
       onConfirm={apply}
       confirmLabel="Update selector"
-      confirmDisabled={selected === "custom" && !customLoc}
+      confirmDisabled={(selected === "custom" && !customLoc) || ambiguous !== null}
     >
       <div className="flex flex-col gap-4">
         {stepLabel ? (
@@ -204,6 +244,12 @@ export function RefineSelectorDialog({
         ) : null}
 
         <PositionField value={nth} onChange={setNth} />
+
+        {ambiguous !== null ? (
+          <Text variant="small" color="tertiary" data-gl="ambiguous-target">
+            {ambiguousTargetHint(ambiguous)}
+          </Text>
+        ) : null}
 
         {cssEntries.length > 0 ? (
           <div className="flex flex-col gap-2">
