@@ -1014,12 +1014,23 @@ const logBuffers = new Map<string, string[]>();
 // runner:step stream is otherwise ephemeral.
 const stepStatusMaps = new Map<string, Record<number, "passed" | "failed">>();
 
-function emitStep(runId: string, index: number, status: "begin" | "end", ok: boolean): void {
+function emitStep(
+  runId: string,
+  index: number,
+  status: "begin" | "end",
+  ok: boolean,
+  // The 1-based spec line the marker came from. Carried to the renderer
+  // since 2026-08-22 so the Script IDE can paint run status on the line
+  // that RAN rather than on the line it believes step `index` sits on — the
+  // two agree for a generated spec and can disagree for a hand-edited one,
+  // where the runner's fallback line map is a heuristic.
+  line: number,
+): void {
   if (status === "end") {
     const map = stepStatusMaps.get(runId);
     if (map) map[index] = ok ? "passed" : "failed";
   }
-  sendToMain("runner:step", { runId, index, status, ok });
+  sendToMain("runner:step", { runId, index, status, ok, line });
 }
 
 // Parse a stdout chunk: extract the step markers, map their line number to a
@@ -1040,7 +1051,7 @@ function processStdout(runId: string, chunk: string): string {
     for (const marker of markers) {
       const stepIndex = map.get(marker.line);
       if (typeof stepIndex === "number") {
-        emitStep(runId, stepIndex, marker.event, marker.ok);
+        emitStep(runId, stepIndex, marker.event, marker.ok, marker.line);
       }
     }
   }

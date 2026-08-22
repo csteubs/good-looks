@@ -98,6 +98,10 @@ export interface RunInfo {
   code: number | null;
   /** Per-step run status, keyed by step index (0-based). */
   stepStatus: Record<number, RunStepStatus>;
+  /** The 1-based spec line each reported step index last ran from — what
+   *  the Script IDE paints run status on. Absent for a run that reported
+   *  nothing yet. */
+  stepLines?: Record<number, number>;
   /** Artifact id for this execution, once it finishes. Distinct from the map
    *  key, which is the TEST id — every run of a test shares that. */
   recordId?: string;
@@ -486,7 +490,8 @@ export function RecorderProvider({
       index: number;
       status: "begin" | "end";
       ok: boolean;
-    }>("runner:step", ({ runId, index, status, ok }) => {
+      line?: number;
+    }>("runner:step", ({ runId, index, status, ok, line }) => {
       setRuns((prev) => {
         const cur = prev[runId] ?? { lines: [], running: true, code: null, stepStatus: {}, startedAt: Date.now() };
         const stepStatus = { ...cur.stepStatus };
@@ -495,7 +500,9 @@ export function RecorderProvider({
         } else {
           stepStatus[index] = ok ? "passed" : "failed";
         }
-        return { ...prev, [runId]: { ...cur, stepStatus } };
+        const stepLines =
+          typeof line === "number" && line > 0 ? { ...(cur.stepLines ?? {}), [index]: line } : cur.stepLines;
+        return { ...prev, [runId]: { ...cur, stepStatus, ...(stepLines ? { stepLines } : {}) } };
       });
     });
     const offDone = api.on<{ runId: string; code: number; recordId?: string }>(
