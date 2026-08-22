@@ -28,25 +28,55 @@ import { api } from "../lib/api";
 import { friendlyError } from "../lib/llm-errors";
 import { buildGenerateStepsMessages } from "../lib/llm-prompts";
 import { extractStepsJson } from "../lib/parse-llm-response";
-import type { Locator, PickedElement, RawStep } from "../lib/recorder-types";
+import type {
+  Locator,
+  PickedElement,
+  RawStep,
+  VerifiedStepResult,
+  VerifiedStepsResult,
+} from "../lib/recorder-types";
 import { useLlmChat } from "../lib/use-llm-chat";
 import { formatLocator, KIND_LABEL } from "./refine-selector-dialog";
 import { useRecorder } from "./recorder-store";
+
+/** The activity log's one-word verdicts, exported so a test can assert the
+ *  copy. `unchecked` is deliberately not "passed": the replayer declined to
+ *  run that step, and calling it verified is the claim this feature exists to
+ *  stop making. */
+export const ACTIVITY_LABEL: Record<VerifiedStepResult["status"], string> = {
+  ran: "ran",
+  unchecked: "unchecked",
+  failed: "failed",
+};
 
 export function GenerateStepsDialog({
   open,
   url,
   onOpenChange,
-  onInsert,
+  onVerify,
 }: {
   open: boolean;
   url: string | null;
   onOpenChange: (open: boolean) => void;
-  onInsert: (steps: RawStep[]) => void;
+  /** Run the proposed steps against the live page and insert what works —
+   *  `recorder-store`'s `verifyGeneratedSteps`, which also marks what landed
+   *  as new. A prop rather than an `api` call so the dialog can be tested
+   *  against a stated outcome. */
+  onVerify: (steps: RawStep[], label: string) => Promise<VerifiedStepsResult>;
 }) {
   const { content, status, error, errorKind, start, stop } = useLlmChat();
   const [prompt, setPrompt] = React.useState("");
   const [added, setAdded] = React.useState(false);
+  // True once the proposed steps have been tried, whatever happened. A second
+  // "Try" of the same list after a failure would run — and insert — the prefix
+  // that already worked a second time, so the button stays down until the
+  // user regenerates.
+  const [attempted, setAttempted] = React.useState(false);
+  // What actually happened when the proposed steps were run, in order. Null
+  // until the user asks for them; this is mabl's agent-activity view, and it is
+  // what makes a bad generation diagnosable rather than merely disappointing.
+  const [activity, setActivity] = React.useState<VerifiedStepResult[] | null>(null);
+  const [verifying, setVerifying] = React.useState(false);
   // Optional selector the user picked to give the LLM as context. Null means
   // "no selector provided" — generation proceeds without one.
   const [selector, setSelector] = React.useState<Locator | null>(null);
@@ -80,7 +110,12 @@ export function GenerateStepsDialog({
   const [pickingForAi, setPickingForAi] = React.useState(false);
 
   React.useEffect(() => {
-    if (open) setAdded(false);
+    if (open) {
+      setAdded(false);
+      setAttempted(false);
+      setActivity(null);
+      setVerifying(false);
+    }
   }, [open]);
 
   // When a pick arrives and we're the one who asked for it, take over the
@@ -129,6 +164,8 @@ export function GenerateStepsDialog({
   const generate = React.useCallback(() => {
     if (!prompt.trim()) return;
     setAdded(false);
+    setAttempted(false);
+    setActivity(null);
     // Poll the live configured model right before sending so the "Thinking
     // with {model}…" placeholder matches the model the backend actually uses,
     // even if the default changed after this dialog opened.
@@ -157,17 +194,62 @@ export function GenerateStepsDialog({
   // any goto the model emits despite the prompt telling it not to.
   const flowSteps = steps ? steps.filter((s) => s.type !== "goto") : null;
 
-  const addSteps = () => {
-    if (!flowSteps || flowSteps.length === 0) return;
-    onInsert(flowSteps);
-    setAdded(true);
-    toast.success(
-      flowSteps.length === 1 ? "Added 1 step." : `Added ${flowSteps.length} steps.`,
-    );
-    onOpenChange(false);
+  /**
+   * Run the proposed steps against the live page, keeping the ones that work.
+   *
+   * The dialog used to insert all of them unverified, which is the same shape
+   * as pasting a guess into the step list: the model names an element that may
+   * not exist, and the user finds out on the next run, several steps away from
+   * the cause. Each step now runs where it lands — against the page the
+   * previous one left behind, not the page the model imagined — and the first
+   * one that does not work stops the rest.
+   *
+   * The dialog STAYS OPEN on a failure. Its whole value at that moment is the
+   * activity log saying which step broke and why, and closing over it would put
+   * the user back where they started with a half-filled list.
+   */
+  const addSteps = async () => {
+    if (!flowSteps || flowSteps.length === 0 || verifying || attempted) return;
+    setVerifying(true);
+    setActivity(null);
+    try {
+      const outcome = await onVerify(flowSteps, prompt.trim());
+      setAttempted(true);
+      setActivity(outcome.results);
+      if (outcome.error) {
+        toast.error(outcome.error);
+        return;
+      }
+      const failed = outcome.results.find((r) => r.status === "failed");
+      if (failed) {
+        toast.error(
+          outcome.inserted === 0
+            ? `Nothing was added — the first step did not work: ${failed.label}`
+            : `Added ${outcome.inserted} step${outcome.inserted === 1 ? "" : "s"}, then stopped at: ${failed.label}`,
+        );
+        return;
+      }
+      setAdded(true);
+      toast.success(
+        outcome.inserted === 1 ? "Added 1 step." : `Added ${outcome.inserted} steps.`,
+      );
+      onOpenChange(false);
+    } catch (err) {
+      toast.error(String(err));
+    } finally {
+      setVerifying(false);
+    }
   };
 
   const candidates = reviewing?.candidates ?? [];
+
+  // The steps after a failure were never attempted: the page they were
+  // written against never happened. Said explicitly, because a log that just
+  // stops reads as a log that was cut off.
+  const failedAt = activity?.findIndex((r) => r.status === "failed") ?? -1;
+  const notAttempted =
+    activity && flowSteps && failedAt >= 0 ? Math.max(0, flowSteps.length - activity.length) : 0;
+  const kept = activity ? activity.filter((r) => r.status !== "failed").length : 0;
 
   return (
     <Dialog
@@ -324,11 +406,70 @@ export function GenerateStepsDialog({
             </Button>
           )}
           {flowSteps && flowSteps.length > 0 ? (
-            <Button size="small" variant="accent" onClick={addSteps} disabled={added}>
-              {added ? "Added" : `Add ${flowSteps.length} steps`}
+            <Button
+              size="small"
+              variant="accent"
+              onClick={addSteps}
+              disabled={added || verifying || attempted}
+            >
+              {added
+                ? "Added"
+                : verifying
+                  ? "Trying them…"
+                  : attempted
+                    ? "Tried"
+                    : `Try ${flowSteps.length} step${flowSteps.length === 1 ? "" : "s"}`}
             </Button>
           ) : null}
         </div>
+
+        {/* The activity log — mabl's agent activity view. One row per step
+            that was attempted, in order, each with what happened to it; this
+            is what makes a bad generation diagnosable rather than merely
+            disappointing, and it is the whole reason the dialog stays open
+            after a failure. */}
+        {activity ? (
+          <div
+            className="flex flex-col gap-1.5 rounded-md border border-separator p-3"
+            data-testid="ai-activity"
+            aria-label="What happened to the proposed steps"
+          >
+            <Text variant="small" color="secondary">
+              What happened
+            </Text>
+            {activity.map((r, i) => (
+              <div key={i} className="flex items-start gap-2" data-status={r.status}>
+                <Badge
+                  color={r.status === "ran" ? "green" : r.status === "failed" ? "red" : "secondary"}
+                  className="shrink-0"
+                >
+                  {ACTIVITY_LABEL[r.status]}
+                </Badge>
+                <div className="flex min-w-0 flex-col">
+                  <Text variant="small-mono" className="truncate">
+                    {r.label}
+                  </Text>
+                  {r.detail ? (
+                    <Text variant="small" color="tertiary" className="break-words">
+                      {r.detail}
+                    </Text>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+            {failedAt >= 0 ? (
+              <Text variant="small" color="secondary">
+                {kept > 0
+                  ? `The ${kept} step${kept === 1 ? "" : "s"} that worked ${kept === 1 ? "was" : "were"} kept, grouped under your prompt. `
+                  : "Nothing was added. "}
+                {notAttempted > 0
+                  ? `${notAttempted} step${notAttempted === 1 ? " was" : "s were"} not attempted — the page ${notAttempted === 1 ? "it was" : "they were"} written for never happened. `
+                  : ""}
+                Fix the page or the prompt and regenerate.
+              </Text>
+            ) : null}
+          </div>
+        ) : null}
 
         {status !== "idle" || content ? (
           <ScrollArea

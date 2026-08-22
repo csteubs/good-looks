@@ -10,6 +10,27 @@ import type { RunTrigger } from "../../shared/run-trigger.mjs";
 export type { CostCurrency };
 export type { ProxySource, ProxyTraffic };
 
+/** One AI-proposed step's fate, from `recorder:verifySteps`. Mirror of
+ *  main/services/recorder-service.ts.
+ *
+ *  `ran` = executed against the live page and worked. `unchecked` = the
+ *  replayer declined to run it (a `goto`, a structural half, a step whose
+ *  meaning only exists at run time) and it was inserted anyway. `failed` = it
+ *  ran and did not work, and nothing after it was attempted. The three are kept
+ *  distinct because calling an unchecked step "verified" is the exact claim
+ *  this feature exists to stop making. */
+export interface VerifiedStepResult {
+  label: string;
+  status: "ran" | "unchecked" | "failed";
+  detail?: string;
+}
+
+export interface VerifiedStepsResult {
+  inserted: number;
+  results: VerifiedStepResult[];
+  error?: string;
+}
+
 export type DownloadMatch = "contains" | "exact";
 export const DOWNLOAD_MATCHES: DownloadMatch[] = ["contains", "exact"];
 

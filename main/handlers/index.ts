@@ -264,6 +264,18 @@ export function registerHandlers(): void {
   ipcMain.handle("recorder:setCursor", async (_e, params: { index: number }) =>
     recorderService.setCursor(params.index),
   );
+  // AI-proposed steps, run against the live page one at a time and inserted
+  // only once each has actually worked. `steps` is `unknown[]` on purpose: it
+  // came from a model, and the service normalizes it through the same boundary
+  // every other arrival goes through.
+  ipcMain.handle(
+    "recorder:verifySteps",
+    async (_e, params: { steps: unknown[]; label?: unknown }) =>
+      recorderService.verifyAndInsertSteps(
+        Array.isArray(params?.steps) ? params.steps : [],
+        typeof params?.label === "string" && params.label.trim() ? params.label.trim() : undefined,
+      ),
+  );
   ipcMain.handle("recorder:replayStep", async (_e, params: { stepId: string }) =>
     recorderService.replayStep(params.stepId),
   );

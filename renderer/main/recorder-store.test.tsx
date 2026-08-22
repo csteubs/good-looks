@@ -53,6 +53,10 @@ vi.mock("../lib/api", () => ({
       stop: async () => {},
       setAssert: async () => baseState(),
       deleteStep: async () => baseState(),
+      verifySteps: async (steps: unknown, label: string) => {
+        verified.push({ steps, label });
+        return verifyOutcome;
+      },
       insertStep: (step: unknown) => {
         inserted.push(step);
         // Deliberately NOT auto-resolving when `holdInserts` is set: proving
@@ -103,7 +107,7 @@ function baseState(): RecorderState {
 }
 
 let actionsUnderTest: {
-  insertGeneratedSteps: (steps: never[]) => Promise<void>;
+  verifyGeneratedSteps: (steps: never[], label: string) => Promise<{ inserted: number }>;
   deleteStep: (id: string) => void;
   run: (id: string) => void;
 } | null = null;
@@ -119,7 +123,7 @@ function Probe() {
     replayRun,
     replayFlash,
     replayStepStatus,
-    insertGeneratedSteps,
+    verifyGeneratedSteps,
     deleteStep,
     run,
     runEpoch,
@@ -128,7 +132,7 @@ function Probe() {
   } = useRecorder();
   // Stashed for the tests that need to invoke an action rather than observe
   // state; a button per action would drown the markup the other suites read.
-  actionsUnderTest = { insertGeneratedSteps, deleteStep, run };
+  actionsUnderTest = { verifyGeneratedSteps, deleteStep, run };
   return (
     <div>
       <span data-testid="recording">{String(state.recording)}</span>
@@ -189,6 +193,12 @@ const text = (id: string) => screen.getByTestId(id).textContent;
 
 /** Every `recorder:insertStep` the store sent, in the order it sent them. */
 let inserted: unknown[] = [];
+/** What `recorder:verifySteps` was handed, and what it answers. */
+let verified: { steps: unknown; label: string }[] = [];
+let verifyOutcome: { inserted: number; results: { label: string; status: string }[] } = {
+  inserted: 0,
+  results: [],
+};
 /** When true, inserts hang until the test releases them one by one. */
 let holdInserts = false;
 let releaseInsert: Array<() => void> = [];
@@ -197,6 +207,8 @@ beforeEach(() => {
   handlers.clear();
   fetchedSteps = [];
   inserted = [];
+  verified = [];
+  verifyOutcome = { inserted: 0, results: [] };
   holdInserts = false;
   releaseInsert = [];
   actionsUnderTest = null;
@@ -539,43 +551,36 @@ describe("marking AI-generated steps as new", () => {
     fetchedSteps = AFTER;
 
     await act(async () => {
-      await actionsUnderTest!.insertGeneratedSteps(RAW);
+      await actionsUnderTest!.verifyGeneratedSteps(RAW, "sign in");
     });
 
     expect(text("steps")).toBe("old,new1,new2");
     expect(text("new-steps")).toBe("new1,new2");
   });
 
-  it("does not send the next insert until the previous one has landed", async () => {
-    // Each insert lands at the session cursor and moves it on by one. Fired
-    // concurrently, where each step ends up is decided by whichever IPC call
-    // the backend services first — a generated flow whose steps run in the
-    // wrong order, with nothing on screen saying so.
+  it("hands the whole list and the prompt to ONE verify call, and returns its outcome", async () => {
+    // Verification is the backend's: it runs the steps in order against the
+    // live page and inserts each as it works. One call, not one insert per
+    // step — the order is its problem, not a race between invokes here (which
+    // is what the old sequential-insert test guarded).
     await withExistingStep();
     fetchedSteps = AFTER;
-    holdInserts = true;
+    verifyOutcome = {
+      inserted: 2,
+      results: [
+        { label: "a", status: "ran" },
+        { label: "b", status: "ran" },
+      ],
+    };
 
-    let done = false;
+    let outcome: { inserted: number } | null = null;
     await act(async () => {
-      void actionsUnderTest!.insertGeneratedSteps(RAW).then(() => {
-        done = true;
-      });
+      outcome = await actionsUnderTest!.verifyGeneratedSteps(RAW, "sign in");
     });
 
-    // First one sent, second one held back behind it.
-    expect(inserted).toEqual([RAW[0]]);
-    expect(done).toBe(false);
-
-    await act(async () => {
-      releaseInsert[0]();
-    });
-    expect(inserted).toEqual([RAW[0], RAW[1]]);
-
-    await act(async () => {
-      releaseInsert[1]();
-    });
-    await act(async () => {});
-    expect(done).toBe(true);
+    expect(verified).toEqual([{ steps: RAW, label: "sign in" }]);
+    expect(inserted, "nothing went through insertStep").toEqual([]);
+    expect(outcome).toEqual(verifyOutcome);
   });
 
   it("marks only what the backend actually kept", async () => {
@@ -586,7 +591,7 @@ describe("marking AI-generated steps as new", () => {
     fetchedSteps = [AFTER[0], AFTER[1]];
 
     await act(async () => {
-      await actionsUnderTest!.insertGeneratedSteps(RAW);
+      await actionsUnderTest!.verifyGeneratedSteps(RAW, "sign in");
     });
 
     expect(text("new-steps")).toBe("new1");
@@ -597,7 +602,7 @@ describe("marking AI-generated steps as new", () => {
     fetchedSteps = [AFTER[0]];
 
     await act(async () => {
-      await actionsUnderTest!.insertGeneratedSteps(RAW);
+      await actionsUnderTest!.verifyGeneratedSteps(RAW, "sign in");
     });
 
     expect(text("new-steps")).toBe("");
@@ -609,7 +614,7 @@ describe("marking AI-generated steps as new", () => {
     await withExistingStep();
     fetchedSteps = AFTER;
     await act(async () => {
-      await actionsUnderTest!.insertGeneratedSteps(RAW);
+      await actionsUnderTest!.verifyGeneratedSteps(RAW, "sign in");
     });
     expect(text("new-steps")).toBe("new1,new2");
 
@@ -628,7 +633,7 @@ describe("marking AI-generated steps as new", () => {
     await withExistingStep();
     fetchedSteps = AFTER;
     await act(async () => {
-      await actionsUnderTest!.insertGeneratedSteps(RAW);
+      await actionsUnderTest!.verifyGeneratedSteps(RAW, "sign in");
     });
     expect(text("new-steps")).toBe("new1,new2");
     expect(text("run-epoch")).toBe("0");

@@ -510,7 +510,7 @@ export function RecordingView() {
     enterFlowScope,
     exitFlowScope,
     setFlowCursor,
-    insertGeneratedSteps,
+    verifyGeneratedSteps,
     reorderStep,
     updateStep,
     applyHeal,
@@ -1208,7 +1208,7 @@ export function RecordingView() {
         open={aiOpen}
         url={state.url}
         onOpenChange={setAiOpen}
-        onInsert={(steps) => void insertGeneratedSteps(steps)}
+        onVerify={verifyGeneratedSteps}
       />
       {picked && refiningStepId ? (
         <RefineSelectorDialog

@@ -28,6 +28,7 @@ import type {
   Locator,
   OverlayRule,
   RawStep,
+  VerifiedStepsResult,
   ProxyVerifyResult,
   RecorderSettings,
   RecorderState,
@@ -207,6 +208,11 @@ export const api = {
       ipc().invoke<{ canceled?: boolean; relPath?: string; name?: string; problem?: string }>(
         "recorder:stageUpload",
       ),
+    /** Run AI-proposed steps against the live page, inserting each only once it
+     *  has worked and stopping at the first that has not. What lands is wrapped
+     *  in a step group named `label` (the prompt). */
+    verifySteps: (steps: RawStep[], label?: string) =>
+      ipc().invoke<VerifiedStepsResult>("recorder:verifySteps", { steps, label }),
     replayStep: (stepId: string) =>
       ipc().invoke<DebugEntry>("recorder:replayStep", { stepId }),
     replayFromStart: () =>
