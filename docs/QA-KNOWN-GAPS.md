@@ -31,8 +31,8 @@ type-check, 141 test files / 2764 Vitest tests, 56 `check:*` scripts.
 | Area | What's absent | Where it would live |
 |---|---|---|
 | **Job ticker** | The top strip has no live run readout. One run, several runs, a batch, a failure and idle all show nothing. | `top-strip.tsx`'s `ticker` slot — passed nothing on purpose ([app-strip.tsx:252](renderer/main/app-strip.tsx:252)) |
-| **Stats → Report mode** | No report mode, no weekly digest, no exports (PDF / CSV / JUnit XML / public link), no channel list. | Stats |
-| **Emit adapters** | None of the five emitters (JUnit XML, GitHub Actions annotations, OTLP JSON, ticket markdown, NDJSON/CSV of step metrics). | Would ship with Report mode |
+| **Stats → Report mode** | No report mode, no weekly digest, no PDF of a run or routine run, no public link, no channel list. **Narrowed 2026-08-21:** the format exports DO exist — see the row below. Note the one PDF in the app is the AI insights report (`insights:exportPdf`); there is none for a run. | Stats |
+| ~~**Emit adapters**~~ | ~~None of the five emitters (JUnit XML, GitHub Actions annotations, OTLP JSON, ticket markdown, NDJSON/CSV of step metrics).~~ **Built 2026-08-12** — five formats over six `EMITTERS` rows in `shared/emitters.mjs`, pure and redacted, wired to `report:emit` and rendered by the Export panel under Cost in Stats. This row was stale from the day it was written; corrected 2026-08-21. **What is genuinely absent is a non-interactive destination:** `emitReport` opens a save dialog, so no scheduled routine, headless run or CI job can produce a file. | Stats → Report |
 | **Routines / Batch v2** | Batch is still a single implicit checklist. No saved named configurations, no schedules, no flow builder. The nav still reads "Batch". | [ROUTINES.md](ROUTINES.md) |
 | ~~**Test groups / folders**~~ | ~~The library rail is flat.~~ **Built 2026-08-14** — folder rows with expand/collapse, a monogram, a count and an aggregate verdict, plus `run_group` over MCP. | Library rail |
 | **Capture parity (MCP)** | `replay.json` is not produced, so captured app state is not a frame series. | Visual tab |
