@@ -313,6 +313,8 @@ export interface Step {
   text?: string;
   soft?: boolean;
   force?: boolean;
+  /** recorded inside a web component (mirror of main types) */
+  shadow?: boolean;
   attr?: string;
   /** KEBAB-case CSS property for a "css" assertion, the match mode, and the
    *  pseudo-state a `state` step applies (mirror of main types). */
@@ -417,6 +419,7 @@ export interface RawStep {
   text?: string;
   soft?: boolean;
   force?: boolean;
+  shadow?: boolean;
   attr?: string;
   cssProp?: string;
   cssMatch?: CssMatch;
@@ -1240,6 +1243,8 @@ export interface PickedElement {
   contextSignals: ContextSignal[];
   text?: string;
   neighborText?: string;
+  /** the element lives inside a web component (mirror of main types) */
+  shadow?: boolean;
 }
 
 /** One test's row in the Batch view (mirrors main types). An ABSENT entry is

@@ -463,6 +463,17 @@ export interface Step {
    *  for targets that are covered or animating BY DESIGN. Off by default:
    *  strictness catches real bugs. */
   force?: boolean;
+  /** The element was recorded inside a web component (a shadow tree). A fact
+   *  about where it lives, stamped by the capture script and shown as a chip:
+   *  it changes nothing the step emits, because Playwright pierces open roots
+   *  on its own. What it explains is the ABSENCE of an XPath fallback — an
+   *  xpath for such an element is relative to its root and resolves to
+   *  nothing in any engine, so none is ever recorded. Cleared when the step is
+   *  retargeted, like `fingerprint`, because the mark describes the element
+   *  and not the step. Not round-tripped by the spec parser (nothing in the
+   *  source carries it), so a hand-edited spec loses it — the same trade as
+   *  `fingerprint`. */
+  shadow?: boolean;
   /** attribute name for an "attribute" assertion */
   attr?: string;
   /** CSS property for a "css" assertion, as a KEBAB-case name
@@ -638,6 +649,8 @@ export interface RawStep {
   text?: string;
   soft?: boolean;
   force?: boolean;
+  /** recorded inside a web component (see Step.shadow) */
+  shadow?: boolean;
   attr?: string;
   cssProp?: string;
   cssMatch?: CssMatch;
@@ -1533,6 +1546,7 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   if (waitUntil) out.waitUntil = waitUntil;
   if (bool(s.soft)) out.soft = true;
   if (bool(s.force)) out.force = true;
+  if (bool(s.shadow)) out.shadow = true;
 
   // A CSS property name is checked for SHAPE, not merely length-capped like the
   // other free strings: it is the one string field whose grammar is known, and
@@ -1705,6 +1719,7 @@ export function normalizePickedElement(input: unknown): PickedElement | null {
   const neighborText = str(p.neighborText);
   if (text !== undefined) out.text = text;
   if (neighborText !== undefined) out.neighborText = neighborText;
+  if (p.shadow === true) out.shadow = true;
   return out;
 }
 
@@ -2573,6 +2588,9 @@ export interface PickedElement {
   text?: string;
   /** nearest preceding heading/label text */
   neighborText?: string;
+  /** the element lives inside a web component — a step authored from this
+   *  pick carries it as `Step.shadow` */
+  shadow?: boolean;
 }
 
 /**

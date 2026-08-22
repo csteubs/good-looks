@@ -181,13 +181,13 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 5362 Vitest tests across 278 files and 78 checks in the chain as of 2026-08-22 (80 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 5379 Vitest tests across 278 files and 78 checks in the chain as of 2026-08-22 (80 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
 
 **A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS — or a real navigation — gets checked: `click-navigation.spec.ts` (a click that changes route is recorded, including one a client-side router intercepts; the failure it was written against loses six clicks out of six and jsdom cannot host it, because nothing there has a navigation that destroys the document mid-read), `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `dialog-lifecycle.spec.ts` (whether the dialog that started a recording is still on top of the app afterwards — the existing recording spec invokes `recorder:start` over IPC, so it opens no dialog and could never see one left behind), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
 
-**Three specs there are not about windows at all.** `assert-parity.spec.ts`,
-`context-parity.spec.ts` and `step-progress.spec.ts` — the second answers the
-neighbouring question, not
+**Four specs there are not about windows at all.** `assert-parity.spec.ts`,
+`context-parity.spec.ts`, `shadow-parity.spec.ts` and `step-progress.spec.ts`
+— the second answers the neighbouring question, not
 "what does this step MEAN" but "which element does it POINT AT". Element context
 is resolved twice, by a DOM walk in the trainer (`ctxFilter` inside `matchesFor`)
 and by real Playwright resolving the chain the generator emits; if those
@@ -195,6 +195,16 @@ disagree, the picker says "matches 1 of 9", the user believes the step is pinned
 and the run acts on something else. A model of Playwright's chaining rules cannot
 settle it, because the question is whether our model of them is right. **Changing
 what a context clause emits or resolves to? Add a row.**
+
+**`shadow-parity.spec.ts`** is the same question one level down — which element
+a locator points at when the element is INSIDE A WEB COMPONENT — and it is the
+only place that question has an answer, because jsdom can model the DOM walk
+but cannot say what real Playwright resolves. Its first run found three
+disagreements nobody had measured (`within` a host, `<script>` text counted as
+text, a host's text read as empty), one of which was not a shadow bug at all.
+**Changing `scanAll`, `pwText`, `composedContains` or the text arm of
+`matchesForBase`? Add a row.** The laptop-speed half is
+`main/recorder/shadow-dom-capture.dom.test.ts`.
 
 **`assert-parity.spec.ts`.** It is the authority on what a step MEANS, running every row through the real injected replayer AND the real generated source executed by real Playwright, and asserting the two verdicts agree — the property whose absence let "URL contains" generate an assertion that could not pass while the trainer showed it green. It uses a plain browser page rather than `_electron` because its subject is matcher semantics, not a window; it lives here because nothing short of real Playwright can answer the question. **Changing what any assertion, wait or condition emits? Add a row.** The fast counterpart is `main/services/assert-emission.test.ts`, which models the same rules in Node — but a model is only worth what validates it.
 

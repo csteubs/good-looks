@@ -44,14 +44,21 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  ATTR_PICKED,
+  ATTR_REFINE,
   buildCaptureScript,
   DOM_HELPERS,
   MAX_SHADOW_ROOTS,
   UNIQUENESS_HELPERS,
   WORLD_STATE_KEY,
 } from "./capture-script.js";
-import { normalizeRawSteps } from "./types.js";
-import type { Locator, RawStep } from "./types.js";
+import {
+  normalizePickedElement,
+  normalizeRawStep,
+  normalizeRawSteps,
+  normalizeStep,
+} from "./types.js";
+import type { Locator, PickedElement, RawStep } from "./types.js";
 
 interface CaptureState {
   queue: { i: number; s: unknown }[];
@@ -78,6 +85,26 @@ function attachOpen(html: string, hostId = "host"): ShadowRoot {
   const root = (host as HTMLElement).attachShadow({ mode: "open" });
   root.innerHTML = html;
   return root;
+}
+
+/** Drive a real refine-mode pick and read back the PickedElement through
+ *  `normalizePickedElement` — the boundary every real pick crosses, so a
+ *  field the script emits and the normalizer drops fails here rather than
+ *  in the app. Same helper as element-context.dom.test.ts. */
+function pick(el: Element | null): PickedElement {
+  expect(el, "the fixture element to pick").not.toBeNull();
+  document.documentElement.setAttribute(ATTR_REFINE, "1");
+  try {
+    (el as HTMLElement).click();
+    const raw = document.documentElement.getAttribute(ATTR_PICKED) || "";
+    expect(raw, "refine mode wrote a picked element").not.toBe("");
+    const picked = normalizePickedElement(JSON.parse(raw));
+    expect(picked, "the picked element survives normalization").not.toBeNull();
+    return picked as PickedElement;
+  } finally {
+    document.documentElement.removeAttribute(ATTR_REFINE);
+    document.documentElement.removeAttribute(ATTR_PICKED);
+  }
 }
 
 /** The last step the capture script queued, through `normalizeRawSteps` —
@@ -209,6 +236,24 @@ describe("the uniqueness oracle", () => {
     expect(hits[0].tagName.toLowerCase()).toBe("span");
   });
 
+  it("reads a host's root text for `withinHasText`, as filter({ hasText }) does", () => {
+    // Playwright's elementText includes a host's shadow-root text, so a
+    // `hasText` filter on the host holds when the text is inside the root.
+    // `textContent` on the host is empty, and a filter built on it kept no
+    // container — so "within x-card that has text Save" counted 0 here and 2
+    // in the run. VERIFIED TO FAIL by dropping the shadowRoot line in pwText.
+    install(`<x-card id="host"></x-card><x-card id="host2"></x-card>`);
+    const a = attachOpen(`<button>Save</button>`, "host");
+    const b = attachOpen(`<button>Save</button>`, "host2");
+    const found = matchesFor({
+      k: "role",
+      role: "button",
+      name: "Save",
+      ctx: { within: { k: "css", v: "x-card" }, withinHasText: "Save" },
+    });
+    expect(found).toEqual([a.querySelector("button"), b.querySelector("button")]);
+  });
+
   it("leaves XPath document-only, matching the one engine Playwright does not pierce", () => {
     document.body.innerHTML = `<div id="host"></div>`;
     attachOpen(`<button data-testid="x">X</button>`);
@@ -299,5 +344,98 @@ describe("picking an element at a point", () => {
     answerWith(document, btn);
 
     expect(deepElementFromPoint(10, 10)).toBe(btn);
+  });
+});
+
+// ── The mark, and the XPath that is withheld ────────────────────────────────
+//
+// Capturing the right element (above) made these steps CORRECT; nothing yet
+// made them LEGIBLE. A step inside a web component looks exactly like any other
+// in the list, and it differs in one way a user will eventually hit: it has no
+// XPath fallback, because an xpath for it is relative to the shadow root and
+// resolves to nothing in any engine. So the capture script marks the step
+// (`Step.shadow`), the row shows a chip, and the candidate lists — the refine
+// picker's and the heal probe's, which share `candidatesFor` — leave the xpath
+// out rather than offering a locator that cannot work.
+//
+// VERIFIED TO FAIL: dropping the `inShadow` stamp in `withFp` fails every
+// "marks" test; restoring the unconditional xpath push in `candidatesFor` fails
+// "offers no xpath candidate".
+
+describe("the web-component mark", () => {
+  it("marks a click recorded inside an open shadow root", () => {
+    install(`<div id="host"></div>`);
+    const root = attachOpen(`<button data-testid="inner">Go</button>`);
+    (root.querySelector("button") as HTMLElement).click();
+    expect(lastStep()?.shadow).toBe(true);
+  });
+
+  it("does not mark a light-DOM click", () => {
+    install(`<button data-testid="plain">Plain</button>`);
+    (document.querySelector("button") as HTMLElement).click();
+    expect(lastStep()?.shadow).toBeUndefined();
+  });
+
+  it("marks a fill inside a shadow root", () => {
+    install(`<div id="host"></div>`);
+    const root = attachOpen(`<input data-testid="shadow-field" />`);
+    const field = root.querySelector("input") as HTMLInputElement;
+    field.value = "hello";
+    field.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+    expect(lastStep()?.shadow).toBe(true);
+  });
+
+  it("is kept by both normalizers, and only as `true`", () => {
+    const locator = { k: "testid", v: "x" };
+    expect(normalizeRawStep({ type: "click", locator, shadow: true })?.shadow).toBe(true);
+    // A page can put anything on the wire; a truthy string is not the mark.
+    expect(normalizeRawStep({ type: "click", locator, shadow: "yes" })?.shadow).toBeUndefined();
+    expect(
+      normalizeStep({ id: "s", timestamp: 0, type: "click", locator, shadow: true })?.shadow,
+    ).toBe(true);
+  });
+
+  it("rides on a picked element, so a step authored from the pick carries it", () => {
+    install(`<div id="host"></div>`);
+    const root = attachOpen(`<button data-testid="inner">Go</button>`);
+    expect(pick(root.querySelector("button")).shadow).toBe(true);
+  });
+
+  it("is absent from a light-DOM pick", () => {
+    install(`<button data-testid="plain">Plain</button>`);
+    expect(pick(document.querySelector("button")).shadow).toBeUndefined();
+  });
+});
+
+describe("no XPath inside a shadow tree", () => {
+  it("offers no xpath candidate for a picked element inside a shadow root", () => {
+    install(`<div id="host"></div>`);
+    const root = attachOpen(`<button>Go</button>`);
+    const kinds = pick(root.querySelector("button")).candidates.map((c) => c.k);
+    expect(kinds).not.toContain("xpath");
+    // The css path stays, so the list still ends in something positional.
+    expect(kinds).toContain("css");
+  });
+
+  it("still offers an xpath for a light-DOM pick", () => {
+    install(`<button>Go</button>`);
+    expect(pick(document.querySelector("button")).candidates.map((c) => c.k)).toContain("xpath");
+  });
+
+  it("records a locator the piercing oracle resolves when nothing inside the root is unique", () => {
+    // Two identical components. No candidate is unique, so the recorder falls
+    // back to an indexed one — and whatever it records must resolve, through
+    // the oracle the run agrees with, to the button that was clicked.
+    install(`<div id="host"></div><div id="host2"></div>`);
+    attachOpen(`<button>Go</button>`, "host");
+    const second = attachOpen(`<button>Go</button>`, "host2");
+    (second.querySelector("button") as HTMLElement).click();
+
+    const loc = lastStep()?.locator as Locator;
+    expect(loc.k).not.toBe("xpath");
+    // `matchesFor` answers the un-indexed set on purpose (nth is applied by
+    // whoever consumes it, after context), so index it the way the run does.
+    expect(typeof loc.nth, "nothing was unique, so an index was recorded").toBe("number");
+    expect(matchesFor(loc)[loc.nth as number]).toBe(second.querySelector("button"));
   });
 });

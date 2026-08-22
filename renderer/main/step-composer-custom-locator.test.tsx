@@ -158,3 +158,26 @@ describe("position among matches", () => {
     expect(s.locator).toEqual({ k: "css", v: "table tr", nth: 0 });
   });
 });
+
+describe("a pick inside a web component", () => {
+  // The capture script marks a RECORDED step inside a shadow root
+  // (`Step.shadow`); a step AUTHORED from a pick of the same element must
+  // carry the same mark, or the chip — and the explanation of the missing
+  // XPath fallback — would depend on which way the step was written.
+  it("marks the authored step", () => {
+    const { onAdd } = renderComposer(picked({ shadow: true }));
+    submit();
+    expect(onAdd).toHaveBeenCalledTimes(1);
+    const steps = onAdd.mock.calls[0][0] as RawStep[];
+    expect(steps).toHaveLength(1);
+    expect(steps[0].locator).toBeDefined();
+    expect(steps[0].shadow).toBe(true);
+  });
+
+  it("leaves a light-DOM pick unmarked", () => {
+    const { onAdd } = renderComposer(picked());
+    submit();
+    const steps = onAdd.mock.calls[0][0] as RawStep[];
+    expect(steps[0].shadow).toBeUndefined();
+  });
+});

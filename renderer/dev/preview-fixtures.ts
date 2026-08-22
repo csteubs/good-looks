@@ -77,7 +77,14 @@ export const TESTS: TestRecord[] = [
       { type: "click", locator: { k: "role", role: "button", name: "Add to cart" } },
       { type: "click", locator: { k: "role", role: "link", name: "Cart" } },
       { type: "fill", locator: { k: "label", v: "Email" }, value: "buyer@example.com" },
-      { type: "click", locator: { k: "role", role: "button", name: "Place order" } },
+      // Recorded inside a web component (a payment widget's shadow root), so
+      // the step list shows the "web component" chip and its explanation —
+      // the only place outside a real page the chip can be seen.
+      {
+        type: "click",
+        locator: { k: "role", role: "button", name: "Place order" },
+        shadow: true,
+      },
       {
         type: "assert",
         assert: "text",

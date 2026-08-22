@@ -11,7 +11,7 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/rea
 
 import type { Step, StepType } from "../lib/recorder-types";
 import { SEL_RING, TONE, hexToRgb } from "../theme";
-import { StepRow } from "./step-row";
+import { SHADOW_CHIP_TITLE, StepRow } from "./step-row";
 
 /** jsdom normalises an inline `color` to `rgb(r, g, b)`, so a hex assertion
  *  never matches what reads back. (`box-shadow` is NOT normalised — see
@@ -58,6 +58,22 @@ describe("rendering", () => {
   it("labels the step type", () => {
     render(<StepRow index={0} step={step({ type: "click", locator: LOCATOR })} />);
     expect(screen.getByText("click")).toBeTruthy();
+  });
+
+  it("marks a step recorded inside a web component with a neutral chip that explains itself", () => {
+    // The chip is the only place the user learns that this step has no XPath
+    // fallback and why, so the explanation rides on the chip as its title —
+    // a Tooltip cannot be opened in jsdom, and a title can be read.
+    render(<StepRow index={0} step={step({ type: "click", locator: LOCATOR, shadow: true })} />);
+    const chip = screen.getByText("web component");
+    expect(chip.className).toContain("gl-chip");
+    expect(chip.getAttribute("title")).toBe(SHADOW_CHIP_TITLE);
+    expect(SHADOW_CHIP_TITLE).toMatch(/XPath/);
+  });
+
+  it("shows no web-component chip on an ordinary step", () => {
+    render(<StepRow index={0} step={step({ type: "click", locator: LOCATOR })} />);
+    expect(screen.queryByText("web component")).toBeNull();
   });
 
   it("renders 'end if' rather than the raw type name", () => {
