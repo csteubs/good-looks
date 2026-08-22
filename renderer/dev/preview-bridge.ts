@@ -1409,14 +1409,22 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     },
 
     // The Documentation pane's one piece of live state. A preview has no
-    // filesystem to check, so it answers with the shape a real checkout gives —
-    // the interesting half of the pane to look at is the copyable command, and
-    // the absent case is one line of prose.
+    // filesystem to check, so it answers with the shape a real INSTALL gives —
+    // the packaged case, which is the one nearly every user is in now that
+    // `build.files` ships `mcp/**`, and the one whose command is easiest to get
+    // subtly wrong. The absent case is one line of prose.
+    //
+    // SINGLE QUOTES, matching `registerCommand`. The path contains `Good Looks!`
+    // and a `!` inside double quotes is history expansion in interactive zsh and
+    // bash — a preview showing the double-quoted form would be showing a command
+    // that does not paste.
     "docs:mcpServer": () => ({
-      path: "/path/to/good-looks/mcp/server.mjs",
+      path: "/Applications/Good Looks!.app/Contents/Resources/app/mcp/server.mjs",
       exists: true,
       command:
-        'claude mcp add --scope user good-looks -- node "/path/to/good-looks/mcp/server.mjs"',
+        "claude mcp add --scope user good-looks -e ELECTRON_RUN_AS_NODE=1 " +
+        "-- '/Applications/Good Looks!.app/Contents/MacOS/Good Looks!' " +
+        "'/Applications/Good Looks!.app/Contents/Resources/app/mcp/server.mjs'",
     }),
 
     // ── Issue tracker ────────────────────────────────────────────────────

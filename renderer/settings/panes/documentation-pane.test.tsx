@@ -147,9 +147,14 @@ describe("rendering the document", () => {
   it("draws code blocks", () => {
     setHash("#documentation/setup");
     const { container } = renderPane(<DocumentationPane />);
-    const blocks = container.querySelectorAll("pre.gl-doc-pre");
+    const blocks = [...container.querySelectorAll("pre.gl-doc-pre")];
     expect(blocks.length).toBeGreaterThan(0);
-    expect(blocks[0].textContent).toContain("claude mcp add");
+    // ANY block, not `blocks[0]`. The subject here is that fenced code renders
+    // at all; which block comes first is the document's business, and pinning
+    // the index made an ordinary edit to MCP-GUIDE.md §2 fail a test about the
+    // parser. What matters is that the register command survives the round trip
+    // into the pane — it is the one line on this page a user has to copy.
+    expect(blocks.some((b) => b.textContent?.includes("claude mcp add"))).toBe(true);
   });
 
   it("renders bold and inline code as their own elements", () => {
@@ -181,14 +186,20 @@ describe("the MCP server on this machine", () => {
   });
 
   it("says the server is not here rather than offering a command that names nothing", async () => {
-    // The packaged-app case: `mcp/` is not shipped, so a copyable command would
-    // point at a path that does not exist.
+    // NO LONGER THE PACKAGED CASE. R15 ships `mcp/**`, so a `.app` takes the
+    // branch above; what is left here is a source tree without the folder, and
+    // a `build.files` regression. The branch is kept for exactly that second
+    // reason — it is what turns a packaging mistake into a message instead of a
+    // command that names nothing.
     mcpServer.mockResolvedValueOnce({ path: "/app/mcp/server.mjs", exists: false, command: "" });
     setHash("#documentation/setup");
     renderPane(<DocumentationPane />);
     await waitFor(() => {
-      expect(screen.getByText(/does not carry the MCP server/i)).toBeTruthy();
+      expect(screen.getByText(/not where this copy of the app expects it/i)).toBeTruthy();
     });
+    // It names the path it looked at, so the reader can see WHICH assumption
+    // broke rather than being told the file is missing from somewhere unstated.
+    expect(screen.getByText("/app/mcp/server.mjs")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /copy command/i })).toBeNull();
   });
 
