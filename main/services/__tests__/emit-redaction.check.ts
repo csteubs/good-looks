@@ -35,8 +35,8 @@
 // non-zero exit code stand in for one. Run with:
 //   npm run check:emit-redaction
 
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -113,6 +113,81 @@ assert(
   `${emitPath} does not reach for NO_REDACTION — it exists for the MCP and for ` +
     "tests, and using it here would satisfy the check above while defeating it",
 );
+
+// ── 2b. And no OTHER file in main/ emits behind its back ─────────────
+//
+// Sections 1 and 2 watch one file, which was right while one file was the only
+// way to obtain bytes. `emitReportTo` (R1) makes the emit path reachable
+// without a dialog, so the next caller — a run-end report, an MCP tool, the CLI
+// — is the one that can quietly import `junitXml` directly and skip everything
+// above. The rule in docs/plans/test-runner-improvements.md §3.5 is that every
+// new egress path extends this check in the same commit that adds it; this is
+// that extension, and it is written to cover callers that do not exist yet.
+
+/** Every `.ts` under `main/`, minus tests and the check scripts themselves. */
+function mainSources(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      mainSources(full, out);
+    } else if (entry.name.endsWith(".ts") && !/\.(test|check)\.tsx?$/.test(entry.name)) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
+const emitAbsolute = resolve(root, emitPath);
+const otherCallers: string[] = [];
+for (const file of mainSources(resolve(root, "main"))) {
+  if (file === emitAbsolute) continue;
+  const source = withoutComments(read(file.slice(root.length + 1)));
+  // The import is the tell, not the call: a file that does not import an
+  // emitter cannot call one, and matching bare names would flag any local
+  // function that happened to share a spelling.
+  const importsEmitters = /from\s+["'][^"']*shared\/emitters\.mjs["']/.test(source);
+  if (!importsEmitters) continue;
+  // A type-only import carries no runtime reach — `EmitterId` is the whole
+  // point of the module's `.d.mts` and every handler that names an emitter has
+  // it. Only a VALUE import can emit.
+  const valueImport = new RegExp(
+    String.raw`import\s+(?!type\s)[^;]*?from\s+["'][^"']*shared/emitters\.mjs["']`,
+    "s",
+  ).test(source);
+  if (!valueImport) continue;
+  if (emitterFns.some((fn) => new RegExp(String.raw`\b${fn}\s*\(`).test(source))) {
+    otherCallers.push(file.slice(root.length + 1));
+  }
+}
+
+assert(
+  otherCallers.length === 0,
+  "no file under main/ other than the emit service calls an emitter — a second " +
+    "caller does not inherit redactWithSnapshot and would produce a valid file " +
+    `with a live credential in it. Found: ${otherCallers.join(", ") || "none"}`,
+);
+
+// ── 2c. The non-interactive destination cannot be handed a redactor ──
+//
+// `emitReportTo` writes without a dialog, so nothing on its path asks a person
+// to look at the result. If it ever accepted a redactor from its caller, the
+// caller could pass an identity function and the file would look identical.
+// Redaction on this path is not a parameter; it is the one in `buildReport`.
+
+const emitToSignature = withoutComments(service).match(
+  /export function emitReportTo\(([\s\S]*?)\)\s*:/,
+);
+assert(
+  emitToSignature !== null,
+  `${emitPath} exports emitReportTo — the non-interactive destination this section guards`,
+);
+if (emitToSignature) {
+  assert(
+    !/redact/i.test(emitToSignature[1]),
+    "emitReportTo takes no redactor from its caller — it must use the one in " +
+      "buildReport, or an unattended write could opt out of redaction silently",
+  );
+}
 
 // ── 3. No IPC channel returns emitted text ───────────────────────────
 

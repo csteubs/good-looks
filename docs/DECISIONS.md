@@ -10,6 +10,64 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-21 — A report can name which runs it covers, and be written without a person
+
+R1 of [plans/test-runner-improvements.md](plans/test-runner-improvements.md).
+Six correct emitters have existed since 2026-08-12 and neither half of "emit a
+report for this CI run" was reachable.
+
+**The scope was the bigger of the two, and the failure it fixes is silent.**
+`build()` read the whole live run history and filtered only by `testId`, so a
+JUnit file emitted after a twelve-test routine described every run the machine
+had kept — up to `MAX_RECORDS`. That file is well-formed, a CI dashboard ingests
+it without complaint, and it reports four thousand test cases including failures
+from three months earlier. Nothing about it looks wrong. `EmitScope` is
+`{testId?, batchId?, since?, until?, runIds?}`, ANDed, with `{}` meaning the
+whole history — which is what every existing caller passes, so nothing changed
+under them.
+
+**The scope reaches SQL rather than filtering the query's output**, and that is
+not a performance choice. `stepDurations` returns rows aggregated per step — a
+median and a p95 over a window of runs — so filtering afterwards would drop
+whole steps while leaving the surviving numbers computed over runs *outside* the
+scope. "The p95 for this batch" would quietly have last month in it. The WHERE
+clause is now assembled from a list, which introduces its own hazard: a
+condition and its parameter drifting out of order binds positionally, SQLite
+does not complain, and the query filters on the wrong column and returns a
+plausible wrong answer. `check:metrics-db` §5c drives the real database and was
+verified to go red when the parameters are reversed.
+
+**An EMPTY `runIds` selects nothing, not everything.** Skipping the condition for
+an empty list is the natural way to write it and is the exact bug the feature
+exists to prevent — a scope that resolves to zero silently widening to the whole
+database. Pinned on both sides of the boundary (`report-emitter`'s filter and
+the SQL), because both could regress independently.
+
+**`emitReportTo` is main-process-only and deliberately NOT an IPC channel.**
+`report:emit` is a verb — it answers with a path and a byte count and never the
+text — precisely so the un-redacted payload does not cross the boundary before
+`redactWithSnapshot` runs. A channel that took a destination path would hand the
+renderer the choice of where bytes land, which is the same property surrendered
+by a different door. Every caller this exists for (the run-end report, and the
+CLI when it arrives) already lives on the main-process side. It also refuses a
+relative path rather than resolving one against the process cwd, which under
+Electron is wherever the app was launched from.
+
+**The guard grew with the egress path, which is the standing rule for this area**
+(plan §3.5). `check:emit-redaction` watched one file, which was right while one
+file was the only way to obtain bytes; an unattended destination makes the *next*
+caller the one that can import `junitXml` directly and skip redaction entirely.
+It now scans every `.ts` under `main/` for a VALUE import of the emitters — a
+type-only import of `EmitterId` is not runtime reach and must not trip it — and
+asserts `emitReportTo` accepts no redactor from its caller, since an unattended
+write could otherwise be handed an identity function and produce an identical
+looking file. Both new assertions were verified failing before being kept.
+
+**Not done here, deliberately:** no Batch-view button. Surfacing `batchId` so
+"export this batch" is one click is UI work with its own tests, and mixing it in
+would double a diff whose subject is a seam. The capability is reachable and
+tested; the affordance is the follow-up.
+
 ### 2026-08-21 — `import.meta` in the spec runtime is what "No tests found" meant
 
 `glaze-runtime.mjs` failed to LOAD under the Playwright CLI, and had for as long
