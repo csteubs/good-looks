@@ -547,15 +547,28 @@ export function stepBrowserMatrix(db, { testId, limit = 400 } = {}) {
 }
 
 /** Past runs of the same test, for the cross-run half of triage: did this fail
- *  on every engine, on every dataset row, only when capture was on? */
-export function siblingRuns(db, testId, { limit = 50, excludeRunId } = {}) {
+ *  on every engine, on every dataset row, only when capture was on?
+ *
+ *  `stepId` joins in `step_status` — the outcome of THAT step in each sibling,
+ *  or null when the sibling never executed it. Triage reads the step's outcome
+ *  rather than the run's, because a test's history speaks for steps the test
+ *  no longer has, and for steps it did not have yet: "passes on webkit" read
+ *  off runs of an earlier shape of the test filed a strict-mode violation as
+ *  an engine problem. A subquery rather than a LEFT JOIN, because a step
+ *  inside a loop has one row per iteration and a join would multiply the run;
+ *  a failed iteration wins, since one failure is what a failed step means. */
+export function siblingRuns(db, testId, { limit = 50, excludeRunId, stepId } = {}) {
   return all(
     db,
     `SELECT id, status, browser, speed, dataset_id, dataset_name, capture_ms,
-            failed_step_id, error_signature, started_at, has_artifacts
+            failed_step_id, error_signature, started_at, has_artifacts,
+            (SELECT s.status FROM step_metrics s
+              WHERE s.run_id = runs.id AND s.step_id = ?
+              ORDER BY CASE s.status WHEN 'failed' THEN 0 ELSE 1 END
+              LIMIT 1) AS step_status
      FROM runs
      WHERE test_id = ? AND id <> COALESCE(?, '')
      ORDER BY started_at DESC LIMIT ?`,
-    [testId, excludeRunId ?? null, limit],
+    [stepId ?? null, testId, excludeRunId ?? null, limit],
   );
 }

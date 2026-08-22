@@ -187,8 +187,12 @@ export declare function runEvidence(
   runId: string,
 ): { run: RunRow; steps: StepRow[] } | null;
 
+/** A sibling run, with `step_status` — the outcome of the step triage asked
+ *  about (`opts.stepId`) in that run, null when the run never executed it. */
+export type SiblingRunRow = Partial<RunRow> & { step_status: string | null };
+
 export declare function siblingRuns(
   db: Db,
   testId: string,
-  opts?: { limit?: number; excludeRunId?: string },
-): Partial<RunRow>[];
+  opts?: { limit?: number; excludeRunId?: string; stepId?: string },
+): SiblingRunRow[];

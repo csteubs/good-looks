@@ -459,6 +459,26 @@ try {
     siblings.length === 1 && siblings[0].id === "run-2",
     "query: sibling runs exclude the run being triaged",
   );
+  // Step-scoped: the sibling's outcome ON a given step, so triage can tell
+  // "passed on webkit" from "never ran there". run-2 is rolled up from the
+  // same replay (s0 passed, s2 failed) under a run marked passed — which is
+  // what shows the column is the STEP's outcome and not the run's.
+  const ranS0 = siblingRuns(db, "test-1", { excludeRunId: "run-1", stepId: "s0" });
+  assert(ranS0[0]?.step_status === "passed", "query: a sibling carries the asked-for step's own outcome");
+  const ranS2 = siblingRuns(db, "test-1", { excludeRunId: "run-1", stepId: "s2" });
+  assert(
+    ranS2[0]?.step_status === "failed" && ranS2[0]?.status === "passed",
+    "query: the step's outcome, not the run's",
+  );
+  const never = siblingRuns(db, "test-1", { excludeRunId: "run-1", stepId: "never-ran" });
+  assert(
+    never.length === 1 && never[0].step_status === null,
+    "query: a step the sibling never executed is null, not borrowed from the run",
+  );
+  assert(
+    siblings[0].step_status === null,
+    "query: asked without a step id, every sibling reads as not having executed it",
+  );
 
   // Its own database: the assertions below ingest extra runs, and doing that
   // to the shared one moves every count the earlier queries were checked

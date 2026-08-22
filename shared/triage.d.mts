@@ -33,9 +33,12 @@ export interface TriageResult {
 export interface TriageInput {
   run: RunRow | null | undefined;
   steps?: StepRow[];
-  /** Other runs of the same test, from metrics-query's siblingRuns(). The
-   *  window is the caller's choice. */
-  siblings?: Partial<RunRow>[];
+  /** Other runs of the same test, from metrics-query's siblingRuns() asked
+   *  with the failing step's id. The window is the caller's choice. Cross-run
+   *  signals read each sibling's `step_status` — the failing step's outcome in
+   *  that run — and a sibling that never executed the step (null) is set aside
+   *  rather than read as a pass. */
+  siblings?: (Partial<RunRow> & { step_status?: string | null })[];
   /** The stepHealth() row for the failing step, when the caller has it. */
   stepHistory?: Pick<StepHealthRow, "heals" | "healFailures" | "runs"> | null;
 }

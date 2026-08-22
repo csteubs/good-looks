@@ -1852,8 +1852,8 @@ server.registerTool(
     description:
       "Attribute one failed run to the SITE or to the TEST/RUNNER, from evidence already on " +
       "disk: response codes and page errors on the failing step, whether Auto-Heal found the " +
-      "element under a different locator or none at all, whether the same test fails on every " +
-      "engine or just one, on every dataset row or one, only when capture is on, and whether " +
+      "element under a different locator or none at all, whether the failing STEP fails on every " +
+      "engine that has run it or just one, on every dataset row or one, only when capture is on, and whether " +
       "the failing step simply ran out the test's timeout. " +
       "Read `evidence` and `limits` before `verdict` — `limits` says what the capture did NOT " +
       "record, and an absent signal there is not evidence of absence. Verdicts are never " +
@@ -1886,7 +1886,15 @@ server.registerTool(
 
     const { run, steps } = evidence;
     const failingStepId = run.failed_step_id ?? steps.find((s) => s.status === "failed")?.step_id;
-    const siblings = siblingRuns(db, run.test_id, { limit: TRIAGE_COHORT, excludeRunId: runId });
+    // With the failing step's id, so each sibling carries THAT step's outcome
+    // and a run that never executed it is not read as a pass — the same call
+    // the app's metrics-store makes, or the two surfaces would answer
+    // differently for one run.
+    const siblings = siblingRuns(db, run.test_id, {
+      limit: TRIAGE_COHORT,
+      excludeRunId: runId,
+      stepId: failingStepId,
+    });
     const result = triageRun({
       run,
       steps,
@@ -1911,6 +1919,9 @@ server.registerTool(
       // "does not fail on other engines" is unreadable — it means one thing
       // against 30 sibling runs and nothing at all against zero.
       cohortSize: siblings.length,
+      // …and how many of those actually executed the failing step, which is
+      // the number the engine/dataset/capture signals were drawn from.
+      stepCohortSize: siblings.filter((s) => s.step_status === "passed" || s.step_status === "failed").length,
       // The failure-reason label this evidence argues for — the same mapping
       // the app's automatic categorization applies at run end. Advisory here:
       // this server never writes app data, so assigning it (or overriding it)

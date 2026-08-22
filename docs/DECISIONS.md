@@ -10,6 +10,43 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-22 — Triage reads the failing step's history, not the test's
+
+A run of "Unsplash Integration Test" failed with `strict mode violation:
+getByTestId('search-route').getByText('Mountain') resolved to 3 elements`, and
+the app filed it as **Environment issue — fails on chromium only; webkit,
+firefox pass**. The element was visible in the screenshots; the locator was a
+substring match that also caught two tag links. The error line said so. The
+verdict did not.
+
+**Two things were wrong, and the second hid the first.** `ambiguous-locator`
+was MODERATE and `single-engine` STRONG, so whenever both fired the inference
+was the headline and the failure-reason label followed it. And the inference
+was drawn from the wrong population: `siblingRuns` returned the test's last
+thirty runs by `test_id`, and this test had run on webkit and firefox *before
+the failing assertion existed*. Those runs passed because they contained
+different steps. The step itself had run three times, all on chromium.
+
+**The cohort is now scoped to the failing step.** `siblingRuns` takes the
+failing step's id and joins in `step_status` — that step's outcome in each
+sibling, null when the sibling never executed it. `triageRun` counts only
+siblings that did, reads the step's outcome rather than the run's (a run that
+failed *later* passed this step; a run that failed *earlier* failed at
+something else), and prices the ones it set aside as a `limits` entry, because
+those runs exist and a reader who knows the test ran on webkit will otherwise
+wonder why the verdict does not mention it. With no failing step identified
+nothing can be scoped, and the runs' own outcomes are read as before.
+
+**A stated cause outranks an inferred one.** `ambiguous-locator` is now STRONG:
+it is Playwright naming the cause in the error line, not a shape read off
+counts. `check:triage` pins both halves — a sibling that never ran the step is
+not a clean engine, and a strict-mode signature is the headline even when the
+other engines genuinely passed the step.
+
+Rejected: a separate `stepEngines` input from `stepBrowserMatrix`. That
+aggregate spans all history while the cohort is a window, and two windows in
+one verdict is a verdict nobody can reason about. One query, one column, both
+callers (`metrics-store.triage` and the MCP's `triage_run`) pass the same id.
 ### 2026-08-22 — The recorder learns Playwright's role table
 
 A run of "Unsplash Integration Test" failed with `strict mode violation:
