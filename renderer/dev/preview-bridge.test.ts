@@ -363,6 +363,38 @@ describe("the scripted run", () => {
     const lastReported = Math.max(...steps.map((s) => s.index));
     expect(lastReported).toBe(failed[0].index);
   });
+
+  it("stops a run with its current step left OPEN, as a SIGKILL does", async () => {
+    // The real Stop kills the Playwright process; the reporter dies with the
+    // step it began still unclosed, and no `end` for it ever arrives. The
+    // preview has to reproduce that shape — the store's job is to settle that
+    // step when the run reports done, and a preview that closed it tidily
+    // would never show the spinner-after-stop bug the store fixes. A longer
+    // tick here so the stop lands between the first `begin` and its `end`.
+    installPreviewBridge({ runTickMs: 50 });
+    const steps: { index: number; status: string; ok: boolean }[] = [];
+    let code: number | null = null;
+    ipc().on("runner:step", (...a: unknown[]) => steps.push(a[1] as never));
+    const firstBegin = new Promise<void>((resolve) => {
+      ipc().on("runner:step", () => resolve());
+    });
+    const done = new Promise<void>((resolve) => {
+      ipc().on("runner:done", (...a: unknown[]) => {
+        code = (a[1] as { code: number }).code;
+        resolve();
+      });
+    });
+    await ipc().invoke("runner:run", { id: "t-checkout", headed: false });
+    await firstBegin;
+    await ipc().invoke("runner:stop", { runId: "t-checkout" });
+    await done;
+    expect(code).not.toBe(0);
+    expect(steps).toEqual([{ runId: "t-checkout", index: 0, status: "begin", ok: true }]);
+    // Cancelled, not merely superseded: no tick of the stopped run fires
+    // afterwards, which would report steps on a run the store has closed.
+    await new Promise((r) => setTimeout(r, 120));
+    expect(steps).toHaveLength(1);
+  });
 });
 
 describe("the trainer route", () => {

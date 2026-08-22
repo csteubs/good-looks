@@ -10530,3 +10530,49 @@ not drifted. After the rebase onto #184: the forged-negative parity row was
 run against the pre-delegation rendering and failed exactly there
 (`.nth(-7)` shown for a line that says `.nth(0)`) before the delegation made
 it pass.
+
+## 2026-08-22 — A run that ends settles its open step
+
+**The bug.** Occasionally a test stopped mid-run, or one that failed mid-run,
+finished with its last step still wearing the running treatment: cyan rail,
+`Loader2` turning, and none of the failing-step styling — no red rail, no red
+description, no X. The verdict chip said FAILED one pane down.
+
+**Why.** A step's status in `RunInfo.stepStatus` comes from a `begin`/`end`
+pair the reporter writes to stdout, and the `end` is not guaranteed to
+arrive. Stop sends SIGKILL, so the reporter dies with the step it opened still
+open; a browser crash or the process-timeout kill ends the same way. The
+`runner:done` handler set `running: false` and the exit code and left the
+step map alone, so a step at `running` stayed there for as long as the run
+was on screen. The same map feeds the AI debug prompt's "earliest failed
+step", which therefore had nothing to point at.
+
+**The fix is in the store, not the runner.** `settleStepStatus` runs the map
+on `runner:done`: anything still `running` becomes `failed` on a non-zero
+exit and `passed` on zero. Non-zero is the ordinary case — the open step is
+the one under way when the run died, which is the failing step. Zero is
+defensive: a run that passed with a step somehow left open should not show a
+red row under a green verdict. Steps that never began stay absent, because an
+unmarked row is how "did not run" is shown. The main process was the other
+candidate — it could track the open index and emit a synthetic `end` before
+`runner:done` — but the store is the one place every run's stream terminates
+(the app's own runs, batch members, the preview's scripted runs), and the
+persisted replay model already infers a failing step when the reporter never
+reported one (`buildReplay`'s last-screenshot fallback), so nothing on disk
+needed the synthetic event. The precedent is `recorder-service.ts`'s replay
+path, which emits `end ok:false` when a step throws for exactly the reason
+given there: "without this the row keeps the 'begin' spinner forever".
+
+**The preview could not show it.** `preview-bridge.ts` had no `runner:stop`
+at all — the Stop button's invoke was a recorded miss — so a stopped run was
+one more state with no address in a tab. It now cancels the scripted run's
+pending ticks and reports done with code -1, and deliberately does NOT close
+the step in flight, because the real runner's SIGKILL does not either. A
+bridge that tidied the step first would have been unable to reproduce the
+bug the store fixes.
+
+**Verified to fail first.** With `settleStepStatus` stubbed to identity, the
+two new `recorder-store.test.tsx` cases fail on `1:running` where `1:failed`
+and `0:passed` are expected; a third pins that a reported outcome is left
+alone. `preview-bridge.test.ts` pins the stop shape: exactly one `begin`
+reported, a non-zero code, and no tick of the stopped run firing afterwards.

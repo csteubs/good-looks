@@ -146,6 +146,12 @@ function Probe() {
       <span data-testid="run-finished">
         {runs["t1"]?.finishedAt === undefined ? "none" : "set"}
       </span>
+      <span data-testid="run-steps">
+        {Object.entries(runs["t1"]?.stepStatus ?? {})
+          .map(([i, v]) => `${i}:${v}`)
+          .sort()
+          .join("|")}
+      </span>
       <span data-testid="replay-ran">{String(replayRun?.ran ?? "none")}</span>
       <span data-testid="replay-steps">
         {(replayRun?.steps ?? []).map((s) => `${s.stepLabel}:${s.ok}`).join("|")}
@@ -314,6 +320,45 @@ describe("run output", () => {
     emit("runner:done", { runId: "t1", code: 0 });
     expect(text("run-running")).toBe("false");
     expect(text("run-code")).toBe("0");
+  });
+
+  it("marks the step a failed run died on as failed, even though it never ended", () => {
+    // A step's status is a `begin`/`end` pair from the reporter, and the `end`
+    // is not guaranteed: Stop is a SIGKILL, so the reporter is gone before it
+    // can close the step it opened, and a browser crash ends the same way. The
+    // row then kept its spinner and cyan rail after the run had finished, and
+    // never went red — the failing step looked like it was still running.
+    renderStore();
+    emit("runner:step", { runId: "t1", index: 0, status: "begin", ok: true });
+    emit("runner:step", { runId: "t1", index: 0, status: "end", ok: true });
+    emit("runner:step", { runId: "t1", index: 1, status: "begin", ok: true });
+    expect(text("run-steps")).toBe("0:passed|1:running");
+    emit("runner:done", { runId: "t1", code: -1 });
+    expect(text("run-running")).toBe("false");
+    expect(text("run-steps")).toBe("0:passed|1:failed");
+  });
+
+  it("settles a step still open at a clean exit as passed, not failed", () => {
+    // The run passed, so whatever it was doing passed with it. A red row under
+    // a green verdict would be two outcomes for one run.
+    renderStore();
+    emit("runner:step", { runId: "t1", index: 0, status: "begin", ok: true });
+    emit("runner:done", { runId: "t1", code: 0 });
+    expect(text("run-steps")).toBe("0:passed");
+  });
+
+  it("leaves a reported outcome alone when the run ends", () => {
+    // Settling is only for steps the reporter never closed. A step that ended
+    // `ok: false` is already the failing step; a step that ended `ok: true`
+    // before a later failure stays green — and nothing that never began is
+    // invented.
+    renderStore();
+    emit("runner:step", { runId: "t1", index: 0, status: "begin", ok: true });
+    emit("runner:step", { runId: "t1", index: 0, status: "end", ok: true });
+    emit("runner:step", { runId: "t1", index: 1, status: "begin", ok: true });
+    emit("runner:step", { runId: "t1", index: 1, status: "end", ok: false });
+    emit("runner:done", { runId: "t1", code: 1 });
+    expect(text("run-steps")).toBe("0:passed|1:failed");
   });
 
   it("refetches the run history when the backend says it changed", () => {
