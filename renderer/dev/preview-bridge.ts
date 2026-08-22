@@ -79,6 +79,7 @@ import type {
   RunNoticeKind,
   RunReplay,
   RunReplaySummary,
+  ScriptCheckResult,
   SecretStatus,
   TestRecord,
   TestVariable,
@@ -634,6 +635,47 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
         "});",
         "",
       ].join("\n");
+    },
+    /** The real handler hands the draft to the Playwright CLI. The preview has
+     *  no CLI, so it answers the one thing the editor's error path needs to be
+     *  visible here: an unbalanced bracket is reported on the line it is on,
+     *  and anything that balances loads. Deliberately crude — the point is to
+     *  render the failed-check state, not to parse TypeScript. */
+    "tests:checkScript": (p): ScriptCheckResult => {
+      const source = String(p?.source ?? "");
+      const lines = source.split("\n");
+      let depth = 0;
+      let badLine = 0;
+      for (let i = 0; i < lines.length; i++) {
+        for (const ch of lines[i]) {
+          if (ch === "(" || ch === "{" || ch === "[") depth += 1;
+          else if (ch === ")" || ch === "}" || ch === "]") depth -= 1;
+          if (depth < 0 && !badLine) badLine = i + 1;
+        }
+      }
+      if (depth !== 0 && !badLine) badLine = lines.length;
+      const tests: { title: string; line: number }[] = [];
+      lines.forEach((l, i) => {
+        const m = l.match(/^\s*test\(\s*"([^"]*)"/);
+        if (m) tests.push({ title: m[1], line: i + 1 });
+      });
+      if (badLine) {
+        return {
+          ok: false,
+          errors: [{ message: 'SyntaxError: Unexpected token, expected "," (' + badLine + ":1)", line: badLine, column: 1 }],
+          tests: [],
+          durationMs: 420,
+        };
+      }
+      if (tests.length === 0) {
+        return {
+          ok: false,
+          errors: [{ message: "This script defines no tests — Playwright found nothing to run." }],
+          tests: [],
+          durationMs: 380,
+        };
+      }
+      return { ok: true, errors: [], tests, durationMs: 410 };
     },
     "tests:rename": (p) => {
       const test = findTest(p?.id);

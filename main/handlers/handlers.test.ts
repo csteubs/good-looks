@@ -2265,3 +2265,54 @@ describe("failure reasons — the vocabulary and the per-run label", () => {
     expect(rec.failureReasonId).toBeUndefined();
   });
 });
+
+describe("tests:checkScript", () => {
+  // These hand a draft to the REAL Playwright CLI, the way the Script tab's
+  // Save does. About half a second each; the point is the wiring — the
+  // scripts dir, the module symlink, the emitted runtime, the reporter — which
+  // a fake process would only restate.
+  const GOOD =
+    'import { test, expect } from "@playwright/test";\n' +
+    'test("ok", async ({ page }) => {\n' +
+    '  await page.goto("https://example.com");\n' +
+    "});\n";
+
+  it("reports a syntax error against the draft's line, and writes nothing", async () => {
+    const rec = seedTest("t-check-1");
+    fs.mkdirSync(path.dirname(rec.scriptPath), { recursive: true });
+    fs.writeFileSync(rec.scriptPath, GOOD);
+    const broken = GOOD.replace('"https://example.com")', '"https://example.com"');
+    const result = await invokeHandler<{
+      ok: boolean;
+      errors: { message: string; line?: number; column?: number }[];
+    }>("tests:checkScript", { id: "t-check-1", source: broken });
+    expect(result.ok).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].line).toBe(3);
+    expect(result.errors[0].message).toMatch(/^SyntaxError/);
+    // The check is read-only: the spec is untouched, the record unchanged,
+    // and no draft is left beside it.
+    expect(fs.readFileSync(rec.scriptPath, "utf-8")).toBe(GOOD);
+    expect(testStore.get("t-check-1")?.scriptEdited).toBeUndefined();
+    const leftovers = fs.readdirSync(path.dirname(rec.scriptPath)).filter((f) => f.includes(".draft-"));
+    expect(leftovers).toEqual([]);
+  }, 30_000);
+
+  it("passes a loadable draft and lists what it would run", async () => {
+    const rec = seedTest("t-check-2");
+    fs.mkdirSync(path.dirname(rec.scriptPath), { recursive: true });
+    fs.writeFileSync(rec.scriptPath, GOOD);
+    const result = await invokeHandler<{ ok: boolean; tests: { title: string; line: number }[] }>(
+      "tests:checkScript",
+      { id: "t-check-2", source: GOOD },
+    );
+    expect(result.ok).toBe(true);
+    expect(result.tests).toEqual([{ title: "ok", line: 2 }]);
+  }, 30_000);
+
+  it("refuses an unknown test", async () => {
+    await expect(invokeHandler("tests:checkScript", { id: "t-nope", source: GOOD })).rejects.toThrow(
+      /Test not found/,
+    );
+  });
+});

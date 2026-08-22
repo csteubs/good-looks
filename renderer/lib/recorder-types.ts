@@ -844,6 +844,26 @@ export interface ScriptChangeSource {
   reviewed?: boolean;
 }
 
+/** One reason a draft of a script failed to load (mirror of
+ *  main/services/script-check.ts). `line` is 1-based and absent when the CLI
+ *  could not place the error (a module-scope throw, a missing module). */
+export interface ScriptCheckError {
+  message: string;
+  line?: number;
+  column?: number;
+  snippet?: string;
+}
+
+/** What `tests:checkScript` answers: whether the real Playwright CLI could
+ *  load and collect the draft, and what it found. `tests` are the test()
+ *  calls it collected, with their lines. */
+export interface ScriptCheckResult {
+  ok: boolean;
+  errors: ScriptCheckError[];
+  tests: { title: string; line: number }[];
+  durationMs: number;
+}
+
 /** One recorded change to a test's whole spec, and the means to undo it.
  *
  *  The sibling of `HealEntry`: a heal swaps one step's locator, this replaces

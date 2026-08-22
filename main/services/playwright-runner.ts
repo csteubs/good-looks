@@ -156,7 +156,7 @@ function browsersPath(): string {
  * project root's `node_modules` — two levels up either way (build/main → root,
  * or main/services → root when run from source). The extra candidate covers a
  * packaged layout where the app contents sit one level deeper. */
-function resolvePlaywright(): { cliPath: string; nodeModules: string } {
+export function resolvePlaywright(): { cliPath: string; nodeModules: string } {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const candidateRoots = [
     // build/main -> approot/node_modules (also main/services -> root in dev)
@@ -207,7 +207,7 @@ let tmpSeq = 0;
  * fixture; renaming into place is, and the content of these files is fixed per
  * app build, so after the first run of a session this writes nothing at all.
  */
-function writeIfChanged(filePath: string, content: string): void {
+export function writeIfChanged(filePath: string, content: string): void {
   try {
     if (fs.readFileSync(filePath, "utf-8") === content) return;
   } catch {
@@ -285,7 +285,7 @@ export function ensureModuleResolution(scriptsDir: string, nodeModules: string):
 // Contents live in shared/playwright-config-source.mjs — see there for why ONE
 // definition serves both this and the MCP server, and for what each env-driven
 // field is for. The write is `writeIfChanged`, like every other fixture here.
-function ensureConfig(scriptsDir: string): string {
+export function ensureConfig(scriptsDir: string): string {
   const configPath = path.join(scriptsDir, PLAYWRIGHT_CONFIG_FILE);
   writeIfChanged(configPath, playwrightConfigSource);
   return configPath;
@@ -311,7 +311,7 @@ function ensureCaptureFixture(scriptsDir: string): void {
 // reporter: it's a few hundred bytes, and writing it only when a capture step
 // exists would mean a test that gains one mid-session runs against a missing
 // module until the next app start.
-function ensureRuntime(scriptsDir: string): void {
+export function ensureRuntime(scriptsDir: string): void {
   writeIfChanged(path.join(scriptsDir, GLAZE_RUNTIME_FILE), glazeRuntimeSource);
 }
 
@@ -761,7 +761,7 @@ async function installBrowser(
   }
 }
 
-function baseEnv(nodeModules: string): NodeJS.ProcessEnv {
+export function baseEnv(nodeModules: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
     PLAYWRIGHT_BROWSERS_PATH: browsersPath(),

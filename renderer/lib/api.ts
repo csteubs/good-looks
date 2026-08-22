@@ -14,6 +14,7 @@ import type {
   ScriptChangeEntry,
   ScriptChangeListEntry,
   ScriptChangeSource,
+  ScriptCheckResult,
   SecretStatus,
   FlowScopeCommit,
   TestVariable,
@@ -277,6 +278,11 @@ export const api = {
      *  had before the journal existed. */
     updateScript: (id: string, source: string, origin?: ScriptChangeSource) =>
       ipc().invoke<TestRecord>("tests:updateScript", { id, source, origin }),
+    /** Load a DRAFT of the script through the real Playwright CLI without
+     *  saving it: syntax, imports, duplicate titles, a file with no tests.
+     *  Not a type check — see main/services/script-check.ts. */
+    checkScript: (id: string, source: string) =>
+      ipc().invoke<ScriptCheckResult>("tests:checkScript", { id, source }),
     /** `regenerate` rebuilds the .spec.ts from these steps even when it was
      *  hand-edited / imported / model-written. Without it such a test keeps its
      *  script and is marked diverged — the steps are saved, the run is not

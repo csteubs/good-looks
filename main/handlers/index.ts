@@ -72,6 +72,7 @@ import {
 import { refreshSecretSnapshot } from "../services/secret-redaction.js";
 import { shopifySignatureStore } from "../services/shopify-signature-store.js";
 import { parseSpecDetailed } from "../services/spec-parser.js";
+import { checkTestScript } from "../services/script-check.js";
 import { activeProviderEndpoint, llmService } from "../services/llm-service.js";
 import { proxyPasswordStore } from "../services/proxy-password-store.js";
 import {
@@ -1177,6 +1178,15 @@ export function registerHandlers(): void {
       );
     },
   );
+
+  /** Does a DRAFT of a test's script load under the real Playwright CLI?
+   *  Writes nothing the user keeps: the Script tab asks this before it saves,
+   *  and shows the answer against the draft's lines. See script-check.ts. */
+  ipcMain.handle("tests:checkScript", async (_e, params: { id: string; source: unknown }) => {
+    const rec = testStore.get(params.id);
+    if (!rec) throw new Error("Test not found: " + params.id);
+    return checkTestScript(rec, typeof params.source === "string" ? params.source : "");
+  });
 
   // ── Script-change journal ────────────────────────────────────────────────
   //

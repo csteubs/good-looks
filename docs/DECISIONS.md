@@ -10,6 +10,93 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-22 — The Script tab verifies a draft with the real Playwright CLI before saving it, and its two editor layers stop drifting
+
+Two bugs in the Script tab's Edit mode, both reported from use. Fixed ahead of
+the Script IDE work (see the research memo linked from the PR), because both
+fixes survive whatever editor engine that work chooses: the overlay fix is the
+stopgap until the engine is replaced, and the pre-save check is the oracle the
+IDE keeps.
+
+**Lines broke and the view shifted.** `ScriptEditor` overlays a transparent
+`<textarea>` on a highlighted `<pre>`. The textarea soft-wrapped — a
+`<textarea>`'s default — while the pre was `white-space: pre`, so the first
+line wider than the pane took two rows in one layer and one in the other, and
+every row below it sat one line off from the text the caret was on. Separately,
+the only scroll sync wrote `scrollTop` to the gutter's inner div, which does not
+scroll, so it did nothing, and the pre scrolled on its own past the first
+screenful. Now the textarea is `wrap="off"` + `white-space: pre`, both layers
+share one style object for metrics, padding, tab size and border, the pre is
+`overflow: hidden` and follows the textarea's scroll programmatically, and the
+gutter follows by transform. jsdom cannot see wrapping or scrolling, so
+`script-view.test.tsx` pins the structure that decides them (the attribute, the
+`white-space`, the shared metrics, and that a scroll event on the textarea
+writes the pre's scroll and the gutter's transform); each assertion was
+reverted and watched fail. The visual half was confirmed in `dev:web` with a
+190-character line and a 50-line draft scrolled to 300px.
+
+**Save wrote anything.** A missing bracket was found on the next run, as "No
+tests found" in the run console, with the editor closed and nothing pointing at
+the line. Save now hands the draft to `tests:checkScript`, which runs the REAL
+Playwright CLI over it in `--list` mode — the same binary, the same Babel
+transform, the same module resolution a run uses — and refuses the write when
+it cannot load. The choice of oracle is the decision here:
+
+- **Not a renderer-side parser.** A tokenizer or a TypeScript parse in the
+  renderer would answer "is this syntactically TypeScript", which is not the
+  question. The question is whether the file a run will load loads, and that
+  includes Playwright's own transform, `./glaze-runtime.mjs` and an imported
+  test's sibling modules resolving from the spec's directory, duplicate test
+  titles, and anything thrown at module scope. `check:runtime-boot` exists
+  because a model of the transform was wrong once (DECISIONS 2026-08-21); this
+  check takes the same side.
+- **Not a type check.** Playwright strips types rather than checking them, so
+  `const n: number = "x"` loads and runs. `check:script-check` pins that as a
+  row — if it ever fails, the check has grown a type pass and the editor's
+  wording ("loads") needs revisiting. A type-aware check is the Script IDE's
+  job, with a language service that can also drive completion.
+- **A custom reporter writing to a FILE, not `--reporter=json` on stdout.**
+  `--list` executes the draft's module scope, and a `console.log` there lands
+  on the same stdout as the JSON; the first version of this corrupted its own
+  report on exactly that. `glaze-list-reporter.mjs` is emitted next to the
+  specs like the step reporter, collects `onError` (a load failure) and
+  `onBegin` (the collected tests), and writes both to `GLAZE_LIST_OUT`.
+- **The draft sits BESIDE the real spec**, under a name that still matches the
+  default `testMatch` (or the CLI finds nothing) and that no record ever points
+  at, and is removed whatever happens. Written anywhere else, relative imports
+  would resolve differently from a run, which would make the check answer a
+  different question than the one it is asked. The CLI spells that path three
+  ways in its messages — absolute, realpath'd (macOS keeps the temp dir and
+  `/var` behind symlinks) and relative to its root — so the rename keys on the
+  draft's basename and eats whatever path precedes it; the first version
+  matched the absolute path only and left `../../../../private…` fragments in
+  a duplicate-title message.
+- **Save anyway exists, and a check that could not run is not a pass.** The
+  file is the user's. A draft the CLI rejects is still their edit, so the
+  refusal keeps the editor open with the problems listed against their lines
+  (click → caret on the line; the gutter number goes red and the row is
+  tinted on the layer BEHIND the textarea, so the mark cannot shift the text
+  it is about) and adds a second, red button. A thrown IPC call (no CLI, no
+  `node_modules`) is shown as a problem with the same button, never written
+  through silently. The "Save & continue" path into the trainer writes
+  unchecked on purpose — it exists so the edit is not lost to the regeneration
+  that follows.
+- **`--list` runs the draft's top-level code.** Stated rather than hidden: a
+  spec is the user's own program and every run executes all of it, so the
+  trust level is unchanged, but it is why the check is a child process under a
+  run's env with a 20s kill and never an in-process parse.
+
+`check:selection-neutral` rejected the first version's hover on the problem
+row (red, an outcome hue); hover now brightens and underlines, and the
+location span carries the red.
+
+**Verified:** `check:script-check` (nine rows through the real CLI, ~0.6s
+each), `script-check.test.ts`, `tests:checkScript` in `handlers.test.ts`
+(real CLI through the handler; the spec on disk and the record are untouched
+and no draft is left behind), seven "saving a script edit" tests in
+`test-detail-view.test.tsx`, and the preview: long line unwrapped, scroll
+synced at 300px, a failing check listing its problem, click-to-line, Save
+anyway closing the editor.
 ### 2026-08-22 — A text locator can be exact
 
 The same Unsplash run as the two entries below. With the role table in place

@@ -1,5 +1,7 @@
 import * as React from "react";
 
+import type { ScriptCheckError } from "../lib/recorder-types";
+
 /**
  * IDE-style viewer + editor for a Playwright/TS test script.
  *
@@ -312,113 +314,182 @@ export function ScriptView({ code }: { code: string }) {
   );
 }
 
+/** Character offset of the START of a 1-based line in `value`, clamped to the
+ *  text. What a click on a reported problem hands to `setSelectionRange`. */
+export function lineStartOffset(value: string, line: number): number {
+  if (line <= 1) return 0;
+  let offset = 0;
+  let current = 1;
+  while (current < line) {
+    const nl = value.indexOf("\n", offset);
+    if (nl === -1) return value.length;
+    offset = nl + 1;
+    current += 1;
+  }
+  return offset;
+}
+
+export interface ScriptEditorProps {
+  value: string;
+  onChange: (next: string) => void;
+  /** Problems the last pre-save check reported. A problem with a `line` marks
+   *  that row in the gutter and tints it in the highlight layer; the rest are
+   *  the host's to show, since the editor has no row to pin them to. */
+  errors?: ScriptCheckError[];
+  /** The textarea, for a host that moves the caret (click a problem, land on
+   *  its line). */
+  textareaRef?: React.Ref<HTMLTextAreaElement>;
+}
+
 /**
  * Editable IDE-style script editor: a transparent `<textarea>` overlaid on a
  * syntax-highlighted `<pre>` with a shared line-number gutter. The textarea's
  * text is transparent (caret stays visible); the pre behind it supplies the
- * colors. Scroll is synchronized so the gutter and highlight track the caret.
+ * colors.
  *
- * Layout: a flex row — a sticky gutter column on the left, and a relative
- * code area on the right that stacks the highlight <pre> and the textarea.
- * Both layers share identical font metrics + padding so typed text overlays
- * the highlighted text line-for-line.
+ * Two layers can only agree line-for-line if they break lines identically and
+ * scroll identically, and both were once left to chance:
+ *
+ *  - The textarea WRAPPED. A `<textarea>` soft-wraps by default and the pre
+ *    is `white-space: pre`, so the first line wider than the pane took two
+ *    rows in one layer and one in the other, and every row below it was
+ *    offset by one — the caret sat on the line above the text it was editing.
+ *    `wrap="off"` plus `white-space: pre` makes both layers break only at a
+ *    newline.
+ *  - Only the gutter was scroll-synced — and by setting `scrollTop` on an
+ *    element that does not scroll, which did nothing. The pre scrolled on its
+ *    own, so past the first screenful the highlight drifted away from the
+ *    caret. The textarea is now the ONE scrolling element; the pre is
+ *    `overflow: hidden` and follows it programmatically, and the gutter
+ *    follows by transform.
+ *
+ * Both layers share identical font metrics, padding and tab size so typed text
+ * overlays the highlighted text line-for-line. `script-view.test.tsx` pins the
+ * structural half; the visual half is what `?test=<id>` in the preview shows.
  */
-export function ScriptEditor({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (next: string) => void;
-}) {
+export function ScriptEditor({ value, onChange, errors, textareaRef }: ScriptEditorProps) {
   const lines = React.useMemo(() => value.split("\n"), [value]);
   const rendered = React.useMemo(() => {
     const state = { inBlockComment: false, inTemplate: false };
     return lines.map((line) => tokenizeLine(line, state));
   }, [lines]);
 
-  const gutterWidth = String(lines.length).length;
+  // Line → first message reported on it. The gutter shows one mark per line;
+  // the host lists every problem.
+  const errorByLine = React.useMemo(() => {
+    const m = new Map<number, string>();
+    for (const e of errors ?? []) {
+      if (e.line && !m.has(e.line)) m.set(e.line, e.message);
+    }
+    return m;
+  }, [errors]);
+
+  const gutterWidth = String(lines.length + 1).length;
   const gutterCh = `${gutterWidth + 2}ch`;
 
-  // The highlight layer scrolls with the textarea via this ref.
-  const highlightRef = React.useRef<HTMLDivElement | null>(null);
+  // The textarea scrolls; the highlight layer and the gutter follow it.
+  const highlightRef = React.useRef<HTMLPreElement | null>(null);
+  const gutterRef = React.useRef<HTMLDivElement | null>(null);
   const onScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
-    const el = highlightRef.current;
-    if (el) {
-      el.scrollTop = e.currentTarget.scrollTop;
-      el.scrollLeft = e.currentTarget.scrollLeft;
+    const { scrollTop, scrollLeft } = e.currentTarget;
+    const pre = highlightRef.current;
+    if (pre) {
+      pre.scrollTop = scrollTop;
+      pre.scrollLeft = scrollLeft;
     }
+    const gutter = gutterRef.current;
+    if (gutter) gutter.style.transform = `translateY(${-scrollTop}px)`;
+  };
+
+  const lineHeight = "var(--text-mono--line-height)";
+  const sharedText: React.CSSProperties = {
+    fontFamily: "var(--font-mono)",
+    fontSize: "var(--text-mono)",
+    lineHeight,
+    tabSize: 2,
+    margin: 0,
+    border: 0,
+    padding: `0 ${CODE_PAD_X}`,
+    whiteSpace: "pre",
+    overflowWrap: "normal",
+    wordBreak: "normal",
   };
 
   return (
-    <div className={`${LINE_CLS} relative min-h-0 flex-1 overflow-hidden`}>
-      <div className="flex min-h-full">
-        {/* Gutter column — sticky, never scrolls vertically with content. */}
+    <div className={`${LINE_CLS} relative min-h-0 flex-1 overflow-hidden`} data-gl="script-editor">
+      <div className="flex h-full min-h-0">
+        {/* Gutter column — clipped, moved by transform to follow the textarea. */}
         <div
           className="select-none overflow-hidden text-right align-top text-[var(--color-token-tertiary)]"
           style={{
             minWidth: `calc(${gutterCh} + ${GUTTER_PAD_X} + ${GUTTER_RIGHT_GAP})`,
             paddingLeft: GUTTER_PAD_X,
             paddingRight: GUTTER_RIGHT_GAP,
-            lineHeight: "var(--text-mono--line-height)",
+            lineHeight,
           }}
           aria-hidden
         >
-          <div ref={highlightRef} className="min-w-0">
-            {lines.map((_, idx) => (
-              <div key={idx} style={{ height: "var(--text-mono--line-height)" }}>
-                {idx + 1}
-              </div>
-            ))}
+          <div ref={gutterRef} className="min-w-0 will-change-transform" data-gl="script-gutter">
+            {lines.map((_, idx) => {
+              const message = errorByLine.get(idx + 1);
+              return (
+                <div
+                  key={idx}
+                  style={{ height: lineHeight }}
+                  className={message ? "gl-script-gutter-err" : undefined}
+                  data-error-line={message ? idx + 1 : undefined}
+                  title={message}
+                >
+                  {idx + 1}
+                </div>
+              );
+            })}
             {/* Trailing line so the caret past the last row has a number. */}
-            <div style={{ height: "var(--text-mono--line-height)" }}>{lines.length + 1}</div>
+            <div style={{ height: lineHeight }}>{lines.length + 1}</div>
           </div>
         </div>
 
         {/* Code area — relative so the textarea can overlay the pre exactly. */}
         <div className="relative min-w-0 flex-1">
-          {/* Highlight layer (pre) — sits behind the textarea, same metrics. */}
+          {/* Highlight layer (pre) — behind the textarea, same metrics, no
+              scrollbars of its own: it is scrolled programmatically. */}
           <pre
-            className="pointer-events-none absolute inset-0 m-0 overflow-auto whitespace-pre"
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: "var(--text-mono)",
-              lineHeight: "var(--text-mono--line-height)",
-              paddingLeft: CODE_PAD_X,
-              paddingRight: CODE_PAD_X,
-              color: "var(--color-text-primary)",
-            }}
+            ref={highlightRef}
+            className="pointer-events-none absolute inset-0 overflow-hidden"
+            style={{ ...sharedText, color: "var(--color-text-primary)" }}
+            data-gl="script-highlight"
             aria-hidden
           >
             {rendered.map((tokens, idx) => (
-              <div key={idx} style={{ minHeight: "var(--text-mono--line-height)" }}>
+              <div
+                key={idx}
+                style={{ minHeight: lineHeight }}
+                className={errorByLine.has(idx + 1) ? "gl-script-line-err" : undefined}
+              >
                 {highlightTokens(tokens)}
                 {"\n"}
               </div>
             ))}
             {/* Trailing empty line for caret at end-of-file. */}
-            <div style={{ minHeight: "var(--text-mono--line-height)" }}> </div>
+            <div style={{ minHeight: lineHeight }}> </div>
           </pre>
 
           {/* Editable layer — transparent text, caret-only; aligned over the pre. */}
           <textarea
+            ref={textareaRef}
             autoFocus
             spellCheck={false}
+            wrap="off"
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onScroll={onScroll}
             className="absolute inset-0 resize-none overflow-auto bg-transparent text-transparent outline-none"
             style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: "var(--text-mono)",
-              lineHeight: "var(--text-mono--line-height)",
-              paddingLeft: CODE_PAD_X,
-              paddingRight: CODE_PAD_X,
+              ...sharedText,
               // text-transparent also makes the caret invisible in WebKit, so
               // restore an explicit caret color from the design system.
               caretColor: "var(--color-text-primary, #fff)",
               color: "transparent",
-              paddingBottom: "0",
-              tabSize: 2,
             }}
           />
         </div>

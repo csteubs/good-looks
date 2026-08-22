@@ -46,7 +46,7 @@ import {
 import { EditStepsView } from "./edit-steps-view";
 import { RunOutput } from "./run-output";
 import { IssueComposeDialog } from "../components/issue-compose-dialog";
-import { ScriptEditor, ScriptView } from "./script-view";
+import { ScriptEditor, ScriptView, lineStartOffset } from "./script-view";
 import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
 import { HealsPanel } from "./heals-panel";
@@ -63,6 +63,8 @@ import {
   RUN_BROWSER_LABELS,
   type RunBrowser,
   type ScriptChangeSource,
+  type ScriptCheckError,
+  type ScriptCheckResult,
   type Step,
   type TestRecord,
   type TestVariable,
@@ -107,6 +109,14 @@ export async function persistRunBrowser(qc: QueryClient, id: string, browser: Ru
   qc.invalidateQueries({ queryKey: ["test", id] });
 }
 
+/** What the pre-save check has said about the current draft. */
+interface ScriptCheckState {
+  status: "idle" | "checking" | "failed";
+  errors: ScriptCheckError[];
+}
+
+const IDLE_CHECK: ScriptCheckState = { status: "idle", errors: [] };
+
 export function TestDetailView() {
   const { id } = useParams({ from: "/test/$id" });
   const navigate = useNavigate();
@@ -118,6 +128,12 @@ export function TestDetailView() {
   const [nameDraft, setNameDraft] = React.useState("");
   const [editingScript, setEditingScript] = React.useState(false);
   const [scriptDraft, setScriptDraft] = React.useState("");
+  // The pre-save check's verdict on the draft. `checking` holds Save while the
+  // Playwright CLI has the draft; `failed` keeps the editor open with the
+  // problems listed and offers "Save anyway" — the file is the user's, and a
+  // draft that does not load yet is still theirs to keep.
+  const [scriptCheck, setScriptCheck] = React.useState<ScriptCheckState>(IDLE_CHECK);
+  const scriptTextareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   const [editingSteps, setEditingSteps] = React.useState(false);
   // Edited steps waiting on the "what about the script?" question. Only set for
   // a test whose script isn't generated from its steps; null the rest of the
@@ -597,7 +613,9 @@ export function TestDetailView() {
       });
   };
 
-  const saveScript = async () => {
+  /** Write the draft over the script. No verification here — the callers
+   *  decide what has to be true first. */
+  const writeScriptDraft = async () => {
     // No origin: a hand edit the user is looking at as they save it. The
     // backend defaults to exactly that, but saying it here is what keeps the
     // Heals tab's labels honest if the default ever changes.
@@ -606,6 +624,49 @@ export function TestDetailView() {
     qc.invalidateQueries({ queryKey: ["test", id] });
     qc.invalidateQueries({ queryKey: ["script-changes", id] });
     setEditingScript(false);
+    setScriptCheck(IDLE_CHECK);
+  };
+
+  /** Save = check, then write. The check hands the draft to the real
+   *  Playwright CLI (`tests:checkScript`, see script-check.ts): a draft it
+   *  cannot load stays in the editor with its problems listed against the
+   *  lines. A check that could not RUN is reported the same way — it is not a
+   *  pass — and "Save anyway" is the way past either. */
+  const saveScript = async () => {
+    setScriptCheck({ status: "checking", errors: [] });
+    let result: ScriptCheckResult;
+    try {
+      result = await api.tests.checkScript(id, scriptDraft);
+    } catch (err) {
+      setScriptCheck({
+        status: "failed",
+        errors: [
+          {
+            message:
+              "Couldn't check the script: " + (err instanceof Error ? err.message : String(err)),
+          },
+        ],
+      });
+      return;
+    }
+    if (!result.ok) {
+      setScriptCheck({ status: "failed", errors: result.errors });
+      return;
+    }
+    await writeScriptDraft();
+  };
+
+  /** Put the caret at the start of a reported line and bring it into view.
+   *  The textarea is the editor's one scrolling element, so setting its
+   *  scrollTop is what moves the highlight layer and the gutter with it. */
+  const jumpToScriptLine = (line: number) => {
+    const ta = scriptTextareaRef.current;
+    if (!ta) return;
+    const offset = lineStartOffset(scriptDraft, line);
+    ta.focus();
+    ta.setSelectionRange(offset, offset);
+    const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 18;
+    ta.scrollTop = Math.max(0, (line - 3) * lineHeight);
   };
 
   if (!test) {
@@ -624,11 +685,10 @@ export function TestDetailView() {
   // edited script is preserved on disk before the trainer can regenerate it.
   const saveAndEditInTrainer = async () => {
     if (editingScript) {
-      await api.tests.updateScript(id, scriptDraft, { by: "manual", reviewed: true });
-      qc.invalidateQueries({ queryKey: ["script", id] });
-      qc.invalidateQueries({ queryKey: ["test", id] });
-      qc.invalidateQueries({ queryKey: ["script-changes", id] });
-      setEditingScript(false);
+      // Unchecked on purpose: this path exists so the edit is not LOST to the
+      // regeneration that follows, and a draft the CLI rejects is still the
+      // edit the user made.
+      await writeScriptDraft();
     }
     start(test.url, test.name, test.id);
     // The composed `Dialog` never closes itself on a resolved confirm — callers
@@ -1153,9 +1213,32 @@ export function TestDetailView() {
               <div className="gl-detail-script-bar">
                 {editingScript ? (
                   <>
-                    <Btn onClick={() => setEditingScript(false)}>Cancel</Btn>
-                    <Btn tone="go" onClick={saveScript}>
-                      Save
+                    {scriptCheck.status === "checking" ? (
+                      <span className="gl-script-check-msg" data-checking="" role="status">
+                        Checking with Playwright…
+                      </span>
+                    ) : scriptCheck.status === "failed" ? (
+                      <span className="gl-script-check-msg" role="status">
+                        {scriptCheck.errors.length === 1
+                          ? "Playwright can't load this script — 1 problem"
+                          : `Playwright can't load this script — ${scriptCheck.errors.length} problems`}
+                      </span>
+                    ) : null}
+                    <Btn
+                      onClick={() => {
+                        setEditingScript(false);
+                        setScriptCheck(IDLE_CHECK);
+                      }}
+                    >
+                      Cancel
+                    </Btn>
+                    {scriptCheck.status === "failed" ? (
+                      <Btn tone="stop" onClick={() => void writeScriptDraft()}>
+                        Save anyway
+                      </Btn>
+                    ) : null}
+                    <Btn tone="go" onClick={saveScript} disabled={scriptCheck.status === "checking"}>
+                      {scriptCheck.status === "checking" ? "Checking…" : "Save"}
                     </Btn>
                   </>
                 ) : (
@@ -1164,6 +1247,7 @@ export function TestDetailView() {
                     <Btn
                       onClick={() => {
                         setScriptDraft(scriptQuery.data ?? "");
+                        setScriptCheck(IDLE_CHECK);
                         setEditingScript(true);
                       }}
                     >
@@ -1172,8 +1256,35 @@ export function TestDetailView() {
                   </>
                 )}
               </div>
+              {editingScript && scriptCheck.status === "failed" ? (
+                <ul className="gl-script-check-errors" aria-label="Script problems">
+                  {scriptCheck.errors.map((e, i) => (
+                    <li key={i}>
+                      <button
+                        type="button"
+                        className="gl-script-check-row"
+                        disabled={!e.line}
+                        title={e.snippet}
+                        onClick={() => {
+                          if (e.line) jumpToScriptLine(e.line);
+                        }}
+                      >
+                        <span className="gl-script-check-loc">
+                          {e.line ? `Line ${e.line}${e.column ? ":" + e.column : ""}` : "Script"}
+                        </span>
+                        <span>{e.message}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
               {editingScript ? (
-                <ScriptEditor value={scriptDraft} onChange={setScriptDraft} />
+                <ScriptEditor
+                  value={scriptDraft}
+                  onChange={setScriptDraft}
+                  errors={scriptCheck.errors}
+                  textareaRef={scriptTextareaRef}
+                />
               ) : (
                 <ScriptView code={scriptQuery.data ?? ""} />
               )}

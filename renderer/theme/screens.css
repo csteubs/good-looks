@@ -3079,6 +3079,84 @@
   border-bottom: 1px solid var(--gl-line);
 }
 
+/* The verdict of the pre-save check, on the bar's left. `margin-right: auto`
+ * is what keeps the buttons right-aligned under Run test when it appears. */
+.gl-script-check-msg {
+  margin-right: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--gl-red);
+}
+
+.gl-script-check-msg[data-checking] {
+  color: var(--gl-tx-2);
+}
+
+/* One row per problem the Playwright CLI reported, under the bar and above the
+ * editor. A row is a button because clicking it moves the caret to the line;
+ * a problem the CLI could not place (a module-scope throw) is a plain row. */
+.gl-script-check-errors {
+  flex: 0 0 auto;
+  max-height: 96px;
+  overflow: auto;
+  margin: 0;
+  padding: 4px 16px;
+  list-style: none;
+  border-bottom: 1px solid var(--gl-line);
+  background: color-mix(in srgb, var(--gl-red) 7%, transparent);
+}
+
+.gl-script-check-row {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  font-family: var(--gl-mono);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--gl-tx-1);
+  cursor: pointer;
+}
+
+.gl-script-check-row[disabled] {
+  cursor: default;
+}
+
+/* Hover brightens, it does not colour: `check:selection-neutral` refuses a
+ * hover in an outcome hue, and red here would say "this got worse" about a
+ * row the pointer merely crossed. The location span is what carries the red. */
+.gl-script-check-row:hover:not([disabled]) {
+  color: var(--gl-tx-1);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.gl-script-check-loc {
+  flex: 0 0 auto;
+  min-width: 64px;
+  color: var(--gl-red);
+}
+
+/* The editor's own marks for a flagged line: the gutter number turns red and
+ * the highlight layer's row is tinted. The tint sits on the layer BEHIND the
+ * textarea, so it cannot shift the text it is about. */
+.gl-script-gutter-err {
+  color: var(--gl-red) !important;
+  font-weight: 600;
+}
+
+.gl-script-line-err {
+  background: color-mix(in srgb, var(--gl-red) 14%, transparent);
+}
+
 /*
  * The tab strip and the run-option checkboxes.
  *
