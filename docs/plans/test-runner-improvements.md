@@ -23,19 +23,30 @@ refute it**. 102 findings went in; 96 survived unchanged, 6 had their verdict
 corrected, and none were dropped as fabricated. Where the refuter corrected a
 claim, the corrected version is what appears here.
 
-### One correction to the existing docs, before anything else
+### One correction to the existing docs — now applied
 
-[QA-KNOWN-GAPS.md:34](../QA-KNOWN-GAPS.md:34) lists the five emit adapters
-(JUnit XML, GitHub Actions annotations, OTLP JSON, ticket markdown, NDJSON/CSV)
-as **not built**. They exist. All six are in
-[shared/emitters.mjs:91-273](../../shared/emitters.mjs:91), they are pure, they
-are redacted, they are wired to `report:emit`, and they render in Stats.
-[ARCHITECTURE.md:457](../ARCHITECTURE.md:457)'s "Not yet wired to any surface"
-is stale in the same direction. Anyone planning CI work from those pages will
-misjudge the starting point by a whole feature — the gap is not the formats, it
-is that `emitReport` cannot produce a file without a person clicking a native
-save dialog ([report-emitter.ts:66](../../main/services/report-emitter.ts:66)).
-Both pages should be fixed in whichever commit first touches this area.
+Two pages claimed the five emit adapters (JUnit XML, GitHub Actions
+annotations, OTLP JSON, ticket markdown, NDJSON/CSV) were **not built**. They
+exist: five formats over six `EMITTERS` rows in
+[shared/emitters.mjs:91-273](../../shared/emitters.mjs:91), pure, redacted,
+wired to `report:emit`, rendered by the Export panel under Cost in Stats.
+
+The gap is not the formats. It is that `emitReport` cannot produce a file
+without a person clicking a native save dialog
+([report-emitter.ts:66](../../main/services/report-emitter.ts:66)) — which is
+R1, the first item of Phase C0.
+
+**Both pages were corrected on 2026-08-21, in the same commit as this
+sentence.** `QA-KNOWN-GAPS.md`'s "Emit adapters" row is struck through and
+dated, its "Stats → Report mode" row narrowed to what is still genuinely
+absent, and `ARCHITECTURE.md`'s "Not yet wired to any surface" line replaced.
+
+Worth noting how the drift happened, because the shape recurs: that
+`ARCHITECTURE.md` line was written on **2026-08-12, the same day the Export
+panel shipped**, and sat directly below the entry describing that panel. The
+document contradicted itself on adjacent lines for nine days. Nothing in the
+gate reads prose, so only a person comparing two paragraphs would ever have
+caught it.
 
 ---
 
