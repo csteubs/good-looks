@@ -10,6 +10,66 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-21 — `import.meta` in the spec runtime is what "No tests found" meant
+
+`glaze-runtime.mjs` failed to LOAD under the Playwright CLI, and had for as long
+as `glazeA11yGate` existed. Any generated spec importing any helper from it died
+at collection with `ReferenceError: exports is not defined in ES module scope`,
+and what the user saw for that was Playwright's report of it: **"No tests
+found"**.
+
+The trigger was one line — `createRequire(import.meta.url)`, the ordinary way to
+resolve a package from a module's own directory. Playwright 1.53 loads spec
+dependencies through its own Babel transform, and that transform converts a file
+containing `import.meta` to CommonJS. Node then loads the file as ESM because the
+extension is `.mjs`, so the emitted `exports` reference throws at module scope.
+Isolated to the syntax: a `.mjs` exporting a plain function imports fine, and one
+whose only addition is `export function meta(){ return import.meta.url; }`
+reproduces the failure exactly.
+
+**The blast radius was the module, not the function.** A module that fails to
+load takes every importer with it, so this was never an accessibility bug: `api`,
+`dialog`, `a11y`, `aiCheck`, `totp`, `echo`, `scroll` and `capture` steps were all
+affected. Plain click/fill/assert tests were not, because the generator emits the
+import only when a step needs a helper (`runtimeNames.length > 0`) — which is why
+this survived unnoticed, and why the eventual symptom was so uninformative.
+
+**The fix is `await import("axe-core")` and its `.source` string.** The obvious
+alternative — make `GLAZE_AXE_PATH` the only mechanism and delete the fallback —
+also removes `import.meta`, and was rejected for taking a working capability with
+it: the gate's own error message ends "…or npm install axe-core next to this
+spec", and a generated spec run outside the app has no env to read. A bare
+specifier resolves from the importing module's directory, which is the same
+answer `createRequire(import.meta.url)` gave, so the standalone path is
+unchanged rather than merely documented as gone. Verified against a real browser
+both ways: with `GLAZE_AXE_PATH` set and with it empty, the gate fires
+identically on a page with a missing `alt`, and passes on a clean one.
+
+**Why nothing caught it.** Every existing test loads the emitted runtime through
+*Node's* loader — `import(pathToFileURL(...))` in the unit tests, and the same in
+`e2e/assert-parity.spec.ts` — where `import.meta` is perfectly legal. They were
+green throughout. `e2e/step-progress.spec.ts` writes the runtime into its scripts
+dir, but its generated specs are plain clicks and assertions, so the import is
+never emitted and the file is never loaded. The transform only exists inside the
+CLI, and nothing booted a spec through it.
+
+So `check:runtime-boot`, which is `check:mcp-boot`'s argument applied here: the
+question no source-reading check can answer is whether the thing we ship actually
+loads in the environment that loads it. It hands the real emitted runtime, the
+real emitted config and **real `generateSpec` output** to the real CLI — one spec
+per helper — and asserts the CLI finds all of them. Two details are load-bearing.
+The helper list is read off the emitted source by regex rather than typed here,
+so a helper added tomorrow is covered without anyone remembering this file; and a
+coverage assertion fails if any export has no row, which is what makes the first
+half honest. No browser is launched — collection plus one fixture-free test is
+all it needs — so it costs about a second and runs anywhere `npm install` ran.
+
+Note that a static "no `import.meta` in the runtime" grep would be the cheaper
+guard and the wrong one: it pins today's spelling of one trigger, while the
+property that matters is that the module loads. The check asserts the property,
+and the comment on `glazeA11yGate` carries the reason so the next person does not
+reintroduce the line while making it pass.
+
 ### 2026-08-21 — A drag is one step with two locators, and heals only its source
 
 `drag` is the first step in the model that points at TWO elements. mabl records
