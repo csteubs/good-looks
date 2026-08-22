@@ -850,11 +850,26 @@ function collectRunMatches(testId: string, runId: string, healDir: string): numb
   }
 }
 
-function collectRunHeals(
+/**
+ * Ingest what run-time Auto-Heal did, and — this is the load-bearing part —
+ * bake a heal into the test on disk ONLY when the whole run PASSED.
+ *
+ * mabl's rule, and the reason for it: a mis-heal usually SUCCEEDS at the step
+ * (clicking the wrong button rarely throws), so "the healed step got past"
+ * is exactly the signal that does NOT tell you the heal was right. The run's
+ * overall outcome does: if the test still failed, the heal is under suspicion
+ * and must not silently become the test's new target. So on a failing run the
+ * heal is still JOURNALLED (so the Heals view shows the attempt and the user
+ * can apply it if they judge it correct) but recorded as `applied: false`, and
+ * the locator on disk is left untouched — there is nothing to revert because
+ * nothing was written. On a passing run, apply-mode behaves as before.
+ */
+export function collectRunHeals(
   testId: string,
   runId: string,
   healDir: string,
   mode: HealApplyMode,
+  runPassed: boolean,
 ): { healed: number; failed: number } {
   const none = { healed: 0, failed: 0 };
   if (!healDir) return none;
@@ -905,8 +920,11 @@ function collectRunHeals(
     return { healed: 0, failed: failures.length };
   }
 
-  const apply = mode === "apply";
-  const rec = apply ? testStore.get(testId) : null;
+  // Baked into the test on disk only in apply mode AND on a passing run — the
+  // outcome gate. Suggest mode never writes; a failed apply-run journals the
+  // heal for review but leaves the test unchanged.
+  const persist = mode === "apply" && runPassed;
+  const rec = persist ? testStore.get(testId) : null;
   let changed = false;
   for (const ev of events) {
     try {
@@ -920,7 +938,9 @@ function collectRunHeals(
         originalLocator: ev.originalLocator,
         appliedLocator: ev.appliedLocator,
         candidates: ev.candidates ?? [],
-        applied: apply,
+        // `applied` is whether the TEST ON DISK changed — false on a failing
+        // apply-run, so the entry reads as a suggestion the user can apply.
+        applied: persist,
       });
     } catch (err) {
       logger.warn("runner", "Could not journal a run heal", { err: String(err) });
@@ -948,7 +968,10 @@ function collectRunHeals(
     runId,
     count: events.length,
     failed: failures.length,
-    apply,
+    runPassed,
+    // Applied to the test on disk only when the run passed; otherwise journalled
+    // for review. See the outcome gate above.
+    persisted: persist,
   });
   return { healed: events.length, failed: failures.length };
 }
@@ -1729,6 +1752,9 @@ export const playwrightRunner = {
           recordId,
           healDir,
           healApplyMode,
+          // The heal gate keys off the exit code directly — the canonical
+          // pass/fail truth, and the same source the run status derives from.
+          exitCode === 0,
         );
         if (healMapPath) {
           try {
