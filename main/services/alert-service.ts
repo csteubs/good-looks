@@ -21,6 +21,7 @@ import { appFetch } from "./proxy-service.js";
 import { insightsSlackUrlStore } from "./insights/insights-slack-url-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { allRedactableValues, redact } from "./secret-redaction.js";
+import { buildDeepLink } from "../../shared/deep-link.mjs";
 import type { BatchSummary, InsightReport, InsightsCadence } from "../recorder/types.js";
 
 /** A webhook that hangs must not hold a batch open. */
@@ -28,6 +29,11 @@ const ALERT_TIMEOUT_MS = 10_000;
 
 export interface RunAlert {
   kind: "run";
+  /** Both ids are REQUIRED rather than optional, so the link cannot be dropped
+   *  by a caller that forgot. A notification nobody can act on is the thing
+   *  this pair exists to prevent. */
+  testId: string;
+  runId: string;
   testName: string;
   status: "passed" | "failed";
   /** steps exceeding the visual threshold (0 when not a capture run) */
@@ -200,8 +206,20 @@ export function buildAlertPayload(alert: Alert): AlertPayload | null {
     if (alert.durationMs !== undefined) parts.push(fmtDuration(alert.durationMs));
     if (alert.browser) parts.push(alert.browser);
 
+    // THE ONE FIELD THAT TURNS A NOTICE INTO A JUMP. Without it a 02:00 failure
+    // read at 09:00 means opening the app, finding the test in the library
+    // rail, opening the run panel and scrolling the history table for the run
+    // that fired this message. Built with the same `buildDeepLink` the
+    // issue-tracker payload uses, so there is no second spelling of the URL.
+    //
+    // The step is deliberately NOT in the link even when `failedLabel` is
+    // known: the link takes ids, and a label is a human string, not a stepId.
+    // A link that selects the run is correct; one that guesses at a step would
+    // open the wrong row.
+    const link = buildDeepLink({ testId: alert.testId, runId: alert.runId });
+
     return {
-      text: parts.length > 0 ? `${headline} — ${parts.join(" · ")}` : headline,
+      text: parts.length > 0 ? `${headline} — ${parts.join(" · ")} · ${link}` : `${headline} — ${link}`,
       event: "run",
       status: failed ? "failed" : "changed",
       detail: {
@@ -211,6 +229,8 @@ export function buildAlertPayload(alert: Alert): AlertPayload | null {
         ...(alert.failedLabel ? { failedStep: alert.failedLabel } : {}),
         ...(alert.durationMs !== undefined ? { durationMs: alert.durationMs } : {}),
         ...(alert.browser ? { browser: alert.browser } : {}),
+        runId: alert.runId,
+        link,
       },
       source: "Good Looks!",
     };
