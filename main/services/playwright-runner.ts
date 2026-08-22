@@ -56,6 +56,7 @@ import { refreshSecretSnapshot, redactWithSnapshot } from "./secret-redaction.js
 import { stripAnsi } from "../../shared/strip-ansi.mjs";
 import { firstErrorLine } from "../../shared/error-signature.mjs";
 import { suggestFailureReason } from "../../shared/failure-reasons.mjs";
+import type { RunTrigger } from "../../shared/run-trigger.mjs";
 import {
   PLAYWRIGHT_CONFIG_FILE,
   playwrightConfigSource,
@@ -1145,6 +1146,13 @@ export const playwrightRunner = {
      *  history can say WHICH row failed. */
     datasetId?: string;
     datasetName?: string;
+    /** WHO asked for this run. Defaults to `manual`, because every caller that
+     *  does not say is an IPC handler answering a click. The scheduler is the
+     *  one caller that must pass a value, and it is the reason the field
+     *  exists: without it a Routine firing overnight is indistinguishable from
+     *  a person pressing Run. Never describes what the run EXECUTES — a replay
+     *  is `replayOfRunId` above. */
+    trigger?: RunTrigger;
   }): { runId: string; recordId?: string; alreadyRunning?: boolean } {
     const captureArtifacts = params.captureArtifacts ?? false;
     const runHeadless = params.runHeadless ?? false;
@@ -1818,6 +1826,10 @@ export const playwrightRunner = {
               // step and nothing that outlived the process could.
               failedStepLabel: failedLabel,
               endedBy,
+              // Defaulted at the ENTRY POINT, not on read: from here on every
+              // run this process starts records a trigger, so an absent one in
+              // history means "predates the field" and nothing else.
+              trigger: params.trigger ?? "manual",
             },
             logText,
           );

@@ -363,6 +363,17 @@ async function executeTest(test, { playwright, browser, batchId, vars, datasetId
     // raised since would make every older run's step-vs-budget comparison
     // wrong while still looking like a plausible number.
     testTimeoutMs,
+    // WHO started this. Same argument as `speed` above and a stronger one:
+    // without it an MCP-driven run is written into the app's history looking
+    // exactly like a person pressing Run, and the app has no other way to tell
+    // — this server writes run-history.json directly and shares no line of the
+    // app's runner. A literal rather than an import because there is one value
+    // to write, but it is a literal the APP validates: run-history-store
+    // narrows an unrecognised trigger to undefined, so a typo here would not
+    // fail, it would silently write MCP runs as unattributed. So check:mcp-parity
+    // §14 does not match a string — it runs what this literal says through the
+    // app's own normalizeRunTrigger, the function that would have dropped it.
+    trigger: "mcp",
     ...(batchId ? { batchId } : {}),
     // Both stored, like the app: the id joins back to the row, and the name
     // survives the row being renamed or deleted. A sweep whose history can't

@@ -14,7 +14,9 @@ import {
   toast,
 } from "@ui";
 import {
+  Bot,
   Calendar,
+  CalendarClock,
   Camera,
   Globe,
   MoreHorizontal,
@@ -25,6 +27,7 @@ import {
   X,
   Wand2,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 import { useNavigate } from "@tanstack/react-router";
 
@@ -40,6 +43,8 @@ import { SuiteCostPanel } from "./suite-cost-panel";
 import { CostPanel } from "./cost-panel";
 import { assumptionsFromSettings } from "../lib/cost-model";
 import { buildAiDebugReport } from "../lib/ai-debug-stats";
+import { RUN_TRIGGER_DESCRIPTIONS, normalizeRunTrigger } from "../../shared/run-trigger.mjs";
+import type { RunTrigger } from "../../shared/run-trigger.mjs";
 import {
   COST_DEFAULT_HOURLY_RATE,
   COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG,
@@ -114,6 +119,66 @@ function dayStartMs(v: string): number {
 function dayEndMs(v: string): number {
   const [y, m, d] = v.split("-").map(Number);
   return new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+}
+
+/**
+ * The glyph each MARKED trigger draws in the Tags cell.
+ *
+ * `manual` is excluded IN THE TYPE, not merely omitted: it is the overwhelming
+ * majority and the assumption a reader already makes, so it is deliberately
+ * unmarked, and stating that here is what stops someone "completing" the map.
+ *
+ * Exhaustive over the rest on purpose. A ternary would have rendered a trigger
+ * added later — `ci`, when the CLI lands — as whichever glyph the else-branch
+ * happened to hold, which is a wrong record rather than a missing one. This way
+ * the addition does not compile until someone chooses.
+ *
+ * NOTHING MAY INDEX THIS MAP WITH AN UNVALIDATED STRING — see `TriggerMark`.
+ */
+const TRIGGER_MARKS: Record<Exclude<RunTrigger, "manual">, LucideIcon> = {
+  schedule: CalendarClock,
+  mcp: Bot,
+};
+
+/**
+ * The trigger glyph for one run, or nothing.
+ *
+ * NARROWS ON READ, and that is the whole reason this is a component rather than
+ * an inline lookup. `run-history-store` narrows on WRITE, but `readAll` casts
+ * the parsed JSON straight to `RunRecord[]` — so the write-side guard does not
+ * protect a value that was already on disk. This store's file is written by the
+ * standalone MCP server today and by the CLI tomorrow, and those ship on their
+ * own schedules: a packaged app WILL eventually read a `trigger` it has never
+ * heard of.
+ *
+ * Indexing `TRIGGER_MARKS` with that string yields `undefined`, and
+ * `createElement(undefined)` throws — which does not degrade to a missing
+ * glyph, it takes the whole Stats view down to a blank screen. The type system
+ * cannot catch it: the record comes off disk through a cast, so TypeScript
+ * believes the field is already a `RunTrigger`.
+ *
+ * An unknown trigger is therefore treated exactly like an absent one —
+ * unmarked, because unknown is what it honestly is.
+ */
+function TriggerMark({ trigger }: { trigger?: RunTrigger }) {
+  const known = normalizeRunTrigger(trigger);
+  if (!known || known === "manual") return null;
+  const Mark = TRIGGER_MARKS[known];
+  const label = RUN_TRIGGER_DESCRIPTIONS[known];
+  return (
+    <Mark
+      className="gl-mini-icon"
+      style={{ color: "var(--gl-tx-3)" }}
+      role="img"
+      aria-label={label}
+    >
+      {/* Both names, for the same reason `BrowserIcon` carries both: this glyph
+          has no adjacent text, so `aria-label` is the only thing a screen
+          reader can read and `<title>` is the only thing a MOUSE user can. An
+          unnamed glyph in a column of glyphs is a mark nobody can act on. */}
+      <title>{label}</title>
+    </Mark>
+  );
 }
 
 export function StatsView() {
@@ -688,7 +753,10 @@ export function StatsView() {
                           <th style={{ width: 160 }}>Status</th>
                           <th style={{ width: 52 }}>Browser</th>
                           <th style={{ width: 96 }}>Started</th>
-                          <th style={{ width: 104 }}>Tags</th>
+                          {/* 148, not 104. At 104 this cell clipped its own
+                              contents — the speed chip was cut off on every
+                              row long before a trigger mark was added to it. */}
+                          <th style={{ width: 148 }}>Tags</th>
                           <th style={{ width: 76 }} className="gl-num">
                             Duration
                           </th>
@@ -821,6 +889,39 @@ export function StatsView() {
                                         {TEST_SPEED_LABELS[r.speed]}
                                       </span>
                                     ) : null}
+                                    {/* WHO started the run.
+                                        ICON-ONLY, and not by preference — this
+                                        cell is a glyph strip. Measured in the
+                                        preview, its content already overflowed
+                                        the column by 23px on a row with no
+                                        trigger at all, and the cell clips
+                                        (`overflow: hidden`, `nowrap`), so a
+                                        chip carrying the word "Scheduled"
+                                        rendered perfectly and sat entirely
+                                        outside the visible area. The column was
+                                        widened to fit what it holds; the word
+                                        was dropped for the same reason the
+                                        engine name was — see the Browser column
+                                        above. The label rides on the icon, so
+                                        hover and assistive tech both get the
+                                        full sentence.
+
+                                        Shown only when the run RECORDED a
+                                        trigger, on the same rule as speed: the
+                                        scheduler and the MCP server were both
+                                        writing runs to this store months before
+                                        the field existed, so marking an older
+                                        row would be a guess wearing the clothes
+                                        of a record.
+
+                                        Manual is deliberately unmarked. It is
+                                        the overwhelming majority and the
+                                        assumption a reader already makes; a
+                                        glyph on every row costs the column its
+                                        scannability and says nothing. The mark
+                                        earns its space by picking out the runs
+                                        NOBODY WAS WATCHING. */}
+                                    <TriggerMark trigger={r.trigger} />
                                     {/* Capture is a filterable tag, so it needs to be
                                         visible here — icon-only to fit the column. */}
                                     {r.captureArtifacts ? (

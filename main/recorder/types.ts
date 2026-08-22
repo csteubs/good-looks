@@ -18,6 +18,10 @@ import { testIdOverride, type TestIdAttributeOverride } from "../../shared/testi
 // injected replayer and the renderer's step list all have to mean the same
 // thing by "starts with" - see the header of shared/step-semantics.mjs.
 import { COMPARE_OPS } from "../../shared/step-semantics.mjs";
+// Who started a run. In shared/ because the app's run-history store and the
+// standalone MCP server BOTH write RunRecords into the same file, and the CLI
+// will be a third writer — see the header of `shared/run-trigger.mjs`.
+import type { RunTrigger } from "../../shared/run-trigger.mjs";
 import type { CompareOp } from "../../shared/step-semantics.mjs";
 
 export type { CostCurrency };
@@ -2374,6 +2378,24 @@ export interface RunRecord {
    * mistake.
    */
   endedBy?: "user" | "process-timeout";
+  /**
+   * WHO started this run.
+   *
+   * `RunRecord` describes what a run did in exhaustive detail and, until this
+   * field, nothing about what caused it to happen — so a Routine firing at
+   * 03:00 and a person clicking Run were the same evidence. See R33.
+   *
+   * ONE AXIS: who initiated it, never what it executed. A re-run of a past run
+   * is `replayOfRunId` above, which says more and stays true whoever started
+   * it.
+   *
+   * Absent on runs recorded before this field, and absent means UNKNOWN — not
+   * "manual". The MCP server and the scheduler have both been writing runs to
+   * this store for months, so defaulting on read would invent evidence for the
+   * one comparison the field exists to support. Vocabulary and the reason it
+   * is shared: `shared/run-trigger.mjs`.
+   */
+  trigger?: RunTrigger;
   /**
    * Label of the step this run failed at, when it is known.
    *

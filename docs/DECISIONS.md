@@ -10,6 +10,115 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-22 — Who started a run, on one axis, recorded now because it cannot be recorded later
+
+R33 of [plans/test-runner-improvements.md](plans/test-runner-improvements.md),
+and the sibling of R19 below: `endedBy` says how a run finished, `trigger` says
+who began it. `RunRecord` described what a run DID in exhaustive detail and
+nothing about what caused it to happen, so a Routine firing at 03:00, an agent
+calling `run_test` over MCP, and a person clicking Run were the same evidence.
+
+**Added ahead of its consumer, which is the whole argument.** Nothing in the app
+reads `trigger` today; the CI joins and the provenance work that will are phases
+away. But a run already on disk was started by something that left no trace, so
+every row written before the field exists is unclassifiable forever — the same
+property that made `healFailedSteps` unreconstructable — the heal fixture only
+ever wrote an event on success, so "tried and could not" is absent on every run
+before 2026-08-07 and no amount of re-reading the artifacts brings it back. Of the
+four `RunRecord` fields §10 of the plan names, three cannot be backfilled, and
+they are cheapest to add early and most expensive to regret.
+
+**One axis: who initiated it, never what it executed.** The obvious fourth value
+is `replay`, and it is wrong. A re-run is already `replayOfRunId` on the same
+record, which says strictly more — it names the run being replayed — and stays
+true whoever pressed the button. Folding it into `trigger` would make a replay
+started by a person and a replay started by an MCP client the same value, which
+is precisely the question the field exists to answer. Two questions in one enum
+is how a field ends up answering neither; `main/services/run-trigger.test.ts`
+pins `replay` as *not* a member so a future addition has to argue for itself.
+
+**Absent is UNKNOWN, not `manual`.** This is the `speed` rule rather than the
+`runBrowser` rule, and the difference is evidence: every pre-picker run really
+did use chromium, so defaulting was a fact. Here there is no such fact — the
+scheduler and the MCP server had both been writing runs to this store for
+months before the field existed — so defaulting on read would invent evidence
+for exactly the comparison the field supports. The runner therefore defaults at
+its ENTRY POINT instead, where "the caller did not say" genuinely means a person
+clicked; from there on an absent value in history means "predates the field" and
+nothing else.
+
+**In `shared/` because there were already two writers in two processes.** The
+app's `run-history-store.append` and `saveRunRecord` in `mcp/server.mjs` write
+the same `run-history.json`, and the MCP imports no line of the app. The CLI
+(R3/R4) is the third writer and will need `ci` — one place to add it, not three.
+The MCP still spells its own literal, because there is exactly one value for it
+to write; what is shared is the RULE, and the failure that rule guards is
+silent in the worst direction. `run-history-store` narrows an unrecognised
+trigger to `undefined` rather than carrying it — correct, since a packaged app
+can read a file written by a newer MCP server — which means `trigger: "MCP"`
+would not throw, would not warn, and would write every agent-driven run as
+unattributed. So `check:mcp-parity` §14 does not match a string: it extracts
+what each writer's source actually writes and runs it through the app's own
+`normalizeRunTrigger`, the function that would have dropped it. Both halves are
+asserted, because a trigger only tells the writers apart if both write one, and
+the app's runner has no unit test to cover its side.
+
+**Narrowing on write is not narrowing, and that nearly shipped as a blank
+screen.** The store narrows an unrecognised trigger in `append`, and the comment
+justifying it says the reason out loud: a packaged app can read a
+`run-history.json` a newer MCP server wrote. That reason is about the READ path,
+and `append` is not on it — `readAll` casts the parsed JSON straight to
+`RunRecord[]`, so a value already on disk reaches the renderer untouched. The
+first draft then indexed a component map with it, `createElement(undefined)`
+threw, and the Stats view rendered as *nothing*: not a missing glyph, a blank
+page. TypeScript cannot see any of this, because the record arrives through a
+cast and the field already claims to be a `RunTrigger`. The lookup now narrows
+at the point of use and treats an unknown trigger exactly like an absent one,
+which is what it honestly is. **The general lesson is that a guard belongs on
+the path the untrusted value actually travels**, and for this store that path is
+the read — `runBrowserOf` in `run-filters.ts` is the neighbouring accessor and
+only defaults an absent value, which is harmless for an engine (it fails to
+match a filter) and fatal for anything used as a key.
+
+**The catch-up prompt counts as `schedule`.** `routines:runMissed` asks the user
+to let an occurrence missed while the app was closed happen late. They consented
+to a scheduled run; they did not schedule it, and recording it as `manual` would
+file a Routine's overnight failures alongside someone debugging at their desk.
+It falls out of `routineScheduler.fire` going through the same `fireRoutine` as
+the timer — which is also what keeps a scheduled run headless — and is pinned in
+`check:routine-scheduler` so it stays a decision rather than an accident.
+
+**Threaded per RUN, not stamped on the batch.** `batchId` and `routineId` were
+already on the record, so stamping the batch looked sufficient. It is not: batch
+history is a separate index, capped and pruned on its own rules, so a run
+outlives the batch that would have explained it. `routineId` is also not a
+substitute — a Routine has a manual path (`routines:run`) that stamps the same
+id, so the id says which job, never whether anyone was there.
+
+**A note on the UI, because the first draft shipped invisible.** The Stats run
+table's Tags cell is a glyph strip: `overflow: hidden`, `nowrap`, 104px. A chip
+reading "Scheduled" rendered correctly and sat entirely outside the visible
+area — and measuring it in the browser preview turned up a defect that predated
+the feature, since the cell already overflowed by 23px on a row with no trigger
+at all, clipping its own speed chip on every row. The mark is icon-only (the
+column's established idiom, and the same reason the Browser column dropped the
+engine name), the column was widened to 148px to fit what it holds, and the
+mark carries BOTH names — `aria-label` for a screen reader and an
+SVG `<title>` for a mouse hover, the pairing `BrowserIcon` already uses, because
+a glyph with no adjacent text is otherwise unnameable to one audience or the
+other (`aria-label` alone renders no tooltip).
+The glyph map is typed `Record<Exclude<RunTrigger, "manual">, LucideIcon>` —
+exhaustive, so the `ci` the CLI will add does not compile until someone chooses
+a glyph for it, where a ternary would have silently drawn it as the MCP mark;
+and `manual` is excluded IN THE TYPE, so its absence reads as a decision rather
+than as a map someone forgot to finish.
+`manual` is deliberately unmarked: it is the overwhelming majority and the
+assumption a reader already makes, so a glyph on every row would cost the column
+its scannability and say nothing. The mark earns its space by picking out the
+runs nobody was watching. **jsdom cannot see any of this** — no layout engine,
+so every clipped-chip test passes — which is why the component test pins the
+declared column width and the preview is where the bug was actually found.
+
 ### 2026-08-21 — A stopped run is not evidence, and the reason outlives the handle
 
 R19 of [plans/test-runner-improvements.md](plans/test-runner-improvements.md).

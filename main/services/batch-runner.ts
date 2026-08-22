@@ -51,6 +51,7 @@ import {
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { buildQueue } from "../../shared/batch-queue.mjs";
 import type { BatchEntry, PerTestRunOption } from "../../shared/batch-queue.mjs";
+import type { RunTrigger } from "../../shared/run-trigger.mjs";
 import { clampBatchConcurrency } from "../recorder/types.js";
 import type {
   BatchState,
@@ -112,6 +113,12 @@ export interface BatchRunParams {
    *  store — and because the name at the moment the run STARTED is the honest
    *  one to report, even if the job is renamed mid-run. */
   routineName?: string;
+  /** WHO asked for this batch, stamped onto every RunRecord it produces.
+   *  Absent means `manual`, which is what `batch:run` and `routines:run` are.
+   *  The scheduler passes `schedule`, and that is the whole point: a Routine
+   *  has both a manual path and a timed one, so `routineId` alone cannot say
+   *  whether a person was there. */
+  trigger?: RunTrigger;
 }
 
 // Expanding a selection into the queue actually executed lives in
@@ -182,6 +189,7 @@ export interface BatchDeps {
     vars?: Record<string, string>;
     datasetId?: string;
     datasetName?: string;
+    trigger?: RunTrigger;
   }) => { runId: string; recordId?: string; alreadyRunning?: boolean };
   /** Resolves with the run's exit code, or null if the run isn't in flight. */
   waitFor: (runId: string) => Promise<number> | null;
@@ -527,6 +535,11 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
               vars: queue[i]?.vars,
               datasetId: entry.datasetId,
               datasetName: entry.datasetName,
+              // Passed through per run rather than stamped on the batch record
+              // alone: run history is queried per RUN, and a batch record is
+              // capped and pruned separately, so a run that outlives its batch
+              // would otherwise lose the answer.
+              trigger: params.trigger,
             });
             // Recorded even if the run later fails, so a persisted batch can
             // link through to the run's log in Stats.

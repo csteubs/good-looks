@@ -225,6 +225,113 @@ describe("run history table", () => {
     expect(within(rows[0]).getByRole("img", { name: "Headless" })).toBeTruthy();
     expect(within(rows[1]).getByRole("img", { name: "Headed" })).toBeTruthy();
   });
+
+  // ── Who started the run ───────────────────────────────────────────
+  //
+  // The chip marks the runs NOBODY WAS WATCHING. Its whole value is in the
+  // rows it appears on and the rows it does not, so both halves are asserted:
+  // a chip on every row would say nothing, and a chip on an old row would be
+  // a guess presented as a record.
+
+  // The mark is ICON-ONLY, so it is queried the way the browser and
+  // headed/headless marks in the same cell are — by the label it carries for
+  // assistive tech. That label is the whole content: a glyph nobody can name is
+  // not a record of anything.
+  const TRIGGER_MARK = /started by/i;
+
+  it("marks a scheduled run, so an overnight failure is not read as hands-on debugging", async () => {
+    runs = [run({ id: "r1", trigger: "schedule" })];
+    renderView();
+    const [row] = await bodyRows();
+    expect(within(row).getByRole("img", { name: /Routine's schedule/i })).toBeTruthy();
+  });
+
+  it("marks an MCP-driven run, which no other column distinguishes", async () => {
+    runs = [run({ id: "r1", trigger: "mcp" })];
+    renderView();
+    const [row] = await bodyRows();
+    expect(within(row).getByRole("img", { name: /MCP client/i })).toBeTruthy();
+  });
+
+  it("says nothing on a manual run — the assumption a reader already makes", async () => {
+    runs = [run({ id: "r1", trigger: "manual" })];
+    renderView();
+    const [row] = await bodyRows();
+    expect(within(row).queryByRole("img", { name: TRIGGER_MARK })).toBeNull();
+  });
+
+  it("says nothing on a run recorded before the field, rather than guessing Manual", async () => {
+    // The failure this rules out is a mark that LOOKS like evidence. The
+    // scheduler and the MCP server were both writing runs to this store long
+    // before `trigger` existed, so an absent one is genuinely unknown — and
+    // marking it would corrupt the one comparison the glyph is here to support.
+    runs = [run({ id: "r1" })]; // no trigger
+    renderView();
+    const [row] = await bodyRows();
+    expect(within(row).queryByRole("img", { name: TRIGGER_MARK })).toBeNull();
+  });
+
+  it("distinguishes two otherwise identical rows by who started them", async () => {
+    // The pairing that motivates the whole field: same test, same outcome,
+    // same engine. Without the mark these rows are indistinguishable.
+    runs = [
+      run({ id: "r1", trigger: "schedule" }),
+      run({ id: "r2", trigger: "manual" }),
+    ];
+    renderView();
+    const rows = await bodyRows(2);
+    expect(within(rows[0]).getByRole("img", { name: /Routine's schedule/i })).toBeTruthy();
+    expect(within(rows[1]).queryByRole("img", { name: TRIGGER_MARK })).toBeNull();
+  });
+
+  it("survives a trigger written by a newer build, instead of going blank", async () => {
+    // THE CRASH THIS RULES OUT, found before this shipped. `run-history-store`
+    // narrows on WRITE, but `readAll` casts the parsed JSON straight to
+    // RunRecord[] — so the write-side guard does nothing for a value already on
+    // disk, and this store's file is written by the standalone MCP server today
+    // and the CLI ("ci") tomorrow, each shipping on its own schedule.
+    //
+    // The old code indexed a component map with that raw string. The lookup
+    // returned undefined, `createElement(undefined)` threw "Element type is
+    // invalid", and the WHOLE VIEW rendered as nothing — not a missing glyph, a
+    // blank screen. TypeScript could never catch it: the record arrives through
+    // a cast, so the field already claims to be a RunTrigger.
+    runs = [run({ id: "r1", trigger: "ci" as unknown as "mcp" })];
+    renderView();
+    const [row] = await bodyRows();
+    // The row renders, and the unknown trigger is treated exactly like an
+    // absent one — unmarked, because unknown is what it honestly is.
+    expect(row).toBeTruthy();
+    expect(within(row).queryByRole("img", { name: TRIGGER_MARK })).toBeNull();
+  });
+
+  it("names the mark for a mouse as well as a screen reader", async () => {
+    // The glyph has no adjacent text, so `aria-label` alone leaves a sighted
+    // mouse user with an unnamed icon in a column of icons. `<title>` is the
+    // half that hovers — the same pairing `BrowserIcon` carries, and for the
+    // same reason. Asserted because jsdom renders no tooltip, so the only way
+    // this regresses visibly is on a real screen.
+    runs = [run({ id: "r1", trigger: "schedule" })];
+    renderView();
+    const [row] = await bodyRows();
+    const mark = within(row).getByRole("img", { name: /Routine's schedule/i });
+    expect(mark.querySelector("title")?.textContent).toMatch(/Routine's schedule/i);
+  });
+
+  it("keeps the Tags cell wide enough to show what it holds", async () => {
+    // The defect that made the first draft of this feature invisible, and it
+    // predated the feature: the cell clips (`overflow: hidden`, `nowrap`) and
+    // at 104px its own speed chip already overflowed by 23px on every row.
+    // jsdom has no layout engine and cannot measure that, so what is pinned
+    // here is the declared width — the thing a future tidy-up would revert.
+    runs = [run({ id: "r1" })];
+    renderView();
+    await bodyRows();
+    const tags = within(screen.getByRole("table", { name: /run history/i }))
+      .getAllByRole("columnheader")
+      .find((h) => h.textContent?.trim() === "Tags") as HTMLElement;
+    expect(Number.parseInt(tags.style.width, 10)).toBeGreaterThanOrEqual(148);
+  });
 });
 
 describe("filtering", () => {

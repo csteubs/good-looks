@@ -39,6 +39,10 @@ import {
   recorderSettingsStore,
 } from "./recorder-settings-store.js";
 import { redactWithSnapshot } from "./secret-redaction.js";
+import {
+  normalizeRunTrigger,
+  type RunTrigger,
+} from "../../shared/run-trigger.mjs";
 import { DELETED_TEST_NAME } from "../recorder/types.js";
 import type {
   LogSearchResult,
@@ -544,6 +548,8 @@ export const runHistoryStore = {
       failedStepLabel?: string;
       /** how the run ended, when it did not end on its own */
       endedBy?: "user" | "process-timeout";
+      /** who started the run — narrowed here, not trusted */
+      trigger?: RunTrigger;
     },
     logText: string,
   ): RunRecord {
@@ -608,6 +614,13 @@ export const runHistoryStore = {
       // Absent is the ordinary case — a run that ended by itself. Writing a
       // value there would claim every historical run had been examined.
       ...(run.endedBy ? { endedBy: run.endedBy } : {}),
+      // NARROWED, not copied. This store's file is also written by the
+      // standalone MCP server, and will be by the CLI — processes that ship on
+      // their own schedules — so an unrecognised trigger is honestly unknown
+      // rather than a string to carry into every surface that renders one.
+      // Absent stays absent: a run predating the field could have been started
+      // by any of the three, so defaulting to "manual" would invent evidence.
+      ...(normalizeRunTrigger(run.trigger) ? { trigger: run.trigger } : {}),
     };
 
     const all = readAll();

@@ -5,6 +5,7 @@ import type { FlakeReport as SharedFlakeReport } from "../../shared/flake-analys
 import type { CostCurrency } from "../../shared/cost-units.mjs";
 import type { ProxySource, ProxyTraffic } from "../../shared/proxy-config.mjs";
 import type { TestIdAttributeOverride } from "../../shared/testid-attr.mjs";
+import type { RunTrigger } from "../../shared/run-trigger.mjs";
 
 export type { CostCurrency };
 export type { ProxySource, ProxyTraffic };
@@ -927,6 +928,12 @@ export interface RunRecord {
   failureReasonBy?: "user" | "auto";
   /** the triage signal an automatic assignment argued from. */
   failureReasonSignal?: string;
+  /** WHO started this run — a person, a Routine's schedule, or an MCP client.
+   *  Absent on runs predating the field, and absent means UNKNOWN rather than
+   *  "manual": the scheduler and the MCP server were both writing runs to this
+   *  store long before it existed. Never says what the run EXECUTED — a re-run
+   *  is `replayOfRunId` above. Vocabulary: shared/run-trigger.mjs. */
+  trigger?: RunTrigger;
   kind?: RunRecordKind;
   note?: string;
   /** The test this run belonged to has been deleted (mirrors main types). The
