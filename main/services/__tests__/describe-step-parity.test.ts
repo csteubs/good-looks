@@ -41,6 +41,31 @@ const cases: { label: string; step: Step }[] = [
   { label: "press without locator", step: step({ type: "press", value: "Escape" }) },
   { label: "reload", step: step({ type: "reload" }) },
   { label: "echo", step: step({ type: "echo", text: "order is ${orderId}" }) },
+  { label: "dblclick", step: step({ type: "dblclick", locator: LOCATOR }) },
+  { label: "dblclick with a timeout", step: step({ type: "dblclick", locator: LOCATOR, timeoutMs: 9000 }) },
+  { label: "rightclick", step: step({ type: "rightclick", locator: LOCATOR }) },
+  {
+    label: "rightclick forced with a timeout",
+    step: step({ type: "rightclick", locator: LOCATOR, force: true, timeoutMs: 9000 }),
+  },
+  {
+    label: "drag",
+    step: step({ type: "drag", locator: { k: "testid", v: "card" }, toLocator: { k: "testid", v: "done" } }),
+  },
+  {
+    label: "drag with a timeout",
+    step: step({
+      type: "drag",
+      locator: { k: "testid", v: "card" },
+      toLocator: { k: "css", v: "#col" },
+      timeoutMs: 15_000,
+    }),
+  },
+  // Malformed on purpose: a drag with nothing to drop onto. Both sides must
+  // degrade identically rather than one printing "undefined".
+  { label: "drag with no target", step: step({ type: "drag", locator: { k: "testid", v: "card" } }) },
+  { label: "dblclick with no element", step: step({ type: "dblclick" }) },
+  { label: "rightclick with no element", step: step({ type: "rightclick" }) },
   { label: "echo with nothing to say", step: step({ type: "echo" }) },
   { label: "reload with a timeout", step: step({ type: "reload", timeoutMs: 30_000 }) },
   // `force` was in the generated call and NOT in the renderer's step list until

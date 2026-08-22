@@ -240,6 +240,14 @@ export const TESTS: TestRecord[] = [
       { type: "if", cond: "variable", captureVar: "exportName", compareOp: "contains", value: ".csv" },
       { type: "echo", text: "export was ${exportName}" },
       { type: "endif" },
+      // The three widened actions, so each has a visible step row.
+      { type: "dblclick", locator: { k: "testid", v: "result-row" } },
+      { type: "rightclick", locator: { k: "testid", v: "result-row" } },
+      {
+        type: "drag",
+        locator: { k: "role", role: "listitem", name: "Saved search" },
+        toLocator: { k: "testid", v: "favourites" },
+      },
       // The teardown divider, with a step under it — the only way to see the
       // row that says everything below it survives a failure, and the only
       // place the divider's own styling is visible at all.

@@ -286,7 +286,7 @@ function parseTimeoutOption(s: string): number | null {
  *  a click-only escape and `delay` means something only to a per-character
  *  fill, so accepting either anywhere else would read back a call the
  *  generator cannot re-emit. */
-const CLICK_OPTION_KEYS: ReadonlySet<string> = new Set(["force", "timeout"]);
+const CLICK_OPTION_KEYS: ReadonlySet<string> = new Set(["force", "timeout", "button"]);
 const TYPE_OPTION_KEYS: ReadonlySet<string> = new Set(["delay", "timeout"]);
 const TIMEOUT_OPTION_KEYS: ReadonlySet<string> = new Set(["timeout"]);
 
@@ -296,6 +296,10 @@ interface TrailingOptions {
   force: boolean;
   delay: number | null;
   timeout: number | null;
+  /** `button: "right"` — what tells a right-click from an ordinary one. Only
+   *  the one value the generator writes reads back; `"left"` is the default
+   *  said out loud, which it never emits. */
+  button: string | null;
 }
 
 /**
@@ -323,7 +327,13 @@ function parseTrailingOptions(
   argsStr: string,
   allowed: ReadonlySet<string>,
 ): TrailingOptions | null {
-  const none: TrailingOptions = { before: argsStr, force: false, delay: null, timeout: null };
+  const none: TrailingOptions = {
+    before: argsStr,
+    force: false,
+    delay: null,
+    timeout: null,
+    button: null,
+  };
   const trimmed = argsStr.trim();
   if (!trimmed.endsWith("}")) return none;
 
@@ -349,6 +359,7 @@ function parseTrailingOptions(
     force: false,
     delay: null,
     timeout: null,
+    button: null,
   };
   const inner = trimmed.slice(open + 1, trimmed.length - 1);
   let j = 0;
@@ -361,6 +372,15 @@ function parseTrailingOptions(
     const key = keyM[1];
     if (!allowed.has(key)) return null;
     const at = j + keyM[0].length;
+    // `button` is the one key whose value is a STRING, and only the one string
+    // the generator writes — anything else is a shape this parser does not own.
+    if (key === "button") {
+      const btnM = inner.slice(at).match(/^"right"/);
+      if (!btnM) return null;
+      out.button = "right";
+      j = at + btnM[0].length;
+      continue;
+    }
     const valM = inner.slice(at).match(/^(true|false|\d+)/);
     if (!valM) return null;
     const raw = valM[1];
@@ -580,6 +600,12 @@ function makeStep(type: StepType, partial: Partial<Step>): Step {
  *  the other. */
 const LOCATOR_ACTIONS = [
   "click",
+  // BEFORE "click"? No — "dblclick" does not start with "click", so the
+  // alternation cannot mis-match it. `dragTo` is listed here but handled
+  // separately below, because its argument is another LOCATOR rather than a
+  // value.
+  "dblclick",
+  "dragTo",
   "fill",
   // BEFORE "press", and that order is load-bearing: these names are joined
   // into a regex alternation, and a shorter alternative listed first would
@@ -651,8 +677,23 @@ function locatorActionStep(locator: Locator, action: string, argsStr: string): S
       ...(waitUntil && timeoutMs !== null ? { timeoutMs } : {}),
     });
   }
+  if (action === "dragTo") {
+    // The drop target is a whole locator, not a value, so it is parsed as one
+    // — through the SAME `parseLocator` the source went through. A shape it
+    // cannot read makes the statement foreign rather than a drag onto nothing.
+    const opts = parseTrailingOptions(argsStr, TIMEOUT_OPTION_KEYS);
+    if (opts === null) return null;
+    const to = parseLocator(opts.before.trim());
+    if (!to) return null;
+    return makeStep("drag", {
+      locator,
+      toLocator: to.locator,
+      ...(opts.timeout !== null ? { timeoutMs: opts.timeout } : {}),
+    });
+  }
   const typeMap: Record<string, StepType> = {
     click: "click",
+    dblclick: "dblclick",
     fill: "fill",
     // A per-character fill is the same STEP as a fill — one `fill` step whose
     // `typeMode` says how it is delivered — so it reads back as one, not as a
@@ -678,7 +719,10 @@ function locatorActionStep(locator: Locator, action: string, argsStr: string): S
   const opts = parseTrailingOptions(argsStr, allowed);
   if (opts === null) return null;
   const value = parseValueArg(opts.before);
-  return makeStep(typeMap[action], {
+  // `button: "right"` is what tells a right-click from a click. Read here
+  // rather than as its own action, because Playwright has only the one method.
+  const kind: StepType = action === "click" && opts.button === "right" ? "rightclick" : typeMap[action];
+  return makeStep(kind, {
     locator,
     ...(opts.force ? { force: true } : {}),
     ...(action === "pressSequentially" ? { typeMode: "sequential" as const } : {}),

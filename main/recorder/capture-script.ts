@@ -1519,6 +1519,58 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
     return step;
   }
 
+  // Double-click. The browser fires two clicks first and each has already been
+  // recorded (the console channel emits a click the instant it is captured, and
+  // holding one back to see what follows is exactly what must not happen). The
+  // backend withdraws them when this arrives - see dropClicksSupersededBy.
+  function onDblClick(e) {
+    if (isPaused() || assertMode()) return;
+    var el = e.target;
+    if (!el || el.nodeType !== 1) return;
+    var target = interactiveTarget(el);
+    push(withFp({ type: "dblclick", locator: locatorFor(target) }, target));
+  }
+
+  // ---- Drag and drop -------------------------------------------------------
+  //
+  // Recorded from the POINTER SEQUENCE rather than the HTML5 drag events,
+  // because an application built on pointer events fires no drag events at all
+  // and would otherwise be unrecordable. Two thresholds, both mabl's: the
+  // gesture must last at least half a second and move at least 20 pixels. They
+  // are what stops an ordinary click - which is a pointerdown and a pointerup
+  // on the same spot - from being recorded as a degenerate drag onto itself.
+  var DRAG_MIN_MS = 500;
+  var DRAG_MIN_PX = 20;
+  var dragFrom = null;
+
+  function onPointerDownForDrag(e) {
+    if (isPaused() || assertMode()) return;
+    var el = e.target;
+    if (!el || el.nodeType !== 1) { dragFrom = null; return; }
+    dragFrom = { el: el, x: e.clientX, y: e.clientY, t: Date.now() };
+  }
+
+  function onPointerUpForDrag(e) {
+    if (!dragFrom) return;
+    var from = dragFrom;
+    dragFrom = null;
+    if (isPaused() || assertMode()) return;
+    var dx = e.clientX - from.x;
+    var dy = e.clientY - from.y;
+    if (Math.sqrt(dx * dx + dy * dy) < DRAG_MIN_PX) return;
+    if (Date.now() - from.t < DRAG_MIN_MS) return;
+    // The element UNDER THE CURSOR at release, not e.target: a dragged element
+    // often follows the pointer, and it would then be reported as its own drop
+    // target - a drag onto itself, which is a step that does nothing.
+    var to = null;
+    try { to = document.elementFromPoint(e.clientX, e.clientY); } catch (err) {}
+    if (!to || to.nodeType !== 1) return;
+    var src = interactiveTarget(from.el);
+    var dst = interactiveTarget(to);
+    if (src === dst) return;
+    push(withFp({ type: "drag", locator: locatorFor(src), toLocator: locatorFor(dst) }, src));
+  }
+
   function onKeydown(e) {
     var kt = e.target;
     if (kt && kt.nodeType === 1) keepInWindow(kt);
@@ -1542,6 +1594,15 @@ export function buildCaptureScript(nonce: string, extraTestIdAttributes: string[
   // so a second delivery is idempotent rather than a duplicate.
   window.addEventListener("focusin", onFocusIn, true);
   document.addEventListener("focusin", onFocusIn, true);
+  var onDblClickOnce = once(onDblClick);
+  window.addEventListener("dblclick", onDblClickOnce, true);
+  document.addEventListener("dblclick", onDblClickOnce, true);
+  // NOT wrapped in once(): these two only record a pointer position, and the
+  // pair has to see the same delivery. A drag step is pushed from the UP
+  // handler, which is where the de-duplication would matter, and a second
+  // delivery finds dragFrom already cleared.
+  window.addEventListener("pointerdown", onPointerDownForDrag, true);
+  window.addEventListener("pointerup", onPointerUpForDrag, true);
   window.addEventListener("click", onClickOnce, true);
   window.addEventListener("change", onChangeOnce, true);
   window.addEventListener("keydown", onKeydownOnce, true);

@@ -34,6 +34,9 @@ const SYNTAX: Record<SyntaxTheme, Record<StepType, string>> = {
     capture: "#7fd6b0",
     // Interaction — the things a person did.
     click: "#8fd0e8",
+    dblclick: "#8fd0e8",
+    rightclick: "#8fd0e8",
+    drag: "#8fd0e8",
     fill: "#8fd0e8",
     press: "#8fd0e8",
     select: "#8fd0e8",

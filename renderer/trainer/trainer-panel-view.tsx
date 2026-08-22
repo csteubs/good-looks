@@ -120,6 +120,8 @@ const ADD_STEP_KINDS: AddStepKind[] = [
   "goto",
   "reload",
   "echo",
+  "dblclick",
+  "rightclick",
   "press",
   "find",
   "viewport",

@@ -50,6 +50,10 @@ import {
 } from "./input-service.js";
 import { applyViewportStep, type ResizeHost } from "./resize-service.js";
 import { healStep } from "./auto-heal.js";
+// Which clicks a captured double-click withdraws. Its own module, and pure, so
+// every branch is exercisable without a window — the recorder-navigation.ts
+// argument again.
+import { dropClicksSupersededBy } from "./dblclick-supersede.js";
 import { healJournalStore } from "./heal-journal-store.js";
 import { shopifySignatureStore } from "./shopify-signature-store.js";
 import { createTrainerWindowGate } from "./trainer-window-gate.js";
@@ -1454,7 +1458,27 @@ async function drainPicked(): Promise<void> {
  */
 function recordCaptured(steps: unknown[]): void {
   if (steps.length === 0 || !session) return;
-  for (const step of normalizeRawSteps(steps)) addStep(step);
+  for (const raw of normalizeRawSteps(steps)) {
+    // A captured double-click withdraws the two clicks the browser fired
+    // before it. Done here rather than in `addStep` because that funnel also
+    // serves the Add-step dialog, and a double-click the user placed by hand
+    // claims nothing.
+    if (raw.type === "dblclick" && session) {
+      const scope = session.flowScope;
+      const list = scope ? scope.steps : session.steps;
+      const at = scope ? clampScopeCursor(scope.cursor) : clampCursor(session.cursor);
+      const removed = dropClicksSupersededBy(
+        { id: "", timestamp: Date.now(), ...raw } as Step,
+        list,
+        at,
+      );
+      if (removed > 0) {
+        if (scope) scope.cursor = Math.max(0, scope.cursor - removed);
+        else session.cursor = Math.max(0, session.cursor - removed);
+      }
+    }
+    addStep(raw);
+  }
 }
 
 /** Take one arrival from either channel. */
@@ -2365,6 +2389,28 @@ export const recorderService = {
             enabled: !!picked,
             click: () => ctxAction({ kind: "fill", picked, prefillText: "", prefillValue: "" }),
           },
+          // A right-click on the page CANNOT be captured the way a click or a
+          // double-click is: this menu is what a right-click already does in
+          // the training browser, and taking that over would cost the user the
+          // tools menu. mabl solves it with a Trainer preference; the honest
+          // version here is to put the action IN the menu the gesture already
+          // opens — the user has right-clicked the element they mean, and
+          // choosing this says so. It inserts the step directly rather than
+          // opening the composer: there is nothing to configure.
+          {
+            label: "Record a right-click here",
+            enabled: !!picked && !!picked.candidates?.length,
+            click: () => {
+              const loc = picked?.candidates?.[0];
+              if (!loc) return;
+              // No fingerprint: a right-click's element is described by
+              // PICK_AT_POINT_SCRIPT, which reports locator candidates rather
+              // than the full recorded identity. So this step cannot AUTO-HEAL,
+              // exactly like every other step authored from this menu — the
+              // trade is the same one, and the step is still refinable.
+              addStep({ type: "rightclick", locator: loc });
+            },
+          },
           {
             label: "Refine selector for this element",
             enabled: !!picked,
@@ -3015,6 +3061,10 @@ export const recorderService = {
           "force",
           "assert",
           "locator",
+          // The drag target. Copied raw like `locator` above and everything
+          // else in this list — which is why `locatorExpr` quotes every value
+          // it emits with `q()` rather than trusting the model.
+          "toLocator",
           "label",
           "continueOnFailure",
           "disabled",
