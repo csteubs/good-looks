@@ -45,10 +45,32 @@ screenshots* (see §6). You set it up in your assistant's config, once.
 
 ## 2. Setup
 
+### Where the server is
+
+The app carries the MCP server inside it, so there is nothing to clone or build.
+Settings → Documentation shows the exact path on **your** machine, with a Copy
+button for the command below — that is worth using, because it answers from disk
+rather than from this page.
+
+For an app installed in `/Applications`, the two paths are:
+
+```
+/Applications/Good Looks!.app/Contents/MacOS/Good Looks!
+/Applications/Good Looks!.app/Contents/Resources/app/mcp/server.mjs
+```
+
+The first is the app's own binary, and it runs the server for you. That is why
+the commands below set `ELECTRON_RUN_AS_NODE=1` and do not mention `node`: you
+do not need Node installed.
+
+Quote these paths with **single** quotes. The app's name ends in an exclamation
+mark, and inside double quotes a shell reads that as history expansion and
+refuses the command.
+
 ### Claude Code
 
 ```bash
-claude mcp add --scope user good-looks -- node "$HOME/Library/Application Support/app.glaze.macos.main/apps/test-recorder-local-2ovdvu33/.glaze-sources/mcp/server.mjs"
+claude mcp add --scope user good-looks -e ELECTRON_RUN_AS_NODE=1 -- '/Applications/Good Looks!.app/Contents/MacOS/Good Looks!' '/Applications/Good Looks!.app/Contents/Resources/app/mcp/server.mjs'
 ```
 
 `--scope user` makes it available in every project; drop it to register the
@@ -66,10 +88,9 @@ Add to the client's MCP config (for Claude Desktop, `claude_desktop_config.json`
 {
   "mcpServers": {
     "good-looks": {
-      "command": "node",
-      "args": [
-        "/Users/<you>/Library/Application Support/app.glaze.macos.main/apps/test-recorder-local-2ovdvu33/.glaze-sources/mcp/server.mjs"
-      ]
+      "command": "/Applications/Good Looks!.app/Contents/MacOS/Good Looks!",
+      "args": ["/Applications/Good Looks!.app/Contents/Resources/app/mcp/server.mjs"],
+      "env": { "ELECTRON_RUN_AS_NODE": "1" }
     }
   }
 }
@@ -81,8 +102,17 @@ Add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.good-looks]
-command = "node"
-args = ["/Users/<you>/Library/Application Support/app.glaze.macos.main/apps/test-recorder-local-2ovdvu33/.glaze-sources/mcp/server.mjs"]
+command = "/Applications/Good Looks!.app/Contents/MacOS/Good Looks!"
+args = ["/Applications/Good Looks!.app/Contents/Resources/app/mcp/server.mjs"]
+env = { ELECTRON_RUN_AS_NODE = "1" }
+```
+
+### From a checkout
+
+Working in the repository instead? Point at the tree and use `node`:
+
+```bash
+claude mcp add --scope user good-looks -- node '/path/to/good-looks/mcp/server.mjs'
 ```
 
 Nothing else is needed — no port, no login, no token. If your client lists

@@ -154,12 +154,14 @@ function Block({ block }: { block: DocBlock }) {
  * Where the MCP server actually is on THIS machine, and the command that
  * registers it.
  *
- * The honest version of a copy button. The server is a folder in the source
- * tree (`mcp/server.mjs`), and `build.files` does not ship it — so a packaged
- * app has no server to point at, and a command copied there would name a path
- * that does not exist. Rather than print a plausible command and let the user
- * discover that, the backend answers whether the file is really there and this
- * says which of the two situations they are in.
+ * The honest version of a copy button: the backend answers from DISK rather
+ * than this pane printing a path from documentation.
+ *
+ * A packaged app carries the server as of R15, so this branch is now the one
+ * that fires for everybody. The absent branch is kept because it is still
+ * reachable — a dev tree run from a stripped checkout — and because a
+ * `build.files` regression should degrade to an honest message rather than a
+ * command naming a path that is not there.
  */
 function McpServerCard() {
   const [state, setState] = useState<{
@@ -209,9 +211,11 @@ function McpServerCard() {
         </>
       ) : (
         <p className="gl-doc-p">
-          This copy of the app does not carry the MCP server — it is part of the source tree, and a
-          packaged build ships only what it needs to run. Register the server from a checkout of the
-          project, using the path to its <code className="gl-doc-code">mcp/server.mjs</code>.
+          The MCP server is not where this copy of the app expects it
+          (<code className="gl-doc-code">{state.path}</code>). A packaged build normally carries it,
+          so this usually means the app is running from a source tree that does not have it.
+          Register it from a checkout of the project, using the path to its{" "}
+          <code className="gl-doc-code">mcp/server.mjs</code>.
         </p>
       )}
     </div>

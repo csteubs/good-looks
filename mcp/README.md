@@ -8,10 +8,30 @@ works whether the app is open or closed.
 
 ## Setup
 
+The app **carries this server inside it**, so there is nothing to clone or build.
+Settings → Documentation shows the resolved path for your install and offers a
+Copy button for the command — prefer that over the paths below, since it answers
+from disk.
+
+For an app in `/Applications`, the binary and the server are:
+
+```
+/Applications/Good Looks!.app/Contents/MacOS/Good Looks!
+/Applications/Good Looks!.app/Contents/Resources/app/mcp/server.mjs
+```
+
+The first is the app's own Electron binary, which runs the server — that is why
+these commands set `ELECTRON_RUN_AS_NODE=1` and never mention `node`. You do not
+need Node installed.
+
+**Use single quotes.** The product's name ends in `!`, and inside double quotes
+an interactive zsh or bash treats that as history expansion and rejects the
+command with `event not found` before it runs.
+
 ### Claude Code
 
 ```bash
-claude mcp add --scope user good-looks -- node "$HOME/Library/Application Support/app.glaze.macos.main/apps/test-recorder-local-2ovdvu33/.glaze-sources/mcp/server.mjs"
+claude mcp add --scope user good-looks -e ELECTRON_RUN_AS_NODE=1 -- '/Applications/Good Looks!.app/Contents/MacOS/Good Looks!' '/Applications/Good Looks!.app/Contents/Resources/app/mcp/server.mjs'
 ```
 
 `--scope user` makes it available in every project, not just this one. Use
@@ -36,8 +56,9 @@ Add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.good-looks]
-command = "node"
-args = ["/Users/<you>/Library/Application Support/app.glaze.macos.main/apps/test-recorder-local-2ovdvu33/.glaze-sources/mcp/server.mjs"]
+command = "/Applications/Good Looks!.app/Contents/MacOS/Good Looks!"
+args = ["/Applications/Good Looks!.app/Contents/Resources/app/mcp/server.mjs"]
+env = { ELECTRON_RUN_AS_NODE = "1" }
 ```
 
 ### Claude Desktop / other MCP clients
@@ -48,17 +69,24 @@ Add to the client's MCP config (e.g. `claude_desktop_config.json`):
 {
   "mcpServers": {
     "good-looks": {
-      "command": "node",
-      "args": [
-        "/Users/<you>/Library/Application Support/app.glaze.macos.main/apps/test-recorder-local-2ovdvu33/.glaze-sources/mcp/server.mjs"
-      ]
+      "command": "/Applications/Good Looks!.app/Contents/MacOS/Good Looks!",
+      "args": ["/Applications/Good Looks!.app/Contents/Resources/app/mcp/server.mjs"],
+      "env": { "ELECTRON_RUN_AS_NODE": "1" }
     }
   }
 }
 ```
 
-This project itself already has it registered in `.mcp.json` at the project
-root, so the Glaze agent can use these tools in this workspace too.
+### From a checkout
+
+Working in the repository? Point at the tree and use `node`:
+
+```bash
+claude mcp add --scope user good-looks -- node '/path/to/good-looks/mcp/server.mjs'
+```
+
+This project already registers it that way in `.mcp.json` at the project root,
+so an agent working in this workspace can use these tools too.
 
 ## Tools
 

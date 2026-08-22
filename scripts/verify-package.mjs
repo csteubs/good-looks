@@ -38,7 +38,19 @@
  * guard that only knows about symlinks would go green on all of those.
  */
 
-import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import * as path from "node:path";
 import process from "node:process";
 import console from "node:console";
@@ -234,6 +246,88 @@ function packagedApps(root) {
   return apps;
 }
 
+/**
+ * Is the MCP server in the box, and does it RUN from there?
+ *
+ * R15 ships `mcp/**` and `shared/**` so that someone who installed the app,
+ * rather than cloning the repo, can reach the test library from an MCP client.
+ * Nothing else in the gate can see whether that worked: the dependency closure
+ * above asks only about PACKAGES, so a `files` pattern that dropped the server
+ * entirely leaves every existing assertion green.
+ *
+ * PRESENCE IS NOT ENOUGH, and that is the whole reason this spawns something.
+ * The obvious way to ship these files — electron-builder's `extraResources` —
+ * puts them in `Contents/Resources`, one level ABOVE the app directory, where
+ * Node cannot see `Resources/app/node_modules` and the server dies at import
+ * with ERR_MODULE_NOT_FOUND. `mcp/data-dir.mjs` also reads `<mcp>/../package.json`
+ * at module load, which does not exist there either. Both layouts contain every
+ * file; only one of them runs. A file-existence check would pass on the broken
+ * one, which is exactly the failure this guard exists to catch.
+ *
+ * `--print-data-dir` is the server's own no-side-effects entry point, and
+ * `GOOD_LOOKS_USERDATA` points it at a throwaway store so the check neither
+ * reads nor writes the user's library.
+ *
+ * @param {string} app  the bundle's app directory
+ * @returns {string[]}  failure lines, empty when the server is fine
+ */
+function verifyMcpServer(app) {
+  const server = path.join(app, "mcp", "server.mjs");
+  if (!existsSync(server)) {
+    return [
+      "The packaged app does not carry the MCP server.",
+      `  expected: ${server}`,
+      "",
+      "`build.files` in package.json must include `mcp/**`. Without it, anyone who",
+      "installed the app rather than cloning the repo can reach none of its tools.",
+    ];
+  }
+  // The sibling tree, not an afterthought: mcp/*.mjs relative-imports ~18
+  // modules from ../shared, so shipping mcp/ alone is a bundle that still
+  // cannot start.
+  const sharedProbe = path.join(app, "shared", "user-data-rules.mjs");
+  if (!existsSync(sharedProbe)) {
+    return [
+      "The MCP server shipped without the `shared/` modules it imports.",
+      `  expected: ${sharedProbe}`,
+      "",
+      "`build.files` must include `shared/**` alongside `mcp/**`.",
+    ];
+  }
+
+  const store = mkdtempSync(path.join(tmpdir(), "gl-verify-mcp-"));
+  try {
+    // Enough of a store that data-dir resolution has something to find; it
+    // refuses to guess rather than silently answering an empty directory.
+    mkdirSync(path.join(store, "recorder"), { recursive: true });
+    writeFileSync(path.join(store, "recorder", "tests.json"), "[]", "utf-8");
+    const result = spawnSync(process.execPath, [server, "--print-data-dir"], {
+      env: { ...process.env, GOOD_LOOKS_USERDATA: store },
+      encoding: "utf-8",
+      timeout: 30_000,
+    });
+    if (result.status !== 0) {
+      return [
+        "The packaged MCP server is present but does not run.",
+        `  ${server}`,
+        "",
+        `exit ${result.status ?? "(killed)"}${result.signal ? ` (${result.signal})` : ""}`,
+        ...String(result.stderr || result.stdout || "(no output)")
+          .split("\n")
+          .slice(0, 8)
+          .map((l) => `  ${l}`),
+        "",
+        "ERR_MODULE_NOT_FOUND here means the files landed somewhere Node cannot",
+        "resolve from — `extraResources` puts them beside the app directory rather",
+        "than inside it, where neither node_modules nor package.json is reachable.",
+      ];
+    }
+  } finally {
+    rmSync(store, { recursive: true, force: true });
+  }
+  return [];
+}
+
 /** @param {string} root */
 function verify(root) {
   const apps = packagedApps(root);
@@ -295,6 +389,10 @@ function verify(root) {
     console.log(
       `ok   ${packages} runtime package(s), ${expected.length} dependency edges, all resolvable in ${path.relative(root, app) || app}`,
     );
+
+    const mcpProblems = verifyMcpServer(app);
+    if (mcpProblems.length > 0) fail(...mcpProblems);
+    console.log(`ok   the MCP server is in the bundle and starts from it`);
   }
 
   if (unresolved.length > 0) {

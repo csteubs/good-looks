@@ -168,8 +168,12 @@
     "files": [
       "build/**/*",
       "package.json",
+      "mcp/**/*",
+      "!mcp/**/*.check.mjs",
+      "shared/**/*",
       "!node_modules/.cache/**"
-    ],
+
+  ],
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build-icon.icns",
