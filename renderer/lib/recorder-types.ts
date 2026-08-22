@@ -1979,3 +1979,20 @@ export interface ShopifySignatureStatus {
    *  is here and the encrypted half could not be decrypted on this machine. */
   state: "valid" | "expiring" | "expired" | "unknown" | "unreadable";
 }
+
+/** A standing overlay dismissal rule. Mirrors `OverlayRule` in
+ *  `main/recorder/types.ts` — the renderer cannot import from `main/`, so this
+ *  is the same hand-maintained mirror every other record here is. */
+export interface OverlayRule {
+  id: string;
+  /** Registrable host, e.g. "ritual.com". Matched on label boundaries, so it
+   *  covers "www." and other subdomains. */
+  host: string;
+  label: string;
+  /** What to click. Only css / testid / text / role reach here — a rule may
+   *  not carry an xpath, which encodes a DOM snapshot rather than an element. */
+  target: Locator;
+  disabled?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}

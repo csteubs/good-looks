@@ -41,6 +41,7 @@ import { captureFixtureSource } from "../main/services/capture-fixture-source.js
 import { glazeRuntimeSource, GLAZE_RUNTIME_FILE } from "../main/services/glaze-runtime-source.js";
 import { healFixtureSource, HEAL_FIXTURE_FILE } from "../main/services/heal-fixture-source.js";
 import { generateSpecDetailed, type FlowSource } from "../main/services/script-generator.js";
+import { dismissFixtureSource, DISMISS_FIXTURE_FILE } from "../main/services/dismiss-fixture-source.js";
 import { settleFixtureSource, SETTLE_FIXTURE_FILE } from "../main/services/settle-fixture-source.js";
 import {
   signatureFixtureSource,
@@ -85,6 +86,7 @@ test.beforeAll(async () => {
   fs.writeFileSync(path.join(dir, HEAL_FIXTURE_FILE), healFixtureSource);
   fs.writeFileSync(path.join(dir, SETTLE_FIXTURE_FILE), settleFixtureSource);
   fs.writeFileSync(path.join(dir, SIGNATURE_FIXTURE_FILE), signatureFixtureSource);
+  fs.writeFileSync(path.join(dir, DISMISS_FIXTURE_FILE), dismissFixtureSource);
   fs.writeFileSync(path.join(dir, GLAZE_RUNTIME_FILE), glazeRuntimeSource);
   // Same trick the runner uses for the temp scripts dir: a link is enough for
   // Node's resolver, which is all the CLI and the fixtures need.

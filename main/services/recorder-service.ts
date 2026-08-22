@@ -33,6 +33,7 @@ import {
   DRAIN_PICKED_SCRIPT,
   DRAIN_SCRIPT,
   PICK_AT_POINT_SCRIPT,
+  WORLD_STATE_KEY,
 } from "../recorder/capture-script.js";
 import {
   CaptureLedger,
@@ -64,7 +65,8 @@ import {
   permissionAllowed,
   DENIED_RECORDER_PERMISSIONS,
 } from "./recorder-navigation.js";
-import type { CookieSpec, GenSpec } from "../recorder/types.js";
+import { armedRulesFor, MAX_OVERLAY_LABEL } from "../../shared/overlay-rules.mjs";
+import type { CookieSpec, GenSpec, OverlayRule } from "../recorder/types.js";
 import type { RunBrowser } from "../recorder/types.js";
 import {
   initialCursor,
@@ -114,6 +116,7 @@ import {
   openTrainerPanel,
 } from "../windows/trainer-panel-window.js";
 import { recorderDebugStore } from "./recorder-debug-store.js";
+import * as overlayRuleStore from "./overlay-rule-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { applyTestSessionProxy } from "./proxy-service.js";
 import { scaled, uiScale } from "./ui-scale.js";
@@ -1314,11 +1317,36 @@ async function injectCapture(): Promise<void> {
   const wc = pageExecutor(page);
   try {
     await wc.executeJavaScript(
-      buildCaptureScript(session.captureNonce, recorderSettingsStore.get().extraTestIdAttributes),
+      buildCaptureScript(
+        session.captureNonce,
+        recorderSettingsStore.get().extraTestIdAttributes,
+        // Armed for THIS document's host. Read at injection time rather than
+        // held on the session, because injection happens on every dom-ready
+        // and the host can change under the user mid-recording — a rule for
+        // one site must not follow them to the next.
+        armedOverlayRules(page.getURL()),
+      ),
     );
     await applyStateAttributes();
   } catch (err) {
     logger.warn("recorder", "Failed to inject capture script", { err: String(err) });
+  }
+}
+
+/** The overlay rules that apply to a URL right now.
+ *
+ *  Read from the store on every call rather than cached on the session: a rule
+ *  taught mid-recording should take effect on the page the user is looking at,
+ *  and the store is small enough that re-reading it is cheaper than keeping a
+ *  second copy honest. */
+function armedOverlayRules(url: string): OverlayRule[] {
+  try {
+    return armedRulesFor(overlayRuleStore.listRules(), url);
+  } catch (err) {
+    // A rule that cannot be read is a rule that does not fire. Never a reason
+    // to fail an injection — capture matters more than dismissal.
+    logger.warn("recorder", "Could not read overlay rules", { err: String(err) });
+    return [];
   }
 }
 
@@ -1597,6 +1625,47 @@ export type TrainerTarget = "main" | "panel";
  * the dialog in the main window instead would put it behind the browser — the
  * exact window hunt this feature removes.
  */
+/**
+ * Turn a right-clicked element into a standing overlay rule for this host.
+ *
+ * Creates it, re-arms the live page so the rule works on the banner the user is
+ * looking at, and reports the outcome — a rule that silently did not save would
+ * leave them clicking the same thing away for the rest of the session.
+ *
+ * The locator comes from `PICK_AT_POINT_SCRIPT`, so it is a page-derived value
+ * and is re-checked by `normalizeOverlayRule` inside the store rather than
+ * trusted for having arrived as a `Locator`.
+ */
+function createOverlayRuleFromPick(target: Locator, label: string): void {
+  const url = currentPageUrl();
+  try {
+    const rule = overlayRuleStore.createRule({
+      url,
+      label: label.trim().slice(0, MAX_OVERLAY_LABEL),
+      target,
+    });
+    if (!rule) {
+      sendToMain("recorder:overlayRuleSaved", {
+        ok: false,
+        message: `Couldn't create an overlay rule for ${url || "this page"}.`,
+      });
+      return;
+    }
+    sendToMain("overlayRules:changed", {});
+    recorderService.refreshOverlayRules();
+    sendToMain("recorder:overlayRuleSaved", {
+      ok: true,
+      message: `Overlay rule saved for ${rule.host} — “${rule.label || "this control"}” will be clicked away from now on.`,
+    });
+  } catch (err) {
+    logger.warn("recorder", "Could not create overlay rule", { err: String(err) });
+    sendToMain("recorder:overlayRuleSaved", {
+      ok: false,
+      message: "Couldn't create an overlay rule for this page.",
+    });
+  }
+}
+
 function ctxAction(action: ContextAction): void {
   sendToMain("recorder:contextAction", {
     ...action,
@@ -1683,6 +1752,38 @@ function stopPolling(): void {
 export const recorderService = {
   getState(): RecorderState {
     return currentState();
+  },
+
+  /**
+   * Re-arm the live page's overlay watcher after the rule set changed.
+   *
+   * A rule is taught while looking at the overlay it dismisses, so the whole
+   * point is that it starts working NOW rather than on the next navigation.
+   * Re-injection is safe for exactly the reason the dom-ready path is: the
+   * capture script's world-state guard makes a second injection a no-op, so
+   * this reloads the WATCHER by rebuilding the page's capture install — which
+   * is why it clears the guard first.
+   *
+   * A no-op with no session, which is the common case: rules are usually
+   * managed from Settings with no recording in flight.
+   */
+  refreshOverlayRules(): void {
+    const page = pageWc();
+    if (!page || !session) return;
+    void (async () => {
+      try {
+        const wc = pageExecutor(page);
+        // Drop the guard AND the watcher's own listeners with it, then let the
+        // ordinary injection path rebuild both. Anything less would leave the
+        // previous rule set observing alongside the new one.
+        await wc.executeJavaScript(
+          `(function () { try { var gl = window.${WORLD_STATE_KEY}; if (gl && gl.stopOverlayWatcher) gl.stopOverlayWatcher(); delete window.${WORLD_STATE_KEY}; } catch (e) {} })();`,
+        );
+        await injectCapture();
+      } catch (err) {
+        logger.warn("recorder", "Could not re-arm overlay rules", { err: String(err) });
+      }
+    })();
   },
 
   /**
@@ -2409,6 +2510,26 @@ export const recorderService = {
               // exactly like every other step authored from this menu — the
               // trade is the same one, and the step is still refinable.
               addStep({ type: "rightclick", locator: loc });
+            },
+          },
+          // Taught from the menu the gesture already opens, for the same
+          // reason "Record a right-click here" is: the user has right-clicked
+          // the control that closes the overlay, which is exactly the
+          // statement a rule needs. It creates the rule directly rather than
+          // opening a composer — there is nothing to configure, and the label
+          // prefills from the element's own text.
+          //
+          // It is NOT a step, and the menu says so. A step would be recorded
+          // into this test at this position, which is the thing that does not
+          // work: the overlay comes back on the next navigation and on every
+          // other test.
+          {
+            label: "Always dismiss this overlay",
+            enabled: !!picked && !!picked.candidates?.length,
+            click: () => {
+              const loc = picked?.candidates?.[0];
+              if (!loc) return;
+              void createOverlayRuleFromPick(loc, prefillText || picked?.description || "");
             },
           },
           {

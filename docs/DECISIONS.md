@@ -82,6 +82,134 @@ and assertion questions in front of the author instead of inside a rewriter.
 datasets already supply values today), environment records (R16), and
 per-environment keying of sessions and baselines (R34).
 
+### 2026-08-22 — Overlay rules: a standing dismissal, because a step cannot express "whenever this appears"
+
+A consent modal does not appear once. It is re-injected by a third-party script
+on EVERY document, so a dismissal placed at one point in a step list is correct
+exactly until the next navigation.
+
+**Three cheaper answers were measured against ritual.com first, and two of them
+are what anybody would reach for.** Replaying the click works and the banner
+returns on the next `goto`. Recording the consent DECISION does not work at all:
+`setConsentPreferences` with every category denied left the banner up, before
+and after navigating. And carrying the cookies does not work either — a fresh
+context seeded with all 48 cookies from a context that had already dismissed it,
+the three `datagrail_*` ones included, still showed the banner. So the app's
+existing `saveSession` / `useSessionFrom` machinery and the `cookie` step cannot
+solve this; the decision is not reconstructible from client cookies.
+
+**What the capture fix already bought, stated honestly.** With the shadow-DOM
+capture bug fixed the same day, one correctly-recorded click on the banner's
+close control dismisses it for the rest of that test — verified across two
+further navigations. The user's reported symptom "it reappears on every
+navigation" was a CONSEQUENCE of the capture bug: the old step clicked the
+modal's backdrop, so nothing was ever dismissed. Two gaps remain, and they are
+what this feature is for. Playwright gives every test a fresh context, so test
+two sees the banner again and every test needs its own dismissal step. And an
+overlay can arrive mid-test: ritual.com's Klaviyo modal appears about eight
+seconds into a visit, full-viewport at z-index 90000, long after any
+top-of-test step has run.
+
+**One resolver, not two.** The trainer resolves a rule inside a live Electron
+page; the run resolves one inside a Playwright worker's init script. The obvious
+build is a resolver on each side, and it is the failure `assert-parity.spec.ts`
+exists to prevent one level down — two implementations agreeing on the day they
+are written. Instead `watcherSource()` in `shared/overlay-rules.mjs` is
+interpolated into both, and both hosts supply the SAME `matchesFor` from
+`UNIQUENESS_HELPERS` — including its shadow piercing, which matters more here
+than anywhere, because the banners this exists for are usually web components.
+`check:overlay-rules` fails if a second copy appears.
+
+**`addInitScript`, not an action wrapper.** Every other run-time fixture patches
+actions, so it runs at step boundaries. That is the wrong shape: the Klaviyo
+modal does not wait for a step, and a wrapper catches it on the next action —
+which is exactly the action it would have blocked.
+
+**The clicked-set is not optional, and the first draft said it was.** The
+argument was that idempotency is structural: a rule targets the control that
+dismisses the overlay, so one click removes what the rule matches. Measured, that
+is false — Klaviyo's close button is removed about 600ms AFTER the click, and the
+sweep runs on every mutation batch plus a 500ms poll. One dismissal produced
+SEVEN clicks. Harmless there, but a control that toggles rather than closes would
+have been clicked back open. Each ELEMENT is now clicked at most once, tracked by
+node identity in a WeakSet — identity rather than a per-rule flag is what keeps a
+legitimately re-injected banner working, since the new banner is a new node.
+
+**The watcher's own click must not become a step.** In the trainer it runs in the
+same isolated world as the capture listeners, so its click reaches them exactly
+like a user's. Unsuppressed, teaching a rule appends a click on the banner to the
+test being recorded — a step whose target the rule itself removes before it can
+ever run. The guard is a counter at `push`, the file's single egress, and it is a
+counter rather than a flag because one rule's click can synchronously reveal a
+second overlay whose rule fires from inside the same sweep.
+
+**Rejected: hiding instead of clicking.** A hidden banner is still in the
+accessibility tree and still counted by an `a11y` step, and a run that deletes
+page content is a run whose screenshots stop describing the site.
+
+**Rejected: xpath targets.** An absolute path encodes the DOM as it stood when
+the rule was taught, and a third-party CMP's position among its siblings is
+exactly what moves between a recording session and a fresh cache-less run.
+
+**Per-host and machine-local, with the cost said out loud.** A pop-up is a
+property of the site, and a copy on every test that visits it is a copy that
+drifts. The consequence is that a test depending on a rule behaves differently on
+a machine without it — so every run reports which rules were ARMED, and the MCP
+server reads the same file through the same shared matcher to say that its runs
+do not enforce them.
+
+### 2026-08-22 — The recorder could not see inside a web component
+
+Every click inside an open shadow root was recorded as a click on the shadow
+HOST. Two independent causes, both silent, both reached from the same page.
+
+**Retargeting.** The capture listeners are on `window` and `document`. An event
+crossing a shadow boundary is retargeted on the way out, so `e.target` at a
+document-level listener is the component, never the control. `composedPath()[0]`
+is the real element and the capture script never called it — Playwright's own
+recorder does, which is what made the gap findable.
+
+**The oracle.** `matchesFor` graded candidate locators with
+`document.querySelectorAll`, which stops at the shadow boundary. Playwright's
+selector engines pierce open roots. So the trainer scored a locator the run
+resolves perfectly well as matching NOTHING. That is the test-id attribute bug
+of 2026-08-14 pointing the other way, and it is why the fix went into `scanAll`
+— the single choke point `UNIQUENESS_HELPERS` gives the capture script, the heal
+probe and the step replayer at once.
+
+**Why it was invisible.** Measured against ritual.com, whose DataGrail consent
+modal is `<aside class="dg-consent-banner">` with an open shadow root: the old
+capture recorded `css: html > body > aside`, which **resolves to exactly one
+element**. Nothing anywhere reports a problem. The step replays green, passes on
+every run, and clicks the modal's backdrop — so the banner stays up and
+obscures whatever the test needed next. A step that does nothing looks exactly
+like a step that worked. The same page carries 28 custom elements: its cart
+drawer and product forms were equally unrecordable, so this was never really
+about cookie banners.
+
+**Closed roots are deliberately not scanned.** Script cannot reach them and
+neither can Playwright, so skipping them is what keeps the two agreeing.
+**XPath is deliberately not piercing** for the same reason inverted:
+`document.evaluate` cannot cross a boundary and Playwright's xpath engine is the
+one engine that does not pierce either, so leaving that arm document-only is
+what keeps IT in agreement.
+
+**Cost.** The root walk measured 0.18ms on that page (2755 elements, 101 shadow
+roots), and a deep scan 0.2–0.3ms more than a flat one. That is why there is no
+cache: the click path can afford the honest answer, and a cache keyed on a
+mutating DOM is a correctness risk bought with nothing.
+
+`deepElementFromPoint` fixes the same blind spot on the two paths that ask what
+is under the cursor — the right-click "pick element here" and the drag-release
+target — since `document.elementFromPoint` also stops at the host.
+
+`occludedBy` in the step replayer needed the converse guard. It reports what is
+covering an element, and `elementFromPoint` answering with the host meant every
+control inside a component read as covered by the component it lives in. On the
+pages where that check earns its keep this is acute: the consent modal IS a
+shadow host, so the trainer would have reported the banner as covering its own
+Accept button.
+
 ### 2026-08-22 — The MCP server ships inside the app, in `files` and not `extraResources`
 
 R15 of [plans/test-runner-improvements.md](plans/test-runner-improvements.md).

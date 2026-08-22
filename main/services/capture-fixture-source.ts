@@ -25,6 +25,7 @@ import {
 } from "./log-capture-source.js";
 import { actionsLiteral, LOCATOR_ACTIONS, PAGE_ACTIONS } from "./page-actions.js";
 import { SETTLE_FIXTURE_FILE } from "./settle-fixture-source.js";
+import { DISMISS_COUNT_ENV, DISMISS_FIXTURE_FILE } from "./dismiss-fixture-source.js";
 import { SIGNATURE_COUNT_ENV, SIGNATURE_FIXTURE_FILE } from "./signature-fixture-source.js";
 import { STEP_MARKER } from "./step-marker.js";
 
@@ -34,6 +35,7 @@ import * as path from "path";
 import { installHealing } from "./glaze-heal.mjs";
 import { installSettle } from "./${SETTLE_FIXTURE_FILE}";
 import { installSignatureHeaders, reportSignedRequests } from "./${SIGNATURE_FIXTURE_FILE}";
+import { dismissalsSoFar, installOverlayDismissal } from "./${DISMISS_FIXTURE_FILE}";
 
 export { expect };
 
@@ -43,6 +45,9 @@ const ON = process.env.GLAZE_CAPTURE_ARTIFACTS === "1";
 // \`test\`, and two fixtures each patching the Locator prototype would double-wrap
 // every action — each one's retry would run inside the other's.
 const HEAL_ON = process.env.GLAZE_HEAL === "1";
+// Standing overlay rules. Gated on there being any, not on a toggle: a run
+// with no rules for its host loads the fixture and installs nothing.
+const DISMISS_ON = (Number(process.env.${DISMISS_COUNT_ENV}) || 0) > 0;
 // Accessibility checks, gated separately from screenshots: a11y is useful
 // without them, and it costs far more, so nobody should pay for one by asking
 // for the other.
@@ -444,7 +449,22 @@ async function saveSessionState(page, testInfo) {
   }
 }
 
-export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON || SIG_ON || SAVE_STATE) ? base.extend({
+/** Say what the overlay rules actually did. Silence here would leave a run that
+ *  clicked things on the page with no record of having done so — and the whole
+ *  argument for arming a rule is that the run stays explainable afterwards. */
+function reportDismissals() {
+  if (!DISMISS_ON) return;
+  try {
+    const fired = dismissalsSoFar();
+    if (fired.length) {
+      process.stderr.write("[glaze-dismiss] dismissed: " + fired.join(", ") + "\\n");
+    } else {
+      process.stderr.write("[glaze-dismiss] no overlay matched a rule this run\\n");
+    }
+  } catch (e) { /* reporting is best-effort */ }
+}
+
+export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON || SIG_ON || DISMISS_ON || SAVE_STATE) ? base.extend({
   page: async ({ page }, use, testInfo) => {
     // The signature goes on FIRST, and is the only one of these that is not an
     // action patch — it routes the network. Installed ahead of the three
@@ -453,6 +473,21 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
     if (SIG_ON) {
       try { installSignatureHeaders(page); } catch (e) {
         process.stderr.write("[glaze-signature] install failed: " + String(e) + "\\n");
+      }
+    }
+    // Overlay rules go on beside the signature, ahead of every action patch:
+    // this registers an init script on the CONTEXT and wraps nothing, so it has
+    // no business inside a wrapper's unwind. Announcing what was armed is part
+    // of the install — a run that clicks things on a page without saying which
+    // rules were active is a run whose surprises point nowhere.
+    if (DISMISS_ON) {
+      try {
+        const armed = await installOverlayDismissal(page);
+        if (armed.length) {
+          process.stderr.write("[glaze-dismiss] armed: " + armed.join(", ") + "\\n");
+        }
+      } catch (e) {
+        process.stderr.write("[glaze-dismiss] install failed: " + String(e) + "\\n");
       }
     }
     // Healing is installed next so its retry sits inside the capture wrapper:
@@ -505,6 +540,7 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
       } finally {
         await saveSessionState(page, testInfo);
         reportSignedRequests();
+        reportDismissals();
       }
       return;
     }
@@ -520,6 +556,7 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
     } finally {
       await saveSessionState(page, testInfo);
       reportSignedRequests();
+      reportDismissals();
       // Persist the manifest: the per-step artifact + outcome model for this run.
       try {
         const manifest = {

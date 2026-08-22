@@ -104,6 +104,7 @@ import { compareRuns } from "../services/run-comparison.js";
 import { analyseFlake } from "../services/flake-analysis.js";
 import { metricsStore } from "../services/metrics-store.js";
 import { failureReasonStore } from "../services/failure-reason-store.js";
+import * as overlayRuleStore from "../services/overlay-rule-store.js";
 import { DEFAULT_FAILURE_REASONS, resolveFailureReason } from "../../shared/failure-reasons.mjs";
 import {
   stepBrowserMatrix,
@@ -130,6 +131,7 @@ import {
   MAX_BATCH_TEST_OPTIONS,
   normalizeDatasets,
   buildStepStructures,
+  normalizeLocator,
   normalizeStep,
   normalizeGroup,
   normalizeTags,
@@ -2539,6 +2541,57 @@ export function registerHandlers(): void {
       return rec;
     },
   );
+
+  // ── Standing overlay rules ────────────────────────────────────────────
+  //
+  // Every mutation pushes `overlayRules:changed`, for the reason the failure
+  // reasons above do it: the management list lives in the SETTINGS window
+  // while the trainer that teaches a rule is the MAIN one, so without the push
+  // a rule taught in one would be invisible in the other until a restart.
+  //
+  // The trainer also has to re-arm its live watcher when the set changes,
+  // which is what `recorderService.refreshOverlayRules()` does — a rule the
+  // user just taught should start working on the page they are looking at, not
+  // on the next navigation.
+  ipcMain.handle("overlayRules:list", async () => overlayRuleStore.listRules());
+  ipcMain.handle(
+    "overlayRules:create",
+    async (_e, params: { url: unknown; label: unknown; target: unknown }) => {
+      // The target came from a PAGE, through the element picker, so it is
+      // rebuilt from checked values rather than trusted for its type — see
+      // `normalizeOverlayRule`. A target that will not normalize is refused
+      // here rather than stored as a rule that can never fire.
+      const target = normalizeLocator(params?.target, false);
+      if (!target) throw new Error("That element can't be turned into a rule.");
+      const rec = overlayRuleStore.createRule({
+        url: typeof params?.url === "string" ? params.url : "",
+        label: typeof params?.label === "string" ? params.label : "",
+        target,
+      });
+      if (!rec) throw new Error("Could not create the rule for this page.");
+      sendToMain("overlayRules:changed", {});
+      recorderService.refreshOverlayRules();
+      return rec;
+    },
+  );
+  ipcMain.handle(
+    "overlayRules:update",
+    async (_e, params: { id: string; label?: unknown; disabled?: unknown }) => {
+      const rec = overlayRuleStore.updateRule(params?.id ?? "", {
+        label: typeof params?.label === "string" ? params.label : undefined,
+        disabled: params?.disabled === true,
+      });
+      sendToMain("overlayRules:changed", {});
+      recorderService.refreshOverlayRules();
+      return rec;
+    },
+  );
+  ipcMain.handle("overlayRules:remove", async (_e, params: { id: string }) => {
+    const removed = overlayRuleStore.removeRule(params?.id ?? "");
+    sendToMain("overlayRules:changed", {});
+    recorderService.refreshOverlayRules();
+    return removed;
+  });
 
   logger.info("handlers", "✓ IPC handlers registered");
 }

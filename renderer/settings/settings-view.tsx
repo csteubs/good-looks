@@ -45,6 +45,7 @@ import { AutoHealPane } from "./panes/auto-heal-pane";
 import { RecordingPane } from "./panes/recording-pane";
 import { StatsPane } from "./panes/stats-pane";
 import { FailureReasonsPane } from "./panes/failure-reasons-pane";
+import { OverlayRulesPane } from "./panes/overlay-rules-pane";
 import { StoragePane } from "./panes/storage-pane";
 import { CostPane } from "./panes/cost-pane";
 import { TestDefaultsPane } from "./panes/test-defaults-pane";
@@ -57,6 +58,7 @@ const PANE_COMPONENTS: Record<PaneId, ComponentType> = {
   storage: StoragePane,
   stats: StatsPane,
   "failure-reasons": FailureReasonsPane,
+  "overlay-rules": OverlayRulesPane,
   cost: CostPane,
   ai: AiPane,
   alerts: AlertsPane,

@@ -425,6 +425,17 @@ export function RecorderProvider({
         );
       },
     );
+    // A standing overlay rule taught from the training browser's context menu.
+    // Surfaced because the action has NO visible result in the step list — it
+    // deliberately records no step — so without this the user cannot tell a
+    // saved rule from a misclick.
+    const offOverlayRule = api.on<{ ok: boolean; message: string }>(
+      "recorder:overlayRuleSaved",
+      ({ ok, message }) => {
+        if (ok) toast.success(message);
+        else toast.warning(message);
+      },
+    );
     const offFinished = api.on<{ testId: string }>("recorder:finished", ({ testId }) => {
       setLiveSteps([]);
       setStepsLoaded(false);
@@ -655,6 +666,7 @@ export function RecorderProvider({
       offCtx();
       offBlocked();
       offSignature();
+      offOverlayRule();
       offFinished();
       offOut();
       offStep();

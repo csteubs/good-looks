@@ -66,6 +66,7 @@ import type {
   EmitResult,
   CaptureOverheadSummary,
   CustomFailureReason,
+  OverlayRule,
   FailureReasonCatalog,
   FlakeReport,
   Locator,
@@ -301,6 +302,37 @@ function seed() {
         updatedAt: Date.now() - 86_400_000,
       },
     ] as CustomFailureReason[],
+    // Two overlay rules on one host, because that is the real shape: a site
+    // typically has a consent modal AND a newsletter pop-up, and the pane's
+    // grouping only means anything with more than one row under a host.
+    // One is disabled, so the enabled/disabled treatment is visible.
+    overlayRules: [
+      {
+        id: "or-consent",
+        host: "ritual.com",
+        label: "Cookie banner — Close",
+        target: { k: "testid", v: "dg-header-close" },
+        createdAt: Date.now() - 172_800_000,
+        updatedAt: Date.now() - 172_800_000,
+      },
+      {
+        id: "or-newsletter",
+        host: "ritual.com",
+        label: "Newsletter pop-up",
+        target: { k: "role", role: "button", name: "Close dialog" },
+        disabled: true,
+        createdAt: Date.now() - 86_400_000,
+        updatedAt: Date.now() - 3_600_000,
+      },
+      {
+        id: "or-app",
+        host: "example.com",
+        label: "",
+        target: { k: "css", v: "button.app-banner__dismiss" },
+        createdAt: Date.now() - 3_600_000,
+        updatedAt: Date.now() - 3_600_000,
+      },
+    ] as OverlayRule[],
     insightReports: structuredClone(INSIGHT_REPORTS),
     insightsState: structuredClone(INSIGHTS_STATE),
     // Edited in place, so a save made in the preview STICKS for the session — a
@@ -922,6 +954,34 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       }
       rec.updatedAt = Date.now();
       return rec;
+    },
+    "overlayRules:list": (): OverlayRule[] => state.overlayRules,
+    "overlayRules:create": (p): OverlayRule => {
+      const rec: OverlayRule = {
+        id: `or-${state.overlayRules.length + 1}`,
+        host: String(p?.url ?? "").replace(/^https?:\/\//, "").split("/")[0] || "example.com",
+        label: String(p?.label ?? ""),
+        target: (p?.target ?? { k: "css", v: "button" }) as OverlayRule["target"],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      state.overlayRules.push(rec);
+      return rec;
+    },
+    "overlayRules:update": (p): OverlayRule => {
+      const rec = state.overlayRules.find((r) => r.id === String(p?.id ?? ""));
+      if (!rec) throw new Error("No such overlay rule: " + String(p?.id ?? ""));
+      if (p?.label !== undefined) rec.label = String(p.label);
+      if (p?.disabled === true) rec.disabled = true;
+      else delete rec.disabled;
+      rec.updatedAt = Date.now();
+      return rec;
+    },
+    "overlayRules:remove": (p): boolean => {
+      const i = state.overlayRules.findIndex((r) => r.id === String(p?.id ?? ""));
+      if (i < 0) return false;
+      state.overlayRules.splice(i, 1);
+      return true;
     },
     /** Site or runner. A real verdict rather than null, because the whole
      *  point of the panel is the evidence list and `null` renders none of it.

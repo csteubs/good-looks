@@ -42,6 +42,12 @@ main/services/insights/  the scheduled AI report (Settings → Alerts, off by de
                     insight-report-store.ts (primary data — never metrics.db, which drops
                     and replays)
 main/services/llm/  local + hosted LLM chat integration (Ollama, LM Studio, Claude)
+                    overlay-rule-store + dismiss-fixture-source are the two halves of
+                    STANDING OVERLAY RULES — "on this host, click this away whenever it
+                    appears". Never a step: a consent modal is re-injected on every
+                    document, so a dismissal placed at one point in a step list is right
+                    until the next navigation. Both halves resolve a rule through the SAME
+                    `matchesFor`, interpolated from shared/overlay-rules.mjs
 main/recorder/       recording-session logic (script injection, step capture)
 main/windows/        BrowserWindow creation/config
 renderer/main/       primary views (home, recording/trainer, script view, ai-debug-panel, stats)
@@ -97,7 +103,14 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      tile counts from a query cache, the a11y:rollup handler from
                      replay files on disk, and only a shared rule keeps them
                      describing the same runs.
-                     step-semantics.mjs is the load-bearing one: the single
+                     overlay-rules.mjs is that shape again, across a nastier boundary:
+                    a rule is resolved by the TRAINER inside a live Electron page and by
+                    the RUN inside a Playwright worker's init script. One watcher source,
+                    interpolated into both, calling a `matchesFor` each host supplies —
+                    so a rule taught in the trainer and a rule enforced in a run cannot
+                    drift into agreeing "for now". `check:overlay-rules` fails if a second
+                    copy of either appears.
+                    step-semantics.mjs is the load-bearing one: the single
                      definition of what each assert/wait/condition MEANS (match
                      mode, case rule, whitespace rule), read by the generator,
                      by the injected replayer (as JSON + `toString`d source) and
@@ -168,7 +181,7 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 5214 Vitest tests across 268 files and 75 checks in the chain as of 2026-08-21 (77 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 5362 Vitest tests across 278 files and 78 checks in the chain as of 2026-08-22 (80 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
 
 **A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS — or a real navigation — gets checked: `click-navigation.spec.ts` (a click that changes route is recorded, including one a client-side router intercepts; the failure it was written against loses six clicks out of six and jsdom cannot host it, because nothing there has a navigation that destroys the document mid-read), `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `dialog-lifecycle.spec.ts` (whether the dialog that started a recording is still on top of the app afterwards — the existing recording spec invokes `recorder:start` over IPC, so it opens no dialog and could never see one left behind), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
 

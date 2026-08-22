@@ -26,6 +26,7 @@ import {
   signatureFixtureSource,
 } from "./signature-fixture-source.js";
 import { downloadProxyEnv, runProxyEnv } from "./proxy-service.js";
+import * as overlayRuleStore from "./overlay-rule-store.js";
 import { shopifySignatureStore } from "./shopify-signature-store.js";
 import type { ShopifySignatureEntry } from "./shopify-signature-store.js";
 import { normalizeSignatureHost } from "../../shared/shopify-signature.mjs";
@@ -45,6 +46,12 @@ import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "./glaze-runtime-source.j
 import { ensureSessionsDir, freshSessionState, sessionStatePath } from "./session-state-store.js";
 import { evaluateAiChecks } from "./ai-check.js";
 import { HEAL_FIXTURE_FILE, healFixtureSource } from "./heal-fixture-source.js";
+import {
+  DISMISS_COUNT_ENV,
+  DISMISS_FIXTURE_FILE,
+  dismissEnvNames,
+  dismissFixtureSource,
+} from "./dismiss-fixture-source.js";
 import { SETTLE_FIXTURE_FILE, settleFixtureSource } from "./settle-fixture-source.js";
 import { buildHealProbeScript } from "./auto-heal.js";
 import { healJournalStore } from "./heal-journal-store.js";
@@ -56,6 +63,7 @@ import { refreshSecretSnapshot, redactWithSnapshot } from "./secret-redaction.js
 import { stripAnsi } from "../../shared/strip-ansi.mjs";
 import { firstErrorLine } from "../../shared/error-signature.mjs";
 import { suggestFailureReason } from "../../shared/failure-reasons.mjs";
+import { armedRulesFor } from "../../shared/overlay-rules.mjs";
 import type { RunTrigger } from "../../shared/run-trigger.mjs";
 import {
   PLAYWRIGHT_CONFIG_FILE,
@@ -65,6 +73,7 @@ import type {
   HealApplyMode,
   HealCandidate,
   Locator,
+  OverlayRule,
   RunBrowser,
   Step,
   TestRecord,
@@ -416,6 +425,30 @@ async function announceSignatureState(args: {
 // run with no signature registered still has to be able to resolve the file.
 function ensureSignatureFixture(scriptsDir: string): void {
   writeIfChanged(path.join(scriptsDir, SIGNATURE_FIXTURE_FILE), signatureFixtureSource);
+}
+
+// Write the overlay-dismissal fixture. Unconditional for the same reason as
+// every other one: the capture fixture imports it at the top of the module, so
+// a run with no rules for its host still has to be able to resolve the file.
+function ensureDismissFixture(scriptsDir: string): void {
+  writeIfChanged(path.join(scriptsDir, DISMISS_FIXTURE_FILE), dismissFixtureSource);
+}
+
+/**
+ * The env carrying this run's overlay rules — one pair of variables per rule.
+ *
+ * Same rule as `signatureEnv`: never a JSON blob for the whole set. The TARGET
+ * is itself JSON because a locator is structured, but it is one rule's locator
+ * per variable, which is what keeps a crash dump from carrying the lot.
+ */
+function dismissEnv(rules: readonly OverlayRule[]): Record<string, string> {
+  const out: Record<string, string> = { [DISMISS_COUNT_ENV]: String(rules.length) };
+  rules.forEach((rule, index) => {
+    const names = dismissEnvNames(index);
+    out[names.label] = rule.label || rule.host;
+    out[names.target] = JSON.stringify(rule.target);
+  });
+  return out;
 }
 
 /**
@@ -1341,6 +1374,18 @@ export const playwrightRunner = {
         const testHost = normalizeSignatureHost(testOrigin);
         const originEntry = signatureEntries.find((entry) => entry.host === testHost) ?? null;
         let signing = originEntry !== null;
+        // ── Standing overlay rules ──────────────────────────────────────
+        //
+        // Armed by HOST, from the test's own starting URL. Nothing here is a
+        // toggle: a run against a host with no rules installs nothing and pays
+        // nothing, which is why there is no setting to forget to turn on.
+        //
+        // Imported tests are excluded along with every other fixture — their
+        // spec is somebody else's file and is never redirected through ours.
+        const overlayRules = rec.sourceDir
+          ? []
+          : armedRulesFor(overlayRuleStore.listRules(), rec.url ?? "");
+        let dismissing = overlayRules.length > 0;
         await announceSignatureState({
           runId,
           testHost,
@@ -1379,13 +1424,14 @@ export const playwrightRunner = {
         // the fixture is where capture, healing AND crawl's page-settling live
         // — so a heal-only or crawl-only run needs it too.
         if (
-          (captureArtifacts || healing || a11y || recordLogs || settling || signing) &&
+          (captureArtifacts || healing || a11y || recordLogs || settling || signing || dismissing) &&
           !rec.sourceDir
         ) {
           ensureCaptureFixture(scriptsDir);
           ensureHealFixture(scriptsDir);
           ensureSettleFixture(scriptsDir);
           ensureSignatureFixture(scriptsDir);
+          ensureDismissFixture(scriptsDir);
           const prepared = prepareCaptureSpec(scriptsDir, specToRun, recordId);
           if (prepared) {
             tempSpecPath = prepared;
@@ -1436,6 +1482,7 @@ export const playwrightRunner = {
               recordLogs ? "Console and network recording" : null,
               settling ? "Crawl page-settling" : null,
               signing ? "The Shopify crawler signature" : null,
+              dismissing ? "Overlay rules" : null,
             ]
               .filter(Boolean)
               .join(" and ");
@@ -1443,6 +1490,7 @@ export const playwrightRunner = {
             // that reads it was never loaded.
             settling = false;
             signing = false;
+            dismissing = false;
             emitOutput(
               runId,
               "system",
@@ -1619,6 +1667,7 @@ export const playwrightRunner = {
             GLAZE_TEST_ID: rec.id,
             GLAZE_RUN_ID: recordId,
             ...signatureEnv(signing ? signatureEntries : []),
+            ...dismissEnv(dismissing ? overlayRules : []),
           },
           processTimeoutMs,
         );

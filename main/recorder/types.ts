@@ -23,6 +23,12 @@ import { COMPARE_OPS } from "../../shared/step-semantics.mjs";
 // will be a third writer — see the header of `shared/run-trigger.mjs`.
 import type { RunTrigger } from "../../shared/run-trigger.mjs";
 import type { CompareOp } from "../../shared/step-semantics.mjs";
+// Which locator kinds a standing overlay rule may target, and how long its
+// label may be. In shared/ because the trainer resolves a rule inside a live
+// Electron page and the run's fixture resolves it inside a Playwright worker,
+// and neither can import the other's module — see the header of
+// `shared/overlay-rules.mjs`.
+import { MAX_OVERLAY_LABEL, OVERLAY_LOCATOR_KINDS } from "../../shared/overlay-rules.mjs";
 
 export type { CostCurrency };
 export type { ProxySource, ProxyTraffic };
@@ -4028,4 +4034,79 @@ export function normalizeInsightsState(input: unknown): InsightsState {
         ? raw.lastSeenAppVersion
         : null,
   };
+}
+
+/**
+ * A standing overlay dismissal rule.
+ *
+ * "On this host, whenever this control is on screen, click it." Never a step
+ * and never a line of generated source — see shared/overlay-rules.mjs for why
+ * a step cannot express it, and for the three cheaper alternatives that were
+ * measured against a real CMP and do not work.
+ *
+ * Rules are per-HOST rather than per-test, deliberately: a consent modal is a
+ * property of the site, and duplicating the same rule onto every test that
+ * visits it is how the copies drift. The cost is that a rule lives in userData
+ * and does not travel with a test to another machine; the run says out loud
+ * which rules were armed so a run that behaves differently elsewhere says why.
+ */
+export interface OverlayRule {
+  id: string;
+  /** Registrable host the rule belongs to, e.g. "ritual.com". Matched on label
+   *  boundaries, so it covers "www." and other subdomains. */
+  host: string;
+  /** Display label, prefilled from the picked element ("Close"). Never reaches
+   *  a page or generated source. */
+  label: string;
+  /** What to click. Restricted to the kinds in OVERLAY_LOCATOR_KINDS. */
+  target: Locator;
+  /** Hidden from enforcement without losing the definition — the same
+   *  disable-never-delete rule custom failure reasons follow, for the same
+   *  reason: a run record naming a rule should keep resolving. */
+  disabled?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * Rebuild an overlay rule out of checked values.
+ *
+ * REBUILDS, never filters — the rule arrives from the renderer over IPC and its
+ * `target` originally came from a PAGE, through the element picker. Spreading
+ * the input and overwriting known keys would carry every unknown key with it,
+ * which is the hole the capture boundary rules in CLAUDE.md exist to close.
+ *
+ * The locator goes through `normalizeLocator` with the kind list narrowed
+ * afterwards: `xpath` is refused because an absolute path encodes the DOM as it
+ * stood when the rule was taught, and a third-party CMP's position among its
+ * siblings is exactly what moves between a recording session and a fresh run.
+ * A rule is meant to outlive a snapshot.
+ *
+ * Context is dropped (`allowContext: false`). A rule resolves against whatever
+ * document it lands on, so a container clause recorded on one page is a
+ * narrowing that may not exist on the next one — and the watcher takes the
+ * first match, so a stale clause can only ever make it miss.
+ */
+export function normalizeOverlayRule(input: unknown): OverlayRule | null {
+  if (!input || typeof input !== "object") return null;
+  const r = input as Partial<OverlayRule>;
+  const id = str(r.id);
+  const host = str(r.host);
+  if (!id || !host) return null;
+  const target = normalizeLocator(r.target, false);
+  if (!target) return null;
+  if (!(OVERLAY_LOCATOR_KINDS as readonly string[]).includes(target.k)) return null;
+  const now = Date.now();
+  const createdAt = int(r.createdAt, 0, Number.MAX_SAFE_INTEGER);
+  const updatedAt = int(r.updatedAt, 0, Number.MAX_SAFE_INTEGER);
+  const out: OverlayRule = {
+    id: id.slice(0, 120),
+    host: host.slice(0, 253).toLowerCase(),
+    label: (str(r.label) ?? "").slice(0, MAX_OVERLAY_LABEL),
+    target,
+    createdAt: createdAt ?? now,
+    updatedAt: updatedAt ?? now,
+  };
+  if (bool(r.disabled)) out.disabled = true;
+  return out;
 }
