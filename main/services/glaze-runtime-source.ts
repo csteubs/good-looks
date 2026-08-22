@@ -129,6 +129,19 @@ const glazeGateFailures = ${gateFailures.toString()};
  * it: from GLAZE_AXE_PATH when the app is driving, else from a local
  * axe-core install. page.evaluate runs through the driver, so a page CSP
  * cannot block the injection the way it would a script tag.
+ *
+ * The local install is reached by \`import("axe-core")\` and its \`.source\`
+ * string — NOT by createRequire(import.meta.url), which is what the obvious
+ * spelling would be. \`import.meta\` ANYWHERE in this file makes Playwright's
+ * Babel transform emit CommonJS, which Node then loads as ESM because the
+ * extension is .mjs, and the emitted \`exports\` reference throws at module
+ * scope. That breaks the whole module, not this function: every spec
+ * importing ANY helper dies at collection with "exports is not defined in ES
+ * module scope" and Playwright reports "No tests found". A bare specifier
+ * resolves from this module's own directory, which is the same answer
+ * createRequire gave, so the standalone path is unchanged. Pinned by
+ * check:runtime-boot, which boots a spec importing every helper through the
+ * real CLI.
  */
 export async function glazeA11yGate(page, minImpact) {
   const hasAxe = await page.evaluate(() => typeof window.axe !== "undefined");
@@ -141,9 +154,8 @@ export async function glazeA11yGate(page, minImpact) {
     }
     if (!src) {
       try {
-        const { createRequire } = await import("module");
-        const req = createRequire(import.meta.url);
-        src = fs.readFileSync(req.resolve("axe-core/axe.min.js"), "utf8");
+        const mod = await import("axe-core");
+        src = (mod.default || mod).source || null;
       } catch (err) { src = null; }
     }
     if (!src) {
