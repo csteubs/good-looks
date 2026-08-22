@@ -17,6 +17,7 @@ import {
   urlPathExpr,
 } from "../../shared/step-semantics.mjs";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
+import { frameSelector } from "../../shared/frame-ref.mjs";
 import type { Locator, Step, StepType } from "./recorder-types";
 
 function q(s: string): string {
@@ -73,6 +74,14 @@ function callArgs(args: string[], opts: string): string {
  *  stopped at the base builder — a step pinned "inside billing-card" with
  *  `.nth(2)` displayed as a bare `getByRole(...)`, hiding exactly the
  *  disambiguation the user added and the run enforces. */
+/** The root a locator resolves against — `page`, or `page.frameLocator(…)`
+ *  per hop — mirroring `root` in script-generator.ts so the step list shows the
+ *  call the run will make. */
+function root(loc: Locator): string {
+  const path = loc.frame ?? [];
+  return path.reduce((acc, f) => acc + ".frameLocator(" + q(frameSelector(f)) + ")", "page");
+}
+
 export function locatorExpr(loc: Locator): string {
   let base = locatorBaseExpr(loc);
   const ctx = loc.ctx;
@@ -84,7 +93,8 @@ export function locatorExpr(loc: Locator): string {
     base = scope + "." + base;
   }
   if (ctx?.and) {
-    for (const pred of ctx.and) base += ".and(page." + locatorBaseExpr(pred) + ")";
+    const predRoot = root(loc);
+    for (const pred of ctx.and) base += ".and(" + predRoot + "." + locatorBaseExpr(pred) + ")";
   }
   if (typeof loc.nth === "number") {
     base += ".nth(" + (loc.nth >= -1 ? Math.trunc(loc.nth) : 0) + ")";
@@ -200,7 +210,7 @@ function describeAssert(step: Step, target: string | null): string {
 /** Readable phrasing of an `if` condition (mirror of script-generator.ts). */
 export function describeCondition(step: Step): string {
   const loc = step.locator;
-  const el = loc ? "page." + locatorExpr(loc) : "element";
+  const el = loc ? root(loc) + "." + locatorExpr(loc) : "element";
   switch (step.cond) {
     case "variable":
       return describeVariableCheck(step);
@@ -264,7 +274,7 @@ export function describeCookie(step: Step): string {
 export function describeCapture(step: Step): string {
   const name = step.captureVar || "variable";
   const from = step.captureFrom ?? "text";
-  const loc = step.locator ? "page." + locatorExpr(step.locator) : "page";
+  const loc = step.locator ? root(step.locator) + "." + locatorExpr(step.locator) : "page";
   switch (from) {
     case "count":
       return `capture ${name} from ${loc} count`;
@@ -300,7 +310,7 @@ export function describeFlow(step: Step): string {
  *  object that mean nothing to the user reading the step list. */
 export function describeWait(step: Step): string {
   const loc = step.locator;
-  const el = loc ? "page." + locatorExpr(loc) : "element";
+  const el = loc ? root(loc) + "." + locatorExpr(loc) : "element";
   const secs = Math.round((step.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS) / 100) / 10;
   const within = " (within " + secs + "s)";
   switch (step.waitUntil) {
@@ -421,7 +431,7 @@ export function describeStep(step: Step): string {
   if (step.type === "capture") return describeCapture(step);
   if (step.type === "runFlow") return describeFlow(step);
   const loc = step.locator;
-  const target = loc ? "page." + locatorExpr(loc) : null;
+  const target = loc ? root(loc) + "." + locatorExpr(loc) : null;
   switch (step.type) {
     case "goto":
       return "page.goto(" + q(step.url ?? "") + ")";
@@ -473,7 +483,7 @@ export function describeStep(step: Step): string {
         : "rightclick";
     case "drag":
       return target && step.toLocator
-        ? target + ".dragTo" + callArgs(["page." + locatorExpr(step.toLocator)], optsExpr(timeoutParts(step)))
+        ? target + ".dragTo" + callArgs([root(step.toLocator) + "." + locatorExpr(step.toLocator)], optsExpr(timeoutParts(step)))
         : "drag";
     case "reload":
       return "page.reload(" + optsExpr(timeoutParts(step)) + ")";

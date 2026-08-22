@@ -1,7 +1,9 @@
 # iFrames — design
 
-**Status:** design only, nothing built. Written 2026-08-08 from the note
+**Status:** the ENGINE (steps 1–3 below) SHIPPED 2026-08-22 — a framed step is writable and runnable. Design written 2026-08-08 from the note
 *"Interact with iFrames — Engine; Ignore iFrames — Trainer"*.
+
+> **Engine landed 2026-08-22.** `Locator.frame` + `shared/frame-ref.mjs`, the generator's `root()` prefix, the spec parser's `frameLocator` reader, and the step-replayer + Auto-Heal refusals are all built and tested (`main/services/frame-engine.test.ts`, `check:locator-roundtrip` frame rows, `e2e/frame-parity.spec.ts`). See DECISIONS 2026-08-22. **Still open:** the trainer NOTICE (step 4 below — it crosses the capture-egress boundary and is deferred to its own change) and trainer CAPTURE inside a frame (step 5, its own project). Two stale references in the design below — the SDK `WebFrameMain` note and the `data-pw-queue` top-document-attribute note (capture state now lives in the isolated world as `window.__glCapture`) — apply only to that unbuilt trainer-capture work.
 
 > **Carried onto `main` 2026-08-14, and still accurate.** Written on
 > `claude/transcribe-notes-plan-work-e36d77`, which never merged. Re-checked

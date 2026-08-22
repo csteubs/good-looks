@@ -12,6 +12,7 @@ import {
   WAIT_SEMANTICS,
 } from "../../shared/step-semantics.mjs";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
+import { frameSelector } from "../../shared/frame-ref.mjs";
 import {
   cookieScopeIsValid,
   ELEMENT_STATES,
@@ -163,6 +164,23 @@ function valueExpr(raw: string | undefined, vars: ReadonlySet<string>): string {
   return out + escTemplate(text.slice(last)) + "`";
 }
 
+/**
+ * The root a locator resolves against: `page`, or `page.frameLocator(…)` per
+ * hop when the locator carries a frame path. Playwright's engines pierce open
+ * frames only through `frameLocator`, so this prefix is the whole of iframe
+ * support on the generation side — `locatorExpr` is unchanged, and a locator
+ * with no `frame` yields exactly `"page"`, so every existing test regenerates
+ * byte-identically.
+ *
+ * Each selector goes through `q()` like every other generated string: a frame
+ * ref is a step field the moment the trainer can produce one, so the generator
+ * is safe before that day rather than after it.
+ */
+function root(loc: Locator | null | undefined): string {
+  const path = loc?.frame ?? [];
+  return path.reduce((acc, f) => acc + ".frameLocator(" + q(frameSelector(f)) + ")", "page");
+}
+
 function locatorBase(loc: Locator): string {
   switch (loc.k) {
     case "testid": {
@@ -249,7 +267,12 @@ export function locatorExpr(loc: Locator): string {
     base = scope + "." + base;
   }
   if (ctx?.and) {
-    for (const pred of ctx.and) base += ".and(page." + locatorBase(pred) + ")";
+    // The predicate is a locator ARGUMENT, and Playwright resolves it in the
+    // SAME frame as the base — so it takes the outer locator's frame root, not
+    // a bare `page.`. `locatorExpr` receives the whole (framed) target, so
+    // `root(loc)` here is that frame path.
+    const predRoot = root(loc);
+    for (const pred of ctx.and) base += ".and(" + predRoot + "." + locatorBase(pred) + ")";
   }
 
   // `.nth(k)` LAST, and that is a correctness requirement rather than a style
@@ -554,7 +577,7 @@ function variableAssertLine(step: Step, vars: ReadonlySet<string>): string | nul
 /** Build the boolean expression for an `if` step's condition. */
 function conditionExpr(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string {
   const loc = step.locator;
-  const target = loc ? "page." + locatorExpr(loc) : "page.locator(\"html\")";
+  const target = loc ? root(loc) + "." + locatorExpr(loc) : "page.locator(\"html\")";
   switch (step.cond) {
     case "variable": {
       // A helper rather than an inline comparison, because thirteen operators
@@ -835,7 +858,7 @@ function ungeneratableReason(step: Step): string {
 
 function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | null {
   const loc = step.locator;
-  const target = loc ? "page." + locatorExpr(loc) : null;
+  const target = loc ? root(loc) + "." + locatorExpr(loc) : null;
   switch (step.type) {
     case "if":
       return "if (" + conditionExpr(step, vars) + ") {";
@@ -926,7 +949,7 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
       // `locatorExpr`, so both are quoted the same way — a second locator is a
       // second chance to interpolate one raw.
       if (!target || !step.toLocator) return null;
-      const to = "page." + locatorExpr(step.toLocator);
+      const to = root(step.toLocator) + "." + locatorExpr(step.toLocator);
       return "await " + target + ".dragTo" + callArgs([to], optsExpr(timeoutParts(step))) + ";";
     }
     case "reload":
@@ -1174,7 +1197,7 @@ export function describeVariableCheck(step: Step): string {
 export function describeCapture(step: Step): string {
   const name = step.captureVar || "variable";
   const from = step.captureFrom ?? "text";
-  const loc = step.locator ? "page." + locatorExpr(step.locator) : "page";
+  const loc = step.locator ? root(step.locator) + "." + locatorExpr(step.locator) : "page";
   switch (from) {
     case "count":
       return `capture ${name} from ${loc} count`;
@@ -1232,7 +1255,7 @@ export function describeCookie(step: Step): string {
 /** Readable phrasing of an `if` condition for the trainer's step list. */
 export function describeCondition(step: Step): string {
   const loc = step.locator;
-  const el = loc ? "page." + locatorExpr(loc) : "element";
+  const el = loc ? root(loc) + "." + locatorExpr(loc) : "element";
   switch (step.cond) {
     case "variable":
       return describeVariableCheck(step);
@@ -1269,7 +1292,7 @@ export function describeCondition(step: Step): string {
  */
 export function describeWait(step: Step): string {
   const loc = step.locator;
-  const el = loc ? "page." + locatorExpr(loc) : "element";
+  const el = loc ? root(loc) + "." + locatorExpr(loc) : "element";
   const secs = Math.round((step.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS) / 100) / 10;
   const within = " (within " + secs + "s)";
   switch (step.waitUntil) {

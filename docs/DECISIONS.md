@@ -10,6 +10,67 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-22 — An iframe test is writable and runnable before it is recordable
+
+Round 3, Phase 6, and the ENGINE half of it — the split `docs/IFRAMES.md`
+recommends: *engine interacts, trainer ignores*. A step whose element is inside
+an iframe now RUNS; capturing a click inside a live iframe is a separate,
+larger project (that doc's step 5) and is not attempted here.
+
+**The whole gap was a missing prefix.** Playwright's engines pierce open
+same-origin frames through `frameLocator`, so `locatorExpr` is unchanged — the
+change is `root(loc)`, which returns `page` or `page.frameLocator(<sel>)` per
+hop and replaces the five hard-coded `"page."` prefixes at the generator's
+locator sites. A locator with no `frame` yields exactly `"page"`, so every test
+on disk regenerates byte-identically. `Locator.frame?: FrameRef[]` carries the
+path, outermost first; `FrameRef` uses the same vocabulary a locator does
+(name / url / testid / css) rather than an index, because a frame found by name
+survives a page that reorders its frames and an index does not.
+
+**One selector spelling, shared.** `shared/frame-ref.mjs` is `frameSelector`
+and its inverse `parseFrameSelector`, the same shape as `testid-attr.mjs`: the
+generator writes the selector, the parser reads it back, and the renderer's
+step list shows it, so two spellings would mean the parser cannot recognise
+what the generator wrote and a hand edit drops the step. `frameSelector` goes
+through `q()` like every generated string — a frame ref is on the capture
+boundary the moment the trainer can produce one, so the generator is safe
+before that day, not after it. `normalizeFrameRefs` rebuilds the array
+(unknown kind dropped, empty value dropped, depth-capped at `MAX_FRAME_DEPTH`),
+and the frame is read only for a TOP-LEVEL locator — a container and an `and`
+predicate resolve in the same frame as the target and never carry their own,
+so the model has one place a frame can live and one heal-map key.
+
+**The parser reads `frameLocator` back**, so a hand-written or imported iframe
+spec round-trips instead of counting into `skipped`. `parseBuilderAt` consumes
+a `(?:page.)?(frameLocator("…").)*` prefix (which also lets an `and` predicate,
+emitted with the target's frame, parse), and `parseLocator` attaches the
+consumed hops to the TARGET — not the container that a chained builder turns
+into `ctx.within`. Held by `check:locator-roundtrip`'s frame rows, including
+the fixed-point property that catches a parser reading the chain into a subtly
+different model.
+
+**The top-document-only parts REFUSE a framed step rather than resolving it
+against the wrong document.** The injected per-step replayer (`buildReplayScript`)
+scans the top document only; a framed locator there would act on the wrong
+element while reporting a verdict, so it returns `ok: false` with an iframe
+reason. Auto-Heal is the same: `healStep` declines without probing, and
+`buildHealMap` builds no probe for a framed step — the probe is a top-document
+query and cannot reach inside a frame, so a candidate it proposed would point
+at the wrong document. Both refusals are pinned, and both go red on revert.
+
+**Scoped out, on purpose.** Cross-origin frames (Playwright cannot pierce them)
+and TRAINER CAPTURE inside a frame — the latter needs per-frame injection,
+per-frame cross-origin refusal, event-ordered merging across frames, and
+coordinate mapping for the crosshair picker, which is its own project. The
+cheap honesty step the doc proposes for the trainer (a notice on a click whose
+target is an `<iframe>`) is also deferred: it crosses the capture-egress
+boundary and its own push-consumer guard, and it does not regress today's
+behaviour (a framed click already records nothing) — so it belongs in its own
+change rather than rushed onto the engine. The proof the engine is correct is
+`e2e/frame-parity.spec.ts`: the emitted `frameLocator` chain, executed by real
+Playwright, resolves the element the recorder meant — one hop, two hops, with
+element context, and a framed click that actually acts inside the frame.
+
 ### 2026-08-22 — AI-proposed steps are tried on the live page before they are inserted
 
 Round 3, Phase 4 — mabl's agent mode. The generate-steps dialog has always

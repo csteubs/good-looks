@@ -267,6 +267,34 @@ function main(): void {
       { k: "testid", v: "x" },
       "a test-id attribute outside the allowlist is dropped",
     );
+    // A locator's frame path is page-authored the moment the trainer can
+    // capture inside a frame, and each ref becomes a `frameLocator(<selector>)`
+    // in executed source. Rebuilt, not filtered: an unknown ref kind and a
+    // forged extra key are dropped, the array is depth-capped, and an empty
+    // value is dropped. The generator quotes the value with q() regardless.
+    assertEqual(
+      normalizeRawStep({
+        type: "click",
+        locator: {
+          k: "css",
+          v: "a",
+          frame: [
+            { k: "name", v: "ok", extra: "x); evil(); (" },
+            { k: "evil", v: "b" },
+            { k: "css", v: "" },
+            { k: "url", v: "/e" },
+          ],
+        },
+      })?.locator?.frame,
+      [{ k: "name", v: "ok" }, { k: "url", v: "/e" }],
+      "a frame path is rebuilt: unknown kind, forged key and empty value dropped",
+    );
+    {
+      const deep = Array.from({ length: 9 }, (_v, i) => ({ k: "name", v: "f" + i }));
+      const out = normalizeRawStep({ type: "click", locator: { k: "css", v: "a", frame: deep } })
+        ?.locator?.frame;
+      assertEqual(out?.length, 3, "a frame path is capped at MAX_FRAME_DEPTH");
+    }
     // A download step's match mode is an enum on its way into `.toBe`/
     // `.toContain` selection, and its captureVar becomes a V-property write —
     // the enum is allowlisted at the boundary, the identifier is gated in the

@@ -1186,16 +1186,7 @@ export function StepComposer({
 
   function submit() {
     if (!ready) return;
-    // A step authored from a pick inside a web component carries the same mark
-    // a recorded one gets from the capture script (`Step.shadow`): the row's
-    // chip and the missing XPath fallback are facts about the ELEMENT, and the
-    // element is the same whichever way the step was written. Only the steps
-    // that target the picked element — the ones holding this composer's
-    // locator — are marked; a page-level step beside them is not.
-    const marked = picked?.shadow
-      ? steps!.map((s) => (s.locator !== undefined && s.locator === locator ? { ...s, shadow: true } : s))
-      : steps!;
-    onAdd(marked);
+    onAdd(steps!);
     onCancel();
   }
 

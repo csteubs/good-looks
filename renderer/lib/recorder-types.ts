@@ -5,6 +5,8 @@ import type { FlakeReport as SharedFlakeReport } from "../../shared/flake-analys
 import type { CostCurrency } from "../../shared/cost-units.mjs";
 import type { ProxySource, ProxyTraffic } from "../../shared/proxy-config.mjs";
 import type { TestIdAttributeOverride } from "../../shared/testid-attr.mjs";
+import type { FrameRef } from "../../shared/frame-ref.mjs";
+export type { FrameRef };
 import type { RunTrigger } from "../../shared/run-trigger.mjs";
 
 export type { CostCurrency };
@@ -173,6 +175,9 @@ export interface Locator {
   attr?: TestIdAttributeOverride;
   role?: string;
   name?: string;
+  /** Frames to descend through, outermost first, before resolving this locator
+   *  (mirror of main types). Absent means the top document. */
+  frame?: FrameRef[];
   /** Index into the matches, when the recorder could not find a locator that
    *  identifies exactly one element (mirror of main types).
    *
@@ -334,8 +339,6 @@ export interface Step {
   text?: string;
   soft?: boolean;
   force?: boolean;
-  /** recorded inside a web component (mirror of main types) */
-  shadow?: boolean;
   attr?: string;
   /** KEBAB-case CSS property for a "css" assertion, the match mode, and the
    *  pseudo-state a `state` step applies (mirror of main types). */
@@ -440,7 +443,6 @@ export interface RawStep {
   text?: string;
   soft?: boolean;
   force?: boolean;
-  shadow?: boolean;
   attr?: string;
   cssProp?: string;
   cssMatch?: CssMatch;
@@ -1264,8 +1266,6 @@ export interface PickedElement {
   contextSignals: ContextSignal[];
   text?: string;
   neighborText?: string;
-  /** the element lives inside a web component (mirror of main types) */
-  shadow?: boolean;
 }
 
 /** One test's row in the Batch view (mirrors main types). An ABSENT entry is
