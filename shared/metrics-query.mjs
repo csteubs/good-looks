@@ -353,21 +353,57 @@ export function runEvidence(db, runId) {
  * made-up duration in a column people sort by is worse than a gap, same rule
  * `stepHealth.p50_ms` follows.
  */
-export function stepDurations(db, { testId, window = 10, limit = 200 } = {}) {
+export function stepDurations(
+  db,
+  { testId, batchId, since, until, runIds, window = 10, limit = 200 } = {},
+) {
+  // THE SCOPE BELONGS IN THE QUERY, NOT AFTER IT. These rows come back
+  // aggregated per step — a median and a p95 over a window of runs — so
+  // filtering the OUTPUT would drop whole steps while leaving the surviving
+  // numbers computed over runs outside the scope. "The p95 for this batch"
+  // would quietly have last month in it.
+  const conditions = [];
+  const params = [];
+  if (testId) {
+    conditions.push("AND r.test_id = ?");
+    params.push(testId);
+  }
+  if (batchId) {
+    conditions.push("AND r.batch_id = ?");
+    params.push(batchId);
+  }
+  if (typeof since === "number" && Number.isFinite(since)) {
+    conditions.push("AND r.started_at >= ?");
+    params.push(since);
+  }
+  if (typeof until === "number" && Number.isFinite(until)) {
+    conditions.push("AND r.started_at <= ?");
+    params.push(until);
+  }
+  if (Array.isArray(runIds)) {
+    // An EMPTY list means "these zero runs", not "never mind". Skipping the
+    // condition would widen the scope to the whole database, which is the exact
+    // shape of bug scoping exists to prevent — and `IN ()` is a syntax error in
+    // SQLite either way, so there is no version of this that works by accident.
+    if (runIds.length === 0) return [];
+    conditions.push(`AND r.id IN (${runIds.map(() => "?").join(",")})`);
+    params.push(...runIds);
+  }
+
   const rows = all(
     db,
     `WITH ranked AS (
        SELECT s.step_id, s.ms, s.label, s.type, r.test_id, r.test_name,
               row_number() OVER (PARTITION BY s.step_id ORDER BY r.started_at DESC) AS rn
        FROM step_metrics s JOIN runs r ON r.id = s.run_id
-       WHERE s.ms IS NOT NULL ${testId ? "AND r.test_id = ?" : ""}
+       WHERE s.ms IS NOT NULL ${conditions.join(" ")}
      )
      SELECT step_id AS stepId, ms, label, type,
             test_id AS testId, test_name AS testName, rn
      FROM ranked
      WHERE rn <= ?
      ORDER BY step_id, rn`,
-    testId ? [testId, window * 2] : [window * 2],
+    [...params, window * 2],
   );
 
   // The percentiles are computed HERE rather than in the statement, and that is

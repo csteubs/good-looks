@@ -526,6 +526,73 @@ try {
       "query: a test with no history reports no median rather than zero",
     );
 
+  // ── 5c. stepDurations' scope (R1) ───────────────────────────────────
+  //
+  // The scope reaches SQL rather than filtering the output, because these rows
+  // come back aggregated per step: filtering afterwards would drop whole steps
+  // while leaving the surviving medians computed over runs OUTSIDE the scope —
+  // "the p95 for this batch" with last month quietly in it.
+  //
+  // Real SQL for the reason the section above gives, and one more specific to
+  // this change: the WHERE clause is now assembled from a list, so the risk is
+  // a condition and its parameter drifting out of order. SQLite binds
+  // positionally and would not complain — it would filter on the wrong column
+  // and return a plausible, wrong set of rows. `all()` swallowing throws means
+  // a genuinely malformed statement comes back as [] and reads as "no data".
+  {
+    for (const sql of DROP_STATEMENTS) db.exec(sql);
+    create();
+    // test-1 twice in batch b1, test-2 once in b2, test-1 once with no batch.
+    ingest(rollupFixture({ run: makeRun({ id: "s-1", batchId: "b1", startedAt: 1000 }) }));
+    ingest(rollupFixture({ run: makeRun({ id: "s-2", batchId: "b1", startedAt: 2000 }) }));
+    ingest(
+      rollupFixture({
+        run: makeRun({ id: "s-3", testId: "test-2", batchId: "b2", startedAt: 3000 }),
+      }),
+    );
+    ingest(rollupFixture({ run: makeRun({ id: "s-4", startedAt: 4000 }) }));
+
+    const runsBehind = (opts: Parameters<typeof stepDurations>[1]) =>
+      stepDurations(db, { ...opts, window: 10 }).reduce((n, d) => n + d.recentRuns, 0);
+
+    // The fixture writes three steps per run, one of which has no `ms`, so the
+    // arithmetic below counts the TIMED step-runs: two per run.
+    const all = runsBehind({});
+    assert(all > 0, "scope: an unscoped query still returns the timed steps");
+    assert(
+      runsBehind({ batchId: "b1" }) < all,
+      "scope: a batch is a strict subset — if this equals the unscoped count the " +
+        "condition never reached the statement",
+    );
+    assert(
+      runsBehind({ batchId: "b2" }) + runsBehind({ batchId: "b1" }) < all,
+      "scope: …and the batches do not between them cover the run that has no batch",
+    );
+    assert(runsBehind({ batchId: "nope" }) === 0, "scope: an unmatched batch selects nothing");
+    assert(
+      runsBehind({ testId: "test-2" }) === runsBehind({ batchId: "b2" }),
+      "scope: testId and batchId reach the same single run here",
+    );
+    assert(
+      runsBehind({ testId: "test-1", batchId: "b2" }) === 0,
+      "scope: the fields AND together — this test is not in that batch",
+    );
+    assert(
+      runsBehind({ since: 3000 }) < all && runsBehind({ since: 3000 }) > 0,
+      "scope: since bounds the window from below",
+    );
+    assert(
+      runsBehind({ since: 2000, until: 3000 }) === runsBehind({ runIds: ["s-2", "s-3"] }),
+      "scope: an inclusive since/until window selects the same runs naming them does",
+    );
+    assert(runsBehind({ runIds: ["s-1"] }) > 0, "scope: an explicit run id selects that run");
+    assert(
+      stepDurations(db, { runIds: [] }).length === 0,
+      "scope: an EMPTY runIds selects NOTHING — skipping the condition would widen " +
+        "it to the whole database, which is the exact bug scoping exists to prevent",
+    );
+  }
+
   // ── 5b. The recovery query ──────────────────────────────────────────
   //
   // The one query here that exists for a NUMBER rather than a view. The run

@@ -129,7 +129,20 @@ export interface StepDurationRow {
 
 export declare function stepDurations(
   db: Db,
-  opts?: { testId?: string; window?: number; limit?: number },
+  opts?: {
+    testId?: string;
+    /** Only the runs of one batch or routine run. */
+    batchId?: string;
+    /** Runs started at or after this epoch-ms instant. */
+    since?: number;
+    /** Runs started at or before this epoch-ms instant. */
+    until?: number;
+    /** Exactly these run ids. An EMPTY array selects nothing, rather than
+     *  widening to everything. */
+    runIds?: readonly string[];
+    window?: number;
+    limit?: number;
+  },
 ): StepDurationRow[];
 
 /** A TEST's own duration trend — recent median against the one before it.
