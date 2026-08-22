@@ -134,7 +134,14 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
   // tag) so we don't miss the intended target, then score + rank them.
   function collectElements() {
     var sel = "button, a[href], input, select, textarea, [role], [data-testid], [data-test-id], [data-test], [aria-label], [tabindex]";
-    var list = Array.prototype.slice.call(document.querySelectorAll(sel));
+    // \`scanAll\`, not \`document.querySelectorAll\`: the latter stops at a
+    // shadow boundary, so a control inside a web component could never be
+    // PROPOSED even though \`identifiesOnly\` (through the same piercing
+    // \`matchesFor\`) would have judged its locator unique. A heal that can
+    // see the old element's replacement only in the light DOM silently gives
+    // up on every page built from components. Uncapped here (GL_SCAN_LIMIT
+    // above), so the slice is the whole page.
+    var list = scanAll(sel);
     // Keep only visible elements (a hidden target can't be the intended one
     // for an action step).
     //

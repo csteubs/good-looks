@@ -148,6 +148,13 @@ function editableField(
  *  one would not be a variable, it would be a spec that doesn't parse. */
 const VAR_FIELD_KEYS = ["value", "text", "url"] as const;
 
+/** Exported so a test can assert the copy without opening a tooltip (see the
+ *  Tooltip note in CLAUDE.md). */
+export const SHADOW_CHIP_TITLE =
+  "Recorded inside a web component (a shadow root). Playwright finds it the same way, " +
+  "so nothing changes at run time — but no XPath fallback was recorded, because XPath " +
+  "cannot reach inside a shadow root.";
+
 interface NativeMenu {
   popup: (options: {
     items: { label?: string; type?: "normal" | "separator"; commandId?: number }[];
@@ -618,6 +625,15 @@ export function StepRow({
           about how the step is CONFIGURED, not results, and giving any of them
           a status hue would make every configured step look like a verdict. */}
       {step.soft ? <span className="gl-chip">soft</span> : null}
+      {/* Recorded inside a web component. A fact about where the element
+          lives, not a verdict — neutral like the three below. The title is
+          the whole explanation, because the chip is the only place the user
+          learns why this step has no XPath fallback. */}
+      {step.shadow ? (
+        <span className="gl-chip" title={SHADOW_CHIP_TITLE}>
+          web component
+        </span>
+      ) : null}
       {step.continueOnFailure ? (
         <span className="gl-chip" title="Continue on Failure — swallow this step's error and keep running">
           continue on fail

@@ -129,6 +129,28 @@ describe("candidate generation", () => {
     expect(byRoleOrText).toBeDefined();
   });
 
+  it("proposes a replacement that lives inside an open shadow root", () => {
+    // The page is built from web components: the renamed button is inside an
+    // open shadow root. `document.querySelectorAll` cannot see it, so a probe
+    // collecting candidates with it proposes NOTHING for exactly the pages
+    // where the trainer (since 2026-08-22) can record — and the heal silently
+    // reports "no candidates" against a page that has the element.
+    document.body.innerHTML = `<div id="host"></div>`;
+    const root = (document.getElementById("host") as HTMLElement).attachShadow({ mode: "open" });
+    root.innerHTML = `<button data-testid="submit-v2">Submit</button>`;
+
+    const cands = probe(step({ type: "click", locator: { k: "testid", v: "submit-v1" } }));
+
+    const tid = cands.find((c) => c.locator.k === "testid");
+    expect(tid?.locator, "the renamed testid inside the shadow root is proposed").toMatchObject({
+      k: "testid",
+      v: "submit-v2",
+    });
+    // And it is the element inside the root, which the light DOM cannot reach.
+    expect(document.querySelector('[data-testid="submit-v2"]')).toBeNull();
+    expect(root.querySelector('[data-testid="submit-v2"]')).not.toBeNull();
+  });
+
   it("returns nothing useful for an empty page rather than throwing", () => {
     const cands = probe(step({ type: "click", locator: { k: "testid", v: "gone" } }));
     expect(Array.isArray(cands)).toBe(true);

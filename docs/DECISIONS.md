@@ -10,6 +10,71 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-22 — A step inside a web component says so, and three more places the trainer and the run disagreed
+
+The rest of the shadow DOM phase after #229. What shipped there made a click
+inside an open shadow root record the right element and count it; this makes
+such a step legible, lets Auto-Heal see inside a component, and closes three
+disagreements that `e2e/shadow-parity.spec.ts` found the moment it asked real
+Playwright instead of a model of it.
+
+**The mark.** `Step.shadow` is stamped in `withFp` — the one place every
+element-bearing step passes WITH its element — and carried on
+`PickedElement.shadow` so a step authored from a pick (an assertion from the
+composer, a right-click from the menu) gets the same mark as a recorded one.
+It renders as a neutral "web component" chip whose title is the whole
+explanation. It changes nothing the step emits, because Playwright pierces open
+roots on its own; it is cleared on retarget like `fingerprint`, because it
+describes the element and not the step; and it is not round-tripped by the spec
+parser, because nothing in the source carries it — the same trade `fingerprint`
+makes.
+
+**No XPath inside a shadow tree.** `xpathFor` walks `parentElement`, which
+stops at the shadow root, so the path it writes for such an element is relative
+to a root no engine can be pointed at: `document.evaluate` and Playwright's
+xpath engine both resolve it to nothing. It was the "unique by construction"
+last resort on every candidate list, and it was the one candidate that could
+not work. Withheld in `candidatesFor` (the picker's and the heal probe's list)
+and `locatorCandidates` (the recorder's); the css path stays as the positional
+last resort. Pinned on the picked candidate list, which is the surface a revert
+reaches — the recorder's own fall-through to an xpath needs every other
+candidate to miss, which a piercing oracle makes essentially unreachable.
+
+**Auto-Heal could not propose anything inside a component.** `collectElements`
+used `document.querySelectorAll` while `identifiesOnly` — through the shared
+`matchesFor` — already pierced. So on a page built from components the probe
+found nothing to judge and reported `no-candidates`, which triage reads as
+"the site changed". Now `scanAll`, uncapped as the probe already was.
+
+**Three disagreements the parity spec found.** Each was measured against real
+Playwright before being fixed, and each fix is pinned by a row that goes red on
+revert.
+
+- *`within` a host.* `ctxFilter` judged containment with `Node.contains`, which
+  does not cross a shadow boundary, so "the Save button inside `#card-b`"
+  counted 0 in the trainer while `page.locator("#card-b").getByRole(…)`
+  resolves it. `composedContains` walks up through each root to its host.
+- *Text that is not text.* The oracle graded text locators on `textContent`,
+  which includes `<script>` and `<style>` source. Playwright's `elementText`
+  gives those nothing (`shouldSkipForTextMatching`). An inline script that
+  mentions a button's label — a state blob, a component template, the
+  fixture's own script — made every ancestor a match and, sitting before the
+  button in document order, made `found[0]` the script: a text locator the run
+  accepts was rejected for a generated css path. Not a shadow bug at all; it
+  was found because the fixture builds its components from a script.
+- *A host's text.* `elementText` INCLUDES a host's shadow-root text, and
+  `filter({ hasText })` reads it. The trainer read `textContent`, which is
+  empty for a host whose only text is inside its root, so `withinHasText` on a
+  component kept no container. `pwText` now mirrors `elementText` —
+  script-free, shadow-inclusive, memoized per call — and the text arm states
+  the "smallest element" rule the way the engine does (a match is an element
+  whose text matches when no direct child's, nor its shadow root's, does)
+  rather than with a `contains` walk that cannot see across the boundary.
+
+**Left alone, on purpose.** Closed roots: neither engine reaches them, and a
+row pins that both say nothing. A click on a host whose root is closed records
+the host, and that is correct — it is the element the page exposes.
+
 ### 2026-08-22 — A base URL cannot re-point a recorded test, so the origin becomes a variable instead
 
 R5 of [plans/test-runner-improvements.md](plans/test-runner-improvements.md)

@@ -229,19 +229,43 @@ export const MAX_SHADOW_ROOTS = 400;
  * change which element an indexed step means.
  */
 export const CONTEXT_HELPERS = `
+  /** \`container.contains(el)\`, crossing shadow boundaries the way a chained
+   *  Playwright locator does. \`Node.contains\` stops at a shadow root, so a
+   *  context pinned to a web component's HOST counted nothing inside it while
+   *  \`page.locator(host).getByRole(…)\` resolves it — the trainer said 0 and
+   *  the run acted. Walks up through each root to its host instead. Strict:
+   *  a container is not inside itself. */
+  function composedContains(container, el) {
+    var node = el;
+    while (node) {
+      var parent = node.parentNode;
+      if (!parent && node.nodeType === 11 && node.host) parent = node.host;
+      else if (parent && parent.nodeType === 11 && parent.host) {
+        // A shadow root: the element is inside it, and it is inside its host.
+        if (parent === container) return false;
+        parent = parent.host;
+      }
+      if (parent === container) return true;
+      node = parent;
+    }
+    return false;
+  }
+
   function ctxFilter(list, ctx) {
     if (!ctx) return list;
     var out = list;
     if (ctx.within) {
       var containers = matchesForBase(ctx.within);
       if (ctx.withinHasText) {
+        var hasTextCache = new Map();
         containers = containers.filter(function (c) {
-          return pwHas(c.textContent, ctx.withinHasText);
+          // Playwright's filter({ hasText }) reads elementText — see pwText.
+          return pwHas(pwText(c, hasTextCache), ctx.withinHasText);
         });
       }
       out = out.filter(function (el) {
         for (var i = 0; i < containers.length; i++) {
-          if (containers[i] !== el && containers[i].contains(el)) return true;
+          if (containers[i] !== el && composedContains(containers[i], el)) return true;
         }
         return false;
       });
@@ -266,6 +290,39 @@ export const UNIQUENESS_HELPERS = `
 
   /** Playwright's default string match: case-insensitive substring, whitespace
    *  normalized on both sides. */
+  /** An element's text THE WAY PLAYWRIGHT'S TEXT ENGINE READS IT
+   *  (\`elementText\` in its injected script), which differs from
+   *  \`textContent\` in two ways that both changed a count here:
+   *
+   *    • script, style, noscript and anything in <head> contribute NOTHING.
+   *      An inline <script> whose source mentions a button's label made the
+   *      button's every ancestor a text match by \`textContent\`.
+   *    • a shadow HOST's text INCLUDES its open root's text, so a host and its
+   *      ancestors are matches that a child inside the root then supersedes —
+   *      the same rule that drops html/body in the light DOM, carried across
+   *      the boundary that \`Node.contains\` cannot cross.
+   *
+   *  Memoized per call through \`cache\` (a Map), so grading a text locator
+   *  walks the tree once rather than once per element. */
+  function pwText(node, cache) {
+    var hit = cache.get(node);
+    if (hit !== undefined) return hit;
+    var out = "";
+    var nn = node.nodeName;
+    if (nn === "SCRIPT" || nn === "STYLE" || nn === "NOSCRIPT" ||
+        (node.nodeType === 1 && document.head && document.head.contains(node))) {
+      cache.set(node, out);
+      return out;
+    }
+    for (var c = node.firstChild; c; c = c.nextSibling) {
+      if (c.nodeType === 3) out += c.nodeValue || "";
+      else if (c.nodeType === 1) out += pwText(c, cache);
+    }
+    if (node.shadowRoot) out += pwText(node.shadowRoot, cache);
+    cache.set(node, out);
+    return out;
+  }
+
   function pwHas(haystack, needle) {
     var n = pwNorm(needle);
     if (!n) return false;
@@ -297,6 +354,22 @@ export const UNIQUENESS_HELPERS = `
       if (acc.length >= GL_SHADOW_LIMIT) return acc;
     }
     return acc;
+  }
+
+  /** Whether \`el\` lives inside a shadow tree — open or closed — rather than
+   *  in the document. This is what marks a step as recorded inside a web
+   *  component, and what withholds the XPath last resort: \`xpathFor\` walks
+   *  \`parentElement\`, which stops at the shadow root, so the path it
+   *  writes for such an element is relative to a root no XPath engine can be
+   *  pointed at. Playwright's xpath engine does not pierce and neither does
+   *  \`document.evaluate\`, so that locator resolves to nothing on both sides —
+   *  the one candidate that is positional "by construction" is the one that
+   *  cannot work here. */
+  function inShadow(el) {
+    try {
+      var r = el && el.getRootNode ? el.getRootNode() : null;
+      return !!(r && r.nodeType === 11 && r.host);
+    } catch (e) { return false; }
   }
 
   /** The elements a CSS selector resolves to, PIERCING open shadow roots.
@@ -387,16 +460,32 @@ export const UNIQUENESS_HELPERS = `
       if (loc.k === "text") {
         // textContent, not innerText: this runs on the click path and innerText
         // forces layout per element. See MAX_UNIQUENESS_SCAN.
-        var hits = scanAll("*").filter(function (el) {
-          return pwHas(el.textContent, loc.v);
-        });
-        // "Smallest element containing the text" — drop any match that contains
-        // another match. Without this every ancestor counts and html/body match
-        // everything.
-        return hits.filter(function (el) {
-          for (var i = 0; i < hits.length; i++) {
-            if (hits[i] !== el && el.contains(hits[i])) return false;
+        //
+        // Playwright's text engine skips script, style, noscript and anything
+        // in <head> (\`shouldSkipForTextMatching\`), and so must this: an
+        // inline <script> whose source mentions a button's label — a JSON
+        // state blob, a component's template — is a "match" by textContent,
+        // and it sits BEFORE the button in document order. So the trainer
+        // counted two where Playwright finds one, \`found[0]\` was the script,
+        // and a text locator the run would have accepted was rejected for a
+        // generated css path. Found by e2e/shadow-parity.spec.ts, whose
+        // fixture builds its components from an inline script.
+        // Mirrors \`elementMatchesText\` in Playwright's text engine: an
+        // element is a match when ITS text matches and no DIRECT child
+        // element's text — nor its own shadow root's — does. That is the
+        // "smallest element" rule stated the way the engine states it, and
+        // it crosses a shadow boundary where the old \`el.contains(other)\`
+        // walk could not (so a host, and body above it, counted as matches
+        // alongside the button inside the root). \`pwText\` is what makes the
+        // two agree on WHAT the text is; this is what makes them agree on
+        // WHICH element carries it.
+        var textCache = new Map();
+        return scanAll("*").filter(function (el) {
+          if (!pwHas(pwText(el, textCache), loc.v)) return false;
+          for (var c = el.firstChild; c; c = c.nextSibling) {
+            if (c.nodeType === 1 && pwHas(pwText(c, textCache), loc.v)) return false;
           }
+          if (el.shadowRoot && pwHas(pwText(el.shadowRoot, textCache), loc.v)) return false;
           return true;
         });
       }
@@ -445,9 +534,10 @@ export const UNIQUENESS_HELPERS = `
     // Nothing was unique. The indexed best candidate beats the last resort,
     // because a readable locator with an index still says what was meant.
     if (fallback) return fallback;
-    // Every candidate list this is called with ends in an xpath, which is
-    // positional and therefore unique by construction. Returning the last
-    // candidate rather than null is what guarantees a step is always recorded.
+    // Every candidate list this is called with ends in a positional path —
+    // an xpath, or inside a shadow tree a css path — which is unique by
+    // construction within its root. Returning the last candidate rather than
+    // null is what guarantees a step is always recorded.
     return candidates.length > 0 ? candidates[candidates.length - 1] : null;
   }
 `;
@@ -542,7 +632,9 @@ export const PICKED_HELPERS = `
     if (t && t.length <= 40) out.push({ k: "text", v: t });
     if (role && !nm) out.push({ k: "role", role: role });
     out.push({ k: "css", v: cssPath(el) });
-    out.push({ k: "xpath", v: xpathFor(el) });
+    // Never an xpath inside a shadow tree — see inShadow. The css path is
+    // then the last candidate, and it is still always present.
+    if (!inShadow(el)) out.push({ k: "xpath", v: xpathFor(el) });
     return out;
   }
 
@@ -794,6 +886,9 @@ export const PICKED_HELPERS = `
       contextBase: ctx.base,
       contextBaseCount: ctx.baseCount,
       contextSignals: ctx.signals,
+      // So a step AUTHORED from this pick (an assertion, a right-click) can
+      // carry the same mark a recorded one gets from withFp.
+      shadow: inShadow(el),
       text: txt(el).slice(0, 200),
       neighborText: neighborTextOf(el)
     };
@@ -1207,9 +1302,12 @@ export function buildCaptureScript(
   // answer: pickLocator asks the page which of them actually identifies this
   // element.
   //
-  // It ends in cssPath and xpathFor on every path. That is what makes the
-  // choice total: an xpath is positional, so there is always a last candidate
-  // that cannot be ambiguous, and the recorder never has to record nothing.
+  // It ends in cssPath on every path, and in xpathFor outside a shadow tree.
+  // That is what makes the choice total: a path is positional, so there is
+  // always a last candidate that cannot be ambiguous, and the recorder never
+  // has to record nothing. Inside a shadow tree the xpath is withheld — it
+  // would be relative to the root and resolve to nothing in either engine —
+  // and the css path, which \`scanAll\` pierces for, is the last resort.
   function locatorCandidates(el) {
     var out = [];
     var tid = testIdLocatorOf(el);
@@ -1233,7 +1331,8 @@ export function buildCaptureScript(
     }
 
     out.push({ k: "css", v: cssPath(el) });
-    out.push({ k: "xpath", v: xpathFor(el) });
+    // Never an xpath inside a shadow tree — see inShadow in UNIQUENESS_HELPERS.
+    if (!inShadow(el)) out.push({ k: "xpath", v: xpathFor(el) });
     return out;
   }
 
@@ -1321,6 +1420,12 @@ export function buildCaptureScript(
       var fp = fingerprintFor(el);
       if (fp) step.fingerprint = fp;
     } catch (e) {}
+    // The one place every element-bearing step passes WITH its element, so
+    // it is also where the step is marked as recorded inside a web component.
+    // The mark is a fact about where the element lives, shown on the step row
+    // and carried into the heal probe; it changes nothing about what the step
+    // emits, because Playwright pierces open roots on its own.
+    try { if (inShadow(el)) step.shadow = true; } catch (e) {}
     return step;
   }
 
@@ -1704,7 +1809,10 @@ export function buildCaptureScript(
     var src = interactiveTarget(from.el);
     var dst = interactiveTarget(to);
     if (src === dst) return;
-    push(withFp({ type: "drag", locator: locatorFor(src), toLocator: locatorFor(dst) }, src));
+    var dragStep = withFp({ type: "drag", locator: locatorFor(src), toLocator: locatorFor(dst) }, src);
+    // Either end inside a web component marks the step; withFp only sees src.
+    try { if (inShadow(dst)) dragStep.shadow = true; } catch (er) {}
+    push(dragStep);
   }
 
   function onKeydown(e) {

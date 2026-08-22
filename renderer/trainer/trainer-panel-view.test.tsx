@@ -600,6 +600,30 @@ describe("refine selector belongs to the window that started it", () => {
     expect(screen.getByRole("dialog")).toBeTruthy();
   });
 
+  it("keeps the web-component mark on a step it retargets", () => {
+    // Refine re-points the SAME element, and the backend clears `shadow` on
+    // any locator patch that does not carry it (a retarget may land in the
+    // light DOM). So the apply must pass the pick's mark through, or every
+    // refined step inside a component loses its chip.
+    setStore({
+      refiningStepId: "a",
+      liveSteps: [step("a", { type: "click", locator: { k: "text", v: "Sign in" }, shadow: true })],
+      picked: {
+        tag: "button",
+        candidates: [{ k: "role", role: "button", name: "Sign in" }],
+        css: {},
+        attributes: {},
+        shadow: true,
+      },
+    });
+    renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: /update selector/i }));
+    expect(actions.updateStep).toHaveBeenCalledWith("a", {
+      locator: { k: "role", role: "button", name: "Sign in" },
+      shadow: true,
+    });
+  });
+
   it("stays out of the way when the OTHER window is refining", () => {
     // `picked` is broadcast to both windows; `refiningStepId` is per-window
     // state. That asymmetry is the whole reason a refine started in the main
