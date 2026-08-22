@@ -19,6 +19,13 @@ import type { SecretStatus, TestRecord } from "../lib/recorder-types";
 import { VariablesPanel } from "./variables-panel";
 
 const setVariables = vi.fn(async (_id: string, _v: unknown) => ({}) as TestRecord);
+let originsData: { origin: string; count: number }[] = [];
+const parameteriseOrigin = vi.fn(async (_id: string, origin: string) => ({
+  test: { id: "t1", variables: [{ name: "SITE_URL", kind: "plain" as const, value: origin }] } as TestRecord,
+  rewritten: 3,
+  reusedVariable: false,
+  name: "SITE_URL",
+}));
 const setDatasets = vi.fn(async (_id: string, _d: unknown) => ({}) as TestRecord);
 const setSecret = vi.fn(async (_id: string, name: string, _value: string) => ({
   name,
@@ -60,6 +67,8 @@ vi.mock("../lib/api", () => ({
   api: {
     tests: {
       setVariables: (id: string, v: unknown) => setVariables(id, v),
+      originsIn: async () => originsData,
+      parameteriseOrigin: (id: string, origin: string) => parameteriseOrigin(id, origin),
       setDatasets: (id: string, d: unknown) => setDatasets(id, d),
       setSecret: (id: string, name: string, value: string) => setSecret(id, name, value),
       clearSecret: (id: string, name: string) => clearSecret(id, name),
@@ -528,5 +537,79 @@ describe("the Reusable flow section", () => {
   it("says what off means while the toggle is off", async () => {
     renderPanel(makeTest());
     expect(await screen.findByText(/not offered in the trainer/i)).toBeTruthy();
+  });
+});
+
+// ── Re-pointing a whole test at another site ─────────────────────────
+//
+// The control exists because Playwright's own `baseURL` cannot move a recorded
+// test: the generator emits the recorded ABSOLUTE address, and baseURL resolves
+// relative paths only. Declaring the address as a variable is what does move
+// it. Every assertion here is about a state the user could otherwise misread.
+
+describe("using a variable for the site address", () => {
+  beforeEach(() => {
+    originsData = [];
+    parameteriseOrigin.mockClear();
+  });
+
+  it("offers the address the steps actually point at, and how many places", async () => {
+    // The count is the number of edits about to happen — a button that says
+    // only "parameterise" asks the user to trust it.
+    originsData = [{ origin: "https://shop.example.com", count: 3 }];
+    renderPanel(makeTest());
+    expect(await screen.findByText(/3 places/)).toBeTruthy();
+    expect(screen.getByText("https://shop.example.com")).toBeTruthy();
+  });
+
+  it("says `place` for one, so a count of one does not read as a bug", async () => {
+    originsData = [{ origin: "https://shop.example.com", count: 1 }];
+    renderPanel(makeTest());
+    expect(await screen.findByText(/1 place\./)).toBeTruthy();
+  });
+
+  it("rewrites when pressed, and reports what changed", async () => {
+    originsData = [{ origin: "https://shop.example.com", count: 3 }];
+    renderPanel(makeTest());
+    const button = await screen.findByRole("button", { name: /use a variable for the site address/i });
+    fireEvent.click(button);
+    await waitFor(() => expect(parameteriseOrigin).toHaveBeenCalledWith("t1", "https://shop.example.com"));
+    await waitFor(() =>
+      expect(toastTexts().some((t) => /3 places now use \$\{SITE_URL\}/.test(t.title))).toBe(true),
+    );
+  });
+
+  it("stops offering the rewrite once it has been done", async () => {
+    // THE BUG THIS PINS, found by pressing the button in the preview: the
+    // origins query reads the STEPS, and a rewrite changes them without
+    // changing their count — so nothing refetched it and the offer survived
+    // its own success. A button that stays after doing its job reads as a
+    // button that did nothing.
+    originsData = [{ origin: "https://shop.example.com", count: 3 }];
+    renderPanel(makeTest());
+    const button = await screen.findByRole("button", { name: /use a variable for the site address/i });
+    originsData = []; // what the backend answers once the URLs reference a variable
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /use a variable for the site address/i })).toBeNull(),
+    );
+  });
+
+  it("offers nothing when no step points at a literal address", async () => {
+    // Already parameterised, or a test with no navigation. Showing a disabled
+    // button here would imply there is something to do.
+    originsData = [];
+    renderPanel(makeTest());
+    await screen.findByText("Variables");
+    expect(screen.queryByRole("button", { name: /use a variable for the site address/i })).toBeNull();
+  });
+
+  it("offers nothing on a hand-edited script, which the steps no longer drive", async () => {
+    // The backend refuses this too. Not offering it is the honest half: a
+    // rewrite here would change steps that no run reads.
+    originsData = [{ origin: "https://shop.example.com", count: 3 }];
+    renderPanel(makeTest({ scriptEdited: true }));
+    await screen.findByText("Variables");
+    expect(screen.queryByRole("button", { name: /use a variable for the site address/i })).toBeNull();
   });
 });

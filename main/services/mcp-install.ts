@@ -4,22 +4,34 @@
 // documentation is a path someone types wrong; a path this process resolved is
 // one that is either right or knowably absent. So this answers from DISK.
 //
-// THE ABSENT CASE IS THE COMMON ONE IN A PACKAGED APP, and that is not a bug
-// here. `mcp/` is part of the source tree, and electron-builder's `files` ships
-// `build/**` and `package.json` — so a `.app` has no server to point at. The
-// pane says so rather than printing a plausible command that names nothing.
-// Making the packaged app host the server is a separate decision (it also needs
-// the server's data-directory resolution revisited, which derives a Glaze-era
-// path); see docs/DECISIONS.md.
+// A PACKAGED APP NOW CARRIES THE SERVER (R15, 2026-08-22). `build.files` ships
+// `mcp/**` and `shared/**` into `Contents/Resources/app`, which is exactly what
+// `PROJECT_ROOT` below resolves to — so `exists` became true in a `.app` with no
+// change to the resolution here, and the pane's copy-command branch, written
+// long before it could ever fire, started firing. The absent branch is kept for
+// a dev tree run from a stripped checkout, and because a `files` regression
+// should degrade to an honest message rather than a command naming nothing.
 //
-// No `electron` import: the build root is derived the same way `window-paths`
-// derives it, from this module's own location.
+// TWO THINGS THE PACKAGED PATH CHANGES, both invisible until you paste it:
+//
+//   1. The path has no `node` beside it. Someone who installed the app rather
+//      than cloning the repo very likely has no Node at all, so the command
+//      names the app's OWN Electron binary and sets ELECTRON_RUN_AS_NODE — the
+//      same trick `playwright-runner` uses to spawn the Playwright CLI.
+//   2. The product is called "Good Looks!", so the path contains a `!`, and a
+//      `!` inside DOUBLE quotes is a history expansion in every interactive
+//      zsh and bash. The old command was double-quoted and worked only because
+//      the path it named was a repo checkout. Pasted with a bundle path it
+//      fails with `event not found` before running anything.
+//
+// No direct `electron` import — `app` comes through `@shell/backend`, the same
+// seam the logger does.
 
 import { existsSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { logger } from "@shell/backend";
+import { app, logger } from "@shell/backend";
 
 /** The backend is bundled to `build/main/index.js`, so the project root is two
  *  levels above this file's directory at runtime. */
@@ -35,10 +47,36 @@ export interface McpServerInfo {
   command: string;
 }
 
-/** Quoted because the path contains spaces on every real install — the data
- *  directory is under "Application Support". */
+/**
+ * Wrap a path for a shell the user will PASTE into.
+ *
+ * SINGLE quotes, not double. Every real path here needs quoting for its spaces
+ * ("Application Support", "Good Looks!.app"), but double quotes leave `!` live
+ * to history expansion in interactive zsh and bash — and this app's own name
+ * ends in one, so a double-quoted bundle path fails with `event not found`
+ * before the command runs. Inside single quotes nothing is special, and an
+ * embedded single quote is closed, escaped and reopened in the usual way.
+ */
+function shellQuote(value: string): string {
+  // `split`/`join` rather than `replaceAll`: this project targets ES2020.
+  return `'${value.split("'").join(`'\\''`)}'`;
+}
+
+/**
+ * The command that registers this install with Claude Code.
+ *
+ * A packaged app names its OWN binary with `ELECTRON_RUN_AS_NODE=1` rather than
+ * `node`: the whole point of shipping the server is that someone who installed
+ * the `.app` can use it, and that person has no reason to have Node. Under
+ * Electron `process.execPath` IS that binary. From a checkout, `node` is right
+ * and is what a developer already has.
+ */
 function registerCommand(serverPath: string): string {
-  return `claude mcp add --scope user good-looks -- node "${serverPath}"`;
+  const base = "claude mcp add --scope user good-looks";
+  if (app.isPackaged) {
+    return `${base} -e ELECTRON_RUN_AS_NODE=1 -- ${shellQuote(process.execPath)} ${shellQuote(serverPath)}`;
+  }
+  return `${base} -- node ${shellQuote(serverPath)}`;
 }
 
 export function mcpServerInfo(): McpServerInfo {

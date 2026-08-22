@@ -163,10 +163,16 @@ const criticals = runtimeCriticalNames();
  * macOS `.app`, CI builds the Linux unpacked directory, and the guard has to
  * find the same node_modules in both.
  */
+/** What the bundle carries in place of the MCP server. `ok` is the shipped
+ *  shape; the other three are the ways R15 can be wrong, each of which leaves
+ *  every OTHER assertion in this file green. */
+type McpMode = "ok" | "missing" | "no-shared" | "broken";
+
 function buildFixture(
   omitFromBundle: string[] = [],
   withDist = true,
   platform: "mac" | "linux" = "mac",
+  mcp: McpMode = "ok",
 ): string {
   const dir = mkdtempSync(join(tmpdir(), "gl-package-fixture-"));
   const deps: Record<string, string> = { alpha: "1.0.0" };
@@ -195,6 +201,29 @@ function buildFixture(
     writePackage(join(bundled, name), { name });
   }
   if (!omitFromBundle.includes("gamma")) writePackage(join(bundled, "gamma"), { name: "gamma" });
+
+  // The MCP payload R15 ships. A STAND-IN rather than the real server: this
+  // check's subject is whether `verify` can tell a broken bundle from a good
+  // one, not whether the real server boots — `check:mcp-boot` owns that, and
+  // the guard runs against the real thing on every `npm run package` and in
+  // CI's Linux package job. Written by default, because the guard now asserts
+  // it and a fixture without it would turn every case above red.
+  if (mcp !== "missing") {
+    mkdirSync(join(app, "mcp"), { recursive: true });
+    writeFileSync(
+      join(app, "mcp", "server.mjs"),
+      mcp === "broken"
+        ? // Present, and dies at import — the state `extraResources` produces,
+          // where every file is in the bundle and none of them can resolve.
+          `import "./nope-not-here.mjs";\n`
+        : `import process from "node:process";\nif (process.argv.includes("--print-data-dir")) { console.log(process.env.GOOD_LOOKS_USERDATA ?? ""); process.exit(0); }\n`,
+      "utf-8",
+    );
+  }
+  if (mcp !== "missing" && mcp !== "no-shared") {
+    mkdirSync(join(app, "shared"), { recursive: true });
+    writeFileSync(join(app, "shared", "user-data-rules.mjs"), "export const STORE_SUBDIR = \"recorder\";\n", "utf-8");
+  }
   return dir;
 }
 
@@ -319,6 +348,75 @@ function buildFixture(
     /npm run package/.test(source("CLAUDE.md").split("### Environment gotchas")[1] ?? ""),
     "…and so does the worktree note in CLAUDE.md, which is where the rule is looked up",
   );
+}
+
+// ── The MCP server R15 ships ──────────────────────────────────────────
+//
+// Nothing else in the gate can see this. The closure above asks only about
+// PACKAGES, so a `files` pattern that dropped the server entirely leaves every
+// assertion in this file green — which is precisely how it would ship broken.
+
+{
+  const complete = buildFixture();
+  try {
+    const ok = run(["--verify", "--root", complete]);
+    assert(ok.code === 0, "verify passes on a bundle that carries a working MCP server");
+    assert(
+      /MCP server is in the bundle and starts from it/.test(ok.output),
+      "…and says so, rather than passing silently on a check that never ran",
+    );
+  } finally {
+    rmSync(complete, { recursive: true, force: true });
+  }
+}
+
+{
+  // What `main` ships today, and what a `files` regression would reproduce.
+  const noMcp = buildFixture([], true, "mac", "missing");
+  try {
+    const bad = run(["--verify", "--root", noMcp]);
+    assert(bad.code !== 0, "verify FAILS a bundle with no MCP server in it");
+    assert(
+      /does not carry the MCP server/.test(bad.output),
+      "…and names the cause, since `build.files` is where the fix goes",
+    );
+  } finally {
+    rmSync(noMcp, { recursive: true, force: true });
+  }
+}
+
+{
+  // mcp/*.mjs relative-imports ~18 modules from ../shared, so shipping one
+  // without the other is a bundle that cannot start.
+  const noShared = buildFixture([], true, "mac", "no-shared");
+  try {
+    const bad = run(["--verify", "--root", noShared]);
+    assert(bad.code !== 0, "verify FAILS a bundle that shipped mcp/ without shared/");
+    assert(
+      /shipped without the `shared\/` modules/.test(bad.output),
+      "…and distinguishes it from the server being absent altogether",
+    );
+  } finally {
+    rmSync(noShared, { recursive: true, force: true });
+  }
+}
+
+{
+  // THE CASE THAT JUSTIFIES SPAWNING. Every file is present and the server
+  // still cannot run — which is exactly what electron-builder's
+  // `extraResources` produces, and what a file-existence check would wave
+  // through.
+  const broken = buildFixture([], true, "mac", "broken");
+  try {
+    const bad = run(["--verify", "--root", broken]);
+    assert(bad.code !== 0, "verify FAILS a bundle whose MCP server is present but does not run");
+    assert(
+      /present but does not run/.test(bad.output),
+      "…and says the files are there, which is the confusing case to diagnose",
+    );
+  } finally {
+    rmSync(broken, { recursive: true, force: true });
+  }
 }
 
 if (failures > 0) {

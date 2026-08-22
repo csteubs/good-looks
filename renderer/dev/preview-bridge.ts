@@ -743,6 +743,70 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       }
       return test;
     },
+    /** The origin picker and the rewrite, mirroring the real handlers closely
+     *  enough that the panel's two states — "nothing points there" and "N
+     *  fields rewritten" — can both be seen in a tab. The transform itself is
+     *  NOT reimplemented here: a second copy of the rule is how the preview
+     *  comes to show something the app does not do. */
+    "tests:originsIn": (p) => {
+      const test = findTest(p?.id);
+      if (!test) return [];
+      const counts = new Map<string, number>();
+      for (const step of test.steps ?? []) {
+        const url = (step as { url?: string }).url;
+        if (typeof url !== "string" || !/^https?:\/\//i.test(url)) continue;
+        try {
+          const { origin } = new URL(url);
+          counts.set(origin, (counts.get(origin) ?? 0) + 1);
+        } catch {
+          /* not a URL */
+        }
+      }
+      // The test's own site first, matching the real handler: "the site
+      // address" means the site the test is about, not the host its steps
+      // happen to mention most.
+      let preferred = "";
+      try {
+        preferred = new URL(String(test.url ?? "")).origin;
+      } catch {
+        /* no usable url */
+      }
+      return [...counts.entries()]
+        .map(([origin, count]) => ({ origin, count }))
+        .sort((a, b) => {
+          if (preferred) {
+            if (a.origin === preferred && b.origin !== preferred) return -1;
+            if (b.origin === preferred && a.origin !== preferred) return 1;
+          }
+          return b.count - a.count || a.origin.localeCompare(b.origin);
+        });
+    },
+    "tests:parameteriseOrigin": (p) => {
+      const test = findTest(p?.id);
+      if (!test) return undefined;
+      const origin = String(p?.origin ?? "");
+      const name = typeof p?.name === "string" && p.name.trim() ? p.name.trim() : "SITE_URL";
+      let rewritten = 0;
+      for (const step of test.steps ?? []) {
+        const s = step as { url?: string };
+        if (typeof s.url === "string" && s.url.startsWith(origin)) {
+          const rest = s.url.slice(origin.length);
+          if (rest === "" || /^[/?#]/.test(rest)) {
+            s.url = "${" + name + "}" + rest;
+            rewritten++;
+          }
+        }
+      }
+      const vars = test.variables ?? [];
+      const reusedVariable = vars.some((v) => v.name === name);
+      if (!reusedVariable) {
+        test.variables = [
+          ...vars,
+          { name, kind: "plain", value: origin, description: "The site address this test runs against." },
+        ] as NonNullable<TestRecord["variables"]>;
+      }
+      return { test, rewritten, reusedVariable, name };
+    },
     "tests:setSession": (p) => {
       const test = findTest(p?.id);
       if (!test) return undefined;
@@ -1469,14 +1533,22 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     },
 
     // The Documentation pane's one piece of live state. A preview has no
-    // filesystem to check, so it answers with the shape a real checkout gives —
-    // the interesting half of the pane to look at is the copyable command, and
-    // the absent case is one line of prose.
+    // filesystem to check, so it answers with the shape a real INSTALL gives —
+    // the packaged case, which is the one nearly every user is in now that
+    // `build.files` ships `mcp/**`, and the one whose command is easiest to get
+    // subtly wrong. The absent case is one line of prose.
+    //
+    // SINGLE QUOTES, matching `registerCommand`. The path contains `Good Looks!`
+    // and a `!` inside double quotes is history expansion in interactive zsh and
+    // bash — a preview showing the double-quoted form would be showing a command
+    // that does not paste.
     "docs:mcpServer": () => ({
-      path: "/path/to/good-looks/mcp/server.mjs",
+      path: "/Applications/Good Looks!.app/Contents/Resources/app/mcp/server.mjs",
       exists: true,
       command:
-        'claude mcp add --scope user good-looks -- node "/path/to/good-looks/mcp/server.mjs"',
+        "claude mcp add --scope user good-looks -e ELECTRON_RUN_AS_NODE=1 " +
+        "-- '/Applications/Good Looks!.app/Contents/MacOS/Good Looks!' " +
+        "'/Applications/Good Looks!.app/Contents/Resources/app/mcp/server.mjs'",
     }),
 
     // ── Issue tracker ────────────────────────────────────────────────────

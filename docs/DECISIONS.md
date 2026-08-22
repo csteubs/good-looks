@@ -10,6 +10,78 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-22 — A base URL cannot re-point a recorded test, so the origin becomes a variable instead
+
+R5 of [plans/test-runner-improvements.md](plans/test-runner-improvements.md)
+asks for "a per-run base-URL override", calls it cheap, and says it unblocks
+running a suite against a PR preview. **Its premise does not hold**, and the two
+claims cannot both be true.
+
+**Measured, not reasoned about.** Playwright's `use.baseURL` resolves RELATIVE
+navigations only, and the generator emits a recorded test's `goto` as the
+absolute URL the recorder watched (`script-generator.ts`, `case "goto"`). Two
+local servers, the app's own generated config, real Playwright 1.53: with
+`PW_BASE_URL` pointed at origin B, the absolute spec still landed on origin A
+while the relative spec followed to B. So a per-run `PW_BASE_URL` moves imported
+suites and nothing else. Counting the library on this machine — 67 tests, 48
+`goto` steps, **every one of them absolute, and not one record carrying a
+`baseUrl`** — R5 as specified would have changed the behaviour of zero tests.
+The plan also rates it M in §2 and "cheap" in §4.
+
+**What does move a recorded test was already here.** `${name}` interpolation:
+`mapInterpolatable` is the single definition of which fields interpolate, the
+generator substitutes declared names, and a value arrives per run through
+`GLAZE_VARS`. The mechanism was proven, the edit was not — sixty tests meant
+sixty hand edits, which is exactly the cost §4 complains about. So this ships
+the edit: declare the site address as a variable and point every URL on it
+there. Verified the same way the premise was disproved — the generated spec
+lands on the declared default with no override and on the preview with one.
+
+**The rewrite goes through `mapInterpolatable` rather than a list of fields.**
+A URL is not only in `goto`; it is in URL assertions and waits, in
+`if urlContains`, and in API steps. Using that traversal means the fields this
+rewrites and the fields the generator will substitute cannot drift apart.
+Rewriting a hand-picked list would leave an assertion pinned to production while
+the navigation moved — which fails in the confusing direction: the run reaches
+the preview and then asserts it is somewhere else.
+
+**"A URL on this origin" is a prefix match plus a boundary**, and the boundary
+is load-bearing: a bare `startsWith` also matches
+`https://shop.example.commerce.test`, silently re-pointing a different site.
+Reverting that check failed nothing at first — the existing test exercised the
+predicate directly rather than through the rewrite — so a case was added that
+goes through the real path. That gap is the argument for reverting every fix
+and watching the test fail, rather than reverting the ones that look risky.
+
+**The offer names the test's OWN site, not the most-mentioned host.** Caught by
+looking at a real test in the preview: a docs-site test that calls an API twice
+offered to re-point the API. "The site address" means the site the test is
+about, so the origin of `record.url` sorts first when the steps mention it.
+
+**Idempotent, and it reuses an existing variable.** It is reachable from a
+button, so a second press must not produce `${SITE}${SITE}/cart` — it does not,
+because the first pass leaves no literal to match. A name already declared is
+left alone, value included: two entries with one name is a spec whose `V` object
+silently keeps the last, and the existing value may have been deliberately
+pointed elsewhere.
+
+**Refused on a hand-edited script.** Its steps no longer drive the run, so a
+rewrite would report an edit the run does not honour. The backend throws and the
+button is not offered — both, because either alone leaves the other path lying.
+
+**Deliberately NOT done: rewriting absolute `goto` origins at run time.** It is
+the version that needs no authoring step, and it breaks six things, two of them
+in the passing direction: a preview host that 302s to the canonical host puts
+every later step on production with nothing to detect it, and recorded cookie
+domains never arrive. "The run passed" is the entire signal a preview gate
+exists to produce, so a green run against the wrong environment is worse than a
+red one. A declared variable is reviewable in the spec, and leaves the cookie
+and assertion questions in front of the author instead of inside a rewriter.
+
+**Also out:** the per-run variable override UI (this makes it meaningful, and
+datasets already supply values today), environment records (R16), and
+per-environment keying of sessions and baselines (R34).
+
 ### 2026-08-22 — Overlay rules: a standing dismissal, because a step cannot express "whenever this appears"
 
 A consent modal does not appear once. It is re-injected by a third-party script
@@ -137,6 +209,87 @@ control inside a component read as covered by the component it lives in. On the
 pages where that check earns its keep this is acute: the consent modal IS a
 shadow host, so the trainer would have reported the banner as covering its own
 Accept button.
+
+### 2026-08-22 — The MCP server ships inside the app, in `files` and not `extraResources`
+
+R15 of [plans/test-runner-improvements.md](plans/test-runner-improvements.md).
+The server is written, tested and documented, and was simply not in the box:
+`Contents/Resources/app` held `build/`, `node_modules/` and `package.json`, and
+nothing else. Anyone who installed the app rather than cloning the repo could
+reach none of its tools.
+
+**The plan's one-line prescription — "add `mcp/**` to `extraResources`" — is
+wrong, and wrong in the way that looks right.** `extraResources` copies into
+`Contents/Resources`, one level ABOVE the app directory. Both layouts contain
+every file; only one of them runs:
+
+- Node resolves bare specifiers by walking up from the importing file, so from
+  `Resources/mcp/server.mjs` it checks `Resources/mcp/node_modules`,
+  `Resources/node_modules`, `Contents/node_modules` — and never reaches
+  `Resources/app/node_modules`, where `@modelcontextprotocol/sdk` actually is.
+  Reproduced: `ERR_MODULE_NOT_FOUND`. `NODE_PATH` is not a way out; it is
+  CommonJS-only.
+- `mcp/data-dir.mjs` reads `<mcp>/../package.json` at module load to get
+  `productName`. From `Resources/mcp` that is `Resources/package.json`, which
+  does not exist — the server would throw before serving anything, which is
+  precisely the shape of the six-day outage in August when every tool was
+  unreachable.
+
+`build.files` puts them in `Contents/Resources/app`, where the relative
+`../shared/` imports resolve, `node_modules` is a sibling, and
+`<mcp>/../package.json` is the app's own — with `productName` intact, checked in
+a real bundle. Verified end to end before writing any of it: the server answered
+a real `initialize` and `tools/list` with all 23 tools from that layout.
+
+**`shared/**` is not optional.** `mcp/*.mjs` relative-imports eighteen modules
+from `../shared`, and the bundle had none of them in importable form — esbuild
+inlines them into `build/main/index.js`, which is a 55k-line ESM bundle another
+process cannot import paths out of.
+
+**No dependency work was needed**, which is worth recording because it looks
+like it should have been. `@modelcontextprotocol/sdk` and `zod` are already in
+`dependencies`, and electron-builder copies the production closure through a
+separate walker that `files` does not govern — both were already in the bundle,
+just unreachable from where the plan proposed to put the server.
+
+**The user needs no Node.** The command names the app's own Electron binary with
+`ELECTRON_RUN_AS_NODE=1` — the same trick the runner uses to spawn the
+Playwright CLI — because the person this feature is for installed a `.app` and
+has no reason to have Node. Confirmed by booting the server through the bundled
+binary.
+
+**Shipping this turned a latent quoting bug into a real one.** `mcp-install.ts`
+built its command with double quotes, which was fine while the path it named was
+a repo checkout. The bundle path contains `Good Looks!.app`, and a `!` inside
+double quotes is history expansion in every interactive zsh and bash: the pasted
+command dies with `event not found` before running. The app's own name breaks
+its own setup command. Single quotes now, with embedded quotes escaped — verified
+by pasting the generated lines into real interactive shells rather than reasoning
+about them.
+
+**A feature that was already written switched on.** `mcp-install.ts` resolves the
+server from `PROJECT_ROOT`, which at runtime IS `Contents/Resources/app`, so
+`exists` became true with no change to the resolution — and the Documentation
+pane's copy-command branch, written long before it could ever fire, started
+firing. Its absent branch is kept: a stripped dev tree still needs it, and a
+`files` regression should degrade to an honest message rather than a command
+naming nothing.
+
+**The guard is the load-bearing half.** Nothing else in the gate could see this:
+`verify-package.mjs` asks only whether PACKAGES resolve, so a `files` pattern
+that dropped the server entirely left every existing assertion green. It now
+also asserts the payload is present AND **spawns it** — because presence is what
+the broken `extraResources` layout has too. `--print-data-dir` against a
+throwaway store is the server's own side-effect-free entry point. Four fixture
+arms in `check:package-integrity` cover good / no-mcp / no-shared / present-but-
+does-not-run; dropping the spawn leaves exactly the last pair red, which is the
+evidence the spawn earns its cost.
+
+**Left out deliberately:** auto-registration that writes another application's
+config file (the recorded choice is to print the command and let the user run
+it), the R3/R4 CLI, R11 browser installation, R39's shared concurrency budget,
+and any MCP write or emit tool — the last would force `check:emit-redaction`'s
+scan set open, which §3.5 of the plan rules out for a packaging change.
 
 ### 2026-08-22 — An MCP run was deleting 49,000 run records, and nothing could see it
 
