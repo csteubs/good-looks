@@ -28,7 +28,12 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { dismissFixtureSource } from "../dismiss-fixture-source.js";
+import {
+  DISMISS_COUNT_ENV,
+  DISMISS_ENV_PREFIX,
+  dismissEnvNames,
+  dismissFixtureSource,
+} from "../dismiss-fixture-source.js";
 import { buildCaptureScript } from "../../recorder/capture-script.js";
 import { normalizeOverlayRule } from "../../recorder/types.js";
 import {
@@ -134,6 +139,70 @@ assert(
   (dismissFixtureSource.match(/catch \(e\)/g) ?? []).length >= 5,
   "every path in the dismissal fixture swallows its own errors",
 );
+
+// ── The runner WRITES the names the fixture READS ─────────────────────
+//
+// Silent in the worst way if it drifts: the runner sets variables the fixture
+// never looks at, every test stays green, and the feature simply never fires.
+// So the round trip is exercised rather than eyeballed — build the env the
+// runner would, then run the fixture's own reader against it.
+
+const ruleForEnv = {
+  id: "r1",
+  host: "ritual.com",
+  label: "DataGrail — Close",
+  target: { k: "testid" as const, v: "dg-header-close" },
+  createdAt: 0,
+  updatedAt: 0,
+};
+const names = dismissEnvNames(0);
+const env: Record<string, string> = {
+  [DISMISS_COUNT_ENV]: "1",
+  [names.label]: ruleForEnv.label,
+  [names.target]: JSON.stringify(ruleForEnv.target),
+};
+assert(
+  dismissFixtureSource.includes(`process.env.${DISMISS_COUNT_ENV}`),
+  "the fixture reads the count variable the runner writes",
+);
+assert(
+  dismissFixtureSource.includes(JSON.stringify(DISMISS_ENV_PREFIX)),
+  "the fixture interpolates the shared env prefix rather than retyping it",
+);
+assert(
+  !/["']GLAZE_DISMISS_["'] *\+/.test(dismissFixtureSource),
+  "the fixture has no second hand-written spelling of the prefix",
+);
+{
+  // Run the fixture's reader for real against that env — the only way to know
+  // the two halves meet.
+  const saved = { ...process.env };
+  Object.assign(process.env, env);
+  let parsed: { label: string; target: { k: string; v?: string } }[] = [];
+  try {
+    // Everything up to `const RULES = …` is self-contained: the constants,
+    // `note`, and `rulesFromEnv` itself. Slicing at a declaration boundary
+    // rather than by pattern keeps this a test of the reader, not of a regex.
+    const marker = "const RULES = rulesFromEnv();";
+    const cut = dismissFixtureSource.indexOf(marker);
+    if (cut < 0) throw new Error("could not find the reader's boundary in the fixture");
+    const read = new Function(
+      `${dismissFixtureSource.slice(0, cut)}; return rulesFromEnv();`,
+    ) as () => typeof parsed;
+    parsed = read();
+  } catch (e) {
+    parsed = [];
+    console.error(`   (reader threw: ${String(e)})`);
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
+  assert(parsed.length === 1, "the fixture's reader finds the rule the runner wrote");
+  assert(
+    parsed[0]?.label === ruleForEnv.label && parsed[0]?.target?.v === "dg-header-close",
+    "…and reads back its label and target intact",
+  );
+}
 
 // ── A rule's target is checked, not trusted ───────────────────────────
 

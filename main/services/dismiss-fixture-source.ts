@@ -64,13 +64,24 @@ export const DISMISS_FIXTURE_FILE = "glaze-dismiss.mjs";
 /** How many rules this run was given. Zero means the fixture no-ops. */
 export const DISMISS_COUNT_ENV = "GLAZE_DISMISS_COUNT";
 
+/** The prefix every per-rule variable is built from.
+ *
+ *  ONE definition, because two processes spell these names: the runner WRITES
+ *  them (`dismissEnv`) and the generated fixture READS them. A second
+ *  hand-written spelling is the drift this repo has paid for more than once —
+ *  and here it would be silent in the worst way, because the runner would set
+ *  variables the fixture never looks at, every test would stay green, and the
+ *  feature would simply never fire. The fixture interpolates this constant
+ *  rather than retyping it. */
+export const DISMISS_ENV_PREFIX = "GLAZE_DISMISS_";
+
 /** The env names carrying one rule. One variable per field rather than a JSON
  *  blob, for the reason `variableEnv` states about secrets: a blob is a single
  *  string that shows up whole in a crash dump or a process listing. */
 export function dismissEnvNames(index: number): { label: string; target: string } {
   return {
-    label: `GLAZE_DISMISS_${index}_LABEL`,
-    target: `GLAZE_DISMISS_${index}_TARGET`,
+    label: `${DISMISS_ENV_PREFIX}${index}_LABEL`,
+    target: `${DISMISS_ENV_PREFIX}${index}_TARGET`,
   };
 }
 
@@ -83,6 +94,9 @@ ${watcherSource()}
 `;
 
 export const dismissFixtureSource = `const COUNT = Number(process.env.${DISMISS_COUNT_ENV} || 0) || 0;
+
+// Interpolated, never retyped — see DISMISS_ENV_PREFIX.
+const PREFIX = ${JSON.stringify(DISMISS_ENV_PREFIX)};
 
 // The engine, as one string handed to the page. It is not evaluated here — it
 // is evaluated inside every document the run visits.
@@ -103,8 +117,8 @@ function note(msg) {
 function rulesFromEnv() {
   const out = [];
   for (let i = 0; i < COUNT; i++) {
-    const label = process.env["GLAZE_DISMISS_" + i + "_LABEL"] || "";
-    const raw = process.env["GLAZE_DISMISS_" + i + "_TARGET"] || "";
+    const label = process.env[PREFIX + i + "_LABEL"] || "";
+    const raw = process.env[PREFIX + i + "_TARGET"] || "";
     if (!raw) continue;
     try {
       const target = JSON.parse(raw);
