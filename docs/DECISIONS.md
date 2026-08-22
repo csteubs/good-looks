@@ -10,6 +10,45 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-22 — Playwright 1.53.0 → 1.62.1, as its own change ahead of the Script IDE work
+
+The Script IDE plan (`docs/plans/script-ide-view.md`) wanted three things the
+pinned runner did not have — `page.pickLocator()` (1.59), the bundled MCP
+server and `playwright-cli` (1.62), and a `--list` that accepts `declare`
+class fields — and Chris chose to take the upgrade FIRST, so the editor work
+lands on the runner it will ship with rather than re-verifying twice.
+
+**What was checked, because a runner pin is gate-wide.** The release notes
+from 1.54 to 1.62 were read for removals and behaviour changes and each one
+grepped for in what this app emits: `:light` selector suffix (1.58),
+`_react`/`_vue` engines (1.58), `page.accessibility` (1.57), the `devtools`
+launch option (1.58), `Locator.ariaRef()` / `videosPath` / `videoSize` (1.62),
+`?` and `[]` in `page.route()` globs (1.54) — none are used. One change DID
+touch shipped code: since 1.54 `route.continue()` cannot override the `Cookie`
+header, and `signature-fixture-source.ts` merges `allHeaders()` (cookie
+included) into its `continue({headers})`. Probed on both versions with a real
+Chromium, a real cookie and a real route: on 1.62.1 the signature header
+arrives, the cookie arrives, and nothing throws — the runner ignores the
+cookie entry rather than rejecting the call, so the fixture's catch-and-
+continue-unsigned fallback is never entered. Stated here because that
+fallback is the silent failure mode: a throw would have meant every Shopify
+request going out unsigned with a run that still looked green.
+
+**What changed on disk.** `package.json`, the lockfile, the pin line in
+ARCHITECTURE.md, one comment in `script-generator.ts`. `reporter.onError`
+gained a `workerInfo` argument in 1.60; the list reporter in
+`script-check.ts` ignores extra arguments. Chrome for Testing replaced the
+Chromium build in 1.57; the app's runner installs browsers through the CLI
+into `userData/recorder/browsers`, so a first run on the new version
+downloads the new build exactly as a fresh install does.
+
+**Verified:** the full gate on 1.62.1 (lint, type-check, 82 checks including
+`check:runtime-boot`, `check:script-check` and `check:step-progress`, 5422
+Vitest tests, build) and the full `e2e/` suite under `_electron` —
+`assert-parity`, `context-parity`, `shadow-parity` and `step-progress` are the
+rows that would have moved if the transform, the matchers or the reporter
+categories had.
+
 ### 2026-08-22 — The Script tab verifies a draft with the real Playwright CLI before saving it, and its two editor layers stop drifting
 
 Two bugs in the Script tab's Edit mode, both reported from use. Fixed ahead of

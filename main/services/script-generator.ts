@@ -753,7 +753,7 @@ function cookieLiteral(spec: CookieSpec): string {
 }
 
 /** Filter for clearCookies — deleting ONE cookie rather than all of them.
- *  Playwright 1.43+ accepts {name, domain, path}; the bundled runner is 1.53. */
+ *  Playwright 1.43+ accepts {name, domain, path}; the bundled runner is 1.62. */
 function cookieFilterLiteral(spec: CookieSpec): string {
   const parts: string[] = [`name: ${q(spec.name)}`];
   if (spec.domain) parts.push(`domain: ${q(spec.domain)}`);
