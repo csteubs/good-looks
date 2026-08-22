@@ -2529,11 +2529,7 @@ export const recorderService = {
               // than the full recorded identity. So this step cannot AUTO-HEAL,
               // exactly like every other step authored from this menu — the
               // trade is the same one, and the step is still refinable.
-              addStep({
-                type: "rightclick",
-                locator: loc,
-                ...(picked?.shadow ? { shadow: true } : {}),
-              });
+              addStep({ type: "rightclick", locator: loc });
             },
           },
           // Taught from the menu the gesture already opens, for the same
@@ -3311,7 +3307,6 @@ export const recorderService = {
           "continueOnFailure",
           "disabled",
           "fingerprint",
-          "shadow",
         ];
         const target = step as unknown as Record<string, unknown>;
         const src = patch as Record<string, unknown>;
@@ -3352,11 +3347,6 @@ export const recorderService = {
         // candidate is the exception: same intended element, new locator, so
         // that path preserves the fingerprint (see applyHeal).
         if ("locator" in patch && !patch.fingerprint) delete target.fingerprint;
-        // The web-component mark is a fact about the SAME element, so it goes
-        // the same way: a retarget may land in the light DOM, and a mark that
-        // outlived its element would put a chip on a step it no longer
-        // describes.
-        if ("locator" in patch && !patch.shadow) delete target.shadow;
         if (inScope && session.flowScope) {
           session.flowScope.dirty = true;
           broadcastFlowScope();
@@ -3408,13 +3398,8 @@ export const recorderService = {
     // retarget-clears-fingerprint rule doesn't fire: a heal points the SAME
     // intended element at a new locator, and losing the fingerprint here would
     // make every subsequent heal of this step weaker than the first.
-    const prior = session?.steps.find((s) => s.id === stepId);
-    const existing = prior?.fingerprint;
-    return this.updateStep(stepId, {
-      locator,
-      ...(existing ? { fingerprint: existing } : {}),
-      ...(prior?.shadow ? { shadow: true } : {}),
-    });
+    const existing = session?.steps.find((s) => s.id === stepId)?.fingerprint;
+    return this.updateStep(stepId, { locator, ...(existing ? { fingerprint: existing } : {}) });
   },
 
   /** Set the index at which the next captured/inserted step will land. */

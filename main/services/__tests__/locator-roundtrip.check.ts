@@ -197,6 +197,40 @@ function main(): void {
     "css within testid",
   );
 
+  // ── 5b. A frame path round-trips, alone and with everything ──────────────
+  //
+  // The generator emits `page.frameLocator("iframe[…]")…` per hop; the parser
+  // reads it back into `Locator.frame`. Absent it is byte-identical; present it
+  // must survive both directions or a hand edit of a framed step drops it. See
+  // docs/IFRAMES.md and shared/frame-ref.mjs.
+  roundTrip({ k: "role", role: "button", name: "Pay", frame: [{ k: "name", v: "checkout" }] }, "frame by name");
+  roundTrip({ k: "testid", v: "go", frame: [{ k: "url", v: "/embed?x=1" }] }, "frame by url (src*=)");
+  roundTrip({ k: "css", v: ".x", frame: [{ k: "testid", v: "pay" }] }, "frame by testid");
+  roundTrip({ k: "text", v: "OK", frame: [{ k: "css", v: ".wrap > iframe.pay" }] }, "frame by css");
+  roundTrip(
+    { k: "testid", v: "submit", frame: [{ k: "name", v: "outer" }, { k: "testid", v: "inner" }] },
+    "nested frames",
+  );
+  // The frame belongs to the TARGET and every clause resolves inside it — the
+  // container has no frameLocator of its own, and the `and` predicate shares
+  // the target's. This is the row that catches a parser attaching the frame to
+  // the container or dropping it off the predicate.
+  roundTrip(
+    {
+      k: "role",
+      role: "button",
+      name: "Edit",
+      nth: 1,
+      frame: [{ k: "name", v: "f" }],
+      ctx: {
+        within: { k: "testid", v: "card" },
+        withinHasText: "Billing",
+        and: [{ k: "css", v: "[data-qa='edit']" }],
+      },
+    },
+    "frame + within + hasText + and + nth",
+  );
+
   // ── 6. An xpath is read back as an xpath ─────────────────────────────────
   //
   // The generator writes `locator("xpath=…")`, and the parser used to read that

@@ -23,6 +23,8 @@ import { randomUUID } from "crypto";
 import { COMPARE_OPS, regexPatternFromTemplate } from "../../shared/step-semantics.mjs";
 import type { CompareOp } from "../../shared/step-semantics.mjs";
 import { parseTestIdSelector } from "../../shared/testid-attr.mjs";
+import { parseFrameSelector } from "../../shared/frame-ref.mjs";
+import type { FrameRef } from "../../shared/frame-ref.mjs";
 import { DEFAULT_WAIT_TIMEOUT_MS } from "./script-generator.js";
 import { fromPlaywrightSameSite, isSafeUploadRelPath } from "../recorder/types.js";
 import type {
@@ -436,7 +438,44 @@ const BUILDER_RE = "getByTestId|getByRole|getByLabel|getByPlaceholder|getByText|
  * the CONTAINER's role and name onto the target the moment a chain had two role
  * locators in it. It is given this call's text alone.
  */
-function parseBuilderAt(s: string, idx: number): { locator: Locator; rest: string } | null {
+function parseBuilderAt(
+  s: string,
+  idx: number,
+): { locator: Locator; rest: string; frames: FrameRef[] } | null {
+  // A `(?:page.)?(frameLocator("…").)*` prefix before the builder — an element
+  // inside one or more iframes. Consumed here so both the top-level target
+  // (parseLocator captures the frames) and an `and` predicate parse rather than
+  // falling through to a skip. The generator writes the SAME frame on the
+  // predicate as on the target, so discarding the predicate's copy loses
+  // nothing.
+  const frames: FrameRef[] = [];
+  {
+    let k = idx;
+    const pg = /^page\./.exec(s.slice(k));
+    if (pg) k += pg[0].length;
+    const collected: FrameRef[] = [];
+    let ok = true;
+    while (/^frameLocator\s*\(/.test(s.slice(k))) {
+      const open = s.indexOf("(", k);
+      const close = matchParen(s, open);
+      if (close < 0) { ok = false; break; }
+      const argM = s.slice(open + 1, close).match(/^\s*(['"`])((?:\\.|(?!\1).)*)\1\s*$/);
+      if (!argM) { ok = false; break; }
+      const ref = parseFrameSelector(unescapeLit(argM[2]));
+      if (ref) collected.push(ref);
+      k = close + 1;
+      const dm = /^\s*\./.exec(s.slice(k));
+      if (!dm) { ok = false; break; }
+      k += dm[0].length;
+    }
+    // Advance past the prefix only when it parsed cleanly AND held a frame; a
+    // plain `page.getByRole` leaves `idx` alone so the body's own `(?:page.)?`
+    // handles it exactly as before.
+    if (ok && collected.length > 0) {
+      frames.push(...collected);
+      idx = k;
+    }
+  }
   const m = s.slice(idx).match(new RegExp(`^(?:page\\.)?(${BUILDER_RE})\\s*\\(`));
   if (!m) return null;
   const kind = m[1];
@@ -489,7 +528,7 @@ function parseBuilderAt(s: string, idx: number): { locator: Locator; rest: strin
     const tid = parseTestIdSelector(locator.v ?? "");
     if (tid) locator = { k: "testid", attr: tid.attr, v: tid.value };
   }
-  return { locator, rest: s.slice(end + 1) };
+  return { locator, rest: s.slice(end + 1), frames };
 }
 
 /**
@@ -500,7 +539,7 @@ function parseBuilderAt(s: string, idx: number): { locator: Locator; rest: strin
  */
 function parseLocator(expr: string): { locator: Locator; rest: string } | null {
   // Match the first locator-builder call.
-  const m = expr.match(new RegExp(`(?:page\\.)?(${BUILDER_RE})\\s*\\(`));
+  const m = expr.match(new RegExp(`(?:page\\.)?(?:frameLocator|${BUILDER_RE})\\s*\\(`));
   if (!m || m.index === undefined) return null;
   const first = parseBuilderAt(expr, m.index);
   if (!first) return null;
@@ -582,6 +621,10 @@ function parseLocator(expr: string): { locator: Locator; rest: string } | null {
     locator = { ...locator, nth: parseInt(nthM[1], 10) };
     rest = rest.slice(nthM[0].length);
   }
+  // The frame path belongs to the TARGET, attached last so a chained
+  // container (which becomes `ctx.within`) does not carry it. `first.frames`
+  // are the hops `parseBuilderAt` consumed before the first builder.
+  if (first.frames.length > 0) locator = { ...locator, frame: first.frames };
   return { locator, rest };
 }
 
@@ -2092,7 +2135,7 @@ function parseBody(
     }
 
     // page.<locator>.<action>(...)  (page. prefix optional)
-    const locM = rest.match(/^[\s;]*(?:await\s+|return\s+)?(?:page\.)?(getByTestId|getByRole|getByLabel|getByPlaceholder|getByText|locator)\s*\(/);
+    const locM = rest.match(/^[\s;]*(?:await\s+|return\s+)?(?:page\.)?(getByTestId|getByRole|getByLabel|getByPlaceholder|getByText|locator|frameLocator)\s*\(/);
     if (locM) {
       // Find the locator builder's matching close paren in `src`.
       const locOpen = i + locM[0].length - 1;

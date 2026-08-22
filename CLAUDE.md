@@ -93,6 +93,12 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      inverse beside it. The trainer's oracle counts only the
                      recorded attribute; counting all three is how a step
                      could be unique live and match nothing on every run.
+                     frame-ref.mjs is that shape for an iframe in a locator's
+                     frame path: frameSelector spells `frameLocator(<sel>)` and
+                     parseFrameSelector reads it back — one spelling for the
+                     generator, the parser and the step list, so a hand edit of a
+                     framed step is not dropped. Engine only; the trainer does not
+                     yet capture inside a frame (docs/IFRAMES.md).
                      a11y-rollup.mjs is that shape a third time, and it retired two
                      hand-copies rather than adding a third: violationKey/keysOf lived
                      in main/services/a11y-diff.ts AND renderer/lib/a11y-format.ts,
@@ -185,8 +191,9 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 
 **A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS — or a real navigation — gets checked: `click-navigation.spec.ts` (a click that changes route is recorded, including one a client-side router intercepts; the failure it was written against loses six clicks out of six and jsdom cannot host it, because nothing there has a navigation that destroys the document mid-read), `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `dialog-lifecycle.spec.ts` (whether the dialog that started a recording is still on top of the app afterwards — the existing recording spec invokes `recorder:start` over IPC, so it opens no dialog and could never see one left behind), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app), `verified-steps.spec.ts` (that an AI-proposed step is actually TRIED on the live page before it is inserted, that the first failure stops the rest, and that capture does not record the try a second time — a live session acting on a real page, which nothing in jsdom can host). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
 
-**Four specs there are not about windows at all.** `assert-parity.spec.ts`,
-`context-parity.spec.ts`, `shadow-parity.spec.ts` and `step-progress.spec.ts`
+**Five specs there are not about windows at all.** `assert-parity.spec.ts`,
+`context-parity.spec.ts`, `shadow-parity.spec.ts`, `step-progress.spec.ts` and
+`frame-parity.spec.ts`
 — the second answers the neighbouring question, not
 "what does this step MEAN" but "which element does it POINT AT". Element context
 is resolved twice, by a DOM walk in the trainer (`ctxFilter` inside `matchesFor`)
@@ -220,6 +227,16 @@ crawl run, where the fixtures take every action's location off the spec, NO step
 was reported and the progress bar never left the first one. The laptop-speed
 half is `check:step-progress`. **Changing what reports a step — the reporter's
 categories, the fixture's wrapper, the marker format? Add a row.**
+
+**`frame-parity.spec.ts`** is the fourth, and the iframe engine's authority: the
+emitted `frameLocator` chain, executed by real Playwright, must resolve the
+element the recorder meant — one hop, two hops, and with element context inside
+the frame. `frame-engine.test.ts` pins the emission SHAPE in Node, but the shape
+is only right if Playwright's `frameLocator` resolves it the way the generator
+assumes, and a model of that cannot settle it. The trainer cannot yet capture
+inside a frame (see docs/IFRAMES.md); this proves a hand-written, AI-written or
+imported framed step RUNS. **Changing `root()`, `FrameRef`/`frameSelector`, or
+the parser's `frameLocator` reader? Add a row.**
 
 **`check:shell-drift` has retired itself.** It guarded the Glaze tree and the Electron tree against drifting apart, and on 2026-08-09 they became one: `main` carries no `@glaze/*` dependency, and the stale `shell/electron` branch was deleted (preserved as the tag `archive/shell-electron`). The script was written to expect exactly this — with no counterpart ref it prints `nothing to compare` and exits 0, deliberately rather than failing, because a guard that goes red because its problem was *solved* trains people to ignore it. Leave it wired up: it costs nothing and it is what would notice a second shell reappearing.
 

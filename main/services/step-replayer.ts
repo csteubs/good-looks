@@ -529,6 +529,21 @@ export function buildReplayScript(step: Step): string {
       log("info", "Step " + (step.index_ ?? "") + " skipped — disabled");
       return { ok: true, error: "Skipped — disabled" };
     }
+    // A step whose element is inside an iframe cannot be previewed here: this
+    // script runs in the TOP document, matchesFor scans only it, and resolving
+    // a framed locator against the top document would act on the wrong element
+    // (or none) while reporting a verdict. Refuse OUT LOUD — the run resolves
+    // it through frameLocator, which the trainer's injected world has no
+    // equivalent for. NO BACKTICKS in this comment: it lives inside the
+    // buildReplayScript template literal. See docs/IFRAMES.md.
+    if (
+      (step.locator && step.locator.frame && step.locator.frame.length) ||
+      (step.toLocator && step.toLocator.frame && step.toLocator.frame.length)
+    ) {
+      var msg = "This step is inside an iframe — the trainer cannot preview it (the run resolves it through frameLocator). Use Run test to check it.";
+      log("warn", msg);
+      return { ok: false, error: msg };
+    }
     if (t === "if") {
       var met = evalCondition();
       log("info", met ? "block WILL run" : "block will be SKIPPED");

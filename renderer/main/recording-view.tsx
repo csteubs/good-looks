@@ -1218,14 +1218,7 @@ export function RecordingView() {
             return s ? describeStep(s) : undefined;
           })()}
           onApply={(loc) => {
-            // Same element, new locator — so the web-component mark travels
-            // with it, or the retarget rule in updateStep would clear it.
-            if (refiningStepId) {
-              updateStep(refiningStepId, {
-                locator: loc,
-                ...(picked.shadow ? { shadow: true } : {}),
-              });
-            }
+            if (refiningStepId) updateStep(refiningStepId, { locator: loc });
           }}
           onClose={() => {
             clearPicked();

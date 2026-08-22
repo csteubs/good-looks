@@ -14,6 +14,8 @@ import type { ProxySource, ProxyTraffic } from "../../shared/proxy-config.mjs";
 // the heal fixture and the renderer's locator renderings — see the header of
 // `shared/testid-attr.mjs`.
 import { testIdOverride, type TestIdAttributeOverride } from "../../shared/testid-attr.mjs";
+import { isFrameRefKind, type FrameRef } from "../../shared/frame-ref.mjs";
+export type { FrameRef };
 // How a variable's value is compared. In shared/ because the generator, the
 // injected replayer and the renderer's step list all have to mean the same
 // thing by "starts with" - see the header of shared/step-semantics.mjs.
@@ -304,6 +306,23 @@ export interface Locator {
   /** User-pinned disambiguation. Absent on the overwhelming majority of
    *  locators, and absent on every locator recorded before this existed. */
   ctx?: LocatorContext;
+  /**
+   * Frames to descend through, OUTERMOST FIRST, before resolving this locator.
+   * Absent (the overwhelming case) means the top document, and the generator
+   * emits nothing extra — so every test on disk regenerates byte-identically.
+   * Present, it emits one `frameLocator(<selector>)` per hop.
+   *
+   * An array, not a single ref, because nested iframes are real (a payment
+   * widget inside a checkout embed) and a single ref would have to be widened
+   * later by everything that reads it. Depth-capped at MAX_FRAME_DEPTH.
+   *
+   * The trainer cannot yet CAPTURE a framed click (see docs/IFRAMES.md), so in
+   * practice this reaches the model from a hand edit, an AI-written step, or an
+   * imported spec's `frameLocator` prefix — each of which the generator must
+   * run and the parser must read. The per-step-replayer and Auto-Heal DECLINE
+   * a framed step rather than resolving it against the wrong document.
+   */
+  frame?: FrameRef[];
 }
 
 export type AssertKind =
@@ -463,17 +482,6 @@ export interface Step {
    *  for targets that are covered or animating BY DESIGN. Off by default:
    *  strictness catches real bugs. */
   force?: boolean;
-  /** The element was recorded inside a web component (a shadow tree). A fact
-   *  about where it lives, stamped by the capture script and shown as a chip:
-   *  it changes nothing the step emits, because Playwright pierces open roots
-   *  on its own. What it explains is the ABSENCE of an XPath fallback — an
-   *  xpath for such an element is relative to its root and resolves to
-   *  nothing in any engine, so none is ever recorded. Cleared when the step is
-   *  retargeted, like `fingerprint`, because the mark describes the element
-   *  and not the step. Not round-tripped by the spec parser (nothing in the
-   *  source carries it), so a hand-edited spec loses it — the same trade as
-   *  `fingerprint`. */
-  shadow?: boolean;
   /** attribute name for an "attribute" assertion */
   attr?: string;
   /** CSS property for a "css" assertion, as a KEBAB-case name
@@ -649,8 +657,6 @@ export interface RawStep {
   text?: string;
   soft?: boolean;
   force?: boolean;
-  /** recorded inside a web component (see Step.shadow) */
-  shadow?: boolean;
   attr?: string;
   cssProp?: string;
   cssMatch?: CssMatch;
@@ -1299,6 +1305,12 @@ export const MAX_MATCH_INDEX = 1000;
  *  rather than a person, and every entry is a locator the generator emits into
  *  source Playwright executes. */
 export const MAX_CONTEXT_PREDICATES = 8;
+
+/** How deep a locator's frame path may nest. Three is generous — a payment
+ *  widget inside a checkout embed is two — and deeper nesting is a page
+ *  problem, not a test problem. A boundary bound, not a style one: each ref
+ *  becomes a `frameLocator` in executed source. */
+export const MAX_FRAME_DEPTH = 3;
 /** Disambiguating properties offered for one picked element. The page chooses
  *  how many attributes and ancestors an element has, so this is a bound on a
  *  page-controlled list; the capture script caps its own scan well below it. */
@@ -1346,7 +1358,11 @@ function bool(v: unknown): boolean | undefined {
  * inner call passes `false` and any `ctx` on a context locator is dropped
  * rather than recursed into.
  */
-export function normalizeLocator(input: unknown, allowContext = true): Locator | undefined {
+export function normalizeLocator(
+  input: unknown,
+  allowContext = true,
+  allowFrame = true,
+): Locator | undefined {
   if (!input || typeof input !== "object") return undefined;
   const l = input as Partial<Locator>;
   const k = oneOf(l.k, LOCATOR_KINDS);
@@ -1379,11 +1395,54 @@ export function normalizeLocator(input: unknown, allowContext = true): Locator |
   // runs — so the bound admits exactly it and nothing below.
   const nth = int(l.nth, -1, MAX_MATCH_INDEX);
   if (nth !== undefined) out.nth = nth;
+  // A frame path travels on the locator itself, so it is carried on a container
+  // and an `and` predicate too — but only the OUTER locator's frame is emitted
+  // (the whole chain resolves inside one frame), which is why the generator
+  // reads `loc.frame` and not the container's. Rebuilt, not filtered, like
+  // everything else on this boundary: an unknown ref kind is dropped, the array
+  // is depth-capped, and each `v` is bounded.
+  // A container and an `and` predicate resolve in the SAME frame as the target
+  // and never carry their own path — the generator emits the frame once, on the
+  // outer chain. So frame is read only for a top-level locator (allowFrame),
+  // keeping the model canonical: one place a frame can live, one heal-map key.
+  if (allowFrame) {
+    const frame = normalizeFrameRefs(l.frame);
+    if (frame) out.frame = frame;
+  }
   if (allowContext) {
     const ctx = normalizeLocatorContext(l.ctx);
     if (ctx) out.ctx = ctx;
   }
   return out;
+}
+
+/**
+ * Rebuild a locator's frame path from known keys.
+ *
+ * Same rebuild-don't-filter discipline as the rest of this boundary: an
+ * unrecognised ref `k` drops that ref (not the array), a non-string `v` drops
+ * it, the value is length-bounded because it lands inside a `frameLocator`
+ * selector in executed source, and the array is capped at MAX_FRAME_DEPTH.
+ * Returns undefined for an empty result so absent and empty are the same value
+ * — an empty `frame: []` would round-trip through the generator as `page` and
+ * the parser as absent, so a step would compare unequal to its own regenerated
+ * self.
+ */
+export function normalizeFrameRefs(input: unknown): FrameRef[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const out: FrameRef[] = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as Partial<FrameRef>;
+    if (!isFrameRefKind(r.k)) continue;
+    const v = str(r.v);
+    // Non-empty: an empty css ref would emit `frameLocator("")`, and an empty
+    // name/url/testid ref pins nothing.
+    if (!v) continue;
+    out.push({ k: r.k, v });
+    if (out.length >= MAX_FRAME_DEPTH) break;
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 /**
@@ -1399,7 +1458,7 @@ function normalizeLocatorContext(input: unknown): LocatorContext | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
   const c = input as Partial<LocatorContext>;
   const out: LocatorContext = {};
-  const within = normalizeLocator(c.within, false);
+  const within = normalizeLocator(c.within, false, false);
   if (within) out.within = within;
   // Only meaningful as a filter ON the container — see LocatorContext. Read
   // after `within` so this reads as the dependency it is.
@@ -1410,7 +1469,7 @@ function normalizeLocatorContext(input: unknown): LocatorContext | undefined {
   if (Array.isArray(c.and)) {
     const and: Locator[] = [];
     for (const p of c.and) {
-      const loc = normalizeLocator(p, false);
+      const loc = normalizeLocator(p, false, false);
       if (loc) and.push(loc);
       if (and.length >= MAX_CONTEXT_PREDICATES) break;
     }
@@ -1546,7 +1605,6 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   if (waitUntil) out.waitUntil = waitUntil;
   if (bool(s.soft)) out.soft = true;
   if (bool(s.force)) out.force = true;
-  if (bool(s.shadow)) out.shadow = true;
 
   // A CSS property name is checked for SHAPE, not merely length-capped like the
   // other free strings: it is the one string field whose grammar is known, and
@@ -1719,7 +1777,6 @@ export function normalizePickedElement(input: unknown): PickedElement | null {
   const neighborText = str(p.neighborText);
   if (text !== undefined) out.text = text;
   if (neighborText !== undefined) out.neighborText = neighborText;
-  if (p.shadow === true) out.shadow = true;
   return out;
 }
 
@@ -2588,9 +2645,6 @@ export interface PickedElement {
   text?: string;
   /** nearest preceding heading/label text */
   neighborText?: string;
-  /** the element lives inside a web component — a step authored from this
-   *  pick carries it as `Step.shadow` */
-  shadow?: boolean;
 }
 
 /**

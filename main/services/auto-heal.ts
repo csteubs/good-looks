@@ -134,14 +134,7 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
   // tag) so we don't miss the intended target, then score + rank them.
   function collectElements() {
     var sel = "button, a[href], input, select, textarea, [role], [data-testid], [data-test-id], [data-test], [aria-label], [tabindex]";
-    // \`scanAll\`, not \`document.querySelectorAll\`: the latter stops at a
-    // shadow boundary, so a control inside a web component could never be
-    // PROPOSED even though \`identifiesOnly\` (through the same piercing
-    // \`matchesFor\`) would have judged its locator unique. A heal that can
-    // see the old element's replacement only in the light DOM silently gives
-    // up on every page built from components. Uncapped here (GL_SCAN_LIMIT
-    // above), so the slice is the whole page.
-    var list = scanAll(sel);
+    var list = Array.prototype.slice.call(document.querySelectorAll(sel));
     // Keep only visible elements (a hidden target can't be the intended one
     // for an action step).
     //
@@ -432,6 +425,14 @@ export async function healStep(
     autoApplied: false,
   };
   if (!step.locator) return base;
+  // A framed locator resolves through frameLocator at run time, but the heal
+  // probe scans the TOP document only — it cannot see inside an iframe, so
+  // every candidate it proposed would point at the wrong document. Decline
+  // with a stated reason rather than healing against the wrong scope. See
+  // docs/IFRAMES.md.
+  if (step.locator.frame && step.locator.frame.length > 0) {
+    return { ...base, error: "Auto-Heal does not run inside an iframe — the probe scans the top document only." };
+  }
 
   const hints = extractPastHints(pastEntries, step.id);
   const retries = Math.max(1, Math.min(settings.autoHealRetries, 10));

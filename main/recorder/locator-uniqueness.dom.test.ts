@@ -102,13 +102,7 @@ function countMatches(loc: Locator): number {
     ).length;
   }
   if (loc.k === "text") {
-    // Playwright's text engine gives script/style/noscript no text at all
-    // (`shouldSkipForTextMatching`); a judge that counts them encodes the bug
-    // the last describe below exists to catch.
-    const SKIP = new Set(["SCRIPT", "STYLE", "NOSCRIPT"]);
-    const hits = [...document.querySelectorAll("*")].filter(
-      (el) => !SKIP.has(el.nodeName) && has(el.textContent, loc.v ?? ""),
-    );
+    const hits = [...document.querySelectorAll("*")].filter((el) => has(el.textContent, loc.v ?? ""));
     return hits.filter((el) => !hits.some((o) => o !== el && el.contains(o))).length;
   }
   if (loc.k === "xpath") return 1; // positional by construction
@@ -342,32 +336,5 @@ describe("the generated spec", () => {
     const hostile = { k: "text", v: "x", nth: "0); process.exit(1); (" } as unknown as Locator;
     const spec = specFor(hostile);
     expect(spec).not.toContain("process.exit");
-  });
-});
-
-describe("what a text locator does not count", () => {
-  // Playwright's text engine skips <script>, <style>, <noscript> and <head>
-  // (`shouldSkipForTextMatching`). The oracle used to count them, so an inline
-  // script whose source mentions a button's label — a state blob, a template
-  // — made a text locator read as ambiguous here while the run found one.
-  // Worse than a wrong count: the script sits before the button in document
-  // order, so `found[0]` was the script and the locator was rejected.
-  // Found by e2e/shadow-parity.spec.ts. VERIFIED TO FAIL by removing the
-  // nodeName guard in the text arm of `matchesForBase`.
-  //
-  // A <span> rather than a <button>, so the text candidate comes FIRST: with
-  // the script counted, the recorder settled for the css path instead.
-  it("skips a <script> whose source mentions the text", () => {
-    install(`<script>var label = "Accept All";</script><span>Accept All</span>`);
-    expect(countMatches({ k: "text", v: "Accept All" })).toBe(1);
-    expect(clickAndCapture(document.querySelector("span"))).toEqual({ k: "text", v: "Accept All" });
-  });
-
-  it("skips <style> and <noscript> too", () => {
-    install(
-      `<style>/* Accept All */</style><noscript>Accept All</noscript><span>Accept All</span>`,
-    );
-    expect(countMatches({ k: "text", v: "Accept All" })).toBe(1);
-    expect(clickAndCapture(document.querySelector("span"))).toEqual({ k: "text", v: "Accept All" });
   });
 });

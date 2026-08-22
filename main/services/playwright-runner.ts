@@ -541,6 +541,10 @@ export function buildHealMap(steps: Step[]): Record<string, unknown> {
   const map: Record<string, unknown> = {};
   steps.forEach((step, index) => {
     if (!step.locator || step.disabled) return;
+    // Framed steps are excluded from the run-time heal fixture too: the probe
+    // is a top-document query and cannot reach inside an iframe. A key that
+    // never gets a probe simply is not healed, which is the honest outcome.
+    if (step.locator.frame && step.locator.frame.length > 0) return;
     const key = healKeyFor(step.locator);
     // First step wins on a collision. Two steps with an identical locator act
     // on the same element, so they'd share a fingerprint anyway.
