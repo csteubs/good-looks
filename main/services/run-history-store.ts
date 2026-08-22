@@ -40,6 +40,16 @@ import {
 } from "./recorder-settings-store.js";
 import { redactWithSnapshot } from "./secret-redaction.js";
 import {
+  RUN_HISTORY_CAP,
+  PRUNED_DAYS_KEPT,
+  dayStartOf,
+  emptyPrunedTally,
+  foldPrunedRun,
+  readPrunedTally,
+  type PrunedDay,
+  type PrunedTally,
+} from "../../shared/run-history-rules.mjs";
+import {
   normalizeRunTrigger,
   type RunTrigger,
 } from "../../shared/run-trigger.mjs";
@@ -52,27 +62,11 @@ import type {
   TestSpeed,
 } from "../recorder/types.js";
 
-/**
- * How many run RECORDS the index keeps.
- *
- * It was 1000, and that number was really a LOG budget wearing a record
- * budget's clothes: pruning deleted the record and its .log together, so the
- * cheap thing (a ~700-byte record) was made as scarce as the expensive one (its
- * console output, tens of KB). Everything counted off this list inherited the
- * ceiling — the Stats board read 1000 total runs, 1000 runs ago, and would have
- * read 1000 forever.
- *
- * The two are separate dials now. This one is bounded by what the file costs to
- * REWRITE, because `writeAll` rewrites it whole on every save (measured on this
- * machine, representative records): 1k ≈ 0.7 MB and 7 ms, 10k ≈ 7 MB and 55 ms,
- * 50k ≈ 35 MB and 360 ms, 100k ≈ 69 MB and 700 ms. At 50k that is a third of a
- * second of bookkeeping per run — chosen deliberately for depth of history, and
- * the reason `ingest` no longer re-reads the file to find the run it was just
- * handed.
- *
- * The log budget is `runLogRetainedRuns`, a user setting.
- */
-const MAX_RECORDS = 50_000;
+/** How many run records this index keeps. Defined in
+ *  `shared/run-history-rules.mjs` because the standalone MCP server writes the
+ *  same file and had drifted 50x below it — aliased here so the rest of this
+ *  file reads as it always did. */
+const MAX_RECORDS = RUN_HISTORY_CAP;
 const SEARCH_RESULT_CAP = 200;
 const SNIPPET_RADIUS = 80; // chars of context on each side of the first match
 
@@ -136,137 +130,21 @@ function logByteSize(file: string): number {
  *  record, so once a thousand runs fit inside a week those windows lose runs to
  *  the cap exactly as the total did — "1000 runs this week" on a week that had
  *  1019. A flat counter cannot repair that; only a per-day one can. */
-interface PrunedTally {
-  runs: number;
-  passed: number;
-  failed: number;
-  days: PrunedDay[];
-  /** Whether the one-time seed from the metrics DB has run.
-   *
-   *  It has to be recorded, because the seed would otherwise repeat on every
-   *  launch — and it must not: `resetStats` and `deleteAll` zero this tally, and
-   *  a seed that ran again on the next launch would resurrect the history the
-   *  user just asked the app to forget, out of a database that is not the store
-   *  of record for it. Seed once, then the counter is authoritative. */
-  adopted: boolean;
-}
-
-interface PrunedDay {
-  /** local midnight of the day the runs started, epoch ms */
-  dayStart: number;
-  runs: number;
-  passed: number;
-  failed: number;
-}
-
-/** How many days of breakdown to keep. The digest reads fourteen (this week and
- *  the one before) and the chart seven; sixty is room for a view that wants a
- *  month without the file growing without limit. Older days are already in the
- *  flat totals, which is what the cards and the pass rate read. */
-const PRUNED_DAYS_KEPT = 60;
-
-/** Local midnight for a timestamp — the same bucketing `buildDailyBuckets` does
- *  in the renderer, kept as a NUMBER rather than a formatted key so the two
- *  cannot disagree about zero padding or separator. Both run on one machine in
- *  one timezone, which is what makes a local day the right bucket. */
-function dayStartOf(ms: number): number {
-  const d = new Date(ms);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
-/** A count read back off disk: a non-negative whole number, or nothing. */
-function count(v: unknown): number | null {
-  return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null;
-}
-
-/** A TIMESTAMP read back off disk. Signed, unlike `count` — epoch ms before
- *  1970 are negative, and validating a day bucket with the counter's rule threw
- *  the whole breakdown away for a clock the app does not control. No real run
- *  starts in 1969; a machine whose clock says so is exactly the case where
- *  keeping the other days beats discarding them. */
-function whole(v: unknown): number | null {
-  return typeof v === "number" && Number.isInteger(v) ? v : null;
-}
-
-/**
- * The per-day breakdown, or nothing at all.
- *
- * Same all-or-none rule as the totals, one level down: a bucket that survived
- * validation while its neighbour did not would make the digest state a week
- * that never happened. Dropping the breakdown degrades the two windowed figures
- * to what they showed before it existed — an undercount that is at least a
- * count — while the lifetime totals beside them stay exact.
- */
-function readDays(raw: unknown, total: number): PrunedDay[] {
-  if (!Array.isArray(raw)) return [];
-  const out: PrunedDay[] = [];
-  let sum = 0;
-  for (const entry of raw as Partial<PrunedDay>[]) {
-    const dayStart = whole(entry?.dayStart);
-    const runs = count(entry?.runs);
-    const passed = count(entry?.passed);
-    const failed = count(entry?.failed);
-    if (dayStart === null || runs === null || passed === null || failed === null) return [];
-    if (passed + failed !== runs) return [];
-    out.push({ dayStart, runs, passed, failed });
-    sum += runs;
-  }
-  // The days are a SUBSET of the total by construction (only the most recent
-  // are kept). More days than runs is a file describing something that cannot
-  // have happened.
-  if (sum > total) return [];
-  return out.sort((a, b) => a.dayStart - b.dayStart);
-}
-
 /**
  * The tally, or zeroes.
  *
- * ALL THREE FIELDS OR NONE, and the check that pinned this is the reason. The
- * first version sanitised each field on its own, so a file with a plausible
- * `failed` and a nonsense `runs` produced a total SMALLER than the outcome
- * counts sitting beside it on the same row — three numbers on one screen that
- * cannot all be true. A corrupt counter should understate the history, which is
- * self-correcting from the next prune onwards; it should never make the screen
- * incoherent. The same reasoning rejects a file whose parts don't add up.
+ * The VALIDATION lives in `shared/run-history-rules.mjs`, with the cap and the
+ * day bucketing, because the standalone MCP server writes this same file and
+ * had drifted to the pre-#158 policy — see that module's header. Reading the
+ * file stays here; what is shared is what the bytes are allowed to mean.
  */
 function readTally(): PrunedTally {
-  const zero = { runs: 0, passed: 0, failed: 0, days: [], adopted: false };
   try {
-    const parsed = JSON.parse(fs.readFileSync(prunedTallyFile(), "utf-8")) as Partial<PrunedTally>;
-    const runs = count(parsed.runs);
-    const passed = count(parsed.passed);
-    const failed = count(parsed.failed);
-    if (runs === null || passed === null || failed === null) return zero;
-    if (passed + failed !== runs) return zero;
-    return {
-      runs,
-      passed,
-      failed,
-      days: readDays(parsed.days, runs),
-      // Absent means "not yet" — an upgrade from before the seed existed.
-      adopted: parsed.adopted === true,
-    };
+    return readPrunedTally(JSON.parse(fs.readFileSync(prunedTallyFile(), "utf-8")));
   } catch {
     // Absent (nothing has been pruned yet) or unreadable. Same answer.
-    return zero;
+    return emptyPrunedTally();
   }
-}
-
-/** Add one pruned run to its day's bucket, keeping the most recent
- *  PRUNED_DAYS_KEPT days. Buckets stay sorted oldest-first. */
-function tallyDay(days: PrunedDay[], startedAt: number, passed: boolean): PrunedDay[] {
-  const dayStart = dayStartOf(startedAt);
-  const bucket = days.find((d) => d.dayStart === dayStart);
-  if (bucket) {
-    bucket.runs++;
-    if (passed) bucket.passed++;
-    else bucket.failed++;
-    return days;
-  }
-  const next = [...days, { dayStart, runs: 1, passed: passed ? 1 : 0, failed: passed ? 0 : 1 }];
-  next.sort((a, b) => a.dayStart - b.dayStart);
-  return next.slice(-PRUNED_DAYS_KEPT);
 }
 
 /** Best-effort, and deliberately so. This is called from inside `append`, on the
@@ -332,12 +210,10 @@ function pruneToCap(all: RunRecord[]): void {
     const rec = all.shift();
     if (!rec) break;
     safeUnlink(rec.logFile);
-    if (rec.kind === "baseline-update") continue; // an event, not a run
-    tally.runs++;
-    if (rec.status === "passed") tally.passed++;
-    else tally.failed++;
-    tally.days = tallyDay(tally.days, rec.startedAt, rec.status === "passed");
-    dropped++;
+    // `foldPrunedRun` answers whether the record counted — a baseline update is
+    // an event, not a run — so the tally file is rewritten only when something
+    // it describes actually changed.
+    if (foldPrunedRun(tally, rec)) dropped++;
   }
   if (dropped > 0) writeTally(tally);
 }

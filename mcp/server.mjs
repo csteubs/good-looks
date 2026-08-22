@@ -41,6 +41,10 @@ import { routineBlockedReason, routineRunPlan } from "../shared/routine-plan.mjs
 import { describeSchedule } from "../shared/routine-schedule.mjs";
 import { buildQueue } from "../shared/batch-queue.mjs";
 import {
+  listRuns as listRunsFrom,
+  saveRunRecord as saveRunRecordTo,
+} from "./run-history.mjs";
+import {
   runEvidence,
   siblingRuns,
   stepBrowserMatrix,
@@ -77,7 +81,6 @@ const RUN_TIMEOUT_MS = 5 * 60 * 1000;
  *  it, a test given a long timeout dies here first and reports as a hard kill
  *  rather than as the clean per-test timeout Playwright was about to write. */
 const PROCESS_TIMEOUT_BUFFER_MS = 60_000;
-const MAX_RUN_RECORDS = 1000;
 const MAX_BATCH_RECORDS = 50; // mirrors main/services/batch-history-store.ts
 const RUN_BROWSERS = ["chromium", "firefox", "webkit"];
 const OUTPUT_TAIL_CHARS = 4000;
@@ -106,7 +109,14 @@ function listTests() {
 }
 
 function listRuns() {
-  return readJsonFile(dataDir, "recorder/run-history.json", []);
+  return listRunsFrom(dataDir);
+}
+
+/** Bound to this process's data dir. The pruning rules live in
+ *  `mcp/run-history.mjs` so they can be driven against a fixture — see that
+ *  file's header for the drift that made it necessary. */
+function saveRunRecord(record, logText) {
+  saveRunRecordTo(dataDir, record, logText);
 }
 
 function listBatches() {
@@ -217,26 +227,6 @@ function ensurePlaywrightConfig(scriptsDir) {
   fs.writeFileSync(tmp, playwrightConfigSource, "utf-8");
   fs.renameSync(tmp, configPath);
   return configPath;
-}
-
-function saveRunRecord(record, logText) {
-  fs.mkdirSync(path.dirname(record.logFile), { recursive: true });
-  fs.writeFileSync(record.logFile, logText, "utf-8");
-
-  const runs = listRuns();
-  runs.push(record);
-  runs.sort((a, b) => a.startedAt - b.startedAt);
-  while (runs.length > MAX_RUN_RECORDS) {
-    const dropped = runs.shift();
-    if (dropped) {
-      try {
-        fs.rmSync(dropped.logFile, { force: true });
-      } catch {
-        // ignore
-      }
-    }
-  }
-  writeJsonFile(dataDir, "recorder/run-history.json", runs);
 }
 
 /**

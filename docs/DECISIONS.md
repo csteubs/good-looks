@@ -10,6 +10,53 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-22 — An MCP run was deleting 49,000 run records, and nothing could see it
+
+`mcp/server.mjs` and `runHistoryStore.append` both append to
+`recorder/run-history.json`. PR #158 ("Count every run in the Stats totals, not
+the last 1000") raised the app's cap from 1000 to 50000 and built the pruned
+tally underneath it — **37 files, none of them under `mcp/`**. The server kept
+the pre-#158 policy ever since: cap 1000, and no tally.
+
+So one MCP `run_test` against a store the app had grown past a thousand records
+truncated the index to a thousand, deleted the dropped runs' log files, and —
+because the tally was never written — took those runs out of the lifetime totals
+for good. Measured against a seeded store: **49,001 records pruned by a single
+append.** Nothing throws. The Stats board simply reports a smaller history than
+the machine actually has, which is the exact bug #158 existed to end, reopened
+from the other process.
+
+**The evidence that it was an oversight rather than a decision** is sitting on
+the next line. `MAX_BATCH_RECORDS = 50` carries the comment "mirrors
+main/services/batch-history-store.ts", and it does still match. That comment is
+a person doing by hand what a shared constant does by construction — and the run
+cap is what happened the one time nobody did it.
+
+**Why nothing caught it.** Every `check:mcp-*` either reads source or imports a
+pure module; none could append a run and look at the file, because
+`saveRunRecord` lived inside `server.mjs` and importing that starts a server on
+stdio. This is the same blindness recorded for the six-month data-dir outage: a
+suite that only inspects a program cannot tell you the program is doing
+something wrong. So the function moved to `mcp/run-history.mjs` — the precedent
+`mcp/run-plan.mjs` already set — with `dataDir` as a parameter rather than a
+module constant, which is what makes it drivable against a fixture.
+
+**What is shared, and what is not.** The fs stays on each side: one has a logger
+and an Electron userData path, the other has neither.
+`shared/run-history-rules.mjs` owns the rule — the cap, the day bucketing, the
+all-or-none read, and the fold of one dropped run into the tally. The app's
+store keeps its own reading and writing and lost about 120 lines of logic to the
+move, with `check:run-totals` and `check:retention` unchanged and still green,
+which is the evidence the extraction was faithful.
+
+**The check compares the two writers rather than asserting either number.**
+`check:mcp-run-history` seeds one 50,000-record fixture, drives the MCP's
+appender and the app's `append` from the same starting state, and asserts the
+index length, the pruned count, the pass split and the per-day breakdown all
+match. A check that restated the cap would agree with a typo in it — which is
+the same reasoning `run-totals.check.ts` gives for deliberately mirroring the
+constant rather than importing it, one level up.
+
 ### 2026-08-22 — The logger could crash the process it was logging for
 
 A packaged app showed "A JavaScript error occurred in the main process —
@@ -61,6 +108,7 @@ cannot be the check itself (it has to survive to read the verdict) — hence a
 short-lived launcher in between. The control row asserts the UNGUARDED shape
 really does die in this harness, so the guarded row cannot go quietly vacuous
 if the mechanism ever stops reproducing.
+
 
 ### 2026-08-22 — Who started a run, on one axis, recorded now because it cannot be recorded later
 
