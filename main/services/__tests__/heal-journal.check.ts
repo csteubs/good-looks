@@ -22,7 +22,8 @@ import * as os from "os";
 import * as path from "path";
 
 import { healJournalStore, type HealEntry } from "../heal-journal-store.js";
-import { buildHealMap, healKeyFor } from "../playwright-runner.js";
+import { buildHealMap, collectRunHeals, healKeyFor } from "../playwright-runner.js";
+import { testStore } from "../test-store.js";
 import type { Locator, Step } from "../../recorder/types.js";
 
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "glaze-heal-journal-check-"));
@@ -276,6 +277,75 @@ function main(): void {
   assertEqual(healKeyFor({ k: "role", role: "button" }), "role|button|", "a nameless role keys cleanly");
 
   fs.rmSync(userData, { recursive: true, force: true });
+
+  // ── The run-outcome gate ─────────────────────────────────────────────────
+  //
+  // A mis-heal usually SUCCEEDS at the step, so "the healed step got past" is
+  // not evidence the heal was right — the RUN's outcome is. A heal is baked into
+  // the test on disk only on a PASSING run; on a failing apply-run it is
+  // journalled for review (applied:false) and the locator on disk is left as it
+  // was. Driven through the real `collectRunHeals` against a temp heals.json and
+  // a real test in the store.
+  {
+    const healEvent = {
+      outcome: "healed",
+      stepId: "step-1",
+      stepIndex: 0,
+      stepLabel: 'getByTestId("submit-v1").click()',
+      originalLocator: oldLoc,
+      appliedLocator: newLoc,
+      candidates: [],
+      at: Date.now(),
+    };
+    // A fresh heals.json in a fresh scratch dir per call — collectRunHeals
+    // removes the dir on every path out.
+    const seedHealDir = (): string => {
+      const dir = fs.mkdtempSync(path.join(userData, "heal-scratch-"));
+      fs.writeFileSync(path.join(dir, "heals.json"), JSON.stringify([healEvent]));
+      return dir;
+    };
+    const seedTest = (id: string): void => {
+      testStore.save({
+        id,
+        name: id,
+        url: "https://x.test",
+        createdAt: 1,
+        updatedAt: 1,
+        steps: [{ id: "step-1", type: "click", timestamp: 0, locator: oldLoc } as Step],
+        scriptPath: path.join(userData, "recorder", "scripts", id + ".spec.ts"),
+      });
+    };
+    const stepLoc = (id: string): Locator | undefined =>
+      testStore.get(id)?.steps.find((st) => st.id === "step-1")?.locator;
+
+    // apply + FAILED run: journalled, but the test on disk is untouched.
+    seedTest("hg-fail");
+    const rFail = collectRunHeals("hg-fail", "run-fail", seedHealDir(), "apply", false);
+    assertEqual(rFail.healed, 1, "a heal on a failed run is still counted");
+    assertEqual(stepLoc("hg-fail"), oldLoc, "a failed run does NOT change the locator on disk");
+    const failEntry = healJournalStore.list("hg-fail").find((e) => e.runId === "run-fail");
+    assert(!!failEntry, "the heal on a failed run is journalled for review");
+    assertEqual(failEntry?.applied, false, "…as a suggestion (applied:false), not a change");
+
+    // apply + PASSED run: baked into the test on disk.
+    seedTest("hg-pass");
+    const rPass = collectRunHeals("hg-pass", "run-pass", seedHealDir(), "apply", true);
+    assertEqual(rPass.healed, 1, "a heal on a passing run is counted");
+    assertEqual(stepLoc("hg-pass"), newLoc, "a passing run applies the healed locator to disk");
+    const passEntry = healJournalStore.list("hg-pass").find((e) => e.runId === "run-pass");
+    assertEqual(passEntry?.applied, true, "…and the journal marks it applied");
+
+    // suggest mode never writes, pass or fail — the outcome gate only tightens
+    // apply mode, it does not loosen suggest.
+    seedTest("hg-suggest");
+    collectRunHeals("hg-suggest", "run-suggest", seedHealDir(), "suggest", true);
+    assertEqual(stepLoc("hg-suggest"), oldLoc, "suggest mode leaves the locator alone even on a pass");
+    assertEqual(
+      healJournalStore.list("hg-suggest").find((e) => e.runId === "run-suggest")?.applied,
+      false,
+      "…and journals the suggestion as unapplied",
+    );
+  }
 
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed`);

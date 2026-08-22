@@ -10,6 +10,35 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-22 — A run-time heal is baked into the test only when the whole run passed
+
+mabl's rule, adopted: *if the test passes, the auto-heal is saved; if it fails,
+it is not.* Good Looks applied a run heal whenever the STEP's re-run succeeded
+— and `heal-journal-store.ts`'s own header is the argument against that: a
+mis-heal usually SUCCEEDS. Clicking the wrong button rarely throws, so "the
+healed step got past" is exactly the signal that does not tell you the heal was
+right. The rule therefore persisted the heals most likely to be wrong.
+
+The RUN's overall outcome is the signal that does carry information — a wrong
+heal typically breaks a later step, so the test still fails. `collectRunHeals`
+now takes `runPassed` and gates on `mode === "apply" && runPassed`: on a passing
+apply-run it behaves as before (journal `applied: true`, write the locator to
+disk); on a FAILING apply-run it still journals the heal — so the Heals view
+shows the attempt and the user can apply it if they judge it correct — but as
+`applied: false`, and the locator on disk is left untouched. There is nothing to
+revert because nothing was written. Suggest mode is unchanged: the gate only
+tightens apply mode, it never loosens suggest.
+
+**Why not persist the correct heals on a failed run.** On a failing run some
+heals may be right (the failure is elsewhere), and a smarter rule could try to
+tell which. It was rejected as guessing on top of a guess: the whole reason this
+change exists is that step-level success is not trustworthy, and "which of these
+heals caused the failure" is a harder version of the same untrustworthy
+question. The conservative rule — bake in only what a green run vouches for —
+is the one whose failure mode is a heal the user has to apply by hand, not a
+test that silently retargets. Driven end to end by the run-outcome-gate section
+of `check:heal-journal` (revert-verified).
+
 ### 2026-08-22 — An iframe test is writable and runnable before it is recordable
 
 Round 3, Phase 6, and the ENGINE half of it — the split `docs/IFRAMES.md`
