@@ -10,6 +10,52 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-21 — A report says which step failed, and the log still does not travel
+
+R13 of [plans/test-runner-improvements.md](plans/test-runner-improvements.md).
+All three run-shaped emitters said the same two useless things about a failure:
+an exit code, and an ABSOLUTE PATH to a log on the machine that ran the test. On
+a CI runner that path names a file nobody can open, so the GitHub annotation —
+whose only reason to exist is being navigable — told a reader strictly less than
+the exit code already had.
+
+**This was two changes, and the first is why it had not happened.** `failedLabel`
+was a local variable in `playwright-runner`, computed from the replay, used by
+the desktop notification and the alert webhook, then discarded with the run.
+`RunRecord` had no such field and `shared/emitters.mjs` never referenced one, so
+"turn capture on and the report will name the step" was not true either. The
+label is now persisted through `append`'s rebuild-from-known-keys path, absent
+when unknown rather than empty — only a run that wrote a replay has a per-step
+outcome to read, and `""` would claim the run failed at a step with no name.
+
+**It does not revisit the no-log-inlining decision, and the distinction is
+real.** `shared/emitters.mjs` records why the log stays out: it can be megabytes
+and every JUnit consumer truncates at a different length. A step label and a
+triage reason are neither — they are short, structured fields the app had
+already computed. What was rejected was inlining the LOG, and this inlines
+nothing. **`firstErrorLine` was deliberately left out** even though the plan
+lists it: it is log content, obtaining it means reading every run's log file at
+emit time, and that is a genuine widening of what a report carries rather than a
+formatting change. It can be argued separately, on its own terms.
+
+**The reason resolves to a NAME here, not in the emitters.** `failureReasonId` is
+stored and resolved at display time so renaming a custom reason updates every
+historical run; a report is a display. The emitters are pure and cannot reach the
+custom-reason store, so `report-emitter` resolves once per report and passes the
+name in — the same shape as `redact` being a parameter.
+
+**The step label is the likeliest carrier of a secret in the whole record.** A
+`fill()` step's label contains its value: `getByLabel("Password").fill("hunter2")`
+is an ordinary label. Putting it into a file somebody forwards makes this a
+redaction path, not a formatting change, and all three formats route it through
+the caller's redactor. Pinned by a test that plants a credential in a label and
+asserts it survives in none of them.
+
+**The failure message had no test at all**, which is why it could stay wrong for
+as long as it did — changing all three bodies broke nothing. That gap is closed:
+seven cases now cover the step, the reason, the degradation when no label exists,
+the redaction, and the pipe escape a selector can trip.
+
 ### 2026-08-21 — The run alert carries a link, and the ids that build it are required
 
 R30 of [plans/test-runner-improvements.md](plans/test-runner-improvements.md).

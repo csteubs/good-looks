@@ -77,6 +77,28 @@ function xmlSafe(text) {
 export const NO_REDACTION = (text) => text;
 
 /**
+ * Why a run failed, in one line, from what the RECORD holds.
+ *
+ * THE LOG IS STILL NOT INLINED, and this does not revisit that decision. The
+ * reasoning above is about the log — megabytes, truncated differently by every
+ * consumer. A step label and a triage reason are neither: they are short,
+ * structured fields the app already computed, and they are the two things a
+ * reader of a CI failure actually wants. What was there before was an exit code
+ * and an absolute path to a file on a machine the reader does not have.
+ *
+ * Every part is redacted by the caller's redactor before it lands. A step label
+ * can BE the credential — `getByLabel("Password").fill("hunter2")` is a real
+ * label shape — so this must never be assembled outside a redacted path.
+ */
+function failureSummary(run) {
+  const parts = [];
+  if (run.failedStepLabel) parts.push(`Failed at: ${run.failedStepLabel}`);
+  if (run.failureReason) parts.push(run.failureReason);
+  parts.push(`exit ${run.exitCode ?? 1}`);
+  return parts.join(" · ");
+}
+
+/**
  * JUnit XML — one `<testsuite>`, one `<testcase>` per run.
  *
  * The format every CI reads, and the one with the least room for
@@ -104,9 +126,7 @@ export function junitXml(runs, { suiteName = "Good Looks", redact = NO_REDACTION
     const cls = xmlEscape(xmlSafe(run.testId ?? "test"));
     const time = msToSeconds(run.durationMs ?? 0);
     if (run.status === "failed") {
-      const message = xmlEscape(
-        xmlSafe(redact(`exit ${run.exitCode ?? 1} · log ${run.logFile ?? "(none)"}`)),
-      );
+      const message = xmlEscape(xmlSafe(redact(failureSummary(run))));
       lines.push(`  <testcase classname="${cls}" name="${name}" time="${time}">`);
       lines.push(`    <failure message="${message}" type="failure"/>`);
       lines.push("  </testcase>");
@@ -139,9 +159,11 @@ export function githubAnnotations(runs, { redact = NO_REDACTION } = {}) {
   for (const run of list) {
     if (run.status !== "failed") continue;
     const title = ghEscape(redact(run.testName ?? run.testId ?? "unnamed"));
-    const body = ghEscape(
-      redact(`exit ${run.exitCode ?? 1} after ${run.durationMs ?? 0}ms · log ${run.logFile ?? "(none)"}`),
-    );
+    // The log path is gone deliberately: it was the only navigable thing the
+    // annotation carried and it is an absolute path on the machine that ran the
+    // test, so on a CI runner it named a file nobody could open. An annotation
+    // that says less than the exit code did is worse than none.
+    const body = ghEscape(redact(`${failureSummary(run)} after ${run.durationMs ?? 0}ms`));
     out.push(`::error title=${title}::${body}`);
   }
   return out.length > 0 ? out.join("\n") + "\n" : "";
@@ -177,13 +199,21 @@ export function ticketMarkdown(runs, { title = "Test run report", redact = NO_RE
       : `**${failed.length} of ${list.length} failed.**`,
   );
   if (failed.length > 0) {
-    lines.push("", "| Test | Browser | Duration | Exit |", "| --- | --- | --- | --- |");
+    lines.push(
+      "",
+      "| Test | Failed at | Reason | Browser | Duration |",
+      "| --- | --- | --- | --- | --- |",
+    );
     for (const run of failed) {
       // Pipes are escaped because a test name containing one silently adds a
       // column and shifts every cell after it — a table that renders, wrongly.
+      // The step label needs the same treatment and is the likelier carrier: a
+      // selector can contain almost anything.
       const name = mdCell(redact(run.testName ?? run.testId ?? "unnamed"));
+      const step = mdCell(redact(run.failedStepLabel ?? "—"));
+      const reason = mdCell(redact(run.failureReason ?? `exit ${run.exitCode ?? 1}`));
       lines.push(
-        `| ${name} | ${mdCell(run.runBrowser ?? "chromium")} | ${run.durationMs ?? 0}ms | ${run.exitCode ?? 1} |`,
+        `| ${name} | ${step} | ${reason} | ${mdCell(run.runBrowser ?? "chromium")} | ${run.durationMs ?? 0}ms |`,
       );
     }
   }

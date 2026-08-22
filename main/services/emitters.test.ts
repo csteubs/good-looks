@@ -152,6 +152,78 @@ describe("ticket markdown", () => {
   });
 });
 
+describe("what a failure says (R13)", () => {
+  // Before this, all three formats said the same two useless things: an exit
+  // code, and an ABSOLUTE PATH to a log on the machine that ran the test. On a
+  // CI runner that path names a file nobody can open, so the annotation told a
+  // reader strictly less than the exit code already had. None of this was
+  // asserted, which is why the message could be wrong for as long as it was.
+
+  const failedAtLogin = run({
+    status: "failed",
+    exitCode: 1,
+    failedStepLabel: 'click getByRole("button", { name: "Place order" })',
+    failureReason: "Element not found",
+  });
+
+  it("JUnit names the failing step in the failure message", () => {
+    const xml = junitXml([failedAtLogin]);
+    expect(xml).toContain("Failed at:");
+    expect(xml).toContain("Place order");
+    expect(xml).toContain("Element not found");
+  });
+
+  it("…and no longer carries a log path that is dead on any other machine", () => {
+    expect(junitXml([failedAtLogin])).not.toContain("/runs/r1.log");
+    expect(githubAnnotations([failedAtLogin])).not.toContain("/runs/r1.log");
+  });
+
+  it("the GitHub annotation carries the step, which is the only reason to use the format", () => {
+    const out = githubAnnotations([failedAtLogin]);
+    expect(out).toContain("::error title=Checkout::");
+    expect(out).toContain("Failed at:");
+    expect(out).toContain("Element not found");
+  });
+
+  it("still says something useful when the step is unknown", () => {
+    // A run with no replay has no per-step outcome. The message degrades to the
+    // exit code rather than to an empty string or the word "undefined".
+    const bare = run({ status: "failed", exitCode: 2 });
+    const xml = junitXml([bare]);
+    expect(xml).toContain("exit 2");
+    expect(xml).not.toContain("undefined");
+    expect(xml).not.toContain("Failed at:");
+  });
+
+  it("REDACTS the step label, which can itself be the credential", () => {
+    // `fill()` steps carry their value in the label, so this is not a
+    // hypothetical: the label is the likeliest carrier of a secret in the whole
+    // record, and it now travels into a file somebody forwards.
+    const leaky = run({
+      status: "failed",
+      exitCode: 1,
+      failedStepLabel: 'getByLabel("Password").fill("hunter2")',
+    });
+    expect(junitXml([leaky], { redact: hide })).not.toContain("hunter2");
+    expect(githubAnnotations([leaky], { redact: hide })).not.toContain("hunter2");
+    expect(ticketMarkdown([leaky], { redact: hide })).not.toContain("hunter2");
+  });
+
+  it("the ticket table gains the step and the reason as their own columns", () => {
+    const md = ticketMarkdown([failedAtLogin]);
+    expect(md).toContain("| Test | Failed at | Reason | Browser | Duration |");
+    expect(md).toContain("Place order");
+    expect(md).toContain("Element not found");
+  });
+
+  it("escapes a pipe in a step label, which a selector can easily contain", () => {
+    // Same failure the test-name escape exists for: an unescaped pipe adds a
+    // column and shifts every cell after it — a table that renders, wrongly.
+    const piped = run({ status: "failed", failedStepLabel: 'locator("a|b")' });
+    expect(ticketMarkdown([piped])).toContain('locator("a\\|b")');
+  });
+});
+
 describe("step metrics", () => {
   const rows = [
     { runId: "r1", stepId: "s1", label: "goto", ms: 120 },
