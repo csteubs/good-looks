@@ -48,6 +48,7 @@ import { RunOutput } from "./run-output";
 import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import { ScriptEditor, type LineInlay, type RunLineStatus, type ScriptEditorHandle } from "./script-view";
 import { isScriptDirty, markScriptDirty } from "../lib/script-buffer";
+import { makeGhostSource } from "../lib/ghost-source";
 import { SCRIPT_CHANGED_ON_DISK, isScriptChangedOnDisk } from "../../shared/script-save.mjs";
 import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
@@ -275,6 +276,18 @@ export function TestDetailView() {
     queryKey: ["recorder-settings"],
     queryFn: () => api.recorder.getSettings(),
   });
+  // Ghost text is on while editing and an autocomplete slot is assigned
+  // (Settings → AI → Autocomplete). Settings is another window, so this
+  // cache cannot be invalidated from there; a short staleTime and the
+  // focus refetch are what notice a slot assigned while the editor was open.
+  const llmConfigQuery = useQuery({
+    queryKey: ["llm", "config"],
+    queryFn: () => api.llm.getConfig(),
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
+  const ghostSource = React.useMemo(() => makeGhostSource((p) => api.llm.fim(p)), []);
+  const ghostEnabled = editingScript && Boolean(llmConfigQuery.data?.roles?.autocomplete);
   // Settings → Editor → Font size lands on the two tokens every editor
   // column is sized from (renderer/theme/editor.css). Written on the document
   // so the theme extension's `var()` reads pick it up without a remount.
@@ -1650,6 +1663,7 @@ export function TestDetailView() {
                 lineNumbers={settingsQuery.data?.editorLineNumbers ?? true}
                 tabSize={settingsQuery.data?.editorTabSize ?? 2}
                 inlays={liveInlays}
+                ghost={ghostEnabled ? ghostSource : null}
               />
               <Dialog
                 open={staleOpen}

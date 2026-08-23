@@ -140,3 +140,13 @@
   color: var(--gl-tx-3);
   border-style: dashed;
 }
+
+/* Ghost text — the inline completion after the caret (renderer/main/ghost-text.ts).
+   Comment-coloured and italic so it reads as a suggestion, not as source;
+   `pre` so a multi-line completion keeps its shape. */
+.cm-editor .gl-ghost {
+  color: var(--gl-code-cmt);
+  font-style: italic;
+  white-space: pre;
+  pointer-events: none;
+}
