@@ -21,22 +21,31 @@ describe("llmConfigStore roles", () => {
     fs.rmSync(file, { force: true });
   });
 
-  it("seeds chat and instant from an older file's flat pair, and leaves autocomplete unset", () => {
+  it("seeds chat from an older file's flat pair, and leaves instant and autocomplete unset", () => {
+    // An absent instant slot FOLLOWS chat (resolveSlot falls back to the flat
+    // pair). Seeding a copy here would look the same until chat changed and
+    // instant stayed behind — so the pane's "Same as chat" is spelled by
+    // absence, and absence must survive a round trip.
     write({ provider: "lmstudio", model: "qwen", baseUrls: {} });
     expect(llmConfigStore.get()).toEqual({
       provider: "lmstudio",
       model: "qwen",
       baseUrls: {},
-      roles: { chat: { provider: "lmstudio", model: "qwen" }, instant: { provider: "lmstudio", model: "qwen" } },
+      roles: { chat: { provider: "lmstudio", model: "qwen" } },
     });
   });
 
-  it("a corrupt file is the defaults, with the slots seeded too", () => {
+  it("an instant slot that follows chat keeps following when chat changes", () => {
+    write({ provider: "ollama", model: "llama3", baseUrls: {} });
+    llmConfigStore.set({ provider: "lmstudio", model: "qwen" });
+    expect(llmConfigStore.get().roles).toEqual({ chat: { provider: "lmstudio", model: "qwen" } });
+  });
+
+  it("a corrupt file is the defaults, with the chat slot seeded", () => {
     write("not json");
     fs.writeFileSync(file, "{nope");
     expect(llmConfigStore.get().roles).toEqual({
       chat: { provider: "ollama", model: null },
-      instant: { provider: "ollama", model: null },
     });
   });
 

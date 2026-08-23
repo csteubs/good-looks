@@ -582,6 +582,18 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "lm studio bearer authentication unauthorized 401 credential secret",
   },
   { id: "llm-model", pane: "ai", label: "Model", keywords: "llm ollama claude sonnet opus haiku" },
+  {
+    id: "llm-role-instant",
+    pane: "ai",
+    label: "Instant helpers",
+    keywords: "role slot explain failure classify vision screenshot small fast model",
+  },
+  {
+    id: "llm-role-autocomplete",
+    pane: "ai",
+    label: "Autocomplete",
+    keywords: "ghost text inline completion fim fill in the middle code model editor",
+  },
 
   // Failure reasons
   {

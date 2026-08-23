@@ -141,7 +141,16 @@ describe("the setting index", () => {
 
   it("gives credential and action rows no key", () => {
     // This is what keeps "reset section" away from the API key and the webhook.
-    const keyless = ["anthropic-key", "alert-webhook-url", "prune-now", "debug-capture-now", "theme"];
+    const keyless = [
+      "anthropic-key",
+      "alert-webhook-url",
+      "prune-now",
+      "debug-capture-now",
+      "theme",
+      // The role slots live in the LLM config, not RecorderSettings.
+      "llm-role-instant",
+      "llm-role-autocomplete",
+    ];
     for (const id of keyless) {
       const entry = SETTING_INDEX.filter((e) => e.id === id)[0];
       expect(entry, id).toBeDefined();

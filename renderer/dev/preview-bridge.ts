@@ -1615,7 +1615,6 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
         roles.chat = { provider, model };
       }
       if (!roles.chat) roles.chat = { provider, model };
-      if (!roles.instant) roles.instant = roles.chat;
       state.llmConfig = {
         provider,
         model,
