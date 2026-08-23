@@ -36,6 +36,8 @@ import * as path from "node:path";
 
 import { logger } from "@shell/backend";
 
+import { stripAnsi } from "../../shared/strip-ansi.mjs";
+
 import type { TestRecord } from "../recorder/types.js";
 import {
   baseEnv,
@@ -152,7 +154,12 @@ export function parseListReport(
   // the draft's BASENAME and eats whatever path precedes it.
   const draftName = path.basename(draftPath).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const draftRe = new RegExp("(?:[^\\s\"'(]*[\\\\/])?" + draftName, "g");
-  const rename = (s: string) => s.replace(draftRe, displayName);
+  // Under CI (and whenever the CLI believes it has a colour terminal)
+  // Babel's code frame arrives with ANSI colour around the `>` marker and
+  // the caret, so a line number would be matched but the frame would not.
+  // The child is asked for no colour too; this is the side that cannot be
+  // forgotten, since the reporter's file is the only thing read back.
+  const rename = (s: string) => stripAnsi(s).replace(draftRe, displayName);
   const errors: ScriptCheckError[] = [];
   for (const e of Array.isArray(report.errors) ? report.errors : []) {
     const full = typeof e?.message === "string" ? rename(e.message) : "";
@@ -264,6 +271,11 @@ export function runListCheck(opts: ListCheckOptions): Promise<ScriptCheckResult>
         ...opts.env,
         ELECTRON_RUN_AS_NODE: "1",
         GLAZE_LIST_OUT: outPath,
+        // Plain text in the report. Playwright colours its code frames when
+        // it thinks it has a terminal or is on CI; a coloured frame is one
+        // the editor cannot place.
+        FORCE_COLOR: "0",
+        NO_COLOR: "1",
         // The config reads this for its outputDir. Nothing is written in
         // --list mode, but a draft must never point a real run's directory
         // at itself either.

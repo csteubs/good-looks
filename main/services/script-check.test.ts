@@ -71,6 +71,25 @@ describe("parseListReport", () => {
     expect(errors[0].snippet).toBe("   at t-login.spec.ts:3");
   });
 
+  it("strips the colour a CI terminal puts around the code frame", () => {
+    // Reproduced under CI=true and FORCE_COLOR=1: the headline survived but
+    // the snippet's `> 3 |` marker was wrapped in ANSI and never matched.
+    const raw = JSON.stringify({
+      errors: [
+        {
+          message: "\u001b[31mSyntaxError\u001b[39m: " + DRAFT + ': Unexpected token, expected "," (3:39)',
+          location: { line: 3, column: 39 },
+          snippet: "\u001b[0m \u001b[90m 2 |\u001b[39m test()\n\u001b[31m\u001b[1m>\u001b[22m\u001b[39m\u001b[90m 3 |\u001b[39m   await page.goto(",
+        },
+      ],
+    });
+    const { errors } = parseListReport(raw, DRAFT, "t-login.spec.ts");
+    expect(errors[0].message).toBe('SyntaxError: Unexpected token, expected "," (3:39)');
+    expect(errors[0].snippet).toContain("> 3 |");
+    // eslint-disable-next-line no-control-regex
+    expect(JSON.stringify(errors)).not.toMatch(/\u001b/);
+  });
+
   it("keeps 'No tests found' when it is the only finding, in plainer words", () => {
     const raw = JSON.stringify({
       errors: [{ message: "Error: No tests found.\nMake sure that arguments are regular expressions." }],
