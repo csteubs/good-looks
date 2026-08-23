@@ -843,7 +843,9 @@ export interface HealListEntry extends HealEntry {
 }
 
 /** Where a whole-script change came from (mirror of script-change-store.ts). */
-export type ScriptChangeOrigin = "ai-debug" | "manual";
+export type ScriptChangeOrigin = "ai-debug" | "ai-inline" | "manual";
+/** Which AI affordance wrote a change (mirror of `AFFORDANCES`). */
+export type ScriptChangeAffordance = "debug" | "inline-rewrite" | "roundtrip-rewrite";
 
 /** What the renderer sends with a script write, so the journal can say who did
  *  it. `reviewed: false` means the change landed without the user reading it —
@@ -852,6 +854,9 @@ export type ScriptChangeOrigin = "ai-debug" | "manual";
 export interface ScriptChangeSource {
   by: ScriptChangeOrigin;
   model?: string;
+  provider?: string;
+  affordance?: ScriptChangeAffordance;
+  promptVersion?: string;
   reviewed?: boolean;
 }
 
@@ -933,6 +938,9 @@ export interface ScriptChangeEntry {
   /** Which model wrote the fix. May be absent even on an `ai-debug` entry, so
    *  every label must degrade to a bare "AI Debug". */
   model?: string;
+  provider?: string;
+  affordance?: ScriptChangeAffordance;
+  promptVersion?: string;
   reviewed: boolean;
   /** The previous spec — the undo. Empty when `truncated`. */
   before: string;
