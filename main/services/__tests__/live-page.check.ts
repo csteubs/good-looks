@@ -42,7 +42,17 @@ const PAGE = `<!doctype html><html><head><title>Live</title></head><body>
     const { chromium } = await import("playwright");
     livePageService.useLauncher(async () => (await chromium.launch({ headless: true })) as unknown as LiveBrowserLike);
 
-    const st = await livePageService.open(url);
+    let st;
+    try {
+      st = await livePageService.open(url);
+    } catch (err) {
+      // No browser is a setup problem, not a finding: say what to run rather
+      // than dumping an unhandled rejection. CI installs Chromium for this
+      // check in gate.yml; locally, `npx playwright install chromium`.
+      console.error(`FAIL could not launch Chromium: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`);
+      console.error("     run `npx playwright install chromium` and retry");
+      process.exit(1);
+    }
     assert(st.open && st.url === url, `opened at ${url}`);
     assert(st.title === "Live", `read the title (got ${JSON.stringify(st.title)})`);
 
