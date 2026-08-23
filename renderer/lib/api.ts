@@ -3,6 +3,7 @@
 
 import type { Inspection, TextEdit, TsCompletion, TsDiagnostic, TsHover, TsServiceStatus } from "./ts-types";
 import type {
+  BasicAuth,
   Annotation,
   CustomFailureReason,
   FailureReasonCatalog,
@@ -357,6 +358,10 @@ export const api = {
       ipc().invoke<TestRecord>("tests:setHeadless", { id, runHeadless }),
     setBrowser: (id: string, runBrowser: RunBrowser) =>
       ipc().invoke<TestRecord>("tests:setBrowser", { id, runBrowser }),
+    /** Per-test HTTP basic-auth credentials. Pass null to clear. The password
+     *  lives in the secret variable `passwordVar` names, never in this call. */
+    setBasicAuth: (id: string, basicAuth: BasicAuth | null) =>
+      ipc().invoke<TestRecord>("tests:setBasicAuth", { id, basicAuth }),
     /** Per-test Playwright timeout override in ms. Pass null to clear and fall
      *  back to the global Settings default. */
     setTestTimeout: (id: string, testTimeoutMs: number | null) =>

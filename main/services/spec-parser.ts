@@ -2391,7 +2391,11 @@ function extractTestBodies(src: string): { body: string; offset: number }[] {
   const testRe = /\btest(?:\.\w+)?\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = testRe.exec(clean)) !== null) {
-    // Skip test.skip / test.fixme / test.describe — they don't run steps.
+    // Skip test.skip / test.fixme / test.describe / test.use — they don't run
+    // steps. `test.use({ httpCredentials })` (basic auth) sits before the
+    // test() body; without this its `test.use(` matches the test-call regex,
+    // its `indexOf("=>")` finds the REAL test's arrow, and the real body is
+    // extracted a SECOND time — every step doubled on re-parse.
     //
     // `test.step` is in the list for the opposite reason: its body DOES run
     // steps, but it sits INSIDE a `test(...)` body that was already extracted,
@@ -2400,7 +2404,7 @@ function extractTestBodies(src: string): { body: string; offset: number }[] {
     // `await test.step("…", async () => { … })` — the shape a model reaches for
     // whenever it is also writing readable comments — came back with each of
     // its steps duplicated.
-    if (/test\.(skip|fixme|describe|step|beforeEach|beforeAll|afterEach|afterAll)\b/.test(m[0])) {
+    if (/test\.(skip|fixme|describe|step|use|beforeEach|beforeAll|afterEach|afterAll)\b/.test(m[0])) {
       continue;
     }
     // Find the callback body. The callback is an arrow or function expression

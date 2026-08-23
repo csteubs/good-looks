@@ -105,6 +105,12 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      generator, the parser and the step list, so a hand edit of a
                      framed step is not dropped. Engine only; the trainer does not
                      yet capture inside a frame (docs/IFRAMES.md).
+                     basic-auth.mjs is that shape for HTTP basic auth's ORIGIN
+                     SCOPE: an unscoped credential leaks (Playwright answers any
+                     401, Electron's login event fires for every request), so the
+                     generated test.use({ httpCredentials, origin }) and the
+                     trainer's login handler derive the scope from one
+                     `answersLoginFor`. check:basic-auth pins both.
                      a11y-rollup.mjs is that shape a third time, and it retired two
                      hand-copies rather than adding a third: violationKey/keysOf lived
                      in main/services/a11y-diff.ts AND renderer/lib/a11y-format.ts,
@@ -199,7 +205,7 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 5632 Vitest tests across 310 files and 83 checks in the chain as of 2026-08-23 (85 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 5659 Vitest tests across 311 files and 84 checks in the chain as of 2026-08-23 (86 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
 
 **A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS — or a real navigation — gets checked: `click-navigation.spec.ts` (a click that changes route is recorded, including one a client-side router intercepts; the failure it was written against loses six clicks out of six and jsdom cannot host it, because nothing there has a navigation that destroys the document mid-read), `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `dialog-lifecycle.spec.ts` (whether the dialog that started a recording is still on top of the app afterwards — the existing recording spec invokes `recorder:start` over IPC, so it opens no dialog and could never see one left behind), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app), `verified-steps.spec.ts` (that an AI-proposed step is actually TRIED on the live page before it is inserted, that the first failure stops the rest, and that capture does not record the try a second time — a live session acting on a real page, which nothing in jsdom can host), `ts-service.spec.ts` (that the app forks the TypeScript service through a real `utilityProcess` and it answers — the child path, the node_modules resolution and `process.parentPort` exist nowhere else; `check:ts-service` boots the same built file under plain Node). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
 

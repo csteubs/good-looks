@@ -14,6 +14,7 @@ import {
   globalShortcut,
   logger,
   initDevToolsButtonState,
+  safeStorage,
   screen,
 } from "@shell/backend";
 
@@ -69,6 +70,26 @@ registerAppScheme();
 // listener attached after ready misses the click that started everything and a
 // cold start opens on the home screen instead.
 registerDeepLinks();
+
+// ── E2E secret storage ────────────────────────────────────────────────
+// Module scope, before app.whenReady(): Electron reads this before OSCrypt
+// initialises. A headless CI runner has no OS keyring, so safeStorage's
+// isEncryptionAvailable() is false and every encrypted secret store throws
+// "Secure storage is unavailable" — a state no keyring-backed machine (a real
+// install, or a developer's) ever reaches. ONLY in the e2e process (the flag is
+// set solely by e2e/fixtures.ts) does this fall back to an in-memory plaintext
+// key, so secret-dependent behaviour (basic auth, TOTP) is testable in CI. It
+// never runs in a real install; the optional-call guard is for Electron builds
+// where the method is absent.
+if (process.env.GOOD_LOOKS_E2E === "1") {
+  try {
+    safeStorage.setUsePlainTextEncryption?.(true);
+  } catch (err) {
+    logger.warn("main", "Could not enable plaintext secret storage for E2E", {
+      err: String(err),
+    });
+  }
+}
 
 // ── IPC Handlers ──────────────────────────────────────────────────────
 // Host surface first (dialogs/shell/clipboard/theme/menus), then the app's own.

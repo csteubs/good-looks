@@ -125,6 +125,7 @@ import { runHistoryStore } from "./run-history-store.js";
 import { bindFlowStep, describeStep, flowCallBindings } from "./script-generator.js";
 import { testStore } from "./test-store.js";
 import { testSecretsStore } from "./test-secrets-store.js";
+import { answersLoginFor } from "../../shared/basic-auth.mjs";
 import { MASKED, redact, refreshSecretSnapshot } from "./secret-redaction.js";
 
 /** Isolated world the recorder's scripts run in. Any id above 0 is isolated
@@ -2161,6 +2162,42 @@ export const recorderService = {
         callback(true);
       });
       recSession.setPermissionCheckHandler((_target, permission) => permissionAllowed(permission));
+
+      // ── HTTP basic auth ──────────────────────────────────────────────
+      //
+      // A basic-auth wall stops the trainer at the door: without this the
+      // native credential dialog blocks the page, so a site behind one cannot
+      // be recorded at all. When the test being recorded declares `basicAuth`,
+      // answer the challenge with the same credentials the RUN uses — the
+      // username from the record and the password from the encrypted secrets
+      // store — so the trainer and the run get past the wall identically.
+      //
+      // Server auth only: proxy auth is the proxy-settings feature's business.
+      // `preventDefault` THEN `callback` is Electron's contract; the callback
+      // may fire asynchronously, so the secret lookup can be awaited — Electron
+      // holds the request until it is called, and a missed call hangs the page.
+      wc.on("login", (event, details, authInfo, callback) => {
+        if (authInfo.isProxy) return;
+        const sid = session?.testId;
+        const rec = sid ? testStore.get(sid) : null;
+        const ba = rec?.basicAuth;
+        if (!ba || !ba.passwordVar) return; // no creds → native dialog, as before
+        // SCOPE to the test's own origin. The login event fires for EVERY
+        // authenticating request in the training page — a third-party
+        // subresource, a redirect to another host — and answering all of them
+        // would send the password wherever the challenge came from. Only the
+        // test's origin gets it; the run half scopes the emitted
+        // httpCredentials the same way (shared/basic-auth.mjs). An
+        // unparseable test URL means no scope, matching the run's fallback.
+        if (!answersLoginFor(rec?.url, rec?.baseUrl, details.url)) return;
+        event.preventDefault();
+        void testSecretsStore
+          .valuesFor(sid as string)
+          .then((secrets) => callback(ba.username || "", secrets[ba.passwordVar] ?? ""))
+          // Already prevented the default, so SOMETHING must call back or the
+          // request hangs forever behind a page that never loads.
+          .catch(() => callback());
+      });
 
       // ── The Shopify crawler signature ────────────────────────────────
       //

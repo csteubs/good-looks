@@ -820,6 +820,15 @@ export function isInsightsCadence(v: unknown): v is InsightsCadence {
   return typeof v === "string" && (INSIGHTS_CADENCES as string[]).includes(v);
 }
 
+/** HTTP basic-auth credentials for a test's site. The password is never here:
+ *  `passwordVar` names a secret variable, and the value is resolved from the
+ *  encrypted secrets store when the trainer or the run needs it. */
+export interface BasicAuth {
+  username: string;
+  /** the name of a SECRET variable holding the password */
+  passwordVar: string;
+}
+
 export interface TestRecord {
   id: string;
   name: string;
@@ -928,6 +937,15 @@ export interface TestRecord {
    *  absent, the global `RecorderSettings.defaultRunBrowser` applies. Set from
    *  the test detail toolbar's browser picker. Only affects test runs. */
   runBrowser?: RunBrowser;
+  /** HTTP basic-auth credentials for the site under test. `username` is a
+   *  plain literal; `passwordVar` NAMES a secret variable of this test, so the
+   *  password itself never lands in the record, the spec or the run output —
+   *  it travels the same encrypted path every secret does (test-secrets-store →
+   *  `GLAZE_SECRET_<name>` env → redaction snapshot). The generator emits
+   *  `test.use({ httpCredentials })` reading that env var; the trainer supplies
+   *  the same credentials through the webContents `login` event, so a wall that
+   *  blocks the trainer is passable too. Set from the test detail view. */
+  basicAuth?: BasicAuth;
   /** Per-test Playwright timeout in ms (how long one test may run before
    *  Playwright fails it). When absent, `RecorderSettings.defaultTestTimeoutMs`
    *  applies. Set from the test detail toolbar. Only affects test runs. */
@@ -1598,6 +1616,26 @@ function normalizeCookieSpec(input: unknown): CookieSpec | undefined {
 /** Exported for `recorder-service.updateStep`: `flowArgs` is the one map-valued
  *  field a step patch can carry, so it gets the same rebuild `insertStep` gives
  *  it rather than the allowlist's raw copy. */
+/**
+ * Rebuild a `BasicAuth` from untrusted input (the IPC setter, a stored record).
+ * `username` is bounded (it is q()'d into the spec, but a length cap keeps a
+ * pathological value out of the source anyway); `passwordVar` MUST be a valid
+ * variable name, because it is turned into an env-var identifier by
+ * `secretEnvName` and read by the trainer against the secrets store — an
+ * invalid name there would silently mean "no password". Returns undefined when
+ * there is nothing usable, so absent and empty are the same value.
+ */
+export function normalizeBasicAuth(input: unknown): BasicAuth | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+  const b = input as Partial<BasicAuth>;
+  const username = str(b.username);
+  const passwordVar = str(b.passwordVar);
+  // A credential with no password reference is not a credential — the whole
+  // point is the secret. A username-only value is dropped.
+  if (!passwordVar || !isValidVariableName(passwordVar)) return undefined;
+  return { username: username ?? "", passwordVar };
+}
+
 export function normalizeFlowArgs(input: unknown): Record<string, string> | undefined {
   if (!input || typeof input !== "object") return undefined;
   const out: Record<string, string> = {};

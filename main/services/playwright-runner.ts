@@ -662,7 +662,7 @@ function prepareCaptureSpec(scriptsDir: string, scriptPath: string, runId: strin
  * Returns null for a hand-edited or imported spec, where the stored steps no
  * longer describe the file and the regex scan is the only option left.
  */
-function generatedStepLineMap(
+export function generatedStepLineMap(
   rec: TestRecord,
   steps: Step[],
   resolveFlow: (flowId: string) => TestRecord | null,
@@ -670,7 +670,7 @@ function generatedStepLineMap(
   if (rec.scriptEdited || rec.sourceDir) return null;
   try {
     const { lineMap } = generateSpecDetailed(
-      { name: rec.name, url: rec.url, steps, variables: rec.variables },
+      { name: rec.name, url: rec.url, steps, variables: rec.variables, basicAuth: rec.basicAuth, baseUrl: rec.baseUrl },
       { resolveFlow },
     );
     const map = new Map<number, number>();
@@ -1508,7 +1508,7 @@ export const playwrightRunner = {
           fs.writeFileSync(
             replaySpecPath,
             generateSpec(
-              { name: rec.name, url: rec.url, steps: replaySteps, variables: rec.variables },
+              { name: rec.name, url: rec.url, steps: replaySteps, variables: rec.variables, basicAuth: rec.basicAuth, baseUrl: rec.baseUrl },
               { resolveFlow },
             ),
             "utf-8",

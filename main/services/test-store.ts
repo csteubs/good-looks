@@ -209,6 +209,7 @@ export const testStore = {
         url: record.url,
         steps: record.steps,
         variables: record.variables,
+        basicAuth: record.basicAuth,
       },
       { resolveFlow: (flowId) => this.get(flowId) },
     );

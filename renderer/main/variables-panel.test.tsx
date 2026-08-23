@@ -60,6 +60,7 @@ const importDatasetCsv = vi.fn(
 );
 let secretStatus: SecretStatus[] = [];
 const setSession = vi.fn(async (_id: string, _p: unknown) => ({}) as TestRecord);
+const setBasicAuth = vi.fn(async (_id: string, _ba: unknown) => ({}) as TestRecord);
 let sessionState: { savedAt: number; fresh: boolean } | null = null;
 let allTests: TestRecord[] = [];
 
@@ -75,6 +76,7 @@ vi.mock("../lib/api", () => ({
       secretStatus: async () => secretStatus,
       setFlow: (id: string, isFlow: boolean, params: string[]) => setFlow(id, isFlow, params),
       setSession: (id: string, patch: unknown) => setSession(id, patch),
+      setBasicAuth: (id: string, ba: unknown) => setBasicAuth(id, ba),
       sessionState: async () => sessionState,
       clearSessionState: async () => null,
       list: async () => allTests,
@@ -613,3 +615,59 @@ describe("using a variable for the site address", () => {
     expect(screen.queryByRole("button", { name: /use a variable for the site address/i })).toBeNull();
   });
 });
+
+describe("HTTP basic auth", () => {
+  // The Select's options are native-menu-backed and never enter the DOM, so
+  // the chosen secret is seeded through the record (`test.basicAuth`) and the
+  // assertions drive the username field and the two buttons.
+  const withSecret = () =>
+    makeTest({
+      variables: [{ name: "wallPw", kind: "secret" }],
+      basicAuth: { username: "admin", passwordVar: "wallPw" },
+    });
+
+  it("asks for a secret variable first when none is declared", async () => {
+    renderPanel(makeTest());
+    expect(
+      await screen.findByText(/Declare a .*variable above to hold the password/i),
+    ).toBeTruthy();
+  });
+
+  it("saves the username against the chosen secret, and never a password value", async () => {
+    secretStatus = [{ name: "wallPw", hasValue: true }];
+    renderPanel(withSecret());
+    const user = (await screen.findByLabelText("Basic auth username")) as HTMLInputElement;
+    expect(user.value).toBe("admin");
+    fireEvent.change(user, { target: { value: "root" } });
+    fireEvent.click(screen.getByRole("button", { name: /save basic auth/i }));
+    await waitFor(() => expect(setBasicAuth).toHaveBeenCalledTimes(1));
+    const [, payload] = setBasicAuth.mock.calls[0];
+    expect(payload).toEqual({ username: "root", passwordVar: "wallPw" });
+    // The payload names the secret; no password value exists anywhere in it.
+    expect(JSON.stringify(payload)).not.toMatch(/password"?\s*:/i);
+  });
+
+  it("clears with null, so the backend deletes rather than stores an empty", async () => {
+    secretStatus = [{ name: "wallPw", hasValue: true }];
+    renderPanel(withSecret());
+    fireEvent.click(await screen.findByRole("button", { name: /clear basic auth/i }));
+    await waitFor(() => expect(setBasicAuth).toHaveBeenCalledWith("t1", null));
+  });
+
+  it("warns when the chosen secret has no stored value yet", async () => {
+    secretStatus = [{ name: "wallPw", hasValue: false }];
+    renderPanel(withSecret());
+    expect(await screen.findByText(/has no stored value yet/i)).toBeTruthy();
+  });
+
+  it("warns when the referenced secret is no longer declared", async () => {
+    renderPanel(
+      makeTest({
+        variables: [{ name: "wallPw", kind: "secret" }],
+        basicAuth: { username: "admin", passwordVar: "goneVar" },
+      }),
+    );
+    expect(await screen.findByText(/No secret variable named/i)).toBeTruthy();
+  });
+});
+
