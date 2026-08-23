@@ -112,15 +112,17 @@ function num(v) {
 
 /** Group runs by a key, dropping the ones that don't declare it. Returns a Map
  *  of key → { runs, failed }. Used for all three cross-run signals, which are
- *  the same question asked of `browser`, `dataset_id` and capture. */
-function outcomesBy(runs, key) {
+ *  the same question asked of `browser`, `dataset_id` and capture. `outcome`
+ *  says what counts as a failure for one run — the failing STEP's outcome when
+ *  triage has one, the run's otherwise (see the cross-run section). */
+function outcomesBy(runs, key, outcome = (r) => r.status) {
   const groups = new Map();
   for (const r of runs) {
     const k = key(r);
     if (k === null || k === undefined || k === "") continue;
     const g = groups.get(k) ?? { runs: 0, failed: 0 };
     g.runs += 1;
-    if (r.status === "failed") g.failed += 1;
+    if (outcome(r) === "failed") g.failed += 1;
     groups.set(k, g);
   }
   return groups;
@@ -289,10 +291,15 @@ export function triageRun({ run, steps = [], siblings = [], stepHistory = null }
     // Ambiguity first: it is a WAIT-shaped error with an opposite fix, so
     // letting it fall through to `clean-wait` produces confident wrong advice.
     if (AMBIGUOUS_FAILURE.test(sig)) {
+      // STRONG, not MODERATE: this is Playwright naming the cause in the error
+      // line, not a shape inferred from counts. A tier below `single-engine`,
+      // the inference outranked the stated cause whenever the two fired
+      // together, and a strict-mode violation was filed as an environment
+      // issue with "fails on chromium only" as its headline.
       add(
         "ambiguous-locator",
         "runner",
-        MODERATE,
+        STRONG,
         "The step's locator matched several elements, so Playwright refused it rather than picking one — the page is fine and the locator is too broad.",
       );
     }
@@ -326,27 +333,43 @@ export function triageRun({ run, steps = [], siblings = [], stepHistory = null }
   //
   // `siblings` plus this run. Including this run matters: with a window of one
   // sibling, leaving it out makes every spread "insufficient".
+  //
+  // SCOPED TO THE FAILING STEP. A sibling is evidence about this failure only
+  // if it EXECUTED the step that failed: `step_status` is that step's own
+  // outcome in the sibling, joined in by `siblingRuns(…, { stepId })`. Read
+  // off the run instead, a test's whole history speaks for a step added
+  // yesterday — "webkit and firefox pass" came from runs of an earlier shape
+  // of the test that never contained the step, and a run whose error line said
+  // "strict mode violation" was filed as an engine problem. A sibling that
+  // failed BEFORE reaching the step is set aside for the same reason: it
+  // failed at something else, and counting it toward "fails on every engine"
+  // pins two bugs on one. With no failing step identified there is nothing to
+  // scope by, and the runs' own outcomes are all there is.
 
-  const cohort = [run, ...siblings];
+  const ranStep = (r) => r.step_status === "passed" || r.step_status === "failed";
+  const witnesses = failing ? siblings.filter(ranStep) : siblings;
+  const cohort = [run, ...witnesses];
+  // This run carries no `step_status` of its own, and is failed either way.
+  const outcome = (r) => (ranStep(r) ? r.step_status : r.status);
 
-  const engines = spread(outcomesBy(cohort, (r) => r.browser));
+  const engines = spread(outcomesBy(cohort, (r) => r.browser, outcome));
   if (engines.kind === "all") {
     add(
       "all-engines",
       "site",
       engines.failing.length >= 3 ? STRONG : MODERATE,
-      `Fails on every engine tried (${engines.failing.join(", ")}) — not an engine quirk.`,
+      `The failing step fails on every engine that has run it (${engines.failing.join(", ")}) — not an engine quirk.`,
     );
   } else if (engines.kind === "only" && engines.failing[0] === run.browser) {
     add(
       "single-engine",
       "runner",
       STRONG,
-      `Fails on ${run.browser} only; ${engines.clean.join(", ")} pass — engine-specific selector or timing.`,
+      `The failing step fails on ${run.browser} only; it passes on ${engines.clean.join(", ")} — engine-specific selector or timing.`,
     );
   }
 
-  const datasets = spread(outcomesBy(cohort, (r) => r.dataset_id));
+  const datasets = spread(outcomesBy(cohort, (r) => r.dataset_id, outcome));
   if (datasets.kind === "all") {
     add(
       "all-datasets",
@@ -363,7 +386,9 @@ export function triageRun({ run, steps = [], siblings = [], stepHistory = null }
     );
   }
 
-  const capture = spread(outcomesBy(cohort, (r) => (num(r.capture_ms) ? "captured" : "plain")));
+  const capture = spread(
+    outcomesBy(cohort, (r) => (num(r.capture_ms) ? "captured" : "plain"), outcome),
+  );
   if (capture.kind === "only" && capture.failing[0] === "captured" && num(run.capture_ms)) {
     add(
       "capture-only",
@@ -376,6 +401,13 @@ export function triageRun({ run, steps = [], siblings = [], stepHistory = null }
   if (siblings.length === 0) {
     limits.push(
       "No other runs of this test were available, so nothing could be concluded from engines, datasets or capture.",
+    );
+  } else if (failing && witnesses.length < siblings.length) {
+    // A blind spot, and priced as one: those runs exist, and reading them as
+    // evidence is exactly what this section stopped doing.
+    const unreached = siblings.length - witnesses.length;
+    limits.push(
+      `${unreached} of the ${siblings.length} other runs never executed the failing step — an earlier shape of the test, or a failure before it — so they say nothing about engines, datasets or capture.`,
     );
   }
 

@@ -456,7 +456,11 @@ evidence already on disk.
 | `runId` | string | yes |
 
 Returns `verdict` (`site` / `runner` / `mixed` / `unknown`), `confidence`,
-`evidence[]`, `limits[]`, `suggestedNext` and `suggestedFailureReason` — the
+`evidence[]`, `limits[]`, `suggestedNext`, `cohortSize` (other runs of the test
+in the window), `stepCohortSize` (how many of those actually executed the
+failing step — the only ones the engine, dataset and capture signals are drawn
+from; a run of an earlier shape of the test says nothing about a step it never
+had) and `suggestedFailureReason` — the
 built-in failure-reason label this evidence argues for (`{ reasonId, signal }`,
 or `null` when nothing points anywhere), the same mapping the app's automatic
 categorization applies at run end. Advisory only: this server never writes app

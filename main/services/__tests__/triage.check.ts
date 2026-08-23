@@ -90,6 +90,14 @@ function baseRun(over: Run = {}): Run {
   };
 }
 
+/** A sibling run that EXECUTED the failing step, the step's outcome following
+ *  the run's unless stated. The cross-run signals read `step_status`, so a
+ *  sibling built from `baseRun` alone is a run that never reached the step
+ *  and says nothing — which is its own set of cases below. */
+function sibling(over: Run = {}): Run {
+  return baseRun({ step_status: over.status ?? "failed", ...over });
+}
+
 function steps(over: Step = {}): Step[] {
   return [
     { run_id: "run-1", step_index: 0, step_id: "step-1", status: "passed", healed: 0 },
@@ -309,8 +317,8 @@ function triage(over: Run = {}, stepOver: Step = {}, siblings: Run[] = [], stepH
 
 {
   const allEngines = triage({}, {}, [
-    baseRun({ id: "r2", browser: "firefox", status: "failed" }),
-    baseRun({ id: "r3", browser: "webkit", status: "failed" }),
+    sibling({ id: "r2", browser: "firefox", status: "failed" }),
+    sibling({ id: "r3", browser: "webkit", status: "failed" }),
   ]);
   assert(direction(allEngines, "all-engines") === "site", "failing on every engine is site-ward");
   assert(
@@ -319,8 +327,8 @@ function triage(over: Run = {}, stepOver: Step = {}, siblings: Run[] = [], stepH
   );
 
   const oneEngine = triage({}, {}, [
-    baseRun({ id: "r2", browser: "firefox", status: "passed" }),
-    baseRun({ id: "r3", browser: "webkit", status: "passed" }),
+    sibling({ id: "r2", browser: "firefox", status: "passed" }),
+    sibling({ id: "r3", browser: "webkit", status: "passed" }),
   ]);
   assert(
     direction(oneEngine, "single-engine") === "runner",
@@ -330,7 +338,7 @@ function triage(over: Run = {}, stepOver: Step = {}, siblings: Run[] = [], stepH
 
   // The easiest possible bug in this file: concluding "fails on every engine"
   // from a cohort that only ever ran on one.
-  const single = triage({}, {}, [baseRun({ id: "r2", browser: "chromium", status: "failed" })]);
+  const single = triage({}, {}, [sibling({ id: "r2", browser: "chromium", status: "failed" })]);
   assert(
     !fired(single, "all-engines"),
     "one engine tried is not every engine tried, however many runs it has",
@@ -339,12 +347,12 @@ function triage(over: Run = {}, stepOver: Step = {}, siblings: Run[] = [], stepH
 
 {
   const allRows = triage({ dataset_id: "row-1" }, {}, [
-    baseRun({ id: "r2", dataset_id: "row-2", status: "failed" }),
+    sibling({ id: "r2", dataset_id: "row-2", status: "failed" }),
   ]);
   assert(direction(allRows, "all-datasets") === "site", "failing on every dataset row is site-ward");
 
   const oneRow = triage({ dataset_id: "row-1", dataset_name: "Bad card" }, {}, [
-    baseRun({ id: "r2", dataset_id: "row-2", status: "passed" }),
+    sibling({ id: "r2", dataset_id: "row-2", status: "passed" }),
   ]);
   assert(
     direction(oneRow, "single-dataset") === "runner",
@@ -355,7 +363,7 @@ function triage(over: Run = {}, stepOver: Step = {}, siblings: Run[] = [], stepH
 
 {
   const captureOnly = triage({ capture_ms: 4_000 }, {}, [
-    baseRun({ id: "r2", capture_ms: undefined, status: "passed" }),
+    sibling({ id: "r2", capture_ms: undefined, status: "passed" }),
   ]);
   assert(
     direction(captureOnly, "capture-only") === "runner",
@@ -363,11 +371,102 @@ function triage(over: Run = {}, stepOver: Step = {}, siblings: Run[] = [], stepH
   );
 
   const both = triage({ capture_ms: 4_000 }, {}, [
-    baseRun({ id: "r2", capture_ms: undefined, status: "failed" }),
+    sibling({ id: "r2", capture_ms: undefined, status: "failed" }),
   ]);
   assert(
     !fired(both, "capture-only"),
     "failing with capture off too is not a capture problem",
+  );
+}
+
+// ── Cross-run evidence is about the failing STEP, not the test ────────
+//
+// The failure this was written against: an assertion added to a test fails on
+// chromium, and the test's older runs — a different step list — had passed on
+// webkit and firefox. Those runs never executed the step, and reading them as
+// "webkit and firefox pass" filed a strict-mode violation as an engine problem.
+
+{
+  const unreached = triage({}, {}, [
+    baseRun({ id: "r2", browser: "firefox", status: "passed", step_status: null }),
+    baseRun({ id: "r3", browser: "webkit", status: "passed", step_status: null }),
+  ]);
+  assert(
+    !fired(unreached, "single-engine"),
+    "a sibling that never executed the failing step is not a clean engine",
+  );
+  assert(
+    unreached.limits.some((l) => l.includes("never executed the failing step")),
+    "and the verdict says those runs were set aside rather than silently ignoring them",
+  );
+
+  const witnessed = triage({}, {}, [
+    sibling({ id: "r2", browser: "firefox", status: "passed" }),
+    baseRun({ id: "r3", browser: "webkit", status: "passed", step_status: null }),
+  ]);
+  const detail = witnessed.evidence.find((e) => e.signal === "single-engine")?.detail ?? "";
+  assert(
+    direction(witnessed, "single-engine") === "runner",
+    "a sibling that ran the step clean on another engine still counts",
+  );
+  assert(
+    detail.includes("firefox") && !detail.includes("webkit"),
+    "and only the engines that ran the step are named as passing",
+  );
+
+  // A sibling that failed EARLIER failed at something else.
+  const earlier = triage({}, {}, [
+    baseRun({ id: "r2", browser: "firefox", status: "failed", step_status: null }),
+  ]);
+  assert(
+    !fired(earlier, "all-engines"),
+    "a sibling that failed before reaching the step is not this step failing on another engine",
+  );
+
+  // The STEP's outcome, not the run's: a run that failed later ran this one clean.
+  const laterFailure = triage({}, {}, [
+    baseRun({ id: "r2", browser: "firefox", status: "failed", step_status: "passed" }),
+  ]);
+  assert(
+    direction(laterFailure, "single-engine") === "runner",
+    "a run that failed after this step passed it here, and counts as a pass",
+  );
+
+  // With no failing step there is nothing to scope by, and the old reading —
+  // the runs' own outcomes — is the only one available.
+  const unscoped = triage({ failed_step_id: undefined }, { status: "passed" }, [
+    baseRun({ id: "r2", browser: "firefox", status: "passed", step_status: null }),
+  ]);
+  assert(
+    fired(unscoped, "single-engine"),
+    "without a failing step, a sibling's run outcome is still read",
+  );
+}
+
+// ── A stated cause outranks an inferred one ───────────────────────────
+
+{
+  // The same run with the other engines genuinely passing the step: both
+  // signals fire and both point at the runner, but the headline — and the
+  // failure-reason label drawn from it — must be the one Playwright stated.
+  const strictOnChromium = triage(
+    {
+      error_signature:
+        'Error: expect.toBeVisible: Error: strict mode violation: getByText("Mountain") resolved to <n> elements',
+    },
+    { net_worst_status: 200, console_page_errors: 0 },
+    [
+      sibling({ id: "r2", browser: "firefox", status: "passed" }),
+      sibling({ id: "r3", browser: "webkit", status: "passed" }),
+    ],
+  );
+  assert(
+    strictOnChromium.evidence[0]?.signal === "ambiguous-locator",
+    "Playwright naming the cause outranks a cross-run inference that agrees on direction",
+  );
+  assert(
+    fired(strictOnChromium, "single-engine"),
+    "(the inference still fires — it is evidence, just not the headline)",
   );
 }
 

@@ -387,7 +387,13 @@ export const metricsStore = {
       return triageRun({
         run,
         steps,
-        siblings: siblingRuns(db, run.test_id, { limit: TRIAGE_COHORT, excludeRunId: run.id }),
+        // With the failing step's id, so each sibling carries THAT step's
+        // outcome and a run that never executed it is not read as a pass.
+        siblings: siblingRuns(db, run.test_id, {
+          limit: TRIAGE_COHORT,
+          excludeRunId: run.id,
+          stepId: failingStepId,
+        }),
         stepHistory:
           stepHealth(db, { testId: run.test_id }).find((s) => s.stepId === failingStepId) ?? null,
       });
