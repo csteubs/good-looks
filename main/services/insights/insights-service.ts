@@ -129,7 +129,9 @@ export function createInsightsService(deps: InsightsDeps) {
         content: deps.redact(m.content),
       }));
       const completion = await deps.complete(
-        { messages, temperature: 0.2 },
+        // The chat slot, said so: three roles can name three providers, and
+        // the report goes where the user's conversations go.
+        { messages, temperature: 0.2, role: "chat" },
         { timeoutMs: INSIGHTS_TIMEOUT_MS },
       );
       if (!deps.settings().aiInsightsEnabled) {

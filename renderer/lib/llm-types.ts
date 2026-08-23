@@ -2,6 +2,14 @@
 
 export type LlmProvider = "ollama" | "lmstudio" | "anthropic";
 
+/** Mirror of main/services/llm/types.ts. */
+export type LlmRole = "chat" | "instant" | "autocomplete";
+export const LLM_ROLES: LlmRole[] = ["chat", "instant", "autocomplete"];
+export interface LlmRoleSlot {
+  provider: LlmProvider;
+  model: string | null;
+}
+
 export interface LlmModel {
   id: string;
   label: string;
@@ -30,6 +38,7 @@ export interface LlmConfig {
   provider: LlmProvider;
   model: string | null;
   baseUrls: Partial<Record<LlmProvider, string>>;
+  roles?: Partial<Record<LlmRole, LlmRoleSlot>>;
 }
 
 /** Mirror of main/services/llm/types.ts — see there for why this exists. */
@@ -43,6 +52,7 @@ export type LlmErrorKind =
 
 export interface LlmChatParams {
   messages: LlmMessage[];
+  role?: LlmRole;
   provider?: LlmProvider;
   model?: string;
   temperature?: number;

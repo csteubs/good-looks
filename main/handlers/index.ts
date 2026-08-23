@@ -82,7 +82,7 @@ import {
   verifyAppConnectivity,
   verifyTestConnectivity,
 } from "../services/proxy-service.js";
-import { llmConfigStore } from "../services/llm-config-store.js";
+import { llmConfigStore, type LlmConfigPatch } from "../services/llm-config-store.js";
 import { aiDebugStore } from "../services/ai-debug-store.js";
 import { aiDebugHistoryStore } from "../services/ai-debug-history-store.js";
 import { recorderDebugStore } from "../services/recorder-debug-store.js";
@@ -142,10 +142,15 @@ import {
   RUN_BROWSERS,
 } from "../recorder/types.js";
 import type { AiDebugSession, AssertKind, CookieSpec, Locator, RawStep, RecorderSettings, RunBrowser, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
-import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
+import type { LlmRole, LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
 import type { EmitterId } from "../../shared/emitters.mjs";
 
 import { ipcMain, logger } from "@shell/backend";
+
+/** A role name off the wire, or undefined — the service then resolves chat. */
+function asRole(v: unknown): LlmRole | undefined {
+  return v === "chat" || v === "instant" || v === "autocomplete" ? v : undefined;
+}
 
 function asProvider(v: unknown): LlmProvider {
   if (v === "ollama" || v === "lmstudio" || v === "anthropic") return v;
@@ -1527,14 +1532,19 @@ export function registerHandlers(): void {
   ipcMain.handle("llm:getConfig", async () => llmConfigStore.get());
   ipcMain.handle(
     "llm:setConfig",
-    async (_e, params: { provider?: unknown; model?: unknown; baseUrls?: unknown }) => {
-      const update: Partial<LlmConfig> = {};
+    async (_e, params: { provider?: unknown; model?: unknown; baseUrls?: unknown; roles?: unknown }) => {
+      const update: LlmConfigPatch = {};
       if (params?.provider !== undefined) update.provider = asProvider(params.provider);
       if (params?.model !== undefined) {
         update.model = params.model === null ? null : String(params.model);
       }
       if (params?.baseUrls && typeof params.baseUrls === "object") {
         update.baseUrls = params.baseUrls as LlmConfig["baseUrls"];
+      }
+      // Handed through raw: the store rebuilds every slot and refuses what it
+      // must (a hosted autocomplete), and `null` clears a slot.
+      if (params?.roles && typeof params.roles === "object") {
+        update.roles = params.roles as LlmConfigPatch["roles"];
       }
       return llmConfigStore.set(update);
     },
@@ -1550,18 +1560,47 @@ export function registerHandlers(): void {
     "llm:chat",
     async (
       _e,
-      params: { messages?: unknown; provider?: unknown; model?: unknown; temperature?: unknown },
+      params: { messages?: unknown; role?: unknown; provider?: unknown; model?: unknown; temperature?: unknown },
     ) => {
       // The resolved provider and model come back with the id: both default to
       // the configured values, which only this side knows, and a caller that
       // read them from settings later would read whatever is selected THEN.
       return llmService.chat({
         messages: asMessages(params?.messages),
+        role: asRole(params?.role),
         provider: params?.provider === undefined ? undefined : asProvider(params.provider),
         model: params?.model === undefined ? undefined : String(params.model),
         temperature: typeof params?.temperature === "number" ? params.temperature : undefined,
       });
     },
+  );
+  /** One awaited JSON-shaped answer from the instant slot (or the role
+   *  named). The shape is the caller's schema; the service parses and retries
+   *  once, and a renderer never sees text it has to scrape. */
+  ipcMain.handle(
+    "llm:json",
+    async (_e, params: { messages?: unknown; schema?: unknown; role?: unknown; timeoutMs?: unknown }) => {
+      const schema = params?.schema && typeof params.schema === "object" ? (params.schema as object) : null;
+      if (!schema) throw new Error("llm:json needs a JSON schema.");
+      return llmService.completeJson(
+        { messages: asMessages(params?.messages), role: asRole(params?.role) ?? "instant", schema },
+        { timeoutMs: typeof params?.timeoutMs === "number" ? Math.min(120_000, Math.max(1_000, params.timeoutMs)) : 30_000 },
+      );
+    },
+  );
+  /** Fill-in-the-middle from the autocomplete slot — the ghost text. Short,
+   *  local only (the store refuses a hosted slot; the service refuses again). */
+  ipcMain.handle(
+    "llm:fim",
+    async (_e, params: { prefix?: unknown; suffix?: unknown; maxTokens?: unknown }) =>
+      llmService.fim(
+        {
+          prefix: typeof params?.prefix === "string" ? params.prefix : "",
+          suffix: typeof params?.suffix === "string" ? params.suffix : "",
+          maxTokens: typeof params?.maxTokens === "number" ? params.maxTokens : undefined,
+        },
+        { timeoutMs: 8_000 },
+      ),
   );
   ipcMain.handle("llm:cancel", async (_e, params: { requestId?: unknown }) => {
     llmService.cancel(String(params?.requestId ?? ""));

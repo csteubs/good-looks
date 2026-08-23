@@ -5,6 +5,19 @@
 
 export type LlmProvider = "ollama" | "lmstudio" | "anthropic";
 
+/** The three jobs a model can be assigned to (Settings → AI):
+ *  `chat` — AI debug, Cmd-K rewrites, explanations, generation; any provider.
+ *  `instant` — small JSON-only answers (a rewrite, a verdict); any provider.
+ *  `autocomplete` — fill-in-the-middle ghost text on every pause in typing;
+ *  a LOCAL provider only, never a hosted one — a prefix of the script leaves
+ *  on every keystroke, and `normalizeRoles` refuses Anthropic here. */
+export type LlmRole = "chat" | "instant" | "autocomplete";
+export const LLM_ROLES: LlmRole[] = ["chat", "instant", "autocomplete"];
+export interface LlmRoleSlot {
+  provider: LlmProvider;
+  model: string | null;
+}
+
 /** A model available on a provider, normalized across the two APIs. */
 export interface LlmModel {
   /** Identifier passed back in chat requests (Ollama: name, LM Studio: id). */
@@ -48,11 +61,18 @@ export interface LlmProviderStatus {
 
 /** Persisted user selection. */
 export interface LlmConfig {
+  /** The chat slot's provider — kept as the flat pair every older reader
+   *  and every older config file understands; `roles.chat` mirrors it. */
   provider: LlmProvider;
   /** Chosen model id, or null if none picked yet. */
   model: string | null;
-  /** Optional per-provider base URL overrides (empty = use defaults). */
+  /** Optional per-provider base URL overrides (empty = use defaults).
+   *  Provider-keyed, not role-keyed: three roles share three credentials. */
   baseUrls: Partial<Record<LlmProvider, string>>;
+  /** Per-role assignments. `chat` and `instant` are always present once
+   *  read (seeded from the flat pair); `autocomplete` is absent until the
+   *  user assigns one — an unassigned FIM slot is OFF, not "your chat model". */
+  roles?: Partial<Record<LlmRole, LlmRoleSlot>>;
 }
 
 /** Why a chat request failed, decided by the code that KNOWS — not inferred
@@ -81,9 +101,11 @@ export type LlmErrorKind =
 /** Parameters for a streaming chat completion. */
 export interface LlmChatParams {
   messages: LlmMessage[];
-  /** Defaults to the configured provider. */
+  /** Which role's slot to resolve provider and model from. Absent = chat. */
+  role?: LlmRole;
+  /** Defaults to the role's configured provider. */
   provider?: LlmProvider;
-  /** Defaults to the configured model. */
+  /** Defaults to the role's configured model. */
   model?: string;
   temperature?: number;
 }
