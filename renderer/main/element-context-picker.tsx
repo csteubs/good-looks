@@ -77,6 +77,14 @@ const KIND_LABEL: Record<ContextSignalKind, string> = {
   class: "Class",
 };
 
+/** Why Add / Update is off when the chosen locator matches several elements —
+ *  one sentence, shared by the composer and the Refine dialog so the two say
+ *  the same thing, and exported so a test asserts the copy rather than the
+ *  DOM around it. */
+export function ambiguousTargetHint(count: number): string {
+  return `Matches ${count} elements on the page — the run would refuse it. Add a context or a position.`;
+}
+
 /** Kinds that pick a CONTAINER, and are therefore mutually exclusive. */
 function isContainerKind(k: ContextSignalKind): boolean {
   return k === "within" || k === "withinHasText";

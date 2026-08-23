@@ -97,6 +97,44 @@ is the one whose failure mode is a heal the user has to apply by hand, not a
 test that silently retargets. Driven end to end by the run-outcome-gate section
 of `check:heal-journal` (revert-verified).
 
+### 2026-08-22 — The composer refuses a locator that matches several elements
+
+The assertion in "Unsplash Integration Test" that failed with `strict mode
+violation: … resolved to 3 elements` was authored in the trainer's composer.
+The context picker beside it had asked the page how many elements the chosen
+context left and printed "Matches 3 of 3 elements" — and the Add button took
+the step anyway. The number was computed, displayed, and not acted on; the
+run acted on it instead, against a page the user was no longer looking at.
+
+**The count now gates the submit.** The composer counts the locator it is
+about to emit (`api.recorder.countMatches`, which runs the page-side
+`matchesFor` uncapped) on every change, and `ready` is false while the count
+is more than one, with the count in the panel: "Matches 3 elements on the
+page — the run would refuse it. Add a context or a position." The Refine
+dialog applies the same rule to the locator Update would write, because it is
+the other way an ambiguous locator gets recorded.
+
+**It is a second count, not the picker's.** The picker prices how far a
+CONTEXT narrows the semantic base — the question "which one did you mean".
+The gate prices the locator the step will actually hold, which may be a
+different candidate (the user can select the CSS path) and carries the
+position. Lifting the picker's number up would have answered the wrong
+question on exactly the steps this exists for.
+
+**Three things deliberately do not block.** Zero — the custom field is the
+only route to an element the page shows later, and "matches nothing now" is
+not wrong for it. `-1` and a rejected call — the page failing to answer is
+not a verdict; a gate that closes because the recorder window blinked would
+teach people to distrust it. An indexed locator — `.nth(0)` IS the fix for a
+three-way match, and counting it would answer 3 again and refuse the step
+that resolves the problem.
+
+Rejected: trying user-composed steps on the live page through
+`verifyAndInsertSteps` (the AI-proposed path, #232). That performs the step,
+which is right for a model's proposal and wrong for a click a person composed
+for a later page state. The count answers the question the gate needs without
+acting on the page.
+
 ### 2026-08-22 — An iframe test is writable and runnable before it is recordable
 
 Round 3, Phase 6, and the ENGINE half of it — the split `docs/IFRAMES.md`
