@@ -58,6 +58,21 @@ jobs:
 
       - run: npm ci
 
+      # `check:live-page` (in test:all) launches REAL headless Chromium from
+      # node_modules — the whole point of that check is that the expression
+      # the generator spells for a locator is one the real library resolves,
+      # which a fake browser cannot answer. Same cache key as the e2e job's,
+      # so a warm cache serves both.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: playwright-${{ runner.os }}-
+
+      - name: Install Chromium for check:live-page
+        run: npx playwright install --with-deps chromium
+
       # Run separately rather than chained with && so a failure names the step
       # that failed in the UI instead of collapsing into one red block.
       - run: npm run lint

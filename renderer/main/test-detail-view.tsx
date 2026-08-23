@@ -46,14 +46,14 @@ import {
 import { EditStepsView } from "./edit-steps-view";
 import { RunOutput } from "./run-output";
 import { IssueComposeDialog } from "../components/issue-compose-dialog";
-import { ScriptEditor, type RunLineStatus, type ScriptEditorHandle } from "./script-view";
+import { ScriptEditor, type LineInlay, type RunLineStatus, type ScriptEditorHandle } from "./script-view";
 import { markScriptDirty } from "../lib/script-buffer";
 import { SCRIPT_CHANGED_ON_DISK, isScriptChangedOnDisk } from "../../shared/script-save.mjs";
 import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
 import { HealsPanel } from "./heals-panel";
 import { A11yPanel } from "./a11y-panel";
-import { computeStepDepths, describeStep } from "../lib/describe-step";
+import { computeStepDepths, describeStep, locatorExpr } from "../lib/describe-step";
 import { gradeCounts } from "../lib/locator-grade";
 import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
 import { latestA11yRun } from "../lib/a11y-format";
@@ -68,6 +68,8 @@ import {
   type ScriptCheckError,
   type ScriptCheckResult,
   editorLineHeight,
+  type LivePageCount,
+  type LivePageStatus,
   type Step,
   type TestRecord,
   type TestVariable,
@@ -119,6 +121,17 @@ interface ScriptCheckState {
 }
 
 const IDLE_CHECK: ScriptCheckState = { status: "idle", errors: [] };
+
+/** The host of a URL for the live page's status, or the URL itself when it
+ *  does not parse (a page the user typed into the browser). */
+function hostOf(url: string | undefined): string {
+  if (!url) return "";
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return url;
+  }
+}
 
 /** The body of the divergence question: the first few statements the parser
  *  will not map, then what that costs. The script runs as written either
@@ -486,6 +499,137 @@ export function TestDetailView() {
     const step = test.steps[index];
     return { index, label: step ? describeStep(step) : `step ${index + 1}` };
   }, [caretLine, preview, test, shownScript]);
+
+  // ── The live page ──────────────────────────────────────────────────────
+  //
+  // A Playwright browser the editor owns (main/services/live-page-service.ts).
+  // Status is a query the backend's push keeps current; counts are asked per
+  // parsed step's locator whenever the page or the parse changes, and drawn
+  // as inlays at the end of each statement; the caret's step is outlined in
+  // the page as it moves.
+  const livePageQuery = useQuery({ queryKey: ["live-page"], queryFn: () => api.livePage.status() });
+  const livePage: LivePageStatus = livePageQuery.data ?? { open: false };
+  React.useEffect(
+    () =>
+      api.on<LivePageStatus>("livePage:changed", (next) => {
+        qc.setQueryData(["live-page"], next ?? { open: false });
+      }),
+    [qc],
+  );
+  const [liveBusy, setLiveBusy] = React.useState(false);
+  const [liveCounts, setLiveCounts] = React.useState<Record<number, LivePageCount>>({});
+  const liveUrl = React.useMemo(() => {
+    if (!test) return "";
+    // `${var}` references in the address resolve to the plain variables'
+    // values; anything else stays as written and the browser says so.
+    return test.url.replace(/\$\{([A-Za-z_][\w]*)\}/g, (m, name: string) => {
+      const v = (test.variables ?? []).find((x) => x.name === name);
+      return v && typeof v.value === "string" ? v.value : m;
+    });
+  }, [test]);
+  const toggleLivePage = async () => {
+    setLiveBusy(true);
+    try {
+      // The answer is written into the query here as well as arriving on the
+      // push: the window that asked must not wait on a broadcast to see it.
+      if (livePage.open) {
+        await api.livePage.close();
+        qc.setQueryData(["live-page"], { open: false });
+      } else if (liveUrl) {
+        const next = await api.livePage.open(liveUrl, test?.runBrowser ?? settingsQuery.data?.defaultRunBrowser);
+        qc.setQueryData(["live-page"], next);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLiveBusy(false);
+    }
+  };
+  const stepList = preview?.stepList;
+  React.useEffect(() => {
+    if (!livePage.open || !stepList) {
+      setLiveCounts({});
+      return;
+    }
+    let cancelled = false;
+    const indexed = stepList.map((s, i) => ({ i, locator: s.locator })).filter((x) => x.locator);
+    if (indexed.length === 0) {
+      setLiveCounts({});
+      return;
+    }
+    void api.livePage
+      .countMany(indexed.map((x) => x.locator!))
+      .then((counts) => {
+        if (cancelled) return;
+        const next: Record<number, LivePageCount> = {};
+        indexed.forEach((x, k) => {
+          next[x.i] = counts[k] ?? { count: null };
+        });
+        setLiveCounts(next);
+      })
+      .catch(() => {
+        if (!cancelled) setLiveCounts({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [livePage.open, livePage.url, stepList]);
+  const liveInlays = React.useMemo<LineInlay[]>(() => {
+    if (!livePage.open || !preview) return [];
+    const out: LineInlay[] = [];
+    for (const [k, c] of Object.entries(liveCounts)) {
+      const range = preview.stepRanges[Number(k)];
+      if (!range) continue;
+      const line = shownScript.slice(0, Math.max(range.from, range.to - 1)).split("\n").length;
+      if (c.count === null) out.push({ line, text: "no count", tone: "muted", title: c.error ?? "Could not count this locator on the live page" });
+      else if (c.count === 1) out.push({ line, text: "1 match", tone: "ok", title: "Matches one element on the live page" });
+      else if (c.count === 0) out.push({ line, text: "no match", tone: "bad", title: "Matches nothing on the live page — this step would fail" });
+      else out.push({ line, text: `${c.count} matches`, tone: "warn", title: `Matches ${c.count} elements on the live page — Playwright refuses an ambiguous action` });
+    }
+    return out;
+  }, [livePage.open, preview, liveCounts, shownScript]);
+  // Caret → outline in the live page, a beat after the caret settles.
+  const caretLocator = caretStep && stepList ? (stepList[caretStep.index]?.locator ?? null) : null;
+  React.useEffect(() => {
+    if (!livePage.open) return;
+    const t = setTimeout(() => void api.livePage.highlight(caretLocator).catch(() => {}), 150);
+    return () => clearTimeout(t);
+  }, [livePage.open, caretLocator]);
+  const pickLocator = async () => {
+    try {
+      const picked = await api.livePage.pick();
+      if (!picked) return;
+      // The app's spelling when the parser read the pick (it round-trips);
+      // Playwright's own otherwise, which the coverage gutter will flag.
+      const text = "page." + (picked.locator ? locatorExpr(picked.locator) : picked.expr);
+      scriptEditorRef.current?.insertAtCaret(text);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  };
+  // "Record here": a trainer session for this test with the insert cursor
+  // just past the caret's step, so what gets recorded lands where the caret
+  // was. The cursor is applied once the session exists.
+  const pendingCursorRef = React.useRef<number | null>(null);
+  const startTrainer = async () => {
+    if (!test) return;
+    await start(test.url, test.name, test.id);
+    const cursor = pendingCursorRef.current;
+    pendingCursorRef.current = null;
+    if (cursor !== null) {
+      try {
+        await api.recorder.setCursor(cursor);
+      } catch {
+        // The session is live either way; the cursor simply stays at the end.
+      }
+    }
+  };
+  const recordHere = () => {
+    if (!test) return;
+    pendingCursorRef.current = caretStep ? caretStep.index + 1 : test.steps.length;
+    if (test.scriptEdited) setTrainerConfirmOpen(true);
+    else void startTrainer();
+  };
   const runOutput = runInfo?.lines.join("") ?? "";
   const recordId = runInfo?.recordId;
   // Identifies the execution being debugged, STABLY for its whole life. Hashing
@@ -843,7 +987,7 @@ export function TestDetailView() {
         return;
       }
     }
-    start(test.url, test.name, test.id);
+    void startTrainer();
     // The composed `Dialog` never closes itself on a resolved confirm — callers
     // close themselves (see `dialog-actions.test.tsx`). Test detail is inside
     // the outlet, so the swap to RecordingView unmounts this dialog and hides
@@ -932,7 +1076,7 @@ export function TestDetailView() {
                 <DropdownMenuContent side="bottom" align="end">
                   <DropdownMenuItem onSelect={() => {
                     if (test.scriptEdited) setTrainerConfirmOpen(true);
-                    else start(test.url, test.name, test.id);
+                    else void startTrainer();
                   }}>
                     Edit in Trainer
                   </DropdownMenuItem>
@@ -953,7 +1097,7 @@ export function TestDetailView() {
                   destructiveAction={{
                     label: "Continue without saving",
                     onClick: () => {
-                      start(test.url, test.name, test.id);
+                      void startTrainer();
                       setTrainerConfirmOpen(false);
                     },
                   }}
@@ -1364,6 +1508,59 @@ export function TestDetailView() {
             </TabsContent>
             <TabsContent value="script" className="flex min-h-0 flex-1 flex-col">
               <div className="gl-detail-script-bar">
+                <span className="gl-script-live" data-gl="script-live">
+                  <Btn
+                    tone={livePage.open ? "go" : "ghost"}
+                    onClick={() => void toggleLivePage()}
+                    disabled={liveBusy || !liveUrl}
+                    title={
+                      livePage.open
+                        ? "Close the live page"
+                        : "Open this test's site in a Playwright browser the editor can ask: match counts after every locator, the caret's element outlined, Pick locator"
+                    }
+                    aria-pressed={livePage.open}
+                  >
+                    {liveBusy ? "Live page…" : livePage.open ? "Live page ●" : "Live page"}
+                  </Btn>
+                  {livePage.open ? (
+                    <span className="gl-script-live-status" title={livePage.url}>
+                      {livePage.picking ? "Click an element in the live page…" : hostOf(livePage.url)}
+                    </span>
+                  ) : livePage.closedReason ? (
+                    <span className="gl-script-live-status" data-muted="">
+                      {livePage.closedReason}
+                    </span>
+                  ) : null}
+                  {editingScript ? (
+                    <Btn
+                      onClick={() => void pickLocator()}
+                      disabled={!livePage.open || Boolean(livePage.picking)}
+                      title={
+                        livePage.open
+                          ? "Click an element in the live page; its locator is inserted at the caret"
+                          : "Open the live page to pick a locator from it"
+                      }
+                    >
+                      Pick locator
+                    </Btn>
+                  ) : (
+                    <Btn
+                      onClick={recordHere}
+                      title={
+                        caretStep
+                          ? `Open the trainer with new steps landing after step ${caretStep.index + 1}`
+                          : "Open the trainer with new steps landing at the end"
+                      }
+                    >
+                      Record here
+                    </Btn>
+                  )}
+                </span>
+                {caretStep && (!editingScript || scriptCheck.status === "idle") ? (
+                  <span className="gl-script-check-msg" data-checking="" data-gl="caret-step">
+                    step {caretStep.index + 1} · {caretStep.label}
+                  </span>
+                ) : null}
                 {editingScript ? (
                   <>
                     {scriptCheck.status === "checking" ? (
@@ -1375,10 +1572,6 @@ export function TestDetailView() {
                         {scriptCheck.errors.length === 1
                           ? "Playwright can't load this script — 1 problem"
                           : `Playwright can't load this script — ${scriptCheck.errors.length} problems`}
-                      </span>
-                    ) : caretStep ? (
-                      <span className="gl-script-check-msg" data-checking="" data-gl="caret-step">
-                        step {caretStep.index + 1} · {caretStep.label}
                       </span>
                     ) : null}
                     <Btn
@@ -1449,6 +1642,7 @@ export function TestDetailView() {
                 lineWrap={settingsQuery.data?.editorLineWrap ?? false}
                 lineNumbers={settingsQuery.data?.editorLineNumbers ?? true}
                 tabSize={settingsQuery.data?.editorTabSize ?? 2}
+                inlays={liveInlays}
               />
               <Dialog
                 open={staleOpen}

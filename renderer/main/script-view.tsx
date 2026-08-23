@@ -14,9 +14,9 @@
 import * as React from "react";
 
 import type { ScriptCheckError, SourceRange } from "../lib/recorder-types";
-import type { RunLineStatus, ScriptEditorHandle } from "./script-editor-cm";
+import type { LineInlay, RunLineStatus, ScriptEditorHandle } from "./script-editor-cm";
 
-export type { RunLineStatus, ScriptEditorHandle } from "./script-editor-cm";
+export type { LineInlay, RunLineStatus, ScriptEditorHandle } from "./script-editor-cm";
 
 const ScriptEditorCm = React.lazy(() => import("./script-editor-cm"));
 
@@ -40,6 +40,8 @@ export interface ScriptEditorProps {
   lineWrap?: boolean;
   lineNumbers?: boolean;
   tabSize?: number;
+  /** End-of-line inlays — the live page's match counts. */
+  inlays?: LineInlay[];
 }
 
 const NO_ERRORS: ScriptCheckError[] = [];
@@ -58,6 +60,7 @@ export function ScriptEditor({
   lineWrap = false,
   lineNumbers = true,
   tabSize = 2,
+  inlays,
 }: ScriptEditorProps): React.ReactElement {
   return (
     <React.Suspense fallback={<div className="gl-script-ide-loading">Loading the editor…</div>}>
@@ -74,6 +77,7 @@ export function ScriptEditor({
         lineWrap={lineWrap}
         lineNumbers={lineNumbers}
         tabSize={tabSize}
+        inlays={inlays}
       />
     </React.Suspense>
   );

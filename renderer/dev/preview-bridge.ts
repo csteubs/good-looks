@@ -81,6 +81,9 @@ import type {
   RunReplaySummary,
   ScriptCheckResult,
   ScriptPreview,
+  LivePageCount,
+  LivePagePick,
+  LivePageStatus,
   SecretStatus,
   TestRecord,
   TestVariable,
@@ -286,9 +289,17 @@ function costFiller(): RunRecord[] {
 /** Mutable copies, so the preview behaves like an app with state: renaming a
  *  test or deleting a tag persists for the session. Reloading resets it, which
  *  is the right amount of persistence for a preview. */
+/** The push emitter of the bridge currently mounted, for handlers that
+ *  announce a change the way the backend does (the live page's status). Set
+ *  once the bridge exists; a handler reached before then has nobody
+ *  listening anyway. */
+let bridgeEmit: (channel: string, payload: unknown) => void = () => {};
+
 function seed() {
   return {
     tests: structuredClone(TESTS),
+    // The Script IDE's live page — see the livePage:* handlers.
+    livePage: { open: false } as LivePageStatus,
     runs: [...structuredClone(RUNS), ...costFiller()],
     heals: structuredClone(HEALS),
     scriptChanges: structuredClone(SCRIPT_CHANGES),
@@ -725,6 +736,15 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
         }
         offset += line.length + 1;
       }
+      // Locators for the live page's counts: read off each statement line.
+      const stepList = stepRanges.map((r, i) => {
+        const text = source.slice(r.from, r.to);
+        const m = text.match(/getBy(Role|TestId|Label|Text|Placeholder)\((['"])([^'"]*)\2(?:,\s*\{\s*name:\s*(['"])([^'"]*)\4)?/);
+        const locator = m
+          ? { k: m[1] === "Role" ? "role" : m[1].toLowerCase(), ...(m[1] === "Role" ? { role: m[3], name: m[5] } : { v: m[3] }) }
+          : undefined;
+        return { id: `p${i}`, type: "click", timestamp: 0, ...(locator ? { locator } : {}) } as Step;
+      });
       return {
         tracked: !findTest(p?.id)?.sourceDir,
         steps: stepRanges.length,
@@ -732,8 +752,41 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
         stepRanges,
         skippedRanges,
         newlySkipped,
+        stepList,
       };
     },
+    // ── The Script IDE's live page ─────────────────────────────────────
+    // No browser in the preview. `open` pretends, counts come from the
+    // locator's shape (a test id matches once, a bare role matches three,
+    // "Gone" matches nothing), and pick answers a fixed button after a beat —
+    // enough to see every state the editor draws for it.
+    "livePage:status": (): LivePageStatus => state.livePage,
+    "livePage:open": (p): LivePageStatus => {
+      state.livePage = { open: true, url: String(p?.url ?? ""), title: "Live page (preview)", browser: "chromium" };
+      bridgeEmit("livePage:changed", state.livePage);
+      return state.livePage;
+    },
+    "livePage:close": () => {
+      state.livePage = { open: false };
+      bridgeEmit("livePage:changed", state.livePage);
+    },
+    "livePage:countMany": (p): LivePageCount[] =>
+      (Array.isArray(p?.locators) ? (p.locators as Locator[]) : []).map((l) => {
+        if (!state.livePage.open) return { count: null, error: "No live page." };
+        if (l.k === "text" && /gone/i.test(String(l.v ?? ""))) return { count: 0 };
+        if (l.k === "role" && !l.name) return { count: 3 };
+        return { count: 1 };
+      }),
+    "livePage:highlight": () => undefined,
+    "livePage:pick": async (): Promise<LivePagePick | null> => {
+      state.livePage = { ...state.livePage, picking: true };
+      bridgeEmit("livePage:changed", state.livePage);
+      await new Promise((r) => setTimeout(r, 900));
+      state.livePage = { ...state.livePage, picking: false };
+      bridgeEmit("livePage:changed", state.livePage);
+      return { expr: "getByRole('button', { name: 'Sign in' })", locator: { k: "role", role: "button", name: "Sign in" } };
+    },
+    "livePage:cancelPick": () => undefined,
     "tests:rename": (p) => {
       const test = findTest(p?.id);
       if (test) test.name = String(p?.name ?? test.name);
@@ -2427,6 +2480,7 @@ export function installPreviewBridge(options: PreviewBridgeOptions = {}): Previe
   const emit = (channel: string, payload: unknown) => {
     for (const fn of listeners.get(channel) ?? []) fn(null, payload);
   };
+  bridgeEmit = emit;
 
   const invoke = async (channel: string, ...args: unknown[]): Promise<unknown> => {
     diagnostics.calls.push(channel);

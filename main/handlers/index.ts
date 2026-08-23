@@ -73,6 +73,7 @@ import { refreshSecretSnapshot } from "../services/secret-redaction.js";
 import { shopifySignatureStore } from "../services/shopify-signature-store.js";
 import { parseSpecDetailed } from "../services/spec-parser.js";
 import { checkTestScript } from "../services/script-check.js";
+import { livePageService } from "../services/live-page-service.js";
 import { SCRIPT_CHANGED_ON_DISK } from "../../shared/script-save.mjs";
 import { activeProviderEndpoint, llmService } from "../services/llm-service.js";
 import { proxyPasswordStore } from "../services/proxy-password-store.js";
@@ -1220,6 +1221,32 @@ export function registerHandlers(): void {
   const statementText = (src: string, r: { from: number; to: number }): string =>
     src.slice(r.from, r.to).trim().replace(/;\s*$/, "");
 
+  // ── The Script IDE's live page ─────────────────────────────────────────
+  //
+  // A Playwright browser the editor owns (live-page-service.ts). Every
+  // locator crossing here is a MODEL the service rebuilds through
+  // normalizeLocator before it spells and evaluates it — the same boundary
+  // a recorded step crosses.
+  ipcMain.handle("livePage:status", async () => livePageService.status());
+  ipcMain.handle(
+    "livePage:open",
+    async (_e, params: { url: unknown; browser?: unknown }) => {
+      const url = typeof params?.url === "string" ? params.url : "";
+      if (!/^https?:\/\//i.test(url)) throw new Error("The live page needs an http(s) address.");
+      const browser = isRunBrowser(params?.browser) ? params.browser : "chromium";
+      return livePageService.open(url, browser);
+    },
+  );
+  ipcMain.handle("livePage:close", async () => livePageService.close());
+  ipcMain.handle("livePage:countMany", async (_e, params: { locators: unknown }) =>
+    livePageService.countMany(Array.isArray(params?.locators) ? params.locators : []),
+  );
+  ipcMain.handle("livePage:highlight", async (_e, params: { locator: unknown }) =>
+    livePageService.highlight(params?.locator ?? null),
+  );
+  ipcMain.handle("livePage:pick", async () => livePageService.pick());
+  ipcMain.handle("livePage:cancelPick", async () => livePageService.cancelPick());
+
   /** What saving `source` over this test's script WOULD do, without doing it:
    *  the steps the parser would read back, where it read each from, where it
    *  could not, and which of those misses are NEW against the stored script.
@@ -1255,6 +1282,9 @@ export function registerHandlers(): void {
         stepRanges: draft.stepRanges,
         skippedRanges: draft.skippedRanges,
         newlySkipped,
+        // The parsed steps themselves, aligned with stepRanges: the live
+        // page's match counts are asked per step's locator.
+        stepList: draft.steps,
       };
     },
   );

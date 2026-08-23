@@ -29,7 +29,10 @@ await build({
   outfile: "build/main/index.js",
   sourcemap: true,
   alias,
-  external: ["electron"],
+  // `playwright` stays out of the bundle: the live page imports it
+  // dynamically (main/services/live-page-service.ts) and it resolves from
+  // the same node_modules the runner's CLI comes from.
+  external: ["electron", "playwright"],
   banner: {
     // Bundling CJS dependencies (pngjs, pixelmatch) into an ESM output makes
     // esbuild emit a `__require` shim, and that shim throws "Dynamic require of

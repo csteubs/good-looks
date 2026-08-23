@@ -884,6 +884,30 @@ export interface ScriptPreview {
   stepRanges: SourceRange[];
   skippedRanges: SourceRange[];
   newlySkipped: string[];
+  /** The parsed steps, aligned with `stepRanges`. */
+  stepList: Step[];
+}
+
+/** The Script IDE's live page (mirror of main/services/live-page-service.ts). */
+export interface LivePageStatus {
+  open: boolean;
+  url?: string;
+  title?: string;
+  browser?: RunBrowser;
+  picking?: boolean;
+  closedReason?: string;
+}
+
+export interface LivePageCount {
+  count: number | null;
+  error?: string;
+}
+
+export interface LivePagePick {
+  /** Playwright's own spelling, e.g. `getByRole('button', { name: 'Sign in' })`. */
+  expr: string;
+  /** The app's model of it, or null for a shape the parser does not read. */
+  locator: Locator | null;
 }
 
 /** What `tests:checkScript` answers: whether the real Playwright CLI could

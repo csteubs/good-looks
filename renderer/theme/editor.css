@@ -107,3 +107,36 @@
 .gl-ide-cov[data-coverage="error"] {
   background: var(--gl-red);
 }
+
+/* ── Inlays ──────────────────────────────────────────────────────────────
+   The live page's match count after a locator's line. `ok` is one match —
+   the text colour, dimmed, because a step that resolves is not news. None
+   or several is what a run fails on, so those take the outcome hues. */
+.gl-ide-inlay {
+  margin-left: 12px;
+  padding: 0 6px;
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-3);
+  border: 1px solid var(--gl-line-2);
+  border-radius: 1px;
+  vertical-align: 1px;
+  user-select: none;
+  pointer-events: none;
+}
+
+.gl-ide-inlay[data-tone="bad"] {
+  color: var(--gl-red);
+  border-color: color-mix(in srgb, var(--gl-red) 40%, transparent);
+}
+
+.gl-ide-inlay[data-tone="warn"] {
+  color: var(--gl-amber);
+  border-color: color-mix(in srgb, var(--gl-amber) 40%, transparent);
+}
+
+.gl-ide-inlay[data-tone="muted"] {
+  color: var(--gl-tx-3);
+  border-style: dashed;
+}
