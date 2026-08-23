@@ -316,6 +316,8 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
   { id: "editor-line-numbers", pane: "editor", label: "Line numbers", keywords: "code script ide gutter", key: "editorLineNumbers" },
   { id: "editor-tab-size", pane: "editor", label: "Tab size", keywords: "code script ide indent spaces two four", key: "editorTabSize" },
   { id: "editor-check-on-save", pane: "editor", label: "Check with Playwright before saving", keywords: "code script ide save verify load syntax dry run list cli", key: "editorCheckOnSave" },
+  { id: "editor-format-on-save", pane: "editor", label: "Format on save", keywords: "code script ide prettier indent whitespace typescript formatter", key: "editorFormatOnSave" },
+  { id: "editor-keymap", pane: "editor", label: "Keymap", keywords: "code script ide keyboard shortcuts bindings jetbrains intellij vscode preset", key: "editorKeymap" },
   // Keywords cover the words someone reaches for when the app is too small to
   // read — "zoom", "scale", "bigger", "accessibility" — and not just the label.
   // Whoever needs this setting most is the person least able to browse for it.
@@ -937,6 +939,8 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   editorLineNumbers: true,
   editorTabSize: 2,
   editorCheckOnSave: true,
+  editorFormatOnSave: true,
+  editorKeymap: "default",
   aiInstructions: "",
   aiInstructionsByHost: {},
   inspections: defaultInspections(),

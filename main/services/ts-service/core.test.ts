@@ -131,6 +131,18 @@ describe("inspections", () => {
     expect(inspect(fixed).filter((x) => x.rule === "unwrapped-statement")).toEqual([]);
   });
 
+  it("format returns TypeScript's edits, and a generated spec needs none", () => {
+    svc.update("f", SPEC);
+    expect(svc.format("f")).toEqual([]);
+    const messy = SPEC.replace('  await page.goto("https://a.example");', 'await page.goto(  "https://a.example" )');
+    svc.update("f", messy);
+    const edits = svc.format("f");
+    expect(edits.length).toBeGreaterThan(0);
+    let out = messy;
+    for (const e of [...edits].sort((a, b) => b.from - a.from)) out = out.slice(0, e.from) + e.text + out.slice(e.to);
+    expect(out).toBe(SPEC);
+  });
+
   it("a rule switched off reports nothing", () => {
     svc.update("off", inBody("await page.waitForTimeout(500);"));
     expect(svc.inspections("off", { "no-wait-for-timeout": false }).filter((x) => x.rule === "no-wait-for-timeout")).toEqual([]);

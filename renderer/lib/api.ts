@@ -1,7 +1,7 @@
 // Typed wrappers over the exposed window.glazeAPI IPC bridge. Renderer code
 // never touches ipcRenderer directly.
 
-import type { Inspection, TsCompletion, TsDiagnostic, TsHover, TsServiceStatus } from "./ts-types";
+import type { Inspection, TextEdit, TsCompletion, TsDiagnostic, TsHover, TsServiceStatus } from "./ts-types";
 import type {
   Annotation,
   CustomFailureReason,
@@ -282,6 +282,8 @@ export const api = {
     completions: (id: string, offset: number) => ipc().invoke<TsCompletion[]>("ts:completions", { id, offset }),
     hover: (id: string, offset: number) => ipc().invoke<TsHover | null>("ts:hover", { id, offset }),
     inspections: (id: string) => ipc().invoke<Inspection[]>("ts:inspections", { id }),
+    /** Whole-document formatting edits (TypeScript's formatter). */
+    format: (id: string) => ipc().invoke<TextEdit[]>("ts:format", { id }),
   },
   livePage: {
     status: () => ipc().invoke<LivePageStatus>("livePage:status"),

@@ -191,6 +191,10 @@ export const tsService = {
     return ask("inspections", { id, enabled }, []);
   },
 
+  format(id: string): Promise<TsResults["format"]> {
+    return ask("format", { id }, []);
+  },
+
   /** Stop the child (app quit, or a test's teardown). */
   stop(): void {
     const c = child;

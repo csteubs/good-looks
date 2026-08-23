@@ -1658,6 +1658,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "ts:completions": () => [],
     "ts:hover": () => null,
     "ts:inspections": () => [],
+    "ts:format": () => [],
     "llm:hasApiKey": () => ({ hasKey: false }),
     "llm:hasLmStudioToken": () => ({ hasToken: false }),
     "llm:isActive": () => ({ active: false }),

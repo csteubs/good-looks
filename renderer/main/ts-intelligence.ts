@@ -9,7 +9,7 @@
 // are asked for 300 ms after the last edit and dropped if the document moved
 // on meanwhile; the next pause asks again.
 
-import { autocompletion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
+import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import type { Diagnostic } from "@codemirror/lint";
 import { StateEffect, StateField, type Extension } from "@codemirror/state";
 import { EditorView, ViewPlugin, hoverTooltip, type ViewUpdate } from "@codemirror/view";
@@ -193,13 +193,9 @@ export function tsIntelligence(get: () => TsIntelligence | null, { debounceMs = 
     };
   });
 
-  return [
-    tsDiagnosticsField,
-    plugin,
-    autocompletion({ override: [tsCompletionSource(get)], activateOnTyping: true, maxRenderedOptions: 40 }),
-    hover,
-    intelligenceTheme,
-  ];
+  // Completion is composed by the host (`autocompletion` with this source
+  // and the snippets), so there is one popup with both in it.
+  return [tsDiagnosticsField, plugin, hover, intelligenceTheme];
 }
 
 /** CodeMirror's own popups, in the app's tokens. Lives here rather than in

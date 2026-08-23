@@ -516,6 +516,8 @@ export type UiScale = 0.9 | 1 | 1.1 | 1.25;
 /** Mirror of main/recorder/types.ts. */
 export type EditorTabSize = 2 | 4;
 export const EDITOR_TAB_SIZES: EditorTabSize[] = [2, 4];
+export type EditorKeymap = "default" | "jetbrains" | "vscode";
+export const EDITOR_KEYMAPS: EditorKeymap[] = ["default", "jetbrains", "vscode"];
 export const EDITOR_FONT_SIZE_MIN = 10;
 export const EDITOR_FONT_SIZE_MAX = 20;
 export const EDITOR_FONT_SIZE_DEFAULT = 13;
@@ -1482,6 +1484,8 @@ export interface RecorderSettings {
   editorLineNumbers: boolean;
   editorTabSize: EditorTabSize;
   editorCheckOnSave: boolean;
+  editorFormatOnSave: boolean;
+  editorKeymap: EditorKeymap;
   /** Standing instructions for the Script editor's inline AI (mirror of
    *  main/recorder/types.ts): one global text, and one per host. */
   aiInstructions: string;

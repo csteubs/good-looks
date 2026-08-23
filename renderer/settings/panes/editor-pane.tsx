@@ -14,8 +14,11 @@
 import { Switch } from "@ui";
 import { Segmented } from "../../theme";
 
+import { EDITOR_KEYMAP_LABELS, prettyKey, rowsFor } from "../../main/editor-keymaps";
 import {
   EDITOR_FONT_SIZE_DEFAULT,
+  EDITOR_KEYMAPS,
+  type EditorKeymap,
   EDITOR_FONT_SIZE_MAX,
   EDITOR_FONT_SIZE_MIN,
   EDITOR_TAB_SIZES,
@@ -83,6 +86,33 @@ export function EditorPane() {
         </SettingRow>
 
         <SettingRow
+          id="editor-keymap"
+          label="Keymap"
+          summary="Which editor's keys the Script tab answers to. ⌘K stays the command palette in every preset, and ⌘I is inline AI."
+          details={
+            <table className="gl-keymap-table" aria-label="Bindings in this keymap">
+              <tbody>
+                {rowsFor(settings.editorKeymap ?? "default").map((r) => (
+                  <tr key={r.label}>
+                    <td>{r.label}</td>
+                    <td>
+                      <kbd>{prettyKey(r.key)}</kbd>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          }
+        >
+          <Segmented
+            label="Keymap"
+            value={settings.editorKeymap ?? "default"}
+            options={EDITOR_KEYMAPS.map((k) => ({ value: k, label: EDITOR_KEYMAP_LABELS[k] }))}
+            onChange={(v) => void save({ editorKeymap: v as EditorKeymap })}
+          />
+        </SettingRow>
+
+        <SettingRow
           id="editor-tab-size"
           label="Tab size"
           summary="How wide a tab is drawn, and how far Tab indents."
@@ -111,6 +141,18 @@ export function EditorPane() {
             id="editor-check-on-save"
             checked={settings.editorCheckOnSave ?? true}
             onCheckedChange={(checked) => void save({ editorCheckOnSave: checked })}
+          />
+        </SettingRow>
+
+        <SettingRow
+          id="editor-format-on-save"
+          label="Format on save"
+          summary="TypeScript's own formatter over the draft before it is checked and saved: two-space indent, the generator's style. Needs the type service (the Script tab says ‘Types ready’)."
+        >
+          <Switch
+            id="editor-format-on-save"
+            checked={settings.editorFormatOnSave ?? true}
+            onCheckedChange={(checked) => void save({ editorFormatOnSave: checked })}
           />
         </SettingRow>
       </PaneSection>

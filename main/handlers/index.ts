@@ -1277,6 +1277,7 @@ export function registerHandlers(): void {
   ipcMain.handle("ts:hover", async (_e, params: { id: unknown; offset: unknown }) =>
     tsService.hover(docId(params?.id), offset(params?.offset)),
   );
+  ipcMain.handle("ts:format", async (_e, params: { id: unknown }) => tsService.format(docId(params?.id)));
   ipcMain.handle("ts:inspections", async (_e, params: { id: unknown }) =>
     tsService.inspections(docId(params?.id), recorderSettingsStore.get().inspections),
   );

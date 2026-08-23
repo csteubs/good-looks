@@ -20,6 +20,8 @@ import {
   EDITOR_FONT_SIZE_DEFAULT,
   editorFontSizeOrDefault,
   isEditorTabSize,
+  EDITOR_KEYMAPS,
+  EditorKeymap,
 } from "../recorder/types.js";
 import type { BatchRowOptions, RecorderSettings } from "../recorder/types.js";
 import { normalizeViewport } from "../recorder/window-size.js";
@@ -128,6 +130,10 @@ function clampBatchDefault(value: unknown, fallback: number): number {
  *  the editor sends, and the budget line would otherwise be the only warning. */
 export const AI_INSTRUCTIONS_MAX = 4000;
 const AI_INSTRUCTION_HOSTS_MAX = 100;
+
+function isEditorKeymap(v: unknown): v is EditorKeymap {
+  return (EDITOR_KEYMAPS as readonly unknown[]).includes(v);
+}
 
 function normalizeAiInstructions(raw: unknown): string {
   return typeof raw === "string" ? raw.slice(0, AI_INSTRUCTIONS_MAX) : "";
@@ -252,6 +258,8 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   editorLineNumbers: true,
   editorTabSize: 2,
   editorCheckOnSave: true,
+  editorFormatOnSave: true,
+  editorKeymap: "default",
   aiInstructions: "",
   aiInstructionsByHost: {},
   inspections: defaultInspections(),
@@ -459,6 +467,9 @@ function read(): RecorderSettings {
         typeof parsed.editorCheckOnSave === "boolean"
           ? parsed.editorCheckOnSave
           : DEFAULT_SETTINGS.editorCheckOnSave,
+      editorFormatOnSave:
+        typeof parsed.editorFormatOnSave === "boolean" ? parsed.editorFormatOnSave : DEFAULT_SETTINGS.editorFormatOnSave,
+      editorKeymap: isEditorKeymap(parsed.editorKeymap) ? parsed.editorKeymap : DEFAULT_SETTINGS.editorKeymap,
       aiInstructions: normalizeAiInstructions(parsed.aiInstructions),
       aiInstructionsByHost: normalizeAiInstructionsByHost(parsed.aiInstructionsByHost),
       inspections: normalizeInspections(parsed.inspections),
@@ -679,6 +690,9 @@ export const recorderSettingsStore = {
       editorTabSize: isEditorTabSize(update.editorTabSize) ? update.editorTabSize : current.editorTabSize,
       editorCheckOnSave:
         typeof update.editorCheckOnSave === "boolean" ? update.editorCheckOnSave : current.editorCheckOnSave,
+      editorFormatOnSave:
+        typeof update.editorFormatOnSave === "boolean" ? update.editorFormatOnSave : current.editorFormatOnSave,
+      editorKeymap: isEditorKeymap(update.editorKeymap) ? update.editorKeymap : current.editorKeymap,
       aiInstructions:
         typeof update.aiInstructions === "string" ? normalizeAiInstructions(update.aiInstructions) : current.aiInstructions,
       // Replaced whole, not merged: the pane sends the full table, and a

@@ -756,6 +756,9 @@ export function isRunBrowser(v: unknown): v is RunBrowser {
  *  garbage type and round it into range; four allowed values cannot be wedged. */
 export type EditorTabSize = 2 | 4;
 export const EDITOR_TAB_SIZES: EditorTabSize[] = [2, 4];
+/** Keymap presets (renderer/main/editor-keymaps.ts holds the tables). */
+export type EditorKeymap = "default" | "jetbrains" | "vscode";
+export const EDITOR_KEYMAPS: EditorKeymap[] = ["default", "jetbrains", "vscode"];
 export function isEditorTabSize(v: unknown): v is EditorTabSize {
   return v === 2 || v === 4;
 }
@@ -2935,6 +2938,10 @@ export interface RecorderSettings {
    *  Off, Save still refuses a draft the parser would lose statements from
    *  and a stale one; it stops asking Playwright whether the file loads. */
   editorCheckOnSave: boolean;
+  /** Run TypeScript's formatter over a draft before saving it (default on). */
+  editorFormatOnSave: boolean;
+  /** Which keymap preset the editor binds (default "default"). */
+  editorKeymap: EditorKeymap;
   /** Standing instructions prepended to every inline-AI prompt from the
    *  Script editor (⌘K rewrite, explain): house locator rules, a framework's
    *  quirks. Free text, capped at AI_INSTRUCTIONS_MAX chars. */

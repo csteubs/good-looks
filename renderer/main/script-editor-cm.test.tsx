@@ -15,6 +15,7 @@ import { diagnosticCount, forceLinting } from "@codemirror/lint";
 import ScriptEditorCm, { EditorView, linesOf, type ScriptEditorHandle } from "./script-editor-cm";
 import { ScriptEditor } from "./script-view";
 import { EditorState } from "@codemirror/state";
+import { foldable } from "@codemirror/language";
 
 const CODE = [
   'import { test, expect } from "@playwright/test";',
@@ -237,7 +238,7 @@ describe("linesOf", () => {
   });
 });
 
-describe("⌘K", () => {
+describe("⌘I", () => {
   it("calls the host's onAiRequest and swallows the key; without one, the key falls through", () => {
     const onAi = vi.fn();
     const { rerender } = render(
@@ -246,7 +247,7 @@ describe("⌘K", () => {
     const v = view();
     // "Mod" is Meta on a Mac and Ctrl elsewhere; jsdom reports no platform, so
     // CodeMirror reads it as Ctrl here.
-    const ev = new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true, cancelable: true });
+    const ev = new KeyboardEvent("keydown", { key: "i", ctrlKey: true, bubbles: true, cancelable: true });
     v.contentDOM.dispatchEvent(ev);
     expect(onAi).toHaveBeenCalledTimes(1);
     expect(ev.defaultPrevented).toBe(true);
@@ -254,9 +255,35 @@ describe("⌘K", () => {
     rerender(
       <ScriptEditorCm value={CODE} onChange={() => {}} readOnly={false} errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="t" {...PREFS} />,
     );
-    const ev2 = new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true, cancelable: true });
+    // Without a host callback the binding declines, and the chord falls
+    // through to CodeMirror's own Mod-i (select parent syntax).
+    const ev2 = new KeyboardEvent("keydown", { key: "i", ctrlKey: true, bubbles: true, cancelable: true });
     v.contentDOM.dispatchEvent(ev2);
     expect(onAi).toHaveBeenCalledTimes(1);
-    expect(ev2.defaultPrevented).toBe(false);
+  });
+});
+
+describe("fold by step", () => {
+  it("a test.step wrapper folds from its first line to its last, leaving the title and the close", () => {
+    const doc = [
+      'import { test } from "@playwright/test";',
+      'test("t", async ({ page }) => {',
+      '  await test.step("go", async () => {',
+      '    await page.goto("https://a.example");',
+      "  });",
+      "});",
+    ].join("\n");
+    const from = doc.indexOf("  await test.step") ;
+    const to = doc.indexOf("  });") + "  });".length;
+    render(
+      <ScriptEditorCm value={doc} onChange={() => {}} readOnly={false} errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="t" stepRanges={[{ from, to }]} {...PREFS} />,
+    );
+    const v = view();
+    const line3 = v.state.doc.line(3);
+    const range = foldable(v.state, line3.from, line3.to);
+    expect(range).toEqual({ from: line3.to, to: v.state.doc.line(5).from - 1 });
+    // A line that starts no wrapper folds nothing.
+    const line4 = v.state.doc.line(4);
+    expect(foldable(v.state, line4.from, line4.to)).toBeNull();
   });
 });

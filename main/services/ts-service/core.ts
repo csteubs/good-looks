@@ -187,6 +187,25 @@ export function createTsService(opts: TsServiceOptions) {
       };
     },
 
+    /** TypeScript's own formatter over the whole document, as text edits.
+     *  Two-space indent, spaces not tabs, and the rest of TypeScript's
+     *  defaults — which is how the generator writes a spec. */
+    format(id: string): TextEdit[] {
+      const name = fileName(id);
+      if (!files.has(name)) return [];
+      const settings: ts.FormatCodeSettings = {
+        ...ts.getDefaultFormatCodeSettings("\n"),
+        indentSize: 2,
+        tabSize: 2,
+        convertTabsToSpaces: true,
+        semicolons: ts.SemicolonPreference.Insert,
+        insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces: true,
+      };
+      return service
+        .getFormattingEditsForDocument(name, settings)
+        .map((c) => ({ from: c.span.start, to: c.span.start + c.span.length, text: c.newText }));
+    },
+
     inspections(id: string, enabled?: Partial<Record<InspectionRule, boolean>>): Inspection[] {
       const name = fileName(id);
       if (!files.has(name)) return [];

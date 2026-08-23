@@ -50,6 +50,7 @@ import { ScriptEditor, type LineInlay, type RunLineStatus, type ScriptEditorHand
 import { isScriptDirty, markScriptDirty } from "../lib/script-buffer";
 import { makeGhostSource } from "../lib/ghost-source";
 import { resolveAiInstructions } from "../lib/ai-instructions";
+import { applyTextEdits } from "../lib/text-edits";
 import type { TsIntelligence } from "./script-view";
 import { ScriptAiPanel, type ScriptAiApplyMeta, type ScriptAiMode, type ScriptAiSelection } from "./script-ai-panel";
 import { SCRIPT_CHANGED_ON_DISK, isScriptChangedOnDisk } from "../../shared/script-save.mjs";
@@ -944,10 +945,10 @@ export function TestDetailView() {
    *  will the parser lose statements it could map before (asked once, over
    *  the new misses only), and is the draft still built on the file as it is
    *  (refused by the backend; answered with Reload or Overwrite). */
-  const writeScriptDraft = async (opts: { overwrite?: boolean; confirmedDiverge?: boolean } = {}) => {
+  const writeScriptDraft = async (opts: { overwrite?: boolean; confirmedDiverge?: boolean } = {}, text: string = scriptDraft) => {
     if (!opts.confirmedDiverge) {
       try {
-        const preview = await api.tests.previewScript(id, scriptDraft);
+        const preview = await api.tests.previewScript(id, text);
         if (preview.tracked && preview.newlySkipped.length > 0) {
           setDivergeConfirm({ newlySkipped: preview.newlySkipped, overwrite: Boolean(opts.overwrite) });
           return;
@@ -963,7 +964,7 @@ export function TestDetailView() {
       // Heals tab's labels honest if the default ever changes.
       await api.tests.updateScript(
         id,
-        scriptDraft,
+        text,
         aiOriginRef.current ?? { by: "manual", reviewed: true },
         opts.overwrite ? undefined : scriptBase,
       );
@@ -1006,17 +1007,34 @@ export function TestDetailView() {
    *  lines. A check that could not RUN is reported the same way — it is not a
    *  pass — and "Save anyway" is the way past either. */
   const saveScript = async () => {
+    // Settings → Editor → "Format on save": TypeScript's formatter over the
+    // draft, through the service, before the check and the write. The
+    // formatted text becomes the draft, so what was checked is what is saved
+    // and what the editor shows afterwards. Unavailable service: no format.
+    let draft = scriptDraft;
+    if (settingsQuery.data?.editorFormatOnSave !== false && tsAvailable) {
+      try {
+        await api.ts.update(id, draft);
+        const formatted = applyTextEdits(draft, await api.ts.format(id));
+        if (formatted !== draft) {
+          draft = formatted;
+          setScriptDraft(formatted);
+        }
+      } catch {
+        // A formatter that did not answer is not a reason to refuse a save.
+      }
+    }
     // Settings → Editor → "Check with Playwright before saving". Off, the
     // save still refuses a stale draft and still asks about statements the
     // parser would lose; it stops asking the CLI whether the file loads.
     if (settingsQuery.data?.editorCheckOnSave === false) {
-      await writeScriptDraft();
+      await writeScriptDraft({}, draft);
       return;
     }
     setScriptCheck({ status: "checking", errors: [] });
     let result: ScriptCheckResult;
     try {
-      result = await api.tests.checkScript(id, scriptDraft);
+      result = await api.tests.checkScript(id, draft);
     } catch (err) {
       setScriptCheck({
         status: "failed",
@@ -1033,7 +1051,7 @@ export function TestDetailView() {
       setScriptCheck({ status: "failed", errors: result.errors });
       return;
     }
-    await writeScriptDraft();
+    await writeScriptDraft({}, draft);
   };
 
   /** Put the caret at the start of a reported line and bring it into view. */
@@ -1774,6 +1792,8 @@ export function TestDetailView() {
                 ghost={ghostEnabled ? ghostSource : null}
                 onAiRequest={editingScript ? () => openAi("rewrite") : undefined}
                 intelligence={intelligence}
+                keymapPreset={settingsQuery.data?.editorKeymap ?? "default"}
+                stepRanges={preview?.stepRanges ?? null}
               />
               <Dialog
                 open={staleOpen}

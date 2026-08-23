@@ -33,6 +33,7 @@ function inProcessChild(): TsChildLike & { exit(code: number): void; drop: boole
         case "completions": result = svc.completions(req.params.id, req.params.offset); break;
         case "hover": result = svc.hover(req.params.id, req.params.offset); break;
         case "inspections": result = svc.inspections(req.params.id, req.params.enabled); break;
+        case "format": result = svc.format(req.params.id); break;
       }
       queueMicrotask(() => listeners.message.forEach((fn) => fn({ id: req.id, result })));
     },

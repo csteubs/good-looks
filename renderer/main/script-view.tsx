@@ -21,6 +21,7 @@ export type { LineInlay, RunLineStatus, ScriptEditorHandle } from "./script-edit
 export type { GhostSource } from "./ghost-text";
 export type { TsIntelligence } from "./ts-intelligence";
 import type { TsIntelligence } from "./ts-intelligence";
+import type { EditorKeymap } from "./editor-keymaps";
 
 const ScriptEditorCm = React.lazy(() => import("./script-editor-cm"));
 
@@ -52,6 +53,9 @@ export interface ScriptEditorProps {
   onAiRequest?: () => void;
   /** The TypeScript service; null or absent keeps syntax + CLI diagnostics. */
   intelligence?: TsIntelligence | null;
+  keymapPreset?: EditorKeymap;
+  /** The parser's step statements, for folding by step. */
+  stepRanges?: SourceRange[] | null;
 }
 
 const NO_ERRORS: ScriptCheckError[] = [];
@@ -74,6 +78,8 @@ export function ScriptEditor({
   ghost = null,
   onAiRequest,
   intelligence = null,
+  keymapPreset = "default",
+  stepRanges = null,
 }: ScriptEditorProps): React.ReactElement {
   return (
     <React.Suspense fallback={<div className="gl-script-ide-loading">Loading the editor…</div>}>
@@ -94,6 +100,8 @@ export function ScriptEditor({
         ghost={ghost}
         onAiRequest={onAiRequest}
         intelligence={intelligence}
+        keymapPreset={keymapPreset}
+        stepRanges={stepRanges}
       />
     </React.Suspense>
   );

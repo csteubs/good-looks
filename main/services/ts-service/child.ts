@@ -67,6 +67,8 @@ async function handle(req: TsRequest): Promise<unknown> {
       return svc.hover(req.params.id, req.params.offset);
     case "inspections":
       return svc.inspections(req.params.id, req.params.enabled);
+    case "format":
+      return svc.format(req.params.id);
   }
 }
 

@@ -132,6 +132,8 @@ vi.mock("@tanstack/react-router", () => ({
   useParams: () => ({ id: routeId }),
 }));
 
+import { api } from "../lib/api";
+
 vi.mock("./script-ai-panel", () => ({
   ScriptAiPanel: (props: { onApply: (next: string, meta: unknown) => void }) => (
     <button type="button" onClick={() => props.onApply("// by ai\n", { affordance: "inline-rewrite", provider: "ollama", model: "qwen", promptVersion: "inline-1" })}>
@@ -209,6 +211,7 @@ vi.mock("../lib/api", () => ({
       completions: async () => [],
       hover: async () => null,
       inspections: async () => [],
+      format: async () => [],
     },
     llm: {
       getConfig: async () => ({ provider: "ollama", model: null, baseUrls: {} }),
@@ -1475,6 +1478,27 @@ describe("saving a script edit", () => {
     await waitFor(() => expect(content.getAttribute("contenteditable")).toBe("true"));
     return content;
   }
+
+  it("formats the draft through the type service before checking and saving it", async () => {
+    // The module mock's ts surface is a plain object: make the service
+    // available and hand back one formatting edit for this test only.
+    const ts = api.ts as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>;
+    const wasEnsure = ts.ensure;
+    const wasFormat = ts.format;
+    ts.ensure = async () => ({ available: true, typescript: "5.9.3" });
+    ts.format = async () => [{ from: 0, to: 2, text: "//" }];
+    try {
+      const ta = await openEditor();
+      setDraft(ta, "/*edited");
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
+      expect(checkScript).toHaveBeenCalledWith("t1", "//edited");
+      expect(updateScript).toHaveBeenCalledWith("t1", "//edited", { by: "manual", reviewed: true }, expect.any(String));
+    } finally {
+      ts.ensure = wasEnsure;
+      ts.format = wasFormat;
+    }
+  });
 
   it("files the save as ai-inline after an AI rewrite was applied into the buffer", async () => {
     await openEditor();

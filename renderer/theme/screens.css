@@ -5897,3 +5897,23 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* ── Settings → Editor → Keymap: the bindings table behind "More" ─────── */
+.gl-keymap-table {
+  border-collapse: collapse;
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--gl-tx-2);
+}
+
+.gl-keymap-table td {
+  padding: 2px 16px 2px 0;
+  vertical-align: baseline;
+}
+
+.gl-keymap-table kbd {
+  font-family: var(--gl-mono);
+  color: var(--gl-tx-1);
+  white-space: nowrap;
+}
