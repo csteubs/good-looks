@@ -41,6 +41,12 @@ export interface LlmConfig {
   roles?: Partial<Record<LlmRole, LlmRoleSlot>>;
 }
 
+/** What `llm:setConfig` accepts: `roles` is merged PER KEY, and a role set
+ *  to `null` is cleared — instant then follows chat, autocomplete is off. */
+export type LlmConfigPatch = Partial<Omit<LlmConfig, "roles">> & {
+  roles?: Partial<Record<LlmRole, LlmRoleSlot | null>>;
+};
+
 /** Mirror of main/services/llm/types.ts — see there for why this exists. */
 export type LlmErrorKind =
   | "no-model"

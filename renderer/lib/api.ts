@@ -97,6 +97,7 @@ import type {
   LlmProvider,
   LlmProviderStatus,
   LlmRole,
+  LlmConfigPatch,
 } from "./llm-types";
 
 /** One reusable flow as `tests:listFlows` reports it — enough to offer the
@@ -828,7 +829,7 @@ export const api = {
   },
   llm: {
     getConfig: () => ipc().invoke<LlmConfig>("llm:getConfig"),
-    setConfig: (update: Partial<LlmConfig>) => ipc().invoke<LlmConfig>("llm:setConfig", update),
+    setConfig: (update: LlmConfigPatch) => ipc().invoke<LlmConfig>("llm:setConfig", update),
     status: (provider: LlmProvider) =>
       ipc().invoke<LlmProviderStatus>("llm:status", { provider }),
     detect: () => ipc().invoke<LlmProviderStatus[]>("llm:detect"),

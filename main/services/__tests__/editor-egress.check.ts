@@ -23,6 +23,7 @@
 // Comments are stripped before the source scans, as the insights check does.
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 
 import { REDACTED, redactWithSnapshot, setSecretSnapshotForTesting } from "../secret-redaction.js";
@@ -123,6 +124,33 @@ for (const fn of ["readStepMatches", "readHealFailures", "readLogs"]) {
   else if (!/redactWithSnapshot\(/.test(slice)) fail(`${fn} reads the file without redactWithSnapshot`);
   else ok(`${fn} redacts what it reads`);
 }
+
+// ── 4. Autocomplete never leaves the machine ────────────────────────────────
+// Ghost text is requested on every pause in typing with the script around the
+// caret as the prompt. Three layers say it stays local, and each is pinned
+// here because any one of them alone is a layer the next change can remove:
+// the pane never offers a hosted provider for the slot, the store never keeps
+// one, and the service refuses to run one even if handed it.
+console.log("autocomplete never leaves the machine");
+process.env.GLAZE_TEST_USERDATA = fs.mkdtempSync(path.join(os.tmpdir(), "glaze-editor-egress-"));
+const { llmConfigStore } = await import("../llm-config-store.js");
+llmConfigStore.set({ provider: "ollama", model: "m", roles: { autocomplete: { provider: "anthropic", model: "claude-haiku-4-5" } } });
+if (llmConfigStore.get().roles?.autocomplete) fail("the store kept a hosted autocomplete slot");
+else ok("the store drops a hosted autocomplete slot");
+
+const fimBody = service.slice(service.indexOf("async fim("), service.indexOf("\n  },", service.indexOf("async fim(")));
+const refuseAt = fimBody.indexOf('slot.provider === "anthropic"');
+const dispatchAt = fimBody.search(/ollamaFim\(|lmStudioFim\(|appFetch\(|fetch\(/);
+if (refuseAt === -1) fail("llmService.fim no longer refuses a hosted provider");
+else if (dispatchAt !== -1 && dispatchAt < refuseAt) fail("llmService.fim dispatches before it refuses a hosted provider");
+else ok("llmService.fim refuses a hosted provider before any request is built");
+if (/anthropic/i.test(read("main/services/llm/fim.ts"))) fail("the FIM request builder knows a hosted provider");
+else ok("the FIM request builder has no hosted provider");
+
+const rows = read("renderer/settings/panes/ai-role-rows.tsx");
+const localLine = rows.split("\n").find((l) => l.includes("const LOCAL_PROVIDERS")) ?? "";
+if (!localLine || /anthropic/.test(localLine)) fail(`the Autocomplete row offers a hosted provider: ${localLine || "LOCAL_PROVIDERS not found"}`);
+else ok("the Autocomplete row offers local providers only");
 
 if (failures > 0) {
   console.error(`\ncheck:editor-egress FAILED (${failures})`);

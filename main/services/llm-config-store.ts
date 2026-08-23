@@ -48,10 +48,15 @@ export function normalizeRoles(v: unknown): Partial<Record<LlmRole, LlmRoleSlot>
 /** Seed the slots an older file does not have. The chat slot IS the flat
  *  pair; instant follows chat until assigned; autocomplete stays unset. */
 function seededRoles(flat: LlmRoleSlot, roles: Partial<Record<LlmRole, LlmRoleSlot>>): Partial<Record<LlmRole, LlmRoleSlot>> {
+  // Only chat is seeded. An ABSENT instant slot means "follow chat" — the
+  // service's resolveSlot falls back to the flat pair — and that is a state
+  // the pane offers by name ("Same as chat"), so it must survive on disk. A
+  // seeded copy would look identical until the day chat changes and instant
+  // silently stays behind.
   const chat = roles.chat ?? flat;
   return {
     chat,
-    instant: roles.instant ?? chat,
+    ...(roles.instant ? { instant: roles.instant } : {}),
     ...(roles.autocomplete ? { autocomplete: roles.autocomplete } : {}),
   };
 }

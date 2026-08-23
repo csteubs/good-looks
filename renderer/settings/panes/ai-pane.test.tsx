@@ -10,7 +10,7 @@
 // or vice versa.
 
 import { describe, it, expect } from "vitest";
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 import { makeController, renderPane } from "../__tests__/harness";
 import { AiPane } from "./ai-pane";
@@ -28,14 +28,17 @@ const REACHABLE = {
 describe("provider selection", () => {
   it("offers all three providers", () => {
     renderPane(<AiPane />);
+    // Scoped to the provider RadioGroup: the role rows below offer the same
+    // provider names as toggle items, which also carry role="radio".
+    const group = within(document.getElementById("llm-provider") as HTMLElement);
     for (const name of ["Ollama", "LM Studio", "Claude"]) {
-      expect(screen.getByRole("radio", { name }), name).toBeTruthy();
+      expect(group.getByRole("radio", { name }), name).toBeTruthy();
     }
   });
 
   it("switches provider", async () => {
     const { controller } = renderPane(<AiPane />);
-    fireEvent.click(screen.getByRole("radio", { name: "Claude" }));
+    fireEvent.click(within(document.getElementById("llm-provider") as HTMLElement).getByRole("radio", { name: "Claude" }));
     await waitFor(() => expect(controller.changeProvider).toHaveBeenCalledWith("anthropic"));
   });
 

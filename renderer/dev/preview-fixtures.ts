@@ -979,6 +979,12 @@ export const LLM_CONFIG: LlmConfig = {
   provider: "ollama",
   model: "qwen2.5-coder:7b",
   baseUrls: { ollama: "http://127.0.0.1:11434" },
+  // No instant slot: it follows chat, which is what the pane shows as "Same
+  // as chat". Autocomplete is set so the editor preview can show ghost text.
+  roles: {
+    chat: { provider: "ollama", model: "qwen2.5-coder:7b" },
+    autocomplete: { provider: "ollama", model: "qwen2.5-coder:1.5b" },
+  },
 };
 
 /** `llm:detect` answers with one status PER PROVIDER, not one overall — the
