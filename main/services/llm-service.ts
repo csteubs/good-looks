@@ -8,6 +8,7 @@
 
 import { randomUUID } from "crypto";
 
+import { redactWithSnapshot, refreshSecretSnapshot } from "./secret-redaction.js";
 import { logger } from "@shell/backend";
 
 import { anthropicKeyStore } from "./anthropic-key-store.js";
@@ -233,6 +234,17 @@ interface StreamFacts {
  * activeRequests or the logger — the wrappers own those, which is what keeps
  * the streaming path's observable behavior byte-identical.
  */
+/** Every message, with every stored secret value scrubbed. THE egress
+ *  chokepoint: the renderer's prompt builders quote scripts, run output,
+ *  page structure and — since Phase 3 — user instructions and selections,
+ *  and the only place all of them pass through on the way to a provider is
+ *  here. `check:editor-egress` pins that this runs before the fetch, on
+ *  every provider: a local model is on this machine, but a secret in its
+ *  prompt is a secret in its logs. Callers refresh the snapshot first. */
+function redactedMessages(messages: LlmMessage[]): LlmMessage[] {
+  return messages.map((m) => ({ ...m, content: redactWithSnapshot(m.content) }));
+}
+
 async function streamChatOnce(
   provider: LlmProvider,
   model: string,
@@ -242,6 +254,7 @@ async function streamChatOnce(
   sink: ChatSink,
 ): Promise<StreamFacts> {
   let res: Response;
+  const outgoing = redactedMessages(params.messages);
   // Kept so the 401 branch can say whether a token was actually sent, rather
   // than re-reading the store and possibly answering about a different one.
   let authHeaders: Record<string, string> = {};
@@ -250,7 +263,7 @@ async function streamChatOnce(
     if (!key) {
       throw new ProviderError("Add your Anthropic API key.", "auth");
     }
-    const { system, messages } = toAnthropicPayload(params.messages);
+    const { system, messages } = toAnthropicPayload(outgoing);
     res = await appFetch(`${base}/v1/messages`, {
       method: "POST",
       headers: anthropicHeaders(key),
@@ -271,7 +284,7 @@ async function streamChatOnce(
       headers: { "Content-Type": "application/json", ...authHeaders },
       body: JSON.stringify({
         model,
-        messages: params.messages,
+        messages: outgoing,
         temperature: params.temperature ?? 0.2,
         stream: true,
       }),
@@ -454,6 +467,10 @@ async function runChat(
   const controller = new AbortController();
   activeRequests.set(requestId, controller);
   try {
+    // The snapshot has to know every secret the prompt could quote BEFORE
+    // the messages are scrubbed; a stale one redacts the secrets of an
+    // earlier session and passes a new one through.
+    await refreshSecretSnapshot();
     const facts = await streamChatOnce(provider, model, base, params, controller, {
       chunk(delta, reasoning) {
         sendToMain("llm:chunk", reasoning ? { requestId, delta, reasoning: true } : { requestId, delta });
@@ -803,6 +820,7 @@ export const llmService = {
     const startedAt = Date.now();
     let text = "";
     let firstTokenMs: number | null = null;
+    await refreshSecretSnapshot();
     try {
       const facts = await streamChatOnce(provider, model, base, params, controller, {
         chunk(delta, reasoning) {

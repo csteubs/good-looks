@@ -31,6 +31,15 @@ vi.mock("./app-window.js", () => ({
   setMainWindow: () => {},
 }));
 
+// The send path refreshes the secret snapshot from the stores before it
+// scrubs — under the test stub that refresh finds nothing and would wipe a
+// planted secret. Refresh is a no-op here; what the redaction test proves
+// is the scrub on the send path, which is the part that has no other cover.
+vi.mock("./secret-redaction.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./secret-redaction.js")>()),
+  refreshSecretSnapshot: async () => {},
+}));
+
 const realFetch = globalThis.fetch;
 
 /** Make fetch fail the way a down local provider does. */
@@ -353,6 +362,33 @@ describe("chat() streaming", () => {
 
   /** Last element. This project targets ES2020 — no Array.prototype.at. */
   const last = <T,>(xs: T[]): T | undefined => xs[xs.length - 1];
+
+  it("scrubs every stored secret out of the messages before they leave, on a local provider too", async () => {
+    // The egress chokepoint: the prompt builders quote scripts, run output
+    // and (Phase 3) the user's own text; the one place all of them pass is
+    // streamChatOnce, and the snapshot it scrubs with is refreshed first.
+    const { setSecretSnapshotForTesting, REDACTED } = await import("./secret-redaction.js");
+    setSecretSnapshotForTesting(["hunter2-planted-secret-value"]);
+    sentEvents.length = 0;
+    sseFetch(['data: {"choices":[{"delta":{"content":"ok"}}]}', "data: [DONE]"]);
+    await llmService.chat({
+      messages: [
+        { role: "system", content: "rules" },
+        { role: "user", content: 'the page said "hunter2-planted-secret-value"' },
+      ],
+      provider: "lmstudio",
+      model: "test-model",
+    });
+    for (let i = 0; i < 200; i++) {
+      if (sentEvents.some((e) => e.channel === "llm:done" || e.channel === "llm:error")) break;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const body = String((calls[calls.length - 1][1] as { body: string }).body);
+    expect(body).not.toContain("hunter2-planted-secret-value");
+    expect(body).toContain(REDACTED);
+    expect(body).toContain("rules");
+  });
 
   const chunk = (delta: Record<string, string>) =>
     `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}`;
