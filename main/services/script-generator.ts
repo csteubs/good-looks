@@ -1149,8 +1149,17 @@ export function stepTitle(step: Step): string {
       return step.waitUntil ? describeStep(step) : `wait for ${loc(step.locator)}`.trim();
     case "viewport":
       return `viewport ${num(step.width, 0)}x${num(step.height, 0)}`;
-    default:
-      return describeStep(step);
+    case "scroll":
+      return step.locator ? `scroll to ${loc(step.locator)}` : describeStep(step);
+    default: {
+      // Anything `describeStep` phrases stays a phrase; anything it spells
+      // as the statement gets the type and the target instead, so no title
+      // ever carries code.
+      const phrase = describeStep(step);
+      return /\bpage\.|\bexpect\(|\bglaze[A-Z]/.test(phrase)
+        ? `${step.type} ${loc(step.locator)}`.trim()
+        : phrase;
+    }
   }
 }
 

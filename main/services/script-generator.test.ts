@@ -11,8 +11,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { generateSpecDetailed, type FlowSource } from "./script-generator.js";
-import type { Step, TestVariable } from "../recorder/types.js";
+import { generateSpecDetailed, stepTitle, type FlowSource } from "./script-generator.js";
+import type { Step, StepType, TestVariable } from "../recorder/types.js";
 
 let seq = 0;
 function step(partial: Partial<Step> & Pick<Step, "type">): Step {
@@ -623,5 +623,27 @@ describe("scroll steps", () => {
     const { source } = generateSpecDetailed({ name: "t", url: "u", steps });
     expect(source).toContain("UNGENERATABLE STEP");
     expect(source).toContain("neither an element nor a position");
+  });
+});
+
+describe("test.step wrapper titles", () => {
+  it("never carry code, whatever the step type", () => {
+    const cases: Partial<Step>[] = [
+      { type: "click", locator: { k: "testid", v: "go" } },
+      { type: "fill", locator: { k: "label", v: "Email" }, value: "a@b.c" },
+      { type: "assert", assert: "url", value: "/cart" },
+      { type: "scroll", locator: { k: "testid", v: "deep" } },
+      { type: "scroll", scrollX: 0, scrollY: 120 },
+      { type: "state", locator: { k: "testid", v: "x" }, value: "hover" },
+      { type: "capture", locator: { k: "testid", v: "total" }, captureVar: "t" },
+      { type: "press", value: "Enter" },
+      { type: "goto", url: "https://example.com/a?b=1" },
+      { type: "wait", locator: { k: "testid", v: "x" } },
+    ];
+    for (const c of cases) {
+      const title = stepTitle(step(c as Partial<Step> & { type: StepType }));
+      expect(title, c.type).not.toMatch(/\bpage\.|\bexpect\(|\bglaze[A-Z]|await /);
+      expect(title.length, c.type).toBeGreaterThan(0);
+    }
   });
 });
