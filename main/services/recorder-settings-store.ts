@@ -15,6 +15,9 @@ import {
   MAX_BATCH_CONCURRENCY,
   MAX_BATCH_TEST_OPTIONS,
   RUN_BROWSERS,
+  EDITOR_FONT_SIZE_DEFAULT,
+  editorFontSizeOrDefault,
+  isEditorTabSize,
 } from "../recorder/types.js";
 import type { BatchRowOptions, RecorderSettings } from "../recorder/types.js";
 import { normalizeViewport } from "../recorder/window-size.js";
@@ -216,6 +219,11 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   // size it was designed at unless someone goes looking for the setting.
   uiScale: 1,
   uiTypeface: "space",
+  editorFontSize: EDITOR_FONT_SIZE_DEFAULT,
+  editorLineWrap: false,
+  editorLineNumbers: true,
+  editorTabSize: 2,
+  editorCheckOnSave: true,
   // USD, because the runner prices the Settings pane offers are published in
   // it. The two numbers below are the app's own conservative guesses, and the
   // Cost panel says so on screen for as long as they are unchanged.
@@ -406,6 +414,20 @@ function read(): RecorderSettings {
       // is the only way back. A bad value falls back to 100%.
       uiScale: isUiScale(parsed.uiScale) ? parsed.uiScale : DEFAULT_SETTINGS.uiScale,
       uiTypeface: isUiTypeface(parsed.uiTypeface) ? parsed.uiTypeface : DEFAULT_SETTINGS.uiTypeface,
+      // The editor's rows: membership and a whole-pixel range, on both paths
+      // like everything above. A refused value is the default, never a clamp.
+      editorFontSize: editorFontSizeOrDefault(parsed.editorFontSize),
+      editorLineWrap:
+        typeof parsed.editorLineWrap === "boolean" ? parsed.editorLineWrap : DEFAULT_SETTINGS.editorLineWrap,
+      editorLineNumbers:
+        typeof parsed.editorLineNumbers === "boolean"
+          ? parsed.editorLineNumbers
+          : DEFAULT_SETTINGS.editorLineNumbers,
+      editorTabSize: isEditorTabSize(parsed.editorTabSize) ? parsed.editorTabSize : DEFAULT_SETTINGS.editorTabSize,
+      editorCheckOnSave:
+        typeof parsed.editorCheckOnSave === "boolean"
+          ? parsed.editorCheckOnSave
+          : DEFAULT_SETTINGS.editorCheckOnSave,
       // Clamped rather than cast. Both numbers multiply every figure on the
       // Cost panel, so a hand-edited `0` or `1e9` on disk would render as a
       // confident "$0.00 spent" or an absurd one — a wrong answer that looks
@@ -613,6 +635,16 @@ export const recorderSettingsStore = {
       // does not work" rather than "the value was refused".
       uiScale: isUiScale(update.uiScale) ? update.uiScale : current.uiScale,
       uiTypeface: isUiTypeface(update.uiTypeface) ? update.uiTypeface : current.uiTypeface,
+      editorFontSize:
+        update.editorFontSize !== undefined
+          ? editorFontSizeOrDefault(update.editorFontSize)
+          : current.editorFontSize,
+      editorLineWrap: typeof update.editorLineWrap === "boolean" ? update.editorLineWrap : current.editorLineWrap,
+      editorLineNumbers:
+        typeof update.editorLineNumbers === "boolean" ? update.editorLineNumbers : current.editorLineNumbers,
+      editorTabSize: isEditorTabSize(update.editorTabSize) ? update.editorTabSize : current.editorTabSize,
+      editorCheckOnSave:
+        typeof update.editorCheckOnSave === "boolean" ? update.editorCheckOnSave : current.editorCheckOnSave,
       // Same clamps as `read()`, on the same principle as `uiScale` above: a
       // value refused on load but accepted on save is written to disk and then
       // ignored forever, which reads as "the setting does not work".

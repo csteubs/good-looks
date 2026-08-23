@@ -36,6 +36,10 @@ export interface ScriptEditorProps {
   /** The editor's handle, for a host that moves the caret (click a problem,
    *  land on its line). */
   handleRef?: React.Ref<ScriptEditorHandle>;
+  /** Settings → Editor. Defaults match the store's. */
+  lineWrap?: boolean;
+  lineNumbers?: boolean;
+  tabSize?: number;
 }
 
 const NO_ERRORS: ScriptCheckError[] = [];
@@ -51,6 +55,9 @@ export function ScriptEditor({
   onCaretLine,
   ariaLabel = "Test script",
   handleRef,
+  lineWrap = false,
+  lineNumbers = true,
+  tabSize = 2,
 }: ScriptEditorProps): React.ReactElement {
   return (
     <React.Suspense fallback={<div className="gl-script-ide-loading">Loading the editor…</div>}>
@@ -64,6 +71,9 @@ export function ScriptEditor({
         onCaretLine={onCaretLine}
         ariaLabel={ariaLabel}
         handleRef={handleRef}
+        lineWrap={lineWrap}
+        lineNumbers={lineNumbers}
+        tabSize={tabSize}
       />
     </React.Suspense>
   );

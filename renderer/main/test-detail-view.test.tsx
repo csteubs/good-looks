@@ -1692,6 +1692,16 @@ describe("saving a script edit — stale drafts, divergence, and the dirty buffe
     expect(screen.queryByText(/won't become/)).toBeNull();
   });
 
+  it("skips the Playwright check when Settings → Editor turns it off, and still saves", async () => {
+    settings = { ...settings, editorCheckOnSave: false };
+    const ta = await openEditor();
+    setDraft(ta, "// edited");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
+    expect(checkScript).not.toHaveBeenCalled();
+    await editorClosed();
+  });
+
   it("a preview that fails does not stand between the user and the save", async () => {
     previewScript.mockRejectedValue(new Error("no parser today"));
     const ta = await openEditor();

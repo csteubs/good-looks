@@ -753,6 +753,22 @@ export function isRunBrowser(v: unknown): v is RunBrowser {
  *  makes every window unreadable — INCLUDING the Settings window, which is the
  *  only place the value can be changed back. A clamp would still accept a
  *  garbage type and round it into range; four allowed values cannot be wedged. */
+export type EditorTabSize = 2 | 4;
+export const EDITOR_TAB_SIZES: EditorTabSize[] = [2, 4];
+export function isEditorTabSize(v: unknown): v is EditorTabSize {
+  return v === 2 || v === 4;
+}
+export const EDITOR_FONT_SIZE_MIN = 10;
+export const EDITOR_FONT_SIZE_MAX = 20;
+export const EDITOR_FONT_SIZE_DEFAULT = 13;
+/** Whole pixels inside the range; anything else is the default, not a clamp —
+ *  a hand-edited `1e9` should read as refused, not as "20". */
+export function editorFontSizeOrDefault(v: unknown): number {
+  return typeof v === "number" && Number.isInteger(v) && v >= EDITOR_FONT_SIZE_MIN && v <= EDITOR_FONT_SIZE_MAX
+    ? v
+    : EDITOR_FONT_SIZE_DEFAULT;
+}
+
 export type UiScale = 0.9 | 1 | 1.1 | 1.25;
 
 export const UI_SCALES: UiScale[] = [0.9, 1, 1.1, 1.25];
@@ -2903,6 +2919,21 @@ export interface RecorderSettings {
    *  is fetched — see the header of `renderer/theme/fonts.css` for why this app
    *  does not load fonts over the network. */
   uiTypeface: UiTypeface;
+  /** The Script IDE's font size in px (default 13, 10–20). Its line height is
+   *  derived (×1.4, rounded) so the gutter and the content stay in step. Both
+   *  land on `--gl-code-size` / `--gl-code-line`; see renderer/theme/editor.css. */
+  editorFontSize: number;
+  /** Soft-wrap long lines in the Script IDE (default off — a spec's long lines
+   *  are locator chains, and wrapping one hides where it ends). */
+  editorLineWrap: boolean;
+  /** Show line numbers in the Script IDE (default on). */
+  editorLineNumbers: boolean;
+  /** Tab width in the Script IDE (default 2 — what the generator emits). */
+  editorTabSize: EditorTabSize;
+  /** Run the draft through the Playwright CLI before a save (default on).
+   *  Off, Save still refuses a draft the parser would lose statements from
+   *  and a stale one; it stops asking Playwright whether the file loads. */
+  editorCheckOnSave: boolean;
   /** Which symbol the Cost panel stamps on a money figure (default "usd").
    *
    *  "none" restores the panel's original behaviour — bare numbers, claiming

@@ -27,6 +27,9 @@ const CODE = [
   "",
 ].join("\n");
 
+/** Settings → Editor at their defaults. */
+const PREFS = { lineWrap: false, lineNumbers: true, tabSize: 2 } as const;
+
 function view(): EditorView {
   const content = document.querySelector(".cm-content") as HTMLElement;
   const v = EditorView.findFromDOM(content);
@@ -49,6 +52,7 @@ describe("<ScriptEditorCm />", () => {
         skippedRanges={null}
         runStatus={{}}
         ariaLabel="Script of Checkout"
+        {...PREFS}
       />,
     );
     const content = screen.getByRole("textbox", { name: "Script of Checkout" });
@@ -60,13 +64,13 @@ describe("<ScriptEditorCm />", () => {
   it("reports edits, and takes an external value as a replacement without a remount", () => {
     const onChange = vi.fn();
     const { rerender } = render(
-      <ScriptEditorCm value={CODE} onChange={onChange} readOnly={false} errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" />,
+      <ScriptEditorCm value={CODE} onChange={onChange} readOnly={false} errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" {...PREFS} />,
     );
     const v = view();
     act(() => v.dispatch({ changes: { from: 0, insert: "// c\n" } }));
     expect(onChange).toHaveBeenLastCalledWith("// c\n" + CODE);
     rerender(
-      <ScriptEditorCm value="// v2" onChange={onChange} readOnly={false} errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" />,
+      <ScriptEditorCm value="// v2" onChange={onChange} readOnly={false} errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" {...PREFS} />,
     );
     expect(view()).toBe(v);
     expect(v.state.doc.toString()).toBe("// v2");
@@ -75,13 +79,13 @@ describe("<ScriptEditorCm />", () => {
   it("refuses edits while read-only, and takes them again when it is not", () => {
     const onChange = vi.fn();
     const { rerender } = render(
-      <ScriptEditorCm value={CODE} onChange={onChange} readOnly errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" />,
+      <ScriptEditorCm value={CODE} onChange={onChange} readOnly errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" {...PREFS} />,
     );
     const v = view();
     expect(v.state.readOnly).toBe(true);
     expect(v.contentDOM.getAttribute("contenteditable")).toBe("false");
     rerender(
-      <ScriptEditorCm value={CODE} onChange={onChange} readOnly={false} errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" />,
+      <ScriptEditorCm value={CODE} onChange={onChange} readOnly={false} errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" {...PREFS} />,
     );
     expect(v.state.readOnly).toBe(false);
     expect(v.contentDOM.getAttribute("contenteditable")).toBe("true");
@@ -90,7 +94,7 @@ describe("<ScriptEditorCm />", () => {
   it("marks unmapped statements in the coverage gutter, on their lines only", () => {
     const skipped = [{ from: CODE.indexOf("await page.mouse"), to: CODE.indexOf("move(1, 2);") + "move(1, 2);".length }];
     render(
-      <ScriptEditorCm value={CODE} onChange={() => {}} readOnly errors={[]} skippedRanges={skipped} runStatus={{}} ariaLabel="s" />,
+      <ScriptEditorCm value={CODE} onChange={() => {}} readOnly errors={[]} skippedRanges={skipped} runStatus={{}} ariaLabel="s" {...PREFS} />,
     );
     const marks = Array.from(document.querySelectorAll('.gl-ide-cov[data-coverage="skipped"]:not([data-spacer])'));
     expect(marks).toHaveLength(1);
@@ -102,20 +106,20 @@ describe("<ScriptEditorCm />", () => {
 
   it("paints run status on the lines it is given", () => {
     const { rerender } = render(
-      <ScriptEditorCm value={CODE} onChange={() => {}} readOnly errors={[]} skippedRanges={null} runStatus={{ 4: "passed", 6: "failed" }} ariaLabel="s" />,
+      <ScriptEditorCm value={CODE} onChange={() => {}} readOnly errors={[]} skippedRanges={null} runStatus={{ 4: "passed", 6: "failed" }} ariaLabel="s" {...PREFS} />,
     );
     const statuses = () =>
       Array.from(document.querySelectorAll(".gl-ide-run:not([data-spacer])")).map((el) => (el as HTMLElement).dataset.status);
     expect(statuses().sort()).toEqual(["failed", "passed"]);
     rerender(
-      <ScriptEditorCm value={CODE} onChange={() => {}} readOnly errors={[]} skippedRanges={null} runStatus={{ 4: "running" }} ariaLabel="s" />,
+      <ScriptEditorCm value={CODE} onChange={() => {}} readOnly errors={[]} skippedRanges={null} runStatus={{ 4: "running" }} ariaLabel="s" {...PREFS} />,
     );
     expect(statuses()).toEqual(["running"]);
   });
 
   it("turns the CLI's problems into diagnostics on their lines, and a syntax error into one of its own", async () => {
     const { rerender } = render(
-      <ScriptEditorCm value={CODE} onChange={() => {}} readOnly={false} errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" />,
+      <ScriptEditorCm value={CODE} onChange={() => {}} readOnly={false} errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" {...PREFS} />,
     );
     const v = view();
     act(() => forceLinting(v));
@@ -129,7 +133,7 @@ describe("<ScriptEditorCm />", () => {
         errors={[{ message: 'SyntaxError: Unexpected token, expected "," (4:39)', line: 4, column: 39 }, { message: "no line" }]}
         skippedRanges={null}
         runStatus={{}}
-        ariaLabel="s"
+        ariaLabel="s" {...PREFS}
       />,
     );
     await waitFor(() => expect(diagnosticCount(v.state)).toBe(1));
@@ -146,7 +150,7 @@ describe("<ScriptEditorCm />", () => {
     const ref = React.createRef<ScriptEditorHandle>();
     const onCaretLine = vi.fn();
     render(
-      <ScriptEditorCm value={CODE} onChange={() => {}} readOnly={false} errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" onCaretLine={onCaretLine} handleRef={ref} />,
+      <ScriptEditorCm value={CODE} onChange={() => {}} readOnly={false} errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" {...PREFS} onCaretLine={onCaretLine} handleRef={ref} />,
     );
     act(() => ref.current!.focusLine(6));
     const v = view();
@@ -155,6 +159,25 @@ describe("<ScriptEditorCm />", () => {
     // Clamped, never thrown, for a line past the end.
     act(() => ref.current!.focusLine(999));
     expect(v.state.selection.main.head).toBe(v.state.doc.line(v.state.doc.lines).from);
+  });
+});
+
+describe("<ScriptEditorCm /> settings", () => {
+  it("reconfigures wrapping, line numbers and tab size live, without a remount", () => {
+    const { rerender } = render(
+      <ScriptEditorCm value={CODE} onChange={() => {}} readOnly errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" lineWrap={false} lineNumbers tabSize={2} />,
+    );
+    const v = view();
+    expect(v.state.tabSize).toBe(2);
+    expect(v.contentDOM.classList.contains("cm-lineWrapping")).toBe(false);
+    expect(document.querySelector(".cm-lineNumbers")).not.toBeNull();
+    rerender(
+      <ScriptEditorCm value={CODE} onChange={() => {}} readOnly errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" lineWrap lineNumbers={false} tabSize={4} />,
+    );
+    expect(view()).toBe(v);
+    expect(v.state.tabSize).toBe(4);
+    expect(v.contentDOM.classList.contains("cm-lineWrapping")).toBe(true);
+    expect(document.querySelector(".cm-lineNumbers")).toBeNull();
   });
 });
 

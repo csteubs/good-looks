@@ -59,6 +59,10 @@ export interface ScriptEditorCmProps {
   onCaretLine?: (line: number) => void;
   ariaLabel: string;
   handleRef?: React.Ref<ScriptEditorHandle>;
+  /** Settings → Editor. Each is a Compartment, reconfigured live. */
+  lineWrap: boolean;
+  lineNumbers: boolean;
+  tabSize: number;
 }
 
 // ── Gutters ───────────────────────────────────────────────────────────────
@@ -225,12 +229,18 @@ export default function ScriptEditorCm({
   onCaretLine,
   ariaLabel,
   handleRef,
+  lineWrap,
+  lineNumbers: showLineNumbers,
+  tabSize,
 }: ScriptEditorCmProps): React.ReactElement {
   const hostRef = React.useRef<HTMLDivElement | null>(null);
   const viewRef = React.useRef<EditorView | null>(null);
   const onChangeRef = React.useRef(onChange);
   const onCaretRef = React.useRef(onCaretLine);
   const readOnlyCompartment = React.useRef(new Compartment());
+  const wrapCompartment = React.useRef(new Compartment());
+  const numbersCompartment = React.useRef(new Compartment());
+  const tabCompartment = React.useRef(new Compartment());
   onChangeRef.current = onChange;
   onCaretRef.current = onCaretLine;
 
@@ -245,7 +255,7 @@ export default function ScriptEditorCm({
         doc: value,
         extensions: [
           runGutter,
-          lineNumbers(),
+          numbersCompartment.current.of(showLineNumbers ? lineNumbers() : []),
           lintGutter(),
           coverageGutter,
           highlightActiveLineGutter(),
@@ -267,7 +277,8 @@ export default function ScriptEditorCm({
             needsRefresh: (update) => update.transactions.some((tr) => tr.effects.some((e) => e.is(setCliErrors))),
           }),
           readOnlyCompartment.current.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),
-          EditorState.tabSize.of(2),
+          wrapCompartment.current.of(lineWrap ? EditorView.lineWrapping : []),
+          tabCompartment.current.of(EditorState.tabSize.of(tabSize)),
           EditorView.contentAttributes.of({ "aria-label": ariaLabel, "aria-multiline": "true" }),
           keymap.of([
             ...closeBracketsKeymap,
@@ -325,6 +336,18 @@ export default function ScriptEditorCm({
     view.dispatch({ effects: setCliErrors.of(errors) });
     forceLinting(view);
   }, [errors]);
+
+  React.useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: [
+        wrapCompartment.current.reconfigure(lineWrap ? EditorView.lineWrapping : []),
+        numbersCompartment.current.reconfigure(showLineNumbers ? lineNumbers() : []),
+        tabCompartment.current.reconfigure(EditorState.tabSize.of(tabSize)),
+      ],
+    });
+  }, [lineWrap, showLineNumbers, tabSize]);
 
   React.useEffect(() => {
     const view = viewRef.current;

@@ -512,6 +512,17 @@ export const RUN_BROWSER_LABELS: Record<RunBrowser, string> = {
  *  number reaches `setZoomFactor` — see `main/recorder/types.ts`. */
 export type UiScale = 0.9 | 1 | 1.1 | 1.25;
 
+/** Mirror of main/recorder/types.ts. */
+export type EditorTabSize = 2 | 4;
+export const EDITOR_TAB_SIZES: EditorTabSize[] = [2, 4];
+export const EDITOR_FONT_SIZE_MIN = 10;
+export const EDITOR_FONT_SIZE_MAX = 20;
+export const EDITOR_FONT_SIZE_DEFAULT = 13;
+/** Line height the editor derives from a font size: ×1.4, whole pixels. */
+export function editorLineHeight(fontSize: number): number {
+  return Math.round(fontSize * 1.4);
+}
+
 export const UI_SCALES: UiScale[] = [0.9, 1, 1.1, 1.25];
 
 /** Labels for the size picker.
@@ -1432,6 +1443,12 @@ export interface RecorderSettings {
    *  `lib/typeface.ts`, which writes it to `data-gl-typeface` on the document
    *  element; the families themselves live in `renderer/theme/tokens.css`. */
   uiTypeface: UiTypeface;
+  /** The Script IDE's rows (mirror of main/recorder/types.ts). */
+  editorFontSize: number;
+  editorLineWrap: boolean;
+  editorLineNumbers: boolean;
+  editorTabSize: EditorTabSize;
+  editorCheckOnSave: boolean;
   /** Which symbol the Cost panel stamps on a money figure (default "usd").
    *  "none" restores bare numbers — see `shared/cost-units.mjs`. */
   costCurrency: CostCurrency;

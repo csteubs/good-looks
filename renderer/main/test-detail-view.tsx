@@ -67,6 +67,7 @@ import {
   type ScriptChangeSource,
   type ScriptCheckError,
   type ScriptCheckResult,
+  editorLineHeight,
   type Step,
   type TestRecord,
   type TestVariable,
@@ -261,6 +262,18 @@ export function TestDetailView() {
     queryKey: ["recorder-settings"],
     queryFn: () => api.recorder.getSettings(),
   });
+  // Settings → Editor → Font size lands on the two tokens every editor
+  // column is sized from (renderer/theme/editor.css). Written on the document
+  // so the theme extension's `var()` reads pick it up without a remount.
+  const editorFontSize = settingsQuery.data?.editorFontSize;
+  React.useEffect(() => {
+    const root = document.documentElement;
+    if (typeof editorFontSize === "number") {
+      root.style.setProperty("--gl-code-size", `${editorFontSize}px`);
+      root.style.setProperty("--gl-code-line", `${editorLineHeight(editorFontSize)}px`);
+    }
+  }, [editorFontSize]);
+
   const test = testQuery.data;
   const scriptChanges = scriptChangesQuery.data ?? [];
   // Which tests call this one as a flow. Fetched for every test rather than
@@ -766,6 +779,13 @@ export function TestDetailView() {
    *  lines. A check that could not RUN is reported the same way — it is not a
    *  pass — and "Save anyway" is the way past either. */
   const saveScript = async () => {
+    // Settings → Editor → "Check with Playwright before saving". Off, the
+    // save still refuses a stale draft and still asks about statements the
+    // parser would lose; it stops asking the CLI whether the file loads.
+    if (settingsQuery.data?.editorCheckOnSave === false) {
+      await writeScriptDraft();
+      return;
+    }
     setScriptCheck({ status: "checking", errors: [] });
     let result: ScriptCheckResult;
     try {
@@ -1426,6 +1446,9 @@ export function TestDetailView() {
                 onCaretLine={setCaretLine}
                 ariaLabel={`Script of ${test.name}`}
                 handleRef={scriptEditorRef}
+                lineWrap={settingsQuery.data?.editorLineWrap ?? false}
+                lineNumbers={settingsQuery.data?.editorLineNumbers ?? true}
+                tabSize={settingsQuery.data?.editorTabSize ?? 2}
               />
               <Dialog
                 open={staleOpen}

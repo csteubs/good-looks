@@ -27,6 +27,7 @@ import { PROXY_DEFAULTS } from "../../shared/proxy-config.mjs";
 
 export type PaneId =
   | "appearance"
+  | "editor"
   | "recording"
   | "test-defaults"
   | "auto-heal"
@@ -70,6 +71,12 @@ export const PANES: readonly PaneDef[] = [
     id: "recording",
     title: "Recording",
     subtitle: "The training window you record in.",
+    group: "Testing",
+  },
+  {
+    id: "editor",
+    title: "Editor",
+    subtitle: "The Script tab's code editor: type, wrap, gutters, and what a save checks.",
     group: "Testing",
   },
   {
@@ -295,6 +302,12 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
   // went, so the search has to be able to reach it by the name of the thing
   // that is gone.
   { id: "theme", pane: "appearance", label: "Theme", keywords: "dark light auto system appearance colour color" },
+  // Editor
+  { id: "editor-font-size", pane: "editor", label: "Font size", keywords: "code script ide text bigger smaller zoom px", key: "editorFontSize" },
+  { id: "editor-line-wrap", pane: "editor", label: "Wrap long lines", keywords: "code script ide soft wrap horizontal scroll", key: "editorLineWrap" },
+  { id: "editor-line-numbers", pane: "editor", label: "Line numbers", keywords: "code script ide gutter", key: "editorLineNumbers" },
+  { id: "editor-tab-size", pane: "editor", label: "Tab size", keywords: "code script ide indent spaces two four", key: "editorTabSize" },
+  { id: "editor-check-on-save", pane: "editor", label: "Check with Playwright before saving", keywords: "code script ide save verify load syntax dry run list cli", key: "editorCheckOnSave" },
   // Keywords cover the words someone reaches for when the app is too small to
   // read — "zoom", "scale", "bigger", "accessibility" — and not just the label.
   // Whoever needs this setting most is the person least able to browse for it.
@@ -876,6 +889,11 @@ export function matchCountByPane(matchedIds: readonly string[]): Record<string, 
  * safe direction to be wrong in.
  */
 export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
+  editorFontSize: 13,
+  editorLineWrap: false,
+  editorLineNumbers: true,
+  editorTabSize: 2,
+  editorCheckOnSave: true,
   showUrlBar: true,
   trainerPanelEnabled: false,
   defaultRunSpeed: "slow",

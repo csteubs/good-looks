@@ -41,6 +41,7 @@ import { AlertsPane } from "./panes/alerts-pane";
 import { IntegrationsPane } from "./panes/integrations-pane";
 import { ProxyPane } from "./panes/proxy-pane";
 import { AppearancePane } from "./panes/appearance-pane";
+import { EditorPane } from "./panes/editor-pane";
 import { AutoHealPane } from "./panes/auto-heal-pane";
 import { RecordingPane } from "./panes/recording-pane";
 import { StatsPane } from "./panes/stats-pane";
@@ -52,6 +53,7 @@ import { TestDefaultsPane } from "./panes/test-defaults-pane";
 
 const PANE_COMPONENTS: Record<PaneId, ComponentType> = {
   appearance: AppearancePane,
+  editor: EditorPane,
   recording: RecordingPane,
   "test-defaults": TestDefaultsPane,
   "auto-heal": AutoHealPane,
