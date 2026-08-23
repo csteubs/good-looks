@@ -175,6 +175,9 @@ export interface Locator {
   attr?: TestIdAttributeOverride;
   role?: string;
   name?: string;
+  /** For a text locator: whole-string, case-sensitive — `getByText(v, {
+   *  exact: true })` (mirror of main types). Absent is the substring default. */
+  exact?: boolean;
   /** Frames to descend through, outermost first, before resolving this locator
    *  (mirror of main types). Absent means the top document. */
   frame?: FrameRef[];

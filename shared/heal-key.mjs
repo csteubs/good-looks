@@ -66,6 +66,23 @@ export function healKeyHasText(containerKey, text) {
 }
 
 /**
+ * The key for a text locator — substring (`text|…`) or exact (`text!|…`).
+ *
+ * Two keys, because they are two locators: `getByText("Save")` and
+ * `getByText("Save", { exact: true })` resolve different sets, so a heal
+ * recorded for one must not apply to the other. The `!` sits before the
+ * separator so the prefix stays a distinct token from `text|` rather than a
+ * value that happens to start with a bang.
+ *
+ * @param {string} value
+ * @param {boolean} exact
+ * @returns {string}
+ */
+export function healKeyText(value, exact) {
+  return (exact ? "text!|" : "text|") + String(value == null ? "" : value);
+}
+
+/**
  * The key for a locator narrowed by `.and(<predicate>)`.
  *
  * Repeatable, and ORDER-SENSITIVE by construction: two `and` predicates applied
@@ -98,5 +115,6 @@ export function healKeyOperatorSource() {
     "var healKeyWithin = " + healKeyWithin.toString() + ";",
     "var healKeyHasText = " + healKeyHasText.toString() + ";",
     "var healKeyAnd = " + healKeyAnd.toString() + ";",
+    "var healKeyText = " + healKeyText.toString() + ";",
   ].join("\n");
 }

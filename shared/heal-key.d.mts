@@ -11,4 +11,6 @@ export declare function healKeyHasText(containerKey: string, text: string): stri
 
 export declare function healKeyAnd(baseKey: string, predicateKey: string): string;
 
+export declare function healKeyText(value: string, exact: boolean): string;
+
 export declare function healKeyOperatorSource(): string;

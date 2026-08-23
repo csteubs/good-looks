@@ -559,3 +559,17 @@ describe("roles the run derives from a tag", () => {
     expect(why(r)).toContain("strict mode violation");
   });
 });
+
+describe("exact text, the way the run reads it", () => {
+  it("resolves the whole-string form where the substring is ambiguous", () => {
+    document.body.innerHTML = `<h1>Mountain</h1><a href="/m">mountains</a>`;
+    const r = run(step({ type: "assert", assert: "visible", locator: { k: "text", v: "Mountain", exact: true } }));
+    expect(r.ok, why(r)).toBe(true);
+  });
+
+  it("is case-sensitive", () => {
+    document.body.innerHTML = `<h1>Mountain</h1><a href="/m">mountains</a>`;
+    const r = run(step({ type: "assert", assert: "visible", locator: { k: "text", v: "mountain", exact: true } }));
+    expect(r.ok).toBe(false);
+  });
+});

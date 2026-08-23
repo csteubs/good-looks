@@ -49,7 +49,22 @@ describe("a proposed candidate must be unique the way Playwright counts", () => 
     `;
     const step = { id: "s", type: "click", locator: { k: "testid", v: "gone" } } as Step;
     const texts = proposed(step).filter((l) => l.k === "text");
-    expect(texts.map((l) => l.v)).not.toContain("Save");
+    expect(texts.filter((l) => !l.exact).map((l) => l.v)).not.toContain("Save");
+    // What it proposes instead (2026-08-22): the EXACT form, which matches
+    // "Save" and not "Save changes" — the heal that would have worked.
+    expect(texts).toContainEqual({ k: "text", v: "Save", exact: true });
+  });
+
+  it("does not propose the exact twin where the substring already identifies the element", () => {
+    // Redundant under MAX_CANDIDATES: a second row for the same element that
+    // resolves the same set, costing another element its place.
+    document.body.innerHTML = `
+      <button data-testid="gone">Save</button>
+      <button>Cancel</button>
+    `;
+    const step = { id: "s", type: "click", locator: { k: "testid", v: "gone" } } as Step;
+    const texts = proposed(step).filter((l) => l.k === "text" && l.v === "Save");
+    expect(texts).toEqual([{ k: "text", v: "Save" }]);
   });
 
   it("still proposes a text locator when it really is unique", () => {
@@ -76,7 +91,9 @@ describe("a proposed candidate must be unique the way Playwright counts", () => 
       <button>SUBMIT</button>
     `;
     const step = { id: "s", type: "click", locator: { k: "testid", v: "gone" } } as Step;
-    expect(proposed(step).some((l) => l.k === "text" && l.v === "Submit")).toBe(false);
+    expect(proposed(step).some((l) => l.k === "text" && l.v === "Submit" && !l.exact)).toBe(false);
+    // The exact form is case-sensitive, so it IS unique here — and proposed.
+    expect(proposed(step).some((l) => l.k === "text" && l.v === "Submit" && l.exact === true)).toBe(true);
   });
 
   it("refuses a text locator on a wrapper, because it identifies the CHILD", () => {

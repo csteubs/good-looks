@@ -1020,6 +1020,33 @@ for (const c of WAIT_UNTIL_CASES) {
   assertEqual(twice, src, "a spec with scroll steps regenerates byte-identically");
 }
 
+// ── getByText's exact option ───────────────────────────────────────────────
+//
+// A hand-written or model-written `getByText("Save", { exact: true })` is the
+// same locator the recorder emits for an ambiguous substring, and has to parse
+// as one — the round-trip check covers the generated form; this covers the
+// spellings a person writes.
+{
+  const src = [
+    'import { test, expect } from "@playwright/test";',
+    "",
+    'test("exact", async ({ page }) => {',
+    '  await page.getByText("Save", { exact: true }).click();',
+    "  await page.getByText('Save', {exact:true}).click();",
+    '  await page.getByText("Save", { exact: false }).click();',
+    '  await expect(page.getByText("Done", { exact: true })).toBeVisible();',
+    "});",
+    "",
+  ].join("\n");
+  const parsed = parseSpecDetailed(src);
+  assertEqual(parsed.skipped, 0, "exact-text builders are recognised, not skipped");
+  assertEqual(
+    parsed.steps.map((s) => s.locator?.exact ?? null),
+    [true, true, null, true],
+    "exact: true is read back in either spacing; exact: false is the substring default",
+  );
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

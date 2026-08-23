@@ -50,6 +50,7 @@ const cases: { label: string; loc: Locator }[] = [
   { label: "label", loc: { k: "label", v: "Email" } },
   { label: "placeholder", loc: { k: "placeholder", v: "Search…" } },
   { label: "text", loc: { k: "text", v: "Save" } },
+  { label: "exact text", loc: { k: "text", v: "Save", exact: true } },
   { label: "css", loc: { k: "css", v: "#main .btn" } },
   { label: "xpath", loc: { k: "xpath", v: "//button[1]" } },
 

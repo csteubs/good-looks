@@ -272,6 +272,28 @@ export const UNIQUENESS_HELPERS = `
     return pwNorm(haystack).indexOf(n) >= 0;
   }
 
+  /** Playwright's EXACT string match: whole string, case-sensitive,
+   *  whitespace still normalized on both sides. */
+  function pwIs(haystack, needle) {
+    var n = pwTrim(needle);
+    if (!n) return false;
+    return pwTrim(haystack) === n;
+  }
+  function pwTrim(s) {
+    return String(s == null ? "" : s).replace(/\\s+/g, " ").trim();
+  }
+
+  /** The element's text as an exact locator would have to spell it — from
+   *  textContent, NOT innerText: getByText reads textContent, and a CSS
+   *  text-transform makes an innerText value that never matches. Reads the
+   *  same text the substring arm of matchesForBase reads, so the candidate
+   *  and the oracle that grades it cannot disagree about what the text IS;
+   *  when the text model changes (pwText, DECISIONS 2026-08-22, "the mark
+   *  and the text model"), both must move together. */
+  function pwExact(el) {
+    return pwTrim(el.textContent);
+  }
+
   /** How many elements a scan will look at. Overridable by the including
    *  script — see the note on MAX_UNIQUENESS_SCAN. The cap exists because
    *  CAPTURE runs this on the click path; the replayer and the heal probe do
@@ -387,8 +409,11 @@ export const UNIQUENESS_HELPERS = `
       if (loc.k === "text") {
         // textContent, not innerText: this runs on the click path and innerText
         // forces layout per element. See MAX_UNIQUENESS_SCAN.
+        // \`exact\` swaps the comparison and nothing else: Playwright applies
+        // the same smallest-element rule to getByText(v, { exact: true }).
+        var textMatch = loc.exact === true ? pwIs : pwHas;
         var hits = scanAll("*").filter(function (el) {
-          return pwHas(el.textContent, loc.v);
+          return textMatch(el.textContent, loc.v);
         });
         // "Smallest element containing the text" — drop any match that contains
         // another match. Without this every ancestor counts and html/body match
@@ -438,6 +463,7 @@ export const UNIQUENESS_HELPERS = `
           // narrowed set, attached to a locator that had lost its context,
           // indexes a different set and points at a different element.
           fallback = { k: loc.k, v: loc.v, attr: loc.attr, role: loc.role, name: loc.name, nth: ix };
+          if (loc.exact === true) fallback.exact = true;
           if (loc.ctx) fallback.ctx = loc.ctx;
         }
       }
@@ -540,6 +566,12 @@ export const PICKED_HELPERS = `
     if (ph) out.push({ k: "placeholder", v: ph });
     var t = txt(el);
     if (t && t.length <= 40) out.push({ k: "text", v: t });
+    // The whole text, exactly — case-sensitive and whole-string — for the
+    // page where the substring above also matches a neighbour ("Mountain"
+    // beside "mountains"). After the substring, so a unique substring still
+    // records as it always did; before any generated path.
+    var te = pwExact(el);
+    if (te && te.length <= 40) out.push({ k: "text", v: te, exact: true });
     if (role && !nm && bareRoleOk(role)) out.push({ k: "role", role: role });
     out.push({ k: "css", v: cssPath(el) });
     out.push({ k: "xpath", v: xpathFor(el) });
@@ -1388,6 +1420,12 @@ export function buildCaptureScript(
       if (role && nm) out.push({ k: "role", role: role, name: nm });
       var t = txt(el);
       if (t && t.length <= 40) out.push({ k: "text", v: t });
+    // The whole text, exactly — case-sensitive and whole-string — for the
+    // page where the substring above also matches a neighbour ("Mountain"
+    // beside "mountains"). After the substring, so a unique substring still
+    // records as it always did; before any generated path.
+    var te = pwExact(el);
+    if (te && te.length <= 40) out.push({ k: "text", v: te, exact: true });
       if (role && !nm && bareRoleOk(role)) out.push({ k: "role", role: role });
     }
 
@@ -1406,6 +1444,7 @@ export function buildCaptureScript(
     if (chosen.attr != null) loc.attr = chosen.attr;
     if (chosen.role != null) loc.role = chosen.role;
     if (chosen.name != null) loc.name = chosen.name;
+    if (chosen.exact === true) loc.exact = true;
     if (typeof chosen.nth === "number") loc.nth = chosen.nth;
     if (chosen.ctx) loc.ctx = chosen.ctx;
     return loc;

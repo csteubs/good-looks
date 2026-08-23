@@ -83,6 +83,7 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
     if (loc.attr != null) out.attr = loc.attr;
     if (loc.role != null) out.role = loc.role;
     if (loc.name != null) out.name = loc.name;
+    if (loc.exact === true) out.exact = true;
     out.ctx = stepCtx;
     return out;
   }
@@ -104,6 +105,12 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
     if (ph) out.push({ k: "placeholder", v: ph });
     var t = txt(el);
     if (t && t.length <= 40) out.push({ k: "text", v: t });
+    // The whole text, exactly — case-sensitive and whole-string — for the
+    // page where the substring above also matches a neighbour ("Mountain"
+    // beside "mountains"). After the substring, so a unique substring still
+    // records as it always did; before any generated path.
+    var te = pwExact(el);
+    if (te && te.length <= 40) out.push({ k: "text", v: te, exact: true });
     if (role && !nm && bareRoleOk(role)) out.push({ k: "role", role: role });
     out.push({ k: "css", v: cssPath(el) });
     return out;
@@ -215,8 +222,10 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
     // \`attr\` too: {testid, v} and {testid, attr: "data-test", v} resolve
     // DIFFERENT elements, so treating them as one would silently drop the
     // second element's best candidate.
+    // \`exact\` too: the substring and exact forms of one text are two
+    // locators resolving two sets.
     return !!a && !!b && a.k === b.k && a.v === b.v && a.attr === b.attr &&
-      a.role === b.role && a.name === b.name;
+      a.role === b.role && a.name === b.name && a.exact === b.exact;
   }
 
   // \`resolveAllFor\` used to live here: a fourth near-copy of \`matchesFor\`,
@@ -351,7 +360,14 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
     // identity of the element doesn't change depending on which of its locators
     // we happen to be scoring.
     var identity = scoreElementIdentity(el) + scoreGeometry(el);
+    // The exact text twin is proposed only where the substring form did NOT
+    // identify the element: when the substring is unique the exact form adds
+    // nothing but a second row (and, under MAX_CANDIDATES, costs another
+    // element its place); when the substring is ambiguous the exact form is
+    // the heal that works. Candidates list the substring first.
+    var substringIdentifies = false;
     for (var j = 0; j < cands.length; j++) {
+      if (cands[j].k === "text" && cands[j].exact === true && substringIdentifies) continue;
       // The step's context rides on every candidate from here on: it is what
       // \`identifiesOnly\` judges uniqueness against, and it is what the applied
       // heal will carry. Scoring still compares the BARE locator, because the
@@ -362,6 +378,7 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
       if (sameLocator(c, orig)) continue;
       // Skip anything that doesn't pin down this exact element.
       if (!identifiesOnly(c, el)) continue;
+      if (c.k === "text" && c.exact !== true) substringIdentifies = true;
       var score = scoreLocator(c, orig);
       var fpScore = scoreAgainstFingerprint(c);
       if (fpScore > score) score = fpScore;
@@ -445,11 +462,11 @@ export async function healStep(
         | HealCandidate[]
         | null;
       if (Array.isArray(result) && result.length > 0) {
-        // De-duplicate by locator identity (k+v+role+name).
+        // De-duplicate by locator identity (k+v+role+name+exact).
         const seen = new Set<string>();
         const dedup: HealCandidate[] = [];
         for (const c of result) {
-          const key = `${c.locator.k}|${c.locator.v ?? ""}|${c.locator.role ?? ""}|${c.locator.name ?? ""}`;
+          const key = `${c.locator.k}|${c.locator.v ?? ""}|${c.locator.role ?? ""}|${c.locator.name ?? ""}|${c.locator.exact ? "!" : ""}`;
           if (seen.has(key)) continue;
           seen.add(key);
           dedup.push(c);

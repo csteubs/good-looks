@@ -50,6 +50,8 @@ const FIXTURE = `<!doctype html>
        contains its word is the shape that failed against unsplash.com. -->
   <h2 data-testid="h-mountain">Mountain</h2>
   <a href="#mountains">mountains</a>
+  <!-- getByText reads textContent; the rendered text is SHOUTING. -->
+  <span data-testid="upper" style="text-transform: uppercase">Shouting</span>
   <ul><li data-testid="li-one">North item</li></ul>
   <nav data-testid="nav-main"><a href="#n">Nav link</a></nav>
   <header data-testid="hdr-top">Top header</header>
@@ -326,6 +328,17 @@ function rows(origin: string): Row[] {
     { label: "an image is named by its alt", step: s({ assert: "visible", locator: { k: "role", role: "img", name: "A photo" } }), expected: true },
     { label: "a th with scope=col is a columnheader", step: s({ assert: "visible", locator: { k: "role", role: "columnheader", name: "Column name" } }), expected: true },
     { label: "a td is a cell, named by its content", step: s({ assert: "visible", locator: { k: "role", role: "cell", name: "cell value" } }), expected: true },
+
+    // ---- exact text ---------------------------------------------------------
+    // getByText(v, { exact: true }): whole string, case-sensitive, whitespace
+    // normalized — the form the recorder falls to when the substring is
+    // ambiguous. The oracle's `pwIs` models it; these rows are the browser.
+    { label: "exact text resolves the heading the substring could not", step: s({ assert: "visible", locator: { k: "text", v: "Mountain", exact: true } }), expected: true },
+    { label: "exact text is case-sensitive", step: s({ assert: "visible", locator: { k: "text", v: "mountain", exact: true } }), expected: false },
+    { label: "exact text is whole-string", step: s({ assert: "visible", locator: { k: "text", v: "Mount", exact: true } }), expected: false },
+    { label: "exact text still trims surrounding whitespace", step: s({ assert: "visible", locator: { k: "text", v: "  Mountain  ", exact: true } }), expected: true },
+    { label: "exact text reads textContent, not the rendered text-transform", step: s({ assert: "visible", locator: { k: "text", v: "Shouting", exact: true } }), expected: true },
+    { label: "…so the rendered uppercase form matches nothing", step: s({ assert: "visible", locator: { k: "text", v: "SHOUTING", exact: true } }), expected: false },
   ];
 }
 

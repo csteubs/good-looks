@@ -284,6 +284,20 @@ export interface Locator {
   /** accessible name for role locators */
   name?: string;
   /**
+   * For a text locator: match the WHOLE text, case-sensitively (whitespace
+   * still normalized) — `getByText(v, { exact: true })`. Absent means
+   * Playwright's default, a case-insensitive substring.
+   *
+   * This exists because the default is the ambiguity that fails assertions
+   * on real pages: `getByText("Mountain")` beside links reading "mountains"
+   * and "mountain peak" resolves to three elements, and strict mode refuses
+   * all three. The recorder offers the exact form as the candidate after the
+   * substring one, so a substring that is unique still records as it always
+   * did and the exact form is tried before any generated path. Only `true`
+   * survives the boundary, and only on `k: "text"`.
+   */
+  exact?: boolean;
+  /**
    * Which of several matches this locator meant, 0-based. ABSENT when the
    * locator resolves to exactly one element, which is the case the recorder
    * works hard to reach — see `locatorFor` in capture-script.ts.
@@ -1384,6 +1398,10 @@ export function normalizeLocator(
     const attr = testIdOverride(l.attr);
     if (attr !== null) out.attr = attr;
   }
+  // `bool` admits `true` alone — a string "true" from a page would otherwise
+  // reach the generator as a truthy flag and emit `{ exact: true }` for a
+  // locator the trainer had graded as a substring.
+  if (k === "text" && bool(l.exact)) out.exact = true;
   // `int`, not a typeof check. This field reaches the generator as a BARE
   // NUMERAL — `.nth(<here>)` — which is the exact shape that was remote code
   // execution the last time a numeric step field was trusted for having the

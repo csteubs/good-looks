@@ -10,6 +10,61 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-22 — A text locator can be exact
+
+The same Unsplash run as the two entries below. With the role table in place
+the heading records by role, but the library already held 29 text assertions
+and every element without a role still falls to text — and `getByText`'s
+default is a case-insensitive substring, which is the ambiguity that fails on
+a real page: "Mountain" beside "mountains" and "mountain peak" resolves to
+three. Playwright has the other form, `getByText(v, { exact: true })` — whole
+string, case-sensitive, whitespace still normalized — and the recorder could
+not spell it, so the fallback from an ambiguous substring was an index or a
+generated path. The "Will Pass Firefox" test that started the uniqueness work
+(`getByText("Browser")` beside "Browsers") is the same shape: the exact form
+was the locator it needed all along.
+
+**One field, every consumer.** `Locator.exact?: boolean`, admitted by
+`normalizeLocator` only as a literal `true` on `k: "text"` — it reaches the
+generator as an OPTIONS argument, the shape `nth` made a numeral of, so it is
+pinned on both sides of the boundary by `check:step-ingest`. The generator,
+the step list's mirror and the Refine dialog's formatter spell it; the parser
+reads it back (a Script-tab edit that loosened an exact match into the
+substring it was chosen to avoid would be the round-trip bug from
+`check:locator-roundtrip`'s own header); `shared/heal-key.mjs` gives it a key
+of its own (`text!|…`), because the two forms resolve different sets and a
+heal recorded for one must not apply to the other; the heal fixture's factory
+reads `{ exact }` off the call; and the oracle's text arm swaps `pwHas` for
+`pwIs` and changes nothing else, since Playwright applies the same
+smallest-element rule to both.
+
+**Placed after the substring, before any path.** A unique substring still
+records exactly as it did — this is a narrowing of the fallback, not a new
+preference — and the exact form is tried before `.nth()` or a CSS path. It is
+built from `textContent`, deliberately not `innerText`: `getByText` reads
+textContent, and a CSS `text-transform: uppercase` makes an innerText value
+("SHOUTING") that can never match. `e2e/assert-parity.spec.ts` has the row.
+
+**Auto-Heal proposes the exact twin only where the substring fails.** Its
+`candidatesFor` is a copy of the recorder's and gained the same candidate;
+ranked naively, every text candidate became two rows resolving the same set,
+and under `MAX_CANDIDATES` the second row cost another element its place
+(the probe's "every matching element" test lost its third button). So the
+probe skips the exact form when the substring form already identified the
+element, keys the two separately everywhere it de-duplicates, and proposes
+the exact form exactly where it is the heal that works — "Save" beside "Save
+changes", "Submit" beside "SUBMIT".
+
+**What this changes for the 29 on disk: nothing, by itself.** A stored
+substring locator stays a substring. The Refine dialog offers the exact form
+as a candidate on re-pick, and the composer's match-count gate (same date)
+refuses the ambiguous one before it is written — the two together are what
+stop the next 29.
+
+Known limit: the candidate reads the same text the oracle on main reads
+today (`textContent`). When the shadow-DOM text model (`pwText`, DECISIONS
+"the mark and the text model") is restored, `pwExact` moves with it.
+
 ### 2026-08-22 — Triage reads the failing step's history, not the test's
 
 A run of "Unsplash Integration Test" failed with `strict mode violation:

@@ -206,7 +206,12 @@ function locatorBase(loc: Locator): string {
     case "placeholder":
       return "getByPlaceholder(" + q(loc.v ?? "") + ")";
     case "text":
-      return "getByText(" + q(loc.v ?? "") + ")";
+      // `exact === true` and nothing looser: the flag crosses the capture
+      // boundary, and a truthy string reaching here would emit an option the
+      // trainer never graded. Mirrored in describe-step.ts and formatLocator.
+      return loc.exact === true
+        ? "getByText(" + q(loc.v ?? "") + ", { exact: true })"
+        : "getByText(" + q(loc.v ?? "") + ")";
     case "xpath":
       return "locator(" + q("xpath=" + (loc.v ?? "")) + ")";
     case "css":

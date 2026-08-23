@@ -110,6 +110,15 @@ function main(): void {
   roundTrip({ k: "label", v: "Email" }, "label");
   roundTrip({ k: "placeholder", v: "Search" }, "placeholder");
   roundTrip({ k: "text", v: "Save" }, "text");
+  // The exact form is an OPTIONS argument on the builder, which the parser
+  // has to read back or a Script-tab edit would loosen it into the substring
+  // it was chosen to avoid.
+  roundTrip({ k: "text", v: "Save", exact: true }, "exact text");
+  roundTrip({ k: "text", v: "Save", exact: true, nth: 1 }, "exact text + nth");
+  roundTrip(
+    { k: "text", v: "Edit", exact: true, ctx: { within: { k: "testid", v: "billing" } } },
+    "exact text within",
+  );
   roundTrip({ k: "css", v: "#app > button" }, "css");
   roundTrip({ k: "text", v: "Save", nth: 2 }, "text + nth");
   // -1 is "the last match" — the one negative the model admits, the stable way

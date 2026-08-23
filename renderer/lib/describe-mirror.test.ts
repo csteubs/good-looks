@@ -24,6 +24,7 @@ const BASES: Locator[] = [
   { k: "label", v: "Email" },
   { k: "placeholder", v: "Search…" },
   { k: "text", v: "Add to cart" },
+  { k: "text", v: "Add to cart", exact: true },
   { k: "css", v: "form#login button.primary" },
   { k: "xpath", v: "//td[text()='A']/ancestor::tr" },
 ];

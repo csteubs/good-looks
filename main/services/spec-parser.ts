@@ -511,6 +511,11 @@ function parseBuilderAt(
     const k = map[kind];
     const v = firstStringLiteral(argsStr);
     locator = { k, v: v ? unescapeLit(v) : "" };
+    // `getByText("x", { exact: true })` is the generator's exact form; read
+    // it back as the SAME locator, or a round trip through the Script tab
+    // would silently loosen an exact match into the substring it was chosen
+    // to avoid. Only a literal `true` — the generator emits nothing else.
+    if (kind === "getByText" && /\bexact\s*:\s*true\b/.test(argsStr)) locator.exact = true;
   }
   // `locator("xpath=…")` is how the generator writes an xpath — read it back as
   // one, or a round trip turns every xpath step into a css step whose selector
