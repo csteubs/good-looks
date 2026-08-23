@@ -13,6 +13,7 @@ import {
 } from "../../shared/step-semantics.mjs";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import { frameSelector } from "../../shared/frame-ref.mjs";
+import { credentialOrigin } from "../../shared/basic-auth.mjs";
 import {
   cookieScopeIsValid,
   ELEMENT_STATES,
@@ -1637,7 +1638,7 @@ export interface GeneratedSpec {
 }
 
 export type SpecSource = Pick<TestRecord, "name" | "url" | "steps"> &
-  Partial<Pick<TestRecord, "variables">>;
+  Partial<Pick<TestRecord, "variables" | "basicAuth" | "baseUrl">>;
 
 /**
  * Generate the spec AND the authoritative line→step map.
@@ -2165,6 +2166,36 @@ export function generateSpecDetailed(
     preamble.push(`import { ${runtimeNames.join(", ")} } from "./${GLAZE_RUNTIME_FILE}";`);
   }
   preamble.push("");
+
+  // HTTP basic auth, as a file-level `test.use({ httpCredentials })` before the
+  // test — per-file is per-test here. The password is NEVER written into the
+  // source: it is read from the same `GLAZE_SECRET_<name>` env var every secret
+  // uses, so it stays on the encrypted path and inside the redaction snapshot.
+  // `passwordVar` is re-gated through `isValidVariableName` (a stored record is
+  // untrusted input) before `secretEnvName`, and the username is `q()`'d.
+  const basicAuth = record.basicAuth;
+  if (basicAuth && isValidVariableName(basicAuth.passwordVar)) {
+    const passwordExpr = "process.env." + secretEnvName(basicAuth.passwordVar) + ' ?? ""';
+    // SCOPE the credential to the test's own origin. Without `origin`,
+    // Playwright answers ANY server's 401 during the run, so a third-party
+    // subresource or a redirect to an attacker's host would receive the
+    // password — see shared/basic-auth.mjs. Derived from the test's address,
+    // and the trainer's login handler derives the same origin, so the two
+    // agree on where the credential may go. Unparseable address → no scope
+    // (an exotic case: a basic-auth wall needs a real URL to sit behind).
+    const origin = credentialOrigin(record.url) ?? credentialOrigin(record.baseUrl);
+    const originClause = origin ? ", origin: " + q(origin) : "";
+    preamble.push(
+      "test.use({ httpCredentials: { username: " +
+        q(basicAuth.username ?? "") +
+        ", password: " +
+        passwordExpr +
+        originClause +
+        " } });",
+    );
+    preamble.push("");
+  }
+
   // A download step saving its filename needs the V object to exist, but NOT
   // the glazeCapture runtime — the write is a plain property assignment. Kept
   // separate from `needsCapture` so a download-only spec doesn't grow an

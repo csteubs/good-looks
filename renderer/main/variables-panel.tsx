@@ -248,10 +248,16 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
   // persisted an empty name, the normalizer dropped it, and the invalidation
   // wiped the fresh row before it could be named.
   const [vars, setVars] = React.useState<TestVariable[]>(() => test.variables ?? []);
+  // HTTP basic auth draft — same latch. The password itself is never state
+  // here: `authVar` NAMES a secret variable, and that is all the record holds.
+  const [authUser, setAuthUser] = React.useState(test.basicAuth?.username ?? "");
+  const [authVar, setAuthVar] = React.useState(test.basicAuth?.passwordVar ?? "");
   const [seededFor, setSeededFor] = React.useState(test.id);
   if (seededFor !== test.id) {
     setSeededFor(test.id);
     setVars(test.variables ?? []);
+    setAuthUser(test.basicAuth?.username ?? "");
+    setAuthVar(test.basicAuth?.passwordVar ?? "");
   }
   const variables = vars;
   const datasets = React.useMemo(() => test.datasets ?? [], [test.datasets]);
@@ -275,6 +281,13 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
     () => new Set((secrets.data ?? []).filter((s) => s.hasValue).map((s) => s.name)),
     [secrets.data],
   );
+  // What the basic-auth picker below may reference: declared secrets with
+  // usable names. The backend re-gates the name (normalizeBasicAuth), so this
+  // is a UI courtesy, not the boundary.
+  const authSecretNames = React.useMemo(
+    () => variables.filter((v) => v.kind === "secret" && isValidName(v.name)).map((v) => v.name),
+    [variables],
+  );
 
   // How many steps reference each variable, so removing one that's still in use
   // can be called out rather than silently breaking the spec.
@@ -297,6 +310,11 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
     // taken. Found by pressing the button in the preview and watching it
     // survive its own success.
     void qc.invalidateQueries({ queryKey: ["originsIn", test.id] });
+    // The secret-status query backs the basic-auth "no stored value" warning.
+    // tests:setVariables clears the encrypted value of a dropped secret, so a
+    // delete-and-redeclare would otherwise leave a stale "has a value" cache
+    // and hide the warning while the password is actually gone.
+    void qc.invalidateQueries({ queryKey: ["secretStatus", test.id] });
   };
 
   const saveVariables = useMutation({
@@ -345,6 +363,26 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
   const saveDatasets = useMutation({
     mutationFn: (next: Dataset[]) => api.tests.setDatasets(test.id, next),
     onSuccess: invalidate,
+    onError: (err: unknown) => toast.error(String(err)),
+  });
+
+  const saveAuth = useMutation({
+    mutationFn: () =>
+      api.tests.setBasicAuth(test.id, { username: authUser, passwordVar: authVar }),
+    onSuccess: () => {
+      toast.success("Basic auth saved — the trainer and every run will answer the prompt");
+      invalidate();
+    },
+    onError: (err: unknown) => toast.error(String(err)),
+  });
+  const clearAuth = useMutation({
+    mutationFn: () => api.tests.setBasicAuth(test.id, null),
+    onSuccess: () => {
+      setAuthUser("");
+      setAuthVar("");
+      toast.success("Basic auth cleared");
+      invalidate();
+    },
     onError: (err: unknown) => toast.error(String(err)),
   });
 
@@ -700,6 +738,96 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
             Only tests that save a session are offered. A stale or missing state is reported in
             the run output and the run proceeds signed out — it never fails the run by itself.
           </Text>
+        </section>
+
+        {/* ── HTTP basic auth ───────────────────────────────────────────
+            Lives on this tab because it leans on the list above: the password
+            is a SECRET variable by construction — the record stores only its
+            NAME, so the value follows the one encrypted path that already
+            exists (test-secrets-store → env → redaction) instead of growing a
+            second credential store. The trainer answers the browser's
+            credential prompt with the same values the run's
+            `test.use({ httpCredentials })` reads, so a wall that blocks one
+            blocks neither. */}
+        <section className="flex flex-col gap-3" aria-label="HTTP basic auth">
+          <div className="flex items-center gap-2">
+            <KeyRound className="size-4 text-secondary" />
+            <Text weight="medium">HTTP basic auth</Text>
+          </div>
+          <Text size="small" className="text-secondary">
+            For a site behind a browser password prompt. The training browser and every run answer
+            the prompt with these credentials. The password is a <strong>Secret</strong> variable,
+            so it stays encrypted, out of the generated spec, and out of run logs.
+          </Text>
+          {authSecretNames.length === 0 ? (
+            <Text size="small" className="text-tertiary">
+              Declare a <strong>Secret</strong> variable above to hold the password, then choose it
+              here.
+            </Text>
+          ) : (
+            <div className="flex items-end gap-2">
+              <Field label="Username" orientation="vertical">
+                <Input
+                  className="w-56"
+                  value={authUser}
+                  onChange={(e) => setAuthUser(e.target.value)}
+                  placeholder="username"
+                  aria-label="Basic auth username"
+                />
+              </Field>
+              <Field label="Password secret" orientation="vertical">
+                <Select value={authVar || undefined} onValueChange={setAuthVar}>
+                  <SelectTrigger
+                    aria-label="Secret variable holding the basic auth password"
+                    className="w-56"
+                  >
+                    <SelectValue placeholder="Choose a secret…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {authSecretNames.map((name) => (
+                      <SelectItem key={name} value={name}>
+                        {name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Button
+                size="small"
+                variant="secondary"
+                disabled={!authVar || saveAuth.isPending}
+                onClick={() => saveAuth.mutate()}
+                aria-label="Save basic auth"
+              >
+                Save
+              </Button>
+              {test.basicAuth ? (
+                <Button
+                  size="small"
+                  variant="ghost"
+                  disabled={clearAuth.isPending}
+                  onClick={() => clearAuth.mutate()}
+                  aria-label="Clear basic auth"
+                >
+                  Clear
+                </Button>
+              ) : null}
+            </div>
+          )}
+          {authVar && !storedSecrets.has(authVar) && authSecretNames.includes(authVar) ? (
+            <Text size="small" className="text-tertiary">
+              <TriangleAlert className="mr-1 inline size-3.5" aria-hidden />
+              The secret <code className="font-mono">{authVar}</code> has no stored value yet — set
+              one above, or the prompt will be answered with an empty password.
+            </Text>
+          ) : null}
+          {authVar && !authSecretNames.includes(authVar) ? (
+            <Text size="small" className="text-tertiary">
+              <TriangleAlert className="mr-1 inline size-3.5" aria-hidden />
+              No secret variable named <code className="font-mono">{authVar}</code> is declared any
+              more — the prompt will be answered with an empty password until this points at one.
+            </Text>
+          ) : null}
         </section>
 
         {/* ── Datasets ──────────────────────────────────────────────── */}

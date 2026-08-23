@@ -53,6 +53,10 @@ export const DUPLICATED_FIELDS = [
   "captureArtifacts",
   "runHeadless",
   "runBrowser",
+  // HOW the test runs, like runBrowser. The username and the passwordVar name
+  // travel; the password VALUE rides the secret copy (testSecretsStore.copyTest
+  // already runs on duplicate), so the reference resolves on the copy too.
+  "basicAuth",
   "testTimeoutMs",
   "tags",
   // The folder the original sits in. A copy that landed at the top level would

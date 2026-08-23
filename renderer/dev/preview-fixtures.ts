@@ -151,7 +151,14 @@ export const TESTS: TestRecord[] = [
     // would, so the argument form's default placeholder shows a true value.
     isFlow: true,
     flowParams: ["email"],
-    variables: [{ name: "email", kind: "plain", value: "nobody@example.com" }],
+    variables: [
+      { name: "email", kind: "plain", value: "nobody@example.com" },
+      // A secret + basicAuth referencing it, so the Variables tab's HTTP
+      // basic auth section renders with a chosen credential — the only place
+      // outside a real record it can be seen filled in.
+      { name: "wallPw", kind: "secret" },
+    ],
+    basicAuth: { username: "staging", passwordVar: "wallPw" },
     steps: steps(
       { type: "goto", url: "https://app.example.com/login" },
       { type: "fill", locator: { k: "label", v: "Email" }, value: "${email}" },

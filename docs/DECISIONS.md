@@ -10,6 +10,71 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-23 — Basic auth: the password is a secret variable, and the trainer answers the same prompt the run does
+
+A site behind an HTTP basic-auth wall was untestable end to end: the trainer
+could not even reach the page (Electron's default for an unanswered `login`
+event is to cancel the authentication, so the 401 body is what loads), and a
+generated spec had no way to carry credentials. This is the acute slice of the
+round-3 plan's candidate B — permissions and geolocation are NOT built, and
+deliberately: Electron has no per-session geolocation override to mirror
+`context.setGeolocation`, so "applied identically to the trainer and the run",
+the property this feature is built on, cannot yet be honoured for them.
+
+**The password is a secret variable, not a new credential store.**
+`TestRecord.basicAuth` is `{ username, passwordVar }` — the username travels as
+a literal, and `passwordVar` NAMES a secret variable of the test. That one
+decision buys the entire security story for free, because every path already
+exists: the value lives in `test-secrets-store` (encrypted, never returned over
+IPC), reaches a run as `GLAZE_SECRET_<name>` through `variableEnv`, is inside
+the redaction snapshot that scrubs run output and LLM prompts, and is copied by
+Duplicate Test's existing secret copy. A `password` field on the record — the
+obvious shape — would have been a second, plaintext credential path to guard
+forever; `normalizeBasicAuth` REBUILDS the object precisely so a smuggled
+`password` key is dropped rather than stored.
+
+**The run half is one emitted line.** `test.use({ httpCredentials: { username,
+password: process.env.GLAZE_SECRET_<name> ?? "" } })` in the spec preamble —
+per-file is per-test here. The env read means the spec on disk never holds the
+value; `passwordVar` is re-gated through `isValidVariableName` at emission
+(records on disk predate the boundary) and the username goes through `q()`.
+`extractTestBodies` had to learn to SKIP `test.use`: its `test(`-shaped call
+matched the test scan, the `indexOf("=>")` then found the real test's arrow,
+and the whole body was extracted a second time — every hand edit of a
+basic-auth spec would have silently doubled every step.
+
+**The trainer half answers the challenge, not the request.** A `login` handler
+on the training webContents answers server challenges with the record's
+username and the secret's value, resolved at challenge time — so editing the
+secret mid-session takes effect on the next challenge. Proxy challenges are
+left alone (the proxy-settings feature owns those), and a test with no
+`basicAuth` keeps today's behaviour exactly: the wall blocks, visibly.
+
+**Both halves are SCOPED to the test's own origin, because an unscoped
+credential leaks.** Playwright's `httpCredentials` with no `origin` answers any
+server's 401, and the `login` event fires for every authenticating request in
+the page — a third-party subresource, a redirect to another host — so an
+unscoped credential would travel wherever a challenge came from. The generator
+emits `origin` derived from the test's URL; the trainer refuses a challenge
+whose origin differs, through the SAME rule (`answersLoginFor` in
+`shared/basic-auth.mjs`), so the two cannot drift into disagreeing about where
+the password may go. An adversarial review of the first draft caught this and
+five other wiring gaps — the credential leak on both halves, `tests:setBasicAuth`
+not regenerating the spec (so saving basic auth changed nothing a run did),
+`generatedStepLineMap` and the replay-run path dropping `basicAuth` (a
+two-line-off step highlight, and a re-run that failed at the wall), and a
+deleted secret leaving a dangling reference the run answered with an empty
+password. All are fixed and pinned by `check:basic-auth`, whose assertions were
+each reverted and watched go red.
+
+**Proof at both ends** — `e2e/basic-auth.spec.ts` runs a real 401 wall: the
+REAL generated spec through the REAL Playwright CLI (async spawn — a
+synchronous child starves the in-process wall server's event loop, which reads
+as a mysterious connection hang), and a live trainer session through
+`_electron`. Both halves assert the negative too: no env var fails the run,
+and no `basicAuth` leaves the trainer honestly stopped at the wall. The
+laptop-speed half is `main/services/basic-auth.test.ts`.
+
 ### 2026-08-23 — Script IDE View, Phase 2: a live page the editor owns
 
 Chris's answers for this phase: three AI role slots (for Phase 3); the

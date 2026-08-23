@@ -675,6 +675,12 @@ export type InsightsGenerateNowResult =
   | { started: true }
   | { started: false; reason: "disabled" | "alreadyRunning" };
 
+export interface BasicAuth {
+  username: string;
+  /** name of a SECRET variable holding the password (mirror of main types) */
+  passwordVar: string;
+}
+
 export interface TestRecord {
   id: string;
   name: string;
@@ -708,6 +714,9 @@ export interface TestRecord {
   runHeadless?: boolean;
   /** Per-test browser-engine preference (mirrors main TestRecord). */
   runBrowser?: RunBrowser;
+  /** HTTP basic-auth credentials (mirror of main TestRecord). The password is
+   *  never here — `passwordVar` names a secret variable. */
+  basicAuth?: BasicAuth;
   /** Per-test Playwright timeout in ms (mirrors main TestRecord). When absent,
    *  the global default from Settings applies. */
   testTimeoutMs?: number;

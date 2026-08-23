@@ -48,7 +48,17 @@ export const test = base.extend<AppFixtures>({
     }
 
     const app = await electron.launch({
-      args: [repoRoot, `--user-data-dir=${userDataDir}`],
+      args: [
+        repoRoot,
+        `--user-data-dir=${userDataDir}`,
+        // Make Electron's safeStorage available on a headless Linux CI runner,
+        // which has no system keyring — without it `isEncryptionAvailable()` is
+        // false and any test that stores an encrypted secret (basic auth,
+        // TOTP) fails with "Secure storage is unavailable". The `basic` backend
+        // is a hardcoded-key store that is always available; it only affects
+        // this test process, never a real install.
+        "--password-store=basic",
+      ],
       env: {
         ...process.env,
         // The suite asserts on the app's own behaviour. A developer's real

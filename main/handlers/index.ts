@@ -131,6 +131,7 @@ import {
   clampBatchConcurrency,
   DEFAULT_VISUAL_THRESHOLD,
   isRunBrowser,
+  normalizeBasicAuth,
   isTestSpeed,
   isValidVariableName,
   MAX_BATCH_TEST_OPTIONS,
@@ -584,6 +585,30 @@ export function registerHandlers(): void {
     return rec;
   });
 
+  // Per-test HTTP basic-auth credentials. `basicAuth` is validated through
+  // `normalizeBasicAuth` (username bounded, passwordVar must be a valid
+  // variable name) — the password itself is never in this payload; it lives in
+  // the secret variable `passwordVar` names. A null/invalid value clears it.
+  ipcMain.handle(
+    "tests:setBasicAuth",
+    async (_e, params: { id: string; basicAuth: unknown }) => {
+      const rec = testStore.get(params.id);
+      if (!rec) throw new Error("Test not found: " + params.id);
+      const ba = normalizeBasicAuth(params.basicAuth);
+      if (ba) rec.basicAuth = ba;
+      else delete rec.basicAuth;
+      rec.updatedAt = Date.now();
+      // Regenerate so the on-disk spec's `test.use({ httpCredentials })` matches
+      // — every other content-changing setter does this. Without it, saving or
+      // clearing basic auth had NO effect on runs until an unrelated edit
+      // happened to regenerate, and the UI said one thing while the spec did
+      // another. A hand-edited script is the source of truth and left alone.
+      if (!rec.scriptEdited) rec.scriptPath = testStore.regenerateScript(rec);
+      testStore.save(rec);
+      return rec;
+    },
+  );
+
   // Per-test Playwright timeout override. null clears the override so the
   // global Settings default applies again. Absent on the record means the same.
   ipcMain.handle(
@@ -776,6 +801,13 @@ export function registerHandlers(): void {
       }
       await refreshSecretSnapshot();
       rec.variables = next;
+      // Basic auth names a secret variable; if that secret is gone (deleted or
+      // renamed), the reference is dangling — the run would silently answer the
+      // wall with an EMPTY password. Clear it rather than leave a credential
+      // that points at nothing.
+      if (rec.basicAuth && !keptSecrets.has(rec.basicAuth.passwordVar)) {
+        delete rec.basicAuth;
+      }
       rec.updatedAt = Date.now();
       // Regenerate so the spec's `const V` header matches the declared set. A
       // hand-edited script is the source of truth and is left alone.
