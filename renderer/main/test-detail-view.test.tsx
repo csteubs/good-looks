@@ -132,6 +132,13 @@ vi.mock("@tanstack/react-router", () => ({
   useParams: () => ({ id: routeId }),
 }));
 
+vi.mock("./script-ai-panel", () => ({
+  ScriptAiPanel: (props: { onApply: (next: string, meta: unknown) => void }) => (
+    <button type="button" onClick={() => props.onApply("// by ai\n", { affordance: "inline-rewrite", provider: "ollama", model: "qwen", promptVersion: "inline-1" })}>
+      Apply stub
+    </button>
+  ),
+}));
 vi.mock("../lib/api", () => ({
   api: {
     tests: {
@@ -1458,6 +1465,22 @@ describe("saving a script edit", () => {
     await waitFor(() => expect(content.getAttribute("contenteditable")).toBe("true"));
     return content;
   }
+
+  it("files the save as ai-inline after an AI rewrite was applied into the buffer", async () => {
+    await openEditor();
+    fireEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    // The panel is stubbed (see the vi.mock at the top); its Apply hands back
+    // a rewritten file with the model's details, as the real one does.
+    fireEvent.click(await screen.findByRole("button", { name: "Apply stub" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
+    expect(updateScript).toHaveBeenCalledWith(
+      "t1",
+      "// by ai\n",
+      { by: "ai-inline", affordance: "inline-rewrite", provider: "ollama", model: "qwen", promptVersion: "inline-1", reviewed: true },
+      expect.any(String),
+    );
+  });
 
   it("checks the draft with Playwright before writing it", async () => {
     const ta = await openEditor();

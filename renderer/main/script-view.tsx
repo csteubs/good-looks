@@ -46,6 +46,8 @@ export interface ScriptEditorProps {
   inlays?: LineInlay[];
   /** Ghost-text source; absent or null turns it off. */
   ghost?: GhostSource | null;
+  /** ⌘K inside the editor. */
+  onAiRequest?: () => void;
 }
 
 const NO_ERRORS: ScriptCheckError[] = [];
@@ -66,6 +68,7 @@ export function ScriptEditor({
   tabSize = 2,
   inlays,
   ghost = null,
+  onAiRequest,
 }: ScriptEditorProps): React.ReactElement {
   return (
     <React.Suspense fallback={<div className="gl-script-ide-loading">Loading the editor…</div>}>
@@ -84,6 +87,7 @@ export function ScriptEditor({
         tabSize={tabSize}
         inlays={inlays}
         ghost={ghost}
+        onAiRequest={onAiRequest}
       />
     </React.Suspense>
   );

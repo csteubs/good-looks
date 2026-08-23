@@ -1481,6 +1481,10 @@ export interface RecorderSettings {
   editorLineNumbers: boolean;
   editorTabSize: EditorTabSize;
   editorCheckOnSave: boolean;
+  /** Standing instructions for the Script editor's inline AI (mirror of
+   *  main/recorder/types.ts): one global text, and one per host. */
+  aiInstructions: string;
+  aiInstructionsByHost: Record<string, string>;
   /** Which symbol the Cost panel stamps on a money figure (default "usd").
    *  "none" restores bare numbers — see `shared/cost-units.mjs`. */
   costCurrency: CostCurrency;

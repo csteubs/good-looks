@@ -420,6 +420,17 @@ updated in the same commit, in the rhythm the recorder and runner plans used.
 
 ---
 
+## 8a. Status (2026-08-23)
+
+Phase 0 and Phase 1 shipped (PR #239). Phase 2 (live page, pick locator,
+record here) is PR #240. Phase 3 is `feat/script-ide-phase3`, stacked on
+#240: three role slots, ghost text (local only), ⌘K rewrite into the buffer
+with `ai-inline` journaling, Explain failure at the caret, the budget line
+and hosted cap, standing instructions global and per host, and
+`check:editor-egress`. Deferred from Phase 3: hunk-by-hunk review, the
+`llm:json` round-trip classification (service half built), acceptance
+telemetry. Phases 4–6 are open.
+
 ## 9. Open questions for the maintainer
 
 Each with the options and the recommended default.
