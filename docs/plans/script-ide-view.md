@@ -429,7 +429,14 @@ with `ai-inline` journaling, Explain failure at the caret, the budget line
 and hosted cap, standing instructions global and per host, and
 `check:editor-egress`. Deferred from Phase 3: hunk-by-hunk review, the
 `llm:json` round-trip classification (service half built), acceptance
-telemetry. Phases 4–6 are open.
+telemetry. Phase 4 is `feat/script-ide-phase4`, stacked on Phase 3: the
+TypeScript service in a `utilityProcess` (typescript 5.x shipped, resolved
+from the runner's node_modules), completions/hover/type errors in the
+editor, six app-written inspections with quick fixes, Settings →
+Inspections, `check:ts-service` and `e2e/ts-service.spec.ts`. Deferred from
+Phase 4: signature help, rename, go-to-definition, format on save,
+quick fixes from the live page and from Auto-Heal history. Phases 5–6 are
+open.
 
 ## 9. Open questions for the maintainer
 

@@ -6,6 +6,8 @@ import * as path from "path";
 
 import { app, logger } from "@shell/backend";
 
+import { defaultInspections, normalizeInspections } from "../../shared/inspections.mjs";
+
 import {
   isInsightsCadence,
   isRunBrowser,
@@ -252,6 +254,7 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   editorCheckOnSave: true,
   aiInstructions: "",
   aiInstructionsByHost: {},
+  inspections: defaultInspections(),
   // USD, because the runner prices the Settings pane offers are published in
   // it. The two numbers below are the app's own conservative guesses, and the
   // Cost panel says so on screen for as long as they are unchanged.
@@ -458,6 +461,7 @@ function read(): RecorderSettings {
           : DEFAULT_SETTINGS.editorCheckOnSave,
       aiInstructions: normalizeAiInstructions(parsed.aiInstructions),
       aiInstructionsByHost: normalizeAiInstructionsByHost(parsed.aiInstructionsByHost),
+      inspections: normalizeInspections(parsed.inspections),
       // Clamped rather than cast. Both numbers multiply every figure on the
       // Cost panel, so a hand-edited `0` or `1e9` on disk would render as a
       // confident "$0.00 spent" or an absurd one — a wrong answer that looks
@@ -683,6 +687,11 @@ export const recorderSettingsStore = {
         update.aiInstructionsByHost !== undefined
           ? normalizeAiInstructionsByHost(update.aiInstructionsByHost)
           : current.aiInstructionsByHost,
+      // A patch names the rules it changes; the rest keep their setting.
+      inspections:
+        update.inspections !== undefined
+          ? normalizeInspections({ ...current.inspections, ...(update.inspections as object) })
+          : current.inspections,
       // Same clamps as `read()`, on the same principle as `uiScale` above: a
       // value refused on load but accepted on save is written to disk and then
       // ignored forever, which reads as "the setting does not work".

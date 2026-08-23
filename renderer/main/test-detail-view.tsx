@@ -50,6 +50,7 @@ import { ScriptEditor, type LineInlay, type RunLineStatus, type ScriptEditorHand
 import { isScriptDirty, markScriptDirty } from "../lib/script-buffer";
 import { makeGhostSource } from "../lib/ghost-source";
 import { resolveAiInstructions } from "../lib/ai-instructions";
+import type { TsIntelligence } from "./script-view";
 import { ScriptAiPanel, type ScriptAiApplyMeta, type ScriptAiMode, type ScriptAiSelection } from "./script-ai-panel";
 import { SCRIPT_CHANGED_ON_DISK, isScriptChangedOnDisk } from "../../shared/script-save.mjs";
 import { StepRow } from "./step-row";
@@ -295,6 +296,36 @@ export function TestDetailView() {
     refetchOnWindowFocus: true,
   });
   const ghostSource = React.useMemo(() => makeGhostSource((p) => api.llm.fim(p)), []);
+  // The TypeScript service (Phase 4). Asked for once per view; "unavailable"
+  // is a state the bar reports, never an error, and the editor keeps its
+  // syntax and CLI diagnostics without it.
+  const tsStatusQuery = useQuery({
+    queryKey: ["ts", "status"],
+    queryFn: () => api.ts.ensure(),
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const tsAvailable = Boolean(tsStatusQuery.data?.available);
+  const intelligence = React.useMemo<TsIntelligence | null>(
+    () =>
+      tsAvailable
+        ? {
+            update: (text) => api.ts.update(id, text),
+            diagnostics: () => api.ts.diagnostics(id),
+            inspections: () => api.ts.inspections(id),
+            completions: (offset) => api.ts.completions(id, offset),
+            hover: (offset) => api.ts.hover(id, offset),
+          }
+        : null,
+    [id, tsAvailable],
+  );
+  React.useEffect(() => {
+    if (!tsAvailable) return;
+    return () => {
+      void api.ts.close(id).catch(() => {});
+    };
+  }, [id, tsAvailable]);
   const ghostEnabled = editingScript && Boolean(llmConfigQuery.data?.roles?.autocomplete);
   // Settings → Editor → Font size lands on the two tokens every editor
   // column is sized from (renderer/theme/editor.css). Written on the document
@@ -1583,6 +1614,16 @@ export function TestDetailView() {
                       {livePage.closedReason}
                     </span>
                   ) : null}
+                  {tsStatusQuery.data ? (
+                    <span
+                      className="gl-script-live-status"
+                      data-gl="ts-status"
+                      {...(tsAvailable ? {} : { "data-muted": "" })}
+                      title={tsAvailable ? `TypeScript ${tsStatusQuery.data.typescript ?? ""} — completions, hover, type errors and inspections` : tsStatusQuery.data.reason}
+                    >
+                      {tsAvailable ? "Types ready" : "Types unavailable"}
+                    </span>
+                  ) : null}
                   {typeof failedStepIndex === "number" && runOutput ? (
                     <Btn
                       tone="ai"
@@ -1732,6 +1773,7 @@ export function TestDetailView() {
                 inlays={liveInlays}
                 ghost={ghostEnabled ? ghostSource : null}
                 onAiRequest={editingScript ? () => openAi("rewrite") : undefined}
+                intelligence={intelligence}
               />
               <Dialog
                 open={staleOpen}

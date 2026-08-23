@@ -19,6 +19,8 @@ import type { GhostSource } from "./ghost-text";
 
 export type { LineInlay, RunLineStatus, ScriptEditorHandle } from "./script-editor-cm";
 export type { GhostSource } from "./ghost-text";
+export type { TsIntelligence } from "./ts-intelligence";
+import type { TsIntelligence } from "./ts-intelligence";
 
 const ScriptEditorCm = React.lazy(() => import("./script-editor-cm"));
 
@@ -48,6 +50,8 @@ export interface ScriptEditorProps {
   ghost?: GhostSource | null;
   /** ⌘K inside the editor. */
   onAiRequest?: () => void;
+  /** The TypeScript service; null or absent keeps syntax + CLI diagnostics. */
+  intelligence?: TsIntelligence | null;
 }
 
 const NO_ERRORS: ScriptCheckError[] = [];
@@ -69,6 +73,7 @@ export function ScriptEditor({
   inlays,
   ghost = null,
   onAiRequest,
+  intelligence = null,
 }: ScriptEditorProps): React.ReactElement {
   return (
     <React.Suspense fallback={<div className="gl-script-ide-loading">Loading the editor…</div>}>
@@ -88,6 +93,7 @@ export function ScriptEditor({
         inlays={inlays}
         ghost={ghost}
         onAiRequest={onAiRequest}
+        intelligence={intelligence}
       />
     </React.Suspense>
   );
