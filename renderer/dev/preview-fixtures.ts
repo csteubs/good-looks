@@ -952,6 +952,8 @@ export const SETTINGS: RecorderSettings = {
   editorLineNumbers: true,
   editorTabSize: 2,
   editorCheckOnSave: true,
+  aiInstructions: "Prefer getByRole over CSS. Our buttons carry data-testid; use it when the role name is generic.",
+  aiInstructionsByHost: { "shop.example.com": "The cart drawer is a dialog; assert on its heading, not the overlay." },
   // The shipped cost guesses. Left at their defaults deliberately: the Cost
   // panel's "both are this app's guesses" sentence only renders while they are,
   // and the preview is the only place that sentence can be looked at.

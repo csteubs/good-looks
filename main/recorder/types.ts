@@ -2934,6 +2934,13 @@ export interface RecorderSettings {
    *  Off, Save still refuses a draft the parser would lose statements from
    *  and a stale one; it stops asking Playwright whether the file loads. */
   editorCheckOnSave: boolean;
+  /** Standing instructions prepended to every inline-AI prompt from the
+   *  Script editor (⌘K rewrite, explain): house locator rules, a framework's
+   *  quirks. Free text, capped at AI_INSTRUCTIONS_MAX chars. */
+  aiInstructions: string;
+  /** The same, per site — keyed by host, applied when the test's address is
+   *  on that host. */
+  aiInstructionsByHost: Record<string, string>;
   /** Which symbol the Cost panel stamps on a money figure (default "usd").
    *
    *  "none" restores the panel's original behaviour — bare numbers, claiming

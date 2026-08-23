@@ -11272,3 +11272,82 @@ two new `recorder-store.test.tsx` cases fail on `1:running` where `1:failed`
 and `0:passed` are expected; a third pins that a reported outcome is left
 alone. `preview-bridge.test.ts` pins the stop shape: exactly one `begin`
 reported, a non-zero code, and no tick of the stopped run firing afterwards.
+
+## 2026-08-23 — Script IDE View, Phase 3: AI in the editor
+
+**Three role slots, not one model.** The app had one provider + model pair
+that every AI feature shared. The editor adds two jobs that pair is wrong
+for: ghost text wants a small fill-in-the-middle code model answering in
+under a second on every pause in typing, and "explain this failure" wants a
+fast answer rather than the best one. `LlmConfig.roles` now names a slot per
+job — `chat` (Debug with AI, Generate, ⌘K rewrite), `instant` (explain,
+rewrite classification, vision verdicts) and `autocomplete` (ghost text) —
+resolved by `resolveSlot(role)` in `llm-service.ts`. The chat slot IS the
+old flat pair (the store keeps them in step, so older readers and the MCP
+see the same answer), and a slot that is absent follows it. The pane spells
+that absence as "Same as chat"; the store therefore never seeds an instant
+copy of chat, which would look identical until chat changed and instant
+silently stayed behind (`llm-config-store.test.ts` pins the round trip).
+
+**Autocomplete is local-only by construction, pinned at three layers.**
+Ghost text sends the script around the caret on every pause in typing. A
+hosted provider would mean every pause leaves the machine, and an editor
+affordance is the one place a user spends money by holding a key down. So
+the Settings row offers Ollama and LM Studio only, the store drops a hosted
+autocomplete slot on read and on write, and `llmService.fim` refuses one
+before building a request. `check:editor-egress` pins all three, because
+any one of them alone is a layer the next change can remove.
+
+**Ghost text is an extension with no opinion about its source.**
+`renderer/main/ghost-text.ts` asks a `(prefix, suffix, signal) => text`
+source once per pause, shows the answer after the caret, accepts on Tab
+(bound with highest precedence, falling through to `indentWithTab` when
+nothing is shown), dismisses on Escape, clears on any edit, aborts the
+in-flight request on the next keystroke, and drops a late answer by document
+IDENTITY — the doc object is immutable, so `now.doc !== askedDoc` is an
+exact version check that costs nothing. The host side
+(`renderer/lib/ghost-source.ts`) bounds the window sent (6000 chars before,
+2000 after, cut at line boundaries) and backs off fifteen seconds from a
+server that is not answering, so an Ollama that is not running costs one
+failed request per window rather than one per pause.
+
+**⌘K applies into the buffer, never to disk.** A rewrite's one fenced block
+becomes a diff; Apply puts it into the edit buffer, where the pre-save
+check, the divergence confirm and the stale-base refusal still stand between
+the model's text and the file. Save then records the change as
+`ai-inline` (with `affordance`, `provider`, `model` and `promptVersion`) so
+the Heals tab files it as the model's even though the user pressed Save.
+The alternative — applying straight through `tests:updateScript` as the
+debug panel does — was rejected because the editor is already open on the
+draft: writing under it is the "two writers, one file" shape Phase 1 built
+the dirty registry to refuse. Scope is whole-file or whole-selection; a
+hunk-by-hunk review is deferred (the plan's open question stands).
+
+**Budget before sending, cap on hosted.** The panel's header says what is
+about to be sent and roughly how many tokens (four characters each) before
+the user sends it; a 2000-line spec is a choice, not a surprise. Hosted
+requests from the editor are capped at six a minute, module-level state
+because the cap is per app, not per panel mount.
+
+**Standing instructions are settings, not a store.** `aiInstructions` (global)
+and `aiInstructionsByHost` (exact host, not its subdomains) live on
+`RecorderSettings` — capped at 4000 characters each, hosts lowercased, the
+per-host table replaced whole on save so a host can be removed — and are
+prepended to every ⌘K and Explain prompt. A separate store was the other
+candidate; it would have meant a second reset path and a second place for
+the Settings search to not find.
+
+**Not done here.** The round-trip rewrite through `llm:json` (asking the
+instant model which of a rewrite's newly-skipped statements are steps it
+could spell in the recorder's vocabulary) is built on the service side
+(`completeJson`) but not wired to the panel: the panel instead tells the
+user how many new statements the step list cannot show, from
+`tests:previewScript`, which is the fact that matters before Apply. Ghost
+text has no telemetry on acceptance rate yet.
+
+**CI gate fix that rode along (#240).** `check:live-page` launches real
+headless Chromium and the gate's unit job never installed one, so it failed
+in CI with an unhandled rejection while every sibling check passed. The job
+now installs Chromium (same cache key as the e2e job), and the check names
+the missing browser and the command to install it instead of dumping a
+stack.

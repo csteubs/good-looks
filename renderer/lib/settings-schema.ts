@@ -594,6 +594,20 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     label: "Autocomplete",
     keywords: "ghost text inline completion fim fill in the middle code model editor",
   },
+  {
+    id: "llm-instructions",
+    pane: "ai",
+    label: "Standing instructions",
+    keywords: "prompt rules house style locator conventions system instructions context",
+    key: "aiInstructions",
+  },
+  {
+    id: "llm-instructions-by-host",
+    pane: "ai",
+    label: "Instructions per site",
+    keywords: "prompt rules host site domain per-site instructions",
+    key: "aiInstructionsByHost",
+  },
 
   // Failure reasons
   {
@@ -906,6 +920,8 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   editorLineNumbers: true,
   editorTabSize: 2,
   editorCheckOnSave: true,
+  aiInstructions: "",
+  aiInstructionsByHost: {},
   showUrlBar: true,
   trainerPanelEnabled: false,
   defaultRunSpeed: "slow",

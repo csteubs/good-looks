@@ -25,6 +25,7 @@ import { useSettingsController } from "../settings-controller";
 import { SettingRow } from "../setting-row";
 import { PaneSection } from "../pane-section";
 import { RoleSlotRows } from "./ai-role-rows";
+import { AiInstructionsRows } from "./ai-instructions-rows";
 
 export function AiPane() {
   const {
@@ -223,6 +224,7 @@ export function AiPane() {
 
       {/* The chat slot is the provider + model above; the other two roles. */}
       <RoleSlotRows />
+      <AiInstructionsRows />
     </PaneSection>
   );
 }

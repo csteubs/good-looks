@@ -84,6 +84,9 @@ export interface ScriptEditorCmProps {
   /** Where ghost text comes from; null or undefined turns it off. Read
    *  through a ref at request time, so a host may swap it without a remount. */
   ghost?: GhostSource | null;
+  /** ⌘K inside the editor. Bound here, not on the window, so it wins over
+   *  the command palette only while the editor has focus. */
+  onAiRequest?: () => void;
 }
 
 // ── Gutters ───────────────────────────────────────────────────────────────
@@ -304,6 +307,7 @@ export default function ScriptEditorCm({
   tabSize,
   inlays,
   ghost,
+  onAiRequest,
 }: ScriptEditorCmProps): React.ReactElement {
   const hostRef = React.useRef<HTMLDivElement | null>(null);
   const viewRef = React.useRef<EditorView | null>(null);
@@ -311,6 +315,8 @@ export default function ScriptEditorCm({
   const onCaretRef = React.useRef(onCaretLine);
   const ghostRef = React.useRef<GhostSource | null>(ghost ?? null);
   ghostRef.current = ghost ?? null;
+  const onAiRef = React.useRef(onAiRequest);
+  onAiRef.current = onAiRequest;
   const readOnlyCompartment = React.useRef(new Compartment());
   const wrapCompartment = React.useRef(new Compartment());
   const numbersCompartment = React.useRef(new Compartment());
@@ -359,6 +365,14 @@ export default function ScriptEditorCm({
           // while a completion is shown, and fall through when none is.
           ghostText(() => ghostRef.current),
           keymap.of([
+            {
+              key: "Mod-k",
+              run: () => {
+                if (!onAiRef.current) return false;
+                onAiRef.current();
+                return true;
+              },
+            },
             ...closeBracketsKeymap,
             ...defaultKeymap,
             ...searchKeymap,

@@ -49,6 +49,8 @@ import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import { ScriptEditor, type LineInlay, type RunLineStatus, type ScriptEditorHandle } from "./script-view";
 import { isScriptDirty, markScriptDirty } from "../lib/script-buffer";
 import { makeGhostSource } from "../lib/ghost-source";
+import { resolveAiInstructions } from "../lib/ai-instructions";
+import { ScriptAiPanel, type ScriptAiApplyMeta, type ScriptAiMode, type ScriptAiSelection } from "./script-ai-panel";
 import { SCRIPT_CHANGED_ON_DISK, isScriptChangedOnDisk } from "../../shared/script-save.mjs";
 import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
@@ -154,6 +156,12 @@ export function TestDetailView() {
   const [editingName, setEditingName] = React.useState(false);
   const [nameDraft, setNameDraft] = React.useState("");
   const [editingScript, setEditingScript] = React.useState(false);
+  // The inline AI panel (⌘K rewrite / explain the failure), and the origin
+  // the NEXT save carries once an AI rewrite has been applied into the
+  // buffer — so the Heals tab files the change as the model's, not the
+  // user's, even though the user pressed Save.
+  const [aiPanel, setAiPanel] = React.useState<{ mode: ScriptAiMode; selection: ScriptAiSelection | null } | null>(null);
+  const aiOriginRef = React.useRef<ScriptChangeSource | null>(null);
   const [scriptDraft, setScriptDraft] = React.useState("");
   // The pre-save check's verdict on the draft. `checking` holds Save while the
   // Playwright CLI has the draft; `failed` keeps the editor open with the
@@ -637,6 +645,29 @@ export function TestDetailView() {
       }
     }
   };
+  const openAi = (mode: ScriptAiMode) => {
+    const view = scriptEditorRef.current?.view();
+    const sel = view?.state.selection.main;
+    const selection: ScriptAiSelection | null =
+      mode === "rewrite" && view && sel && !sel.empty
+        ? { from: sel.from, to: sel.to, text: view.state.doc.sliceString(sel.from, sel.to) }
+        : null;
+    setAiPanel({ mode, selection });
+  };
+  const applyAi = (next: string, meta: ScriptAiApplyMeta) => {
+    setScriptDraft(next);
+    markScriptDirty(id, true);
+    aiOriginRef.current = {
+      by: "ai-inline",
+      affordance: meta.affordance,
+      provider: meta.provider,
+      model: meta.model,
+      promptVersion: meta.promptVersion,
+      reviewed: true,
+    };
+    setAiPanel(null);
+    scriptEditorRef.current?.focusLine(1);
+  };
   const recordHere = () => {
     if (!test) return;
     pendingCursorRef.current = caretStep ? caretStep.index + 1 : test.steps.length;
@@ -902,9 +933,10 @@ export function TestDetailView() {
       await api.tests.updateScript(
         id,
         scriptDraft,
-        { by: "manual", reviewed: true },
+        aiOriginRef.current ?? { by: "manual", reviewed: true },
         opts.overwrite ? undefined : scriptBase,
       );
+      aiOriginRef.current = null;
     } catch (err) {
       if (isScriptChangedOnDisk(err)) {
         setStaleOpen(true);
@@ -1551,6 +1583,20 @@ export function TestDetailView() {
                       {livePage.closedReason}
                     </span>
                   ) : null}
+                  {typeof failedStepIndex === "number" && runOutput ? (
+                    <Btn
+                      tone="ai"
+                      onClick={() => openAi("explain")}
+                      title="Ask the instant model why the last run failed, starting from the caret's statement"
+                    >
+                      Explain failure
+                    </Btn>
+                  ) : null}
+                  {editingScript ? (
+                    <Btn tone="ai" onClick={() => openAi("rewrite")} title="Rewrite the selection or the whole file with AI (⌘K)">
+                      Ask AI
+                    </Btn>
+                  ) : null}
                   {editingScript ? (
                     <Btn
                       onClick={() => void pickLocator()}
@@ -1598,6 +1644,8 @@ export function TestDetailView() {
                       onClick={() => {
                         setEditingScript(false);
                         setScriptCheck(IDLE_CHECK);
+                        setAiPanel(null);
+                        aiOriginRef.current = null;
                       }}
                     >
                       Cancel
@@ -1627,6 +1675,25 @@ export function TestDetailView() {
                   </>
                 )}
               </div>
+              {aiPanel ? (
+                <ScriptAiPanel
+                  mode={aiPanel.mode}
+                  testId={id}
+                  testName={test.name}
+                  testUrl={test.url}
+                  script={shownScript}
+                  selection={aiPanel.selection}
+                  caretLine={caretLine ?? 1}
+                  failure={
+                    typeof failedStepIndex === "number"
+                      ? { index: failedStepIndex, label: test.steps[failedStepIndex] ? describeStep(test.steps[failedStepIndex]) : undefined, output: runOutput }
+                      : { output: runOutput }
+                  }
+                  instructions={resolveAiInstructions(settingsQuery.data, test.url)}
+                  onApply={applyAi}
+                  onClose={() => setAiPanel(null)}
+                />
+              ) : null}
               {editingScript && scriptCheck.status === "failed" ? (
                 <ul className="gl-script-check-errors" aria-label="Script problems">
                   {scriptCheck.errors.map((e, i) => (
@@ -1664,6 +1731,7 @@ export function TestDetailView() {
                 tabSize={settingsQuery.data?.editorTabSize ?? 2}
                 inlays={liveInlays}
                 ghost={ghostEnabled ? ghostSource : null}
+                onAiRequest={editingScript ? () => openAi("rewrite") : undefined}
               />
               <Dialog
                 open={staleOpen}
