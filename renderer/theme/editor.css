@@ -43,6 +43,18 @@
   color: var(--gl-tx-3);
 }
 
+/* The two gutter COLUMNS our markers live in, named so the editor can give
+   each a width that does not jump when its first mark appears: CodeMirror
+   sizes a gutter from its widest element, and a column that is empty until
+   the first run would otherwise push the line numbers sideways mid-run. */
+.gl-ide-run-gutter {
+  min-width: 14px;
+}
+
+.gl-ide-cov-gutter {
+  min-width: 6px;
+}
+
 /* ── Gutter marks ─────────────────────────────────────────────────────────
    Elements our own GutterMarkers create (CodeMirror only positions them), so
    their classes are ours to declare. Two gutters: run status on the left of

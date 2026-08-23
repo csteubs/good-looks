@@ -120,6 +120,21 @@ export const TESTS: TestRecord[] = [
     ),
   },
   {
+    // `?test=t-long` — see the preview bridge's getScript: a 2000-line spec
+    // for the Script IDE at the size of an imported suite. Script-only, like
+    // an import, so the detail view opens on the Script tab.
+    id: "t-long",
+    name: "Imported suite — two thousand lines",
+    url: "https://shop.example.com",
+    createdAt: NOW - 2 * DAY,
+    updatedAt: NOW - 2 * DAY,
+    scriptPath: "/preview/scripts/imported/t-long/suite.spec.ts",
+    sourceDir: "/preview/imports/suite",
+    scriptEdited: true,
+    group: "Storefront",
+    steps: [],
+  },
+  {
     id: "t-login",
     name: "Login — wrong password shows an error",
     url: "https://app.example.com/login",

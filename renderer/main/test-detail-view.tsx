@@ -46,14 +46,14 @@ import {
 import { EditStepsView } from "./edit-steps-view";
 import { RunOutput } from "./run-output";
 import { IssueComposeDialog } from "../components/issue-compose-dialog";
-import { ScriptEditor, ScriptView, lineStartOffset } from "./script-view";
+import { ScriptEditor, type RunLineStatus, type ScriptEditorHandle } from "./script-view";
 import { markScriptDirty } from "../lib/script-buffer";
 import { SCRIPT_CHANGED_ON_DISK, isScriptChangedOnDisk } from "../../shared/script-save.mjs";
 import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
 import { HealsPanel } from "./heals-panel";
 import { A11yPanel } from "./a11y-panel";
-import { computeStepDepths } from "../lib/describe-step";
+import { computeStepDepths, describeStep } from "../lib/describe-step";
 import { gradeCounts } from "../lib/locator-grade";
 import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
 import { latestA11yRun } from "../lib/a11y-format";
@@ -145,7 +145,9 @@ export function TestDetailView() {
   // problems listed and offers "Save anyway" — the file is the user's, and a
   // draft that does not load yet is still theirs to keep.
   const [scriptCheck, setScriptCheck] = React.useState<ScriptCheckState>(IDLE_CHECK);
-  const scriptTextareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const scriptEditorRef = React.useRef<ScriptEditorHandle | null>(null);
+  // The caret's line while editing, for the step readout in the bar.
+  const [caretLine, setCaretLine] = React.useState<number | null>(null);
   // The script the draft STARTED from. Sent with every save so the backend
   // can refuse a draft built on text that something else has since replaced
   // (an AI fix landing unattended, a flow edit regenerating this caller, a
@@ -419,6 +421,58 @@ export function TestDetailView() {
   const aiDebug = useAiDebug();
   const aiKey = runSessionKey(id);
   const script = scriptQuery.data ?? "";
+  // The text the editor shows: the draft while editing, the file otherwise.
+  const shownScript = editingScript ? scriptDraft : script;
+  // What the parser makes of the shown text — the coverage gutter and the
+  // step readout draw from it. Keyed by the text itself so a draft is
+  // re-parsed as it changes (debounced below), and the saved script once.
+  const [previewText, setPreviewText] = React.useState(shownScript);
+  React.useEffect(() => {
+    if (!editingScript) {
+      setPreviewText(script);
+      return;
+    }
+    const t = setTimeout(() => setPreviewText(scriptDraft), 500);
+    return () => clearTimeout(t);
+  }, [editingScript, script, scriptDraft]);
+  const previewQuery = useQuery({
+    queryKey: ["script-preview", id, previewText],
+    queryFn: () => api.tests.previewScript(id, previewText),
+    enabled: previewText.length > 0,
+    staleTime: Infinity,
+  });
+  const preview = previewQuery.data ?? null;
+  // Run status by LINE for the editor's gutter: the line each step index
+  // last ran from when the run reported one, else the line the parser reads
+  // that step from in the saved script. Only while the shown text is the
+  // saved script — a draft's lines have moved.
+  const runLineStatus = React.useMemo<Record<number, RunLineStatus>>(() => {
+    const out: Record<number, RunLineStatus> = {};
+    if (!runInfo || editingScript) return out;
+    const lineOfOffset = (offset: number): number => script.slice(0, offset).split("\n").length;
+    for (const [k, status] of Object.entries(runInfo.stepStatus)) {
+      const index = Number(k);
+      const reported = runInfo.stepLines?.[index];
+      const range = preview && preview.tracked !== undefined ? preview.stepRanges[index] : undefined;
+      const line = reported ?? (range ? lineOfOffset(range.from) : undefined);
+      if (line) out[line] = status;
+    }
+    return out;
+  }, [runInfo, editingScript, preview, script]);
+  // The step the caret is on, for the readout: the index whose range holds
+  // the caret's line, described the way the Steps tab describes it.
+  const caretStep = React.useMemo(() => {
+    if (caretLine === null || !preview || !test) return null;
+    const lineOfOffset = (offset: number): number => shownScript.slice(0, offset).split("\n").length;
+    const index = preview.stepRanges.findIndex((r) => {
+      const first = lineOfOffset(r.from);
+      const last = lineOfOffset(Math.max(r.from, r.to - 1));
+      return caretLine >= first && caretLine <= last;
+    });
+    if (index < 0) return null;
+    const step = test.steps[index];
+    return { index, label: step ? describeStep(step) : `step ${index + 1}` };
+  }, [caretLine, preview, test, shownScript]);
   const runOutput = runInfo?.lines.join("") ?? "";
   const recordId = runInfo?.recordId;
   // Identifies the execution being debugged, STABLY for its whole life. Hashing
@@ -735,17 +789,9 @@ export function TestDetailView() {
     await writeScriptDraft();
   };
 
-  /** Put the caret at the start of a reported line and bring it into view.
-   *  The textarea is the editor's one scrolling element, so setting its
-   *  scrollTop is what moves the highlight layer and the gutter with it. */
+  /** Put the caret at the start of a reported line and bring it into view. */
   const jumpToScriptLine = (line: number) => {
-    const ta = scriptTextareaRef.current;
-    if (!ta) return;
-    const offset = lineStartOffset(scriptDraft, line);
-    ta.focus();
-    ta.setSelectionRange(offset, offset);
-    const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 18;
-    ta.scrollTop = Math.max(0, (line - 3) * lineHeight);
+    scriptEditorRef.current?.focusLine(line);
   };
 
   if (!test) {
@@ -1310,6 +1356,10 @@ export function TestDetailView() {
                           ? "Playwright can't load this script — 1 problem"
                           : `Playwright can't load this script — ${scriptCheck.errors.length} problems`}
                       </span>
+                    ) : caretStep ? (
+                      <span className="gl-script-check-msg" data-checking="" data-gl="caret-step">
+                        step {caretStep.index + 1} · {caretStep.label}
+                      </span>
                     ) : null}
                     <Btn
                       onClick={() => {
@@ -1366,16 +1416,17 @@ export function TestDetailView() {
                   ))}
                 </ul>
               ) : null}
-              {editingScript ? (
-                <ScriptEditor
-                  value={scriptDraft}
-                  onChange={setScriptDraft}
-                  errors={scriptCheck.errors}
-                  textareaRef={scriptTextareaRef}
-                />
-              ) : (
-                <ScriptView code={scriptQuery.data ?? ""} />
-              )}
+              <ScriptEditor
+                value={shownScript}
+                onChange={setScriptDraft}
+                readOnly={!editingScript}
+                errors={scriptCheck.errors}
+                skippedRanges={preview?.skippedRanges ?? null}
+                runStatus={runLineStatus}
+                onCaretLine={setCaretLine}
+                ariaLabel={`Script of ${test.name}`}
+                handleRef={scriptEditorRef}
+              />
               <Dialog
                 open={staleOpen}
                 onOpenChange={setStaleOpen}

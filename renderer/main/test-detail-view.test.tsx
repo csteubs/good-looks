@@ -17,6 +17,7 @@ import { TestDetailView, persistRunBrowser } from "./test-detail-view";
 import { runSessionKey, useAiDebug, type AiDebugRunContext } from "./ai-debug-store";
 import { withAiDebug } from "../__tests__/ai-debug-harness";
 import { clearToastCalls, toastTexts } from "../__tests__/sonner-stub";
+import { EditorView } from "./script-editor-cm";
 import { isScriptDirty, resetScriptDirty } from "../lib/script-buffer";
 import { SCRIPT_CHANGED_ON_DISK } from "../../shared/script-save.mjs";
 
@@ -928,6 +929,31 @@ function selectTab(name: RegExp) {
   return tab;
 }
 
+/** Replace the editor's document the way typing would: through the view.
+ *  A CodeMirror content element is contenteditable, so `fireEvent.change`
+ *  reaches nothing. */
+function setDraft(content: HTMLElement, text: string): void {
+  const view = EditorView.findFromDOM(content);
+  if (!view) throw new Error("no EditorView behind the textbox");
+  act(() => {
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+  });
+}
+
+/** The editor stays mounted read-only after a save or a cancel; "closed"
+ *  means it stopped taking edits and the Edit button is back. */
+async function editorClosed(): Promise<void> {
+  await screen.findByRole("button", { name: "Edit script" });
+  await waitFor(() => expect(screen.getByRole("textbox").getAttribute("contenteditable")).toBe("false"));
+}
+
+/** What the editor currently shows. */
+function draftText(): string {
+  const content = document.querySelector(".cm-content") as HTMLElement | null;
+  const view = content ? EditorView.findFromDOM(content) : null;
+  return view ? view.state.doc.toString() : "";
+}
+
 /** The rows currently claiming to be newly added. */
 function glowingRows(): HTMLElement[] {
   return Array.from(document.querySelectorAll<HTMLElement>('[data-new-step="true"]'));
@@ -1394,17 +1420,21 @@ describe("saving a script edit", () => {
     checkScript.mockImplementation(async () => ({ ok: true, errors: [], tests: [], durationMs: 1 }));
   });
 
-  async function openEditor(): Promise<HTMLTextAreaElement> {
+  async function openEditor(): Promise<HTMLElement> {
     renderView();
     await screen.findByText("Checkout");
     selectTab(/Script/);
     fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
-    return (await screen.findByRole("textbox")) as HTMLTextAreaElement;
+    // The CodeMirror host is lazy; the textbox appears once it has loaded and
+    // is editable once the Edit click has flipped it.
+    const content = await screen.findByRole("textbox");
+    await waitFor(() => expect(content.getAttribute("contenteditable")).toBe("true"));
+    return content;
   }
 
   it("checks the draft with Playwright before writing it", async () => {
     const ta = await openEditor();
-    fireEvent.change(ta, { target: { value: "// edited" } });
+    setDraft(ta, "// edited");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
@@ -1414,7 +1444,7 @@ describe("saving a script edit", () => {
     expect(checkScript.mock.invocationCallOrder[0]).toBeLessThan(
       updateScript.mock.invocationCallOrder[0],
     );
-    await waitFor(() => expect(screen.queryByRole("textbox")).toBeNull());
+    await editorClosed();
   });
 
   it("keeps the editor open and lists the problems when the draft does not load", async () => {
@@ -1425,7 +1455,7 @@ describe("saving a script edit", () => {
       durationMs: 1,
     });
     const ta = await openEditor();
-    fireEvent.change(ta, { target: { value: "a\nb\nc(\nd" } });
+    setDraft(ta, "a\nb\nc(\nd");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await screen.findByText(/can't load this script — 1 problem/);
@@ -1434,7 +1464,8 @@ describe("saving a script edit", () => {
     // The problem, where it is, and the line marked in the gutter.
     const row = screen.getByRole("button", { name: /Line 3:9/ });
     expect(row.textContent).toContain('SyntaxError: Unexpected token, expected "," (3:9)');
-    expect(document.querySelector('[data-error-line="3"]')).not.toBeNull();
+    // …and as a diagnostic on its line in the editor.
+    await waitFor(() => expect(document.querySelector(".cm-lintRange-error")).not.toBeNull());
     expect(screen.getByRole("button", { name: "Save anyway" })).toBeTruthy();
   });
 
@@ -1446,13 +1477,13 @@ describe("saving a script edit", () => {
       durationMs: 1,
     });
     const ta = await openEditor();
-    fireEvent.change(ta, { target: { value: "ab\ncd\nef" } });
+    setDraft(ta, "ab\ncd\nef");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     const row = await screen.findByRole("button", { name: /Line 3:1/ });
     fireEvent.click(row);
-    expect(ta.selectionStart).toBe(6);
-    expect(ta.selectionEnd).toBe(6);
-    expect(document.activeElement).toBe(ta);
+    const v = EditorView.findFromDOM(ta)!;
+    expect(v.state.selection.main.head).toBe(6);
+    expect(v.state.selection.main.anchor).toBe(6);
   });
 
   it("Save anyway writes the draft the check refused", async () => {
@@ -1463,7 +1494,7 @@ describe("saving a script edit", () => {
       durationMs: 1,
     });
     const ta = await openEditor();
-    fireEvent.change(ta, { target: { value: "broken(" } });
+    setDraft(ta, "broken(");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     fireEvent.click(await screen.findByRole("button", { name: "Save anyway" }));
 
@@ -1471,13 +1502,13 @@ describe("saving a script edit", () => {
     expect(updateScript).toHaveBeenCalledWith("t1", "broken(", { by: "manual", reviewed: true }, expect.any(String));
     // One check, not two: Save anyway is the way past the verdict, not a retry.
     expect(checkScript).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(screen.queryByRole("textbox")).toBeNull());
+    await editorClosed();
   });
 
   it("treats a check that could not run as a failure, not a pass", async () => {
     checkScript.mockRejectedValue(new Error("Could not find @playwright/test"));
     const ta = await openEditor();
-    fireEvent.change(ta, { target: { value: "// edited" } });
+    setDraft(ta, "// edited");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await screen.findByText(/Couldn't check the script: Could not find @playwright\/test/);
@@ -1494,7 +1525,7 @@ describe("saving a script edit", () => {
         }),
     );
     const ta = await openEditor();
-    fireEvent.change(ta, { target: { value: "// edited" } });
+    setDraft(ta, "// edited");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     const checking = await screen.findByRole("button", { name: "Checking…" });
@@ -1517,7 +1548,7 @@ describe("saving a script edit", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByText(/can't load this script/);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(screen.queryByRole("textbox")).toBeNull());
+    await editorClosed();
     // Re-opening starts clean: no stale problems from the last draft.
     fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
     await screen.findByRole("textbox");
@@ -1547,17 +1578,21 @@ describe("saving a script edit — stale drafts, divergence, and the dirty buffe
     resetScriptDirty();
   });
 
-  async function openEditor(): Promise<HTMLTextAreaElement> {
+  async function openEditor(): Promise<HTMLElement> {
     renderView();
     await screen.findByText("Checkout");
     selectTab(/Script/);
     fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
-    return (await screen.findByRole("textbox")) as HTMLTextAreaElement;
+    // The CodeMirror host is lazy; the textbox appears once it has loaded and
+    // is editable once the Edit click has flipped it.
+    const content = await screen.findByRole("textbox");
+    await waitFor(() => expect(content.getAttribute("contenteditable")).toBe("true"));
+    return content;
   }
 
   it("sends the script it loaded as the draft's base", async () => {
     const ta = await openEditor();
-    fireEvent.change(ta, { target: { value: "// edited" } });
+    setDraft(ta, "// edited");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
     expect(updateScript.mock.calls[0][3]).toBe(LOADED);
@@ -1566,14 +1601,14 @@ describe("saving a script edit — stale drafts, divergence, and the dirty buffe
   it("marks the buffer dirty while the draft differs from what it loaded, and clean after a save", async () => {
     const ta = await openEditor();
     expect(isScriptDirty("t1")).toBe(false);
-    fireEvent.change(ta, { target: { value: "// edited" } });
+    setDraft(ta, "// edited");
     await waitFor(() => expect(isScriptDirty("t1")).toBe(true));
-    fireEvent.change(ta, { target: { value: LOADED } });
+    setDraft(ta, LOADED);
     await waitFor(() => expect(isScriptDirty("t1")).toBe(false));
-    fireEvent.change(ta, { target: { value: "// edited again" } });
+    setDraft(ta, "// edited again");
     await waitFor(() => expect(isScriptDirty("t1")).toBe(true));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(screen.queryByRole("textbox")).toBeNull());
+    await editorClosed();
     expect(isScriptDirty("t1")).toBe(false);
   });
 
@@ -1582,18 +1617,18 @@ describe("saving a script edit — stale drafts, divergence, and the dirty buffe
       throw new Error(SCRIPT_CHANGED_ON_DISK);
     });
     const ta = await openEditor();
-    fireEvent.change(ta, { target: { value: "// edited" } });
+    setDraft(ta, "// edited");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByText("The script changed on disk");
     expect(updateScript).toHaveBeenCalledTimes(1);
     // Still editing underneath the (modal, aria-hiding) dialog.
-    expect(document.querySelector("textarea")).toBe(ta);
+    expect(document.querySelector(".cm-content")).toBe(ta);
 
     fireEvent.click(screen.getByRole("button", { name: "Overwrite with my draft" }));
     await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(2));
     expect(updateScript.mock.calls[1][1]).toBe("// edited");
     expect(updateScript.mock.calls[1][3]).toBeUndefined();
-    await waitFor(() => expect(screen.queryByRole("textbox")).toBeNull());
+    await editorClosed();
   });
 
   it("Reload replaces the draft with the script as it is now, and keeps editing", async () => {
@@ -1601,17 +1636,17 @@ describe("saving a script edit — stale drafts, divergence, and the dirty buffe
       throw new Error(SCRIPT_CHANGED_ON_DISK);
     });
     const ta = await openEditor();
-    fireEvent.change(ta, { target: { value: "// edited" } });
+    setDraft(ta, "// edited");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByText("The script changed on disk");
     getScript.mockImplementation(async () => "// version two");
 
     fireEvent.click(screen.getByRole("button", { name: "Reload (discard draft)" }));
-    await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("// version two"));
+    await waitFor(() => expect(draftText()).toBe("// version two"));
     expect(updateScript).toHaveBeenCalledTimes(1);
     expect(isScriptDirty("t1")).toBe(false);
     // The reloaded text is the new base: saving it sends it as such.
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: "// version three" } });
+    setDraft(screen.getByRole("textbox"), "// version three");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(2));
     expect(updateScript.mock.calls[1][3]).toBe("// version two");
@@ -1627,7 +1662,7 @@ describe("saving a script edit — stale drafts, divergence, and the dirty buffe
       newlySkipped: ['await page.keyboard.down("Shift")'],
     });
     const ta = await openEditor();
-    fireEvent.change(ta, { target: { value: 'await page.keyboard.down("Shift")' } });
+    setDraft(ta, 'await page.keyboard.down("Shift")');
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByText("One statement won't become a step");
     // Scoped to the dialog: the editor's highlight layer shows the draft too.
@@ -1636,8 +1671,9 @@ describe("saving a script edit — stale drafts, divergence, and the dirty buffe
 
     fireEvent.click(screen.getByRole("button", { name: "Save anyway" }));
     await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
-    // Asked once: the confirmed save does not preview again.
-    expect(previewScript).toHaveBeenCalledTimes(1);
+    // Asked once: the confirmed save does not raise the question again.
+    await editorClosed();
+    expect(screen.queryByText(/won't become/)).toBeNull();
   });
 
   it("does not ask when the misses are ones the stored script already had, or the steps are not tracked", async () => {
@@ -1650,7 +1686,7 @@ describe("saving a script edit — stale drafts, divergence, and the dirty buffe
       newlySkipped: ["await page.mouse.move(1, 2)"],
     });
     const ta = await openEditor();
-    fireEvent.change(ta, { target: { value: "// imported" } });
+    setDraft(ta, "// imported");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
     expect(screen.queryByText(/won't become/)).toBeNull();
@@ -1659,7 +1695,7 @@ describe("saving a script edit — stale drafts, divergence, and the dirty buffe
   it("a preview that fails does not stand between the user and the save", async () => {
     previewScript.mockRejectedValue(new Error("no parser today"));
     const ta = await openEditor();
-    fireEvent.change(ta, { target: { value: "// edited" } });
+    setDraft(ta, "// edited");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
   });

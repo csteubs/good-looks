@@ -627,6 +627,28 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "tests:getScript": (p) => {
       const test = findTest(p?.id);
       if (!test) return "";
+      // `?test=t-long`: a 2000-line spec, for looking at the Script IDE under
+      // a file the size of an imported suite — the virtualised viewport,
+      // the gutters and the search panel at a scale no fixture step list
+      // reaches. Every 97th line is one the parser cannot map, so the
+      // coverage gutter has something to show.
+      if (test.id === "t-long") {
+        const lines = [
+          'import { test, expect } from "@playwright/test";',
+          "",
+          `test(${JSON.stringify(test.name)}, async ({ page }) => {`,
+          `  await page.goto(${JSON.stringify(test.url)});`,
+        ];
+        for (let i = 1; lines.length < 1998; i++) {
+          lines.push(
+            i % 97 === 0
+              ? `  await page.mouse.move(${i}, ${i * 2});`
+              : `  await page.getByRole("button", { name: "Step ${i}" }).click();`,
+          );
+        }
+        lines.push("});", "");
+        return lines.join("\n");
+      }
       return [
         'import { test, expect } from "@playwright/test";',
         "",
