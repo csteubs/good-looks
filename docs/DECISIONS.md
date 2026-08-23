@@ -10,6 +10,99 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-22 — Script IDE View, Phase 1: the engine, the transactional save, and per-step wrappers
+
+The plan is `docs/plans/script-ide-view.md` (research memo 04). Chris chose
+CodeMirror 6, the TypeScript service in an Electron `utilityProcess` (Phase 4,
+not here), Phase 1 only before a check-in, `test.step` wrappers in generated
+specs, the save gate as a setting defaulting on, a confirmation when a save
+would lose statements, the editor blocked during a live session, and the
+Playwright upgrade first. What landed, and the decisions inside each.
+
+**CodeMirror 6, lazily.** Measured at 153 KB gz for the whole host against
+Monaco's ~1.1 MB plus a 1.55 MB TypeScript worker, and — the deciding fact —
+`EditorView.theme` passes `var(--gl-*)` through verbatim where Monaco's
+`defineTheme` rejects CSS variables, so the editor is on the token layer and
+`check:script-ide-layout` can prove every name it reads is declared, the way
+`check:theme-tokens` does for a stylesheet. The host is the renderer's first
+dynamic import: the trainer, settings and URL-strip windows never show a
+script. The chunk is budgeted (260 KB gz) so a later `import "typescript"`
+inside it fails the gate. Theme rules live in the extension and NOT in
+`editor.css`, because CodeMirror injects its base rules after the app's
+stylesheet under a generated class — a plain `.cm-gutters` rule of ours ties
+on specificity and loses on order. `editor.css` styles the host and the marks
+our own `GutterMarker`s create.
+
+**One diagnostics set, two sources.** Lezer's error nodes give an instant
+"this cannot load yet" underline; the CLI's verdict from `tests:checkScript`
+is authoritative by line. `linter()` replaces the whole set on each run, so
+both come from one source: the CLI errors sit in a `StateField`, and the
+plugin's `needsRefresh` names the effect that replaces them as a reason to
+run — `forceLinting` alone does nothing unless a lint is already pending,
+which is why the first version's CLI diagnostics never appeared.
+
+**Stale drafts are refused by TEXT, not by a revision number.** The plan
+said "revision rule"; the cross-check of the code found that the writers a
+counter misses are the ones that matter — `regenerateCallers` rewrites
+every caller's spec FILE after a flow edit and never saves their records.
+So `tests:updateScript` takes the text the draft started from and compares
+it with the file. The renderer offers Reload (discard the draft) or
+Overwrite; a three-way merge is Phase 2+ work. The live-session refusal
+moved to `main`: the plan put it in the renderer, but `RootShell` swaps the
+whole outlet for `RecordingView` while any session is live, so there is no
+Script tab to block — what is reachable is a save from another path landing
+underneath `recorderService.finalize`, which regenerates and discards it.
+
+**The divergence question is asked once, over the NEW misses.** An imported
+spec or a hand-written block already has statements the parser cannot map;
+prompting on every save for those would train the user to confirm without
+reading. `tests:previewScript` diffs the draft's unmapped statements
+against the stored script's (trimmed, trailing `;` dropped — the skip branch
+consumes it and the step branches leave it) and the dialog lists only what
+is new. A preview that fails never blocks the save; the banner still
+reports afterwards.
+
+**Unattended AI apply waits for a dirty buffer.** The auto-apply path was
+already gated on the script being byte-identical to what the prompt saw; a
+draft open in the editor leaves the FILE unchanged, so that gate passed and
+the fix would have landed under the user's draft — whose next Save is then a
+stale refusal, the first they hear of it. `renderer/lib/script-buffer.ts` is
+the one place the editor's view state and the store above the router meet.
+
+**`test.step` wrappers, with rules the code forced.** The map of the
+generator found five places a naive "wrap every line" breaks the file or
+the run: brace halves cannot be wrapped; a download's arming `const` must
+stay in the scope its `await` reads from; the continue-on-failure `try`
+must enclose the wrapper, not sit inside it; `record1` must point at the
+inner statement or every highlight shifts a line; and — found by the tests,
+not the map — `describeStep` falls through to the emitted statement for the
+common types, so a title built from it doubles the file and puts
+`page.getByTestId("a")` inside a string, where `force-click.test.ts`'s
+`replace("{ force: true }", …)` promptly hit the title instead of the code.
+`stepTitle` is a phrase for those types. The parser consumes a wrapper
+whole and before the brace closer (the same load-bearing ordering as the
+teardown latch); the runner's fallback line map sees through headers and
+closers. The AI prompts were saying the opposite ("do NOT wrap") and now
+ask for one statement per wrapper. Playwright 1.62 collects the shape
+(`check:runtime-boot`) and `e2e/step-progress.spec.ts` reports through it.
+
+**Deferred from Phase 1, by the check-in rule:** the TypeScript language
+service, ESLint, the trainer tools (match-count inlay, caret → trainer
+highlight, pick-locator insert, record at cursor), the inline AI
+affordances, keymap presets, folding by step, and the three-way merge.
+
+**Verified:** the full gate on every commit of the series; `check:script-
+ide-layout` (token reads, one scroller, the lazy chunk and its budget);
+`script-editor-cm.test.tsx` (gutters, diagnostics, compartments, the
+handle); the "saving a script edit" blocks in `test-detail-view.test.tsx`
+(stale → Reload/Overwrite, divergence confirmation, dirty registry, the
+check-on-save switch); `tests:checkScript`/`tests:previewScript`/stale/live-
+session rows in `handlers.test.ts`; `spec-parser-positions.test.ts`;
+`step-line-map.test.ts`; the §18b wrapper fixtures in `check:spec-parser`;
+the preview at `?test=t-login` (wrap off, syntax colours, Lezer underline,
+coverage mark, the failed-check strip with click-to-line) and `?test=t-long`
+(2000 lines); and the e2e suite on the new spec shape.
+
 ### 2026-08-22 — Playwright 1.53.0 → 1.62.1, as its own change ahead of the Script IDE work
 
 The Script IDE plan (`docs/plans/script-ide-view.md`) wanted three things the
