@@ -56,6 +56,7 @@ import { SETTLE_FIXTURE_FILE, settleFixtureSource } from "./settle-fixture-sourc
 import { buildHealProbeScript } from "./auto-heal.js";
 import { healJournalStore } from "./heal-journal-store.js";
 import { describeStep } from "./script-generator.js";
+import { browserInstalledIn, expectedBrowserDirs } from "../../shared/browser-install.mjs";
 import { testSecretsStore } from "./test-secrets-store.js";
 import { backfillBaseUrl, importedSandboxDir } from "./import-service.js";
 import { shouldRefuseForMissingBaseUrl } from "./imported-config.js";
@@ -729,17 +730,28 @@ export function buildStepLineMapFromSource(src: string): Map<number, number> | n
   return map.size > 0 ? map : null;
 }
 
-/** Playwright unpacks each engine into `<browsersPath>/<engine>-<revision>`.
- *  Chromium additionally ships a `chromium_headless_shell-*` directory, which
- *  is NOT a usable headed browser — so match the engine prefix followed by "-"
- *  rather than a bare `startsWith`, or a headless-shell-only install would be
- *  mistaken for a full one and the run would fail at launch. */
+/** Playwright unpacks each engine into `<browsersPath>/<engine>-<revision>`,
+ *  and the revision is the bundled CLI's — so the question is not "is there
+ *  a chromium directory" but "is there the one THIS Playwright launches".
+ *  The prefix rule that stood here until 2026-08-22 said yes to the 1.53
+ *  build after the upgrade to 1.62, and every run then failed at launch. The
+ *  revisions come from `playwright-core/browsers.json` next to the CLI; with
+ *  no file to read the prefix rule is the fallback (see shared/browser-install.mjs). */
 function isBrowserInstalled(browser: RunBrowser): boolean {
   const dir = browsersPath();
   try {
-    return (
-      fs.existsSync(dir) && fs.readdirSync(dir).some((n) => n.startsWith(`${browser}-`))
-    );
+    if (!fs.existsSync(dir)) return false;
+    let expected: string[] | null = null;
+    try {
+      const { nodeModules } = resolvePlaywright();
+      expected = expectedBrowserDirs(
+        fs.readFileSync(path.join(nodeModules, "playwright-core", "browsers.json"), "utf-8"),
+        browser,
+      );
+    } catch {
+      expected = null;
+    }
+    return browserInstalledIn(fs.readdirSync(dir), browser, expected);
   } catch {
     return false;
   }

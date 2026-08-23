@@ -132,8 +132,20 @@ ARCHITECTURE.md, one comment in `script-generator.ts`. `reporter.onError`
 gained a `workerInfo` argument in 1.60; the list reporter in
 `script-check.ts` ignores extra arguments. Chrome for Testing replaced the
 Chromium build in 1.57; the app's runner installs browsers through the CLI
-into `userData/recorder/browsers`, so a first run on the new version
-downloads the new build exactly as a fresh install does.
+into `userData/recorder/browsers`.
+
+**Found in use, after the upgrade landed here: the runner did NOT install
+the new build.** `isBrowserInstalled` asked whether any `chromium-*`
+directory existed, and `chromium-1178` from 1.53 said yes, so every run on
+the upgraded app launched against `chromium_headless_shell-1234` — which was
+not there — and died with Playwright's "Executable doesn't exist … npx
+playwright install" box. The check now reads the revision the bundled CLI
+wants from `playwright-core/browsers.json` (`main/services/browser-
+install.ts`) and requires both chromium directories; a first run on a new
+Playwright then installs, as the sentence above assumed it always had. The
+revision rule is what every future pin move needs, and it was the thing no
+check covered: `check:package-integrity` proves the CLI is in the bundle,
+nothing proved the browser it launches is in the user's data directory.
 
 **Verified:** the full gate on 1.62.1 (lint, type-check, 82 checks including
 `check:runtime-boot`, `check:script-check` and `check:step-progress`, 5422

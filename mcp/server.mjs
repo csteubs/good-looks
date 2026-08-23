@@ -38,6 +38,7 @@ import {
 // breaks every external client silently, since an MCP client gets "unknown
 // tool" rather than a redirect.
 import { routineBlockedReason, routineRunPlan } from "../shared/routine-plan.mjs";
+import { browserInstalledIn, expectedBrowserDirs } from "../shared/browser-install.mjs";
 import { describeSchedule } from "../shared/routine-schedule.mjs";
 import { buildQueue } from "../shared/batch-queue.mjs";
 import {
@@ -199,14 +200,28 @@ function findPlaywrightCli() {
   return cliPath ? { cliPath, nodeModules } : null;
 }
 
-/** Playwright unpacks each engine as `<engine>-<revision>`. Match the trailing
- *  dash: Chromium also ships a `chromium_headless_shell-*` directory, which is
- *  not a usable browser, so a bare startsWith("chromium") reports a
- *  shell-only install as complete and the run then fails at launch. */
+/** Playwright unpacks each engine as `<engine>-<revision>`, and the revision
+ *  is the bundled CLI's — read from its `browsers.json`, the same rule the
+ *  app's runner applies (shared/browser-install.mjs). A name-prefix match
+ *  stood here until 2026-08-22 and accepted the previous Playwright's build
+ *  after an upgrade, so every run launched a browser that was not there. */
 function isBrowserInstalled(browser = "chromium") {
   const dir = path.join(dataDir, "recorder", "browsers");
   try {
-    return fs.existsSync(dir) && fs.readdirSync(dir).some((n) => n.startsWith(`${browser}-`));
+    if (!fs.existsSync(dir)) return false;
+    let expected = null;
+    const pw = findPlaywrightCli();
+    if (pw) {
+      try {
+        expected = expectedBrowserDirs(
+          fs.readFileSync(path.join(pw.nodeModules, "playwright-core", "browsers.json"), "utf-8"),
+          browser,
+        );
+      } catch {
+        expected = null;
+      }
+    }
+    return browserInstalledIn(fs.readdirSync(dir), browser, expected);
   } catch {
     return false;
   }
