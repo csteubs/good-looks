@@ -5917,3 +5917,103 @@
   color: var(--gl-tx-1);
   white-space: nowrap;
 }
+
+/* ── Script outline (renderer/main/script-outline-panel.tsx) ───────────── */
+.gl-script-outline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-height: 45%;
+  overflow: auto;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.gl-script-outline-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.gl-script-outline-filter {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--gl-line);
+  border-radius: 2px;
+  background: var(--gl-panel);
+  color: var(--gl-tx-1);
+  font-family: var(--gl-mono);
+  font-size: 12px;
+}
+
+.gl-script-outline-filter:focus-visible {
+  outline: 1px solid var(--gl-sel-ring);
+  outline-offset: 0;
+}
+
+.gl-script-outline-count {
+  margin-right: auto;
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-2);
+  white-space: nowrap;
+}
+
+.gl-script-outline-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gl-script-outline-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 2px;
+  background: none;
+  text-align: left;
+  font-family: var(--gl-mono);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--gl-tx-1);
+  cursor: pointer;
+}
+
+.gl-script-outline-row[disabled] {
+  cursor: default;
+  color: var(--gl-tx-3);
+}
+
+.gl-script-outline-row[aria-current="true"] {
+  background: var(--gl-sel-bg);
+}
+
+.gl-script-outline-row:hover:not([disabled]) {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.gl-script-outline-num {
+  flex: 0 0 2.5ch;
+  color: var(--gl-tx-3);
+  text-align: right;
+}
+
+.gl-script-outline-line {
+  margin-left: auto;
+  color: var(--gl-tx-3);
+}
+
+.gl-script-outline-usages {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--gl-line);
+}

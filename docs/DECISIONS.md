@@ -11408,3 +11408,74 @@ is a switch that toggles nothing.
 library, and format-on-save are Phase 5 material; a quick fix from the live
 page (a narrowed locator when the count is not one) and from Auto-Heal
 history were offered and declined for this phase.
+
+## 2026-08-23 — Script IDE View, Phase 5: configuration and structure
+
+**Keymaps are tables in the repo.** Three presets — Default, JetBrains,
+VS Code — each a (command, key) table over CodeMirror's commands in
+`renderer/main/editor-keymaps.ts`, switched in Settings → Editor, where the
+chosen preset's bindings are listed behind the row's "More". A preset as
+code is reviewed, tested (`editor-keymaps.test.tsx` pins the core commands,
+the absence of duplicate keys and the two reserved chords) and documented
+like any change; a user-JSON keymap was the alternative and was declined
+for v1. Two chords are never bound by a preset: ⌘K, the command palette
+everywhere including inside a field, and ⌘I, inline AI. **Inline AI moved
+from ⌘K to ⌘I** in this phase: the palette's window listener fires after
+the editor's handler, so the Phase 3 binding opened both at once — a
+conflict the unit test could not see because it dispatches on the
+editor's DOM, not the window.
+
+**Format on save is TypeScript's formatter, through the service that
+already ships.** `getFormattingEditsForDocument` in the utilityProcess
+(Phase 4), two-space indent and TypeScript's defaults, which is how the
+generator writes a spec. Prettier would have been ~3 MB more and a second
+formatter to keep consistent with the generator's output. The formatted
+text becomes the draft before the `--list` check and the write, so what
+was checked is what is saved and what the editor shows afterwards; with
+the service unavailable, no formatting happens and the save proceeds.
+
+**The fenced code step.** A `test.step` wrapper whose body the parser
+cannot model at all becomes a `code` step: tracked, shown as code in the
+Steps tab, emitted back verbatim under a wrapper titled by the label. The
+wrapper is the fence. A wrapper that mixes modelled statements with
+unmodelled ones keeps the old accounting (its steps, its skipped ranges),
+so only a deliberately-fenced body is held whole. **The page path refuses
+the type**: a code step's body is emitted as written into a spec that
+Playwright executes in Node, so `normalizeRawStep` returns null for it and
+only `normalizeStep` — the IPC path from the renderer, and the parser —
+accepts it, capped at 20 000 characters. `check:step-ingest` pins both
+halves. The trainer's replayer reports a code step as passed with a log
+line saying it runs only in a real run: the replayer is a page script and
+cannot run Node. The unwrapped-statement quick fix (Phase 4) therefore
+round-trips: wrap a statement, save, and the Steps tab shows a code step.
+
+**A page stylesheet and init script, taught once, applied in both
+halves.** Settings → Recording → "Page stylesheet" and "Page init script"
+are applied in the trainer (on every document's dom-ready:
+`insertCSS`, and the script in the page's OWN world, since it is the
+user's code for the page) and in every recorded test's run through a new
+fixture (`user-page-fixture-source.ts`: `context.addInitScript`, and
+`addStyleTag` on every document's domcontentloaded and load). Both halves
+by design, as with overlay rules: a widget hidden only while recording is
+a test that passes in the trainer and fails in the run. The run's half is
+the stronger one — an init script there runs before the page's own code,
+which dom-ready cannot. Both values travel as one base64 environment
+value each, never split. Imported specs are never touched. The init
+script is arbitrary code in every page the trainer visits; the row says
+so in its risk block, which is the place for a consequence the user has
+to read (setting-row.tsx). `record-then-run.spec.ts` proves both reach a
+real run through the app's runner: the stylesheet hides a heading, the
+script marks the document, a recorded test asserts both and passes.
+
+**Outline and Find Usages, one panel.** "Outline" in the script bar lists
+the parsed steps with their lines (filter + Enter jumps to the first
+match) and, for the step under the caret, where its locator is used
+across the library — equality by the generator's spelling of the locator
+(`locatorExpr`), so two steps recorded on different days that emit the
+same expression are the same usage and a differently-scoped one is not.
+It is the Script tab's File Structure popup and Find Usages together,
+because both answer "where is this" about the script being read.
+
+**Not done here.** Flow-block decorations and the re-inline quick fix;
+signature help; rename; a user-JSON keymap; hunk-by-hunk AI review (still
+open from Phase 3).

@@ -53,6 +53,7 @@ import { resolveAiInstructions } from "../lib/ai-instructions";
 import { applyTextEdits } from "../lib/text-edits";
 import type { TsIntelligence } from "./script-view";
 import { ScriptAiPanel, type ScriptAiApplyMeta, type ScriptAiMode, type ScriptAiSelection } from "./script-ai-panel";
+import { ScriptOutlinePanel } from "./script-outline-panel";
 import { SCRIPT_CHANGED_ON_DISK, isScriptChangedOnDisk } from "../../shared/script-save.mjs";
 import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
@@ -164,6 +165,9 @@ export function TestDetailView() {
   // user's, even though the user pressed Save.
   const [aiPanel, setAiPanel] = React.useState<{ mode: ScriptAiMode; selection: ScriptAiSelection | null } | null>(null);
   const aiOriginRef = React.useRef<ScriptChangeSource | null>(null);
+  // The outline (go to step, and the caret locator's usages across the library).
+  const [outlineOpen, setOutlineOpen] = React.useState(false);
+  const testsQuery = useQuery({ queryKey: ["tests"], queryFn: api.tests.list, enabled: outlineOpen });
   const [scriptDraft, setScriptDraft] = React.useState("");
   // The pre-save check's verdict on the draft. `checking` holds Save while the
   // Playwright CLI has the draft; `failed` keeps the editor open with the
@@ -1632,6 +1636,13 @@ export function TestDetailView() {
                       {livePage.closedReason}
                     </span>
                   ) : null}
+                  <Btn
+                    onClick={() => setOutlineOpen((v) => !v)}
+                    aria-pressed={outlineOpen}
+                    title="The steps as a list to jump to, and where the caret's locator is used across the library"
+                  >
+                    Outline
+                  </Btn>
                   {tsStatusQuery.data ? (
                     <span
                       className="gl-script-live-status"
@@ -1734,6 +1745,19 @@ export function TestDetailView() {
                   </>
                 )}
               </div>
+              {outlineOpen ? (
+                <ScriptOutlinePanel
+                  steps={preview?.stepList ?? test.steps}
+                  stepRanges={preview?.stepRanges ?? []}
+                  script={shownScript}
+                  caretIndex={caretStep?.index ?? null}
+                  tests={testsQuery.data ?? []}
+                  currentTestId={id}
+                  onJumpToLine={jumpToScriptLine}
+                  onOpenTest={(testId) => navigate({ to: "/test/$id", params: { id: testId } })}
+                  onClose={() => setOutlineOpen(false)}
+                />
+              ) : null}
               {aiPanel ? (
                 <ScriptAiPanel
                   mode={aiPanel.mode}

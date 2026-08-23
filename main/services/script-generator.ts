@@ -1171,6 +1171,13 @@ export function stepTitle(step: Step): string {
  *  reference shows as written rather than as the `V.name` the spec compiles to
  *  — the step list is meant to read like what the user typed. */
 export function describeStep(step: Step): string {
+  // Kept identical to the renderer's mirror — describe-step-parity.test.ts
+  // compares the two for every step type.
+  if (step.type === "code") {
+    const first = (step.code ?? "").split("\n").find((l) => l.trim() !== "")?.trim() ?? "";
+    const lines = (step.code ?? "").split("\n").filter((l) => l.trim() !== "").length;
+    return (step.label ? step.label + ": " : "code: ") + (first.length > 60 ? first.slice(0, 57) + "…" : first) + (lines > 1 ? ` (+${lines - 1} lines)` : "");
+  }
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
   if (step.type === "else") return "else";

@@ -294,8 +294,11 @@ function main(): void {
   // `.filter()` on the target (rather than on a container) has no counterpart
   // in `LocatorContext`. Reading it as a bare locator would drop the filter and
   // regenerate a step matching MORE elements than the script says — the silent
-  // widening the original `.nth()` comment warns about. It stays unclassified,
-  // which the caller reports as a skip.
+  // widening the original `.nth()` comment warns about. It stays unmodelled.
+  // Since the fenced code step (Phase 5, 2026-08-23) an unmodelled statement
+  // alone in its `test.step` wrapper is kept VERBATIM as a `code` step rather
+  // than reported as a skip — so the filter survives a regeneration instead
+  // of being lost with the skip. Either way it is never a bare click.
   {
     const source = gen([step({ type: "click", locator: { k: "text", v: "Save" } })]).replace(
       'page.getByText("Save")',
@@ -306,7 +309,12 @@ function main(): void {
       parsed.steps.filter((s) => s.type === "click").length === 0,
       "a target-level .filter() is refused rather than silently dropped",
     );
-    assert(parsed.skipped > 0, "…and is reported as a skip");
+    const code = parsed.steps.find((s) => s.type === "code");
+    assert(
+      Boolean(code && code.code?.includes('.filter({ hasText: "now" })')),
+      "…and survives verbatim as a fenced code step",
+    );
+    assert(parsed.skipped === 0, "…with nothing reported as skipped");
   }
 
   // ── 9. A whole script of context-carrying steps ──────────────────────────

@@ -149,6 +149,10 @@ const cases: { label: string; step: Step }[] = [
   { label: "dialog accept with text", step: step({ type: "dialog", dialogAction: "accept", value: "Jane" }) },
   { label: "dialog dismiss", step: step({ type: "dialog", dialogAction: "dismiss" }) },
   { label: "dialog with no action", step: step({ type: "dialog" }) },
+  { label: "code step with a label", step: step({ type: "code", code: "await page.mouse.wheel(0, 1);", label: "scroll" }) },
+  { label: "code step, multi-line, no label", step: step({ type: "code", code: "const n = 1;\nawait page.waitForTimeout(n);" }) },
+  { label: "code step with a long first line", step: step({ type: "code", code: "await page.getByRole(\"button\", { name: \"A very long accessible name indeed\" }).click();" }) },
+  { label: "code step with no code", step: step({ type: "code" }) },
   { label: "a11y gate", step: step({ type: "a11y", a11yImpact: "critical" }) },
   { label: "a11y gate default impact", step: step({ type: "a11y" }) },
   // Malformed on purpose: both sides must fall back to "serious" identically.

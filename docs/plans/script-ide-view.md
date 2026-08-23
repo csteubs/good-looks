@@ -435,8 +435,14 @@ from the runner's node_modules), completions/hover/type errors in the
 editor, six app-written inspections with quick fixes, Settings →
 Inspections, `check:ts-service` and `e2e/ts-service.spec.ts`. Deferred from
 Phase 4: signature help, rename, go-to-definition, format on save,
-quick fixes from the live page and from Auto-Heal history. Phases 5–6 are
-open.
+quick fixes from the live page and from Auto-Heal history. Phase 5 is on
+the same branch as Phase 4's follow-up (`feat/script-ide-phase5`, stacked
+on Phase 4): keymap presets (Default/JetBrains/VS Code, ⌘I for inline AI),
+fold by step, snippets, format on save through the TS service, the fenced
+code step, the page stylesheet and init script (trainer + runs), and the
+Outline with Find Usages. Deferred from Phase 5: flow-block decorations
+and the re-inline quick fix, signature help, rename, a user-JSON keymap.
+Phase 6 is open.
 
 ## 9. Open questions for the maintainer
 

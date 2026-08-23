@@ -217,7 +217,9 @@ for (const method of [...PAGE_ACTIONS, ...LOCATOR_ACTIONS]) {
     for (const sibling of siblings) {
       // Matched by the CONSTANT that names the file as well as by the literal,
       // since both writers address most of these through an exported name.
-      const constant = sibling.replace(/^glaze-/, "").replace(/\.mjs$/, "").toUpperCase();
+      // `glaze-user-page.mjs` → USER_PAGE_FIXTURE_FILE: a hyphen in the file
+      // name is an underscore in the constant.
+      const constant = sibling.replace(/^glaze-/, "").replace(/\.mjs$/, "").replace(/-/g, "_").toUpperCase();
       assert(
         src.includes(sibling) || src.includes(`${constant}_FIXTURE_FILE`),
         `${label} writes ${sibling}, which the capture fixture imports at module load`,
