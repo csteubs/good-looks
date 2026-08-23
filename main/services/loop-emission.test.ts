@@ -41,11 +41,14 @@ describe("emission", () => {
   it("compiles a repeat block to a real for-loop around its body", () => {
     const src = gen([step({ type: "loop", loopCount: 3 }), CLICK(), step({ type: "endLoop" })]);
     expect(src).toContain("for (let i = 0; i < 3; i++) {");
-    // The body is inside and indented one level deeper than the loop line.
+    // The body is inside and indented one level deeper than the loop line:
+    // the step's wrapper at +2, its statement at +4, then the loop's brace.
     const lines = src.split("\n");
     const forAt = lines.findIndex((l) => l.includes("for (let i"));
-    expect(lines[forAt + 1]).toMatch(/^ {4}await page\.getByTestId\("add"\)\.click\(\);/);
-    expect(lines[forAt + 2]).toMatch(/^ {2}\}/);
+    expect(lines[forAt + 1]).toMatch(/^ {4}await test\.step\(/);
+    expect(lines[forAt + 2]).toMatch(/^ {6}await page\.getByTestId\("add"\)\.click\(\);/);
+    expect(lines[forAt + 3]).toMatch(/^ {4}\}\);/);
+    expect(lines[forAt + 4]).toMatch(/^ {2}\}/);
   });
 
   it("names nested loops by depth so nothing shadows", () => {

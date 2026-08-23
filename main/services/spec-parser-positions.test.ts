@@ -126,8 +126,10 @@ describe("parseSpecDetailed ranges", () => {
     const lines = source.split("\n");
     const forLine = lines.findIndex((l) => /^\s*for \(let i = 0; i < 2; i\+\+\) \{/.test(l)) + 1;
     expect(lineOf(source, parsed.stepRanges[0].from)).toBe(forLine);
-    expect(lineOf(source, parsed.stepRanges[1].from)).toBe(forLine + 1);
-    expect(lineOf(source, parsed.stepRanges[2].from)).toBe(forLine + 2);
+    // The click sits inside its test.step wrapper (one line below the
+    // header), and the loop's own closer comes after the wrapper's.
+    expect(lineOf(source, parsed.stepRanges[1].from)).toBe(forLine + 2);
+    expect(lineOf(source, parsed.stepRanges[2].from)).toBe(forLine + 4);
     expect(source.slice(parsed.stepRanges[2].from, parsed.stepRanges[2].to)).toBe("}");
   });
 

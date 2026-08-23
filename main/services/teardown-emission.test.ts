@@ -35,8 +35,13 @@ function gen(steps: Step[]): string {
  *  `new Function(body)` is a SyntaxError for that reason alone and would
  *  report every refusal case as broken. */
 function compiles(spec: string): () => unknown {
-  return () => new Function("page", `return (async () => {${bodyOf(spec)}})();`);
+  return () => new Function("page", "test", `return (async () => {${bodyOf(spec)}})();`);
 }
+
+/** What `test.step(title, fn)` resolves to when the body runs here: the
+ *  callback, nothing else. The wrapper is Playwright's reporting seam, and
+ *  this harness is about what the latch does with the statements inside. */
+const FAKE_TEST = { step: async (_title: string, fn: () => Promise<unknown>) => fn() };
 
 /** The test body, pulled out of the emitted spec so it can be run. */
 function bodyOf(spec: string): string {
@@ -60,9 +65,9 @@ async function runBody(
       },
     }),
   };
-  const fn = new Function("page", `return (async () => {${bodyOf(spec)}})();`);
+  const fn = new Function("page", "test", `return (async () => {${bodyOf(spec)}})();`);
   try {
-    await fn(page);
+    await fn(page, FAKE_TEST);
     return { ran, thrown: null };
   } catch (e) {
     return { ran, thrown: e };
@@ -145,8 +150,8 @@ describe("teardown semantics (the emitted body is executed)", () => {
         },
       }),
     };
-    const fn = new Function("page", `return (async () => {${bodyOf(spec)}})();`);
-    await expect(fn(page)).rejects.toBeDefined();
+    const fn = new Function("page", "test", `return (async () => {${bodyOf(spec)}})();`);
+    await expect(fn(page, FAKE_TEST)).rejects.toBeDefined();
   });
 });
 

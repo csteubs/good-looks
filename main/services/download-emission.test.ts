@@ -112,7 +112,11 @@ describe("emission", () => {
     const arm = lines.findIndex((l) => l.startsWith("const download1"));
     const wait = lines.findIndex((l) => l.startsWith("{ const d1"));
     const endifClose = lines.lastIndexOf("}", wait);
-    expect(arm).toBe(wait - 1);
+    // The arming line sits OUTSIDE the step's wrapper, directly before it:
+    // inside the callback, `download1` would be a const the `await` two
+    // lines later could not see.
+    expect(lines[arm + 1]).toMatch(/^await test\.step\(/);
+    expect(wait).toBe(arm + 2);
     expect(arm).toBeGreaterThan(endifClose - 1);
   });
 

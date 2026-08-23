@@ -36,12 +36,17 @@ const systemPrompt = (): string => {
 };
 
 describe("the generate-from-prompt system prompt", () => {
-  it("names the three shapes that silently cost the user their steps", () => {
+  it("names the shapes that silently cost the user their steps, and the wrapper that does not", () => {
     const p = systemPrompt();
     // Each of these produced a real, silent step loss before it was stated.
     expect(p).toMatch(/Do NOT assign a locator to a variable/i);
-    expect(p).toMatch(/Do NOT wrap the flow in test\.step/i);
     expect(p).toMatch(/Never expect\(\) a JavaScript value/i);
+    // test.step wrappers used to be on that list. Since 2026-08-22 the
+    // generator emits them itself and the parser consumes them whole, so the
+    // rule is the opposite: one statement per wrapper, a phrase for a title.
+    expect(p).toMatch(/Wrap each statement in await test\.step/i);
+    expect(p).toMatch(/one statement per wrapper/i);
+    expect(p).not.toMatch(/Do NOT wrap the flow in test\.step/i);
   });
 
   it("still welcomes the comments and logging the reader ignores", () => {
