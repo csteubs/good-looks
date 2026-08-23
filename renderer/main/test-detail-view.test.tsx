@@ -18,7 +18,7 @@ import { runSessionKey, useAiDebug, type AiDebugRunContext } from "./ai-debug-st
 import { withAiDebug } from "../__tests__/ai-debug-harness";
 import { clearToastCalls, toastTexts } from "../__tests__/sonner-stub";
 import { EditorView } from "./script-editor-cm";
-import { isScriptDirty, resetScriptDirty } from "../lib/script-buffer";
+import { isScriptDirty, markScriptDirty, resetScriptDirty } from "../lib/script-buffer";
 import { SCRIPT_CHANGED_ON_DISK } from "../../shared/script-save.mjs";
 
 let test_: TestRecord | null = null;
@@ -132,6 +132,15 @@ vi.mock("@tanstack/react-router", () => ({
   useParams: () => ({ id: routeId }),
 }));
 
+import { api } from "../lib/api";
+
+vi.mock("./script-ai-panel", () => ({
+  ScriptAiPanel: (props: { onApply: (next: string, meta: unknown) => void }) => (
+    <button type="button" onClick={() => props.onApply("// by ai\n", { affordance: "inline-rewrite", provider: "ollama", model: "qwen", promptVersion: "inline-1" })}>
+      Apply stub
+    </button>
+  ),
+}));
 vi.mock("../lib/api", () => ({
   api: {
     tests: {
@@ -192,6 +201,17 @@ vi.mock("../lib/api", () => ({
       notifyDone: async () => ({ ok: true }),
       history: async () => [],
       record: async (r: unknown) => r,
+    },
+    ts: {
+      ensure: async () => ({ available: false, reason: "no service in tests" }),
+      status: async () => ({ available: false, reason: "no service in tests" }),
+      update: async () => {},
+      close: async () => {},
+      diagnostics: async () => [],
+      completions: async () => [],
+      hover: async () => null,
+      inspections: async () => [],
+      format: async () => [],
     },
     llm: {
       getConfig: async () => ({ provider: "ollama", model: null, baseUrls: {} }),
@@ -1459,6 +1479,43 @@ describe("saving a script edit", () => {
     return content;
   }
 
+  it("formats the draft through the type service before checking and saving it", async () => {
+    // The module mock's ts surface is a plain object: make the service
+    // available and hand back one formatting edit for this test only.
+    const ts = api.ts as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>;
+    const wasEnsure = ts.ensure;
+    const wasFormat = ts.format;
+    ts.ensure = async () => ({ available: true, typescript: "5.9.3" });
+    ts.format = async () => [{ from: 0, to: 2, text: "//" }];
+    try {
+      const ta = await openEditor();
+      setDraft(ta, "/*edited");
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
+      expect(checkScript).toHaveBeenCalledWith("t1", "//edited");
+      expect(updateScript).toHaveBeenCalledWith("t1", "//edited", { by: "manual", reviewed: true }, expect.any(String));
+    } finally {
+      ts.ensure = wasEnsure;
+      ts.format = wasFormat;
+    }
+  });
+
+  it("files the save as ai-inline after an AI rewrite was applied into the buffer", async () => {
+    await openEditor();
+    fireEvent.click(screen.getByRole("button", { name: "Ask AI" }));
+    // The panel is stubbed (see the vi.mock at the top); its Apply hands back
+    // a rewritten file with the model's details, as the real one does.
+    fireEvent.click(await screen.findByRole("button", { name: "Apply stub" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
+    expect(updateScript).toHaveBeenCalledWith(
+      "t1",
+      "// by ai\n",
+      { by: "ai-inline", affordance: "inline-rewrite", provider: "ollama", model: "qwen", promptVersion: "inline-1", reviewed: true },
+      expect.any(String),
+    );
+  });
+
   it("checks the draft with Playwright before writing it", async () => {
     const ta = await openEditor();
     setDraft(ta, "// edited");
@@ -1581,6 +1638,34 @@ describe("saving a script edit", () => {
     await screen.findByRole("textbox");
     expect(screen.queryByText(/can't load this script/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Save anyway" })).toBeNull();
+  });
+});
+
+describe("applying an AI fix lands under the same rules as a hand edit", () => {
+  beforeEach(() => {
+    updateScript.mockReset();
+    updateScript.mockImplementation(async () => ({}) as TestRecord);
+    getScript.mockReset();
+    getScript.mockImplementation(async () => "import { test } from '@playwright/test';");
+    resetScriptDirty();
+  });
+
+  it("sends the stored script as the base, so a fix diffed against an older file is refused", async () => {
+    const view = renderWithApply();
+    await screen.findByText("Checkout");
+    // The script query has resolved by the time the apply handler exists.
+    await waitFor(() => expect(getScript).toHaveBeenCalled());
+    await view.apply("// corrected spec");
+    await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
+    expect(updateScript.mock.calls[0][3]).toBe("import { test } from '@playwright/test';");
+  });
+
+  it("refuses while the Script tab has an unsaved draft of this test", async () => {
+    const view = renderWithApply();
+    await screen.findByText("Checkout");
+    markScriptDirty("t1", true);
+    await expect(view.apply("// corrected spec")).rejects.toThrow(/unsaved draft/);
+    expect(updateScript).not.toHaveBeenCalled();
   });
 });
 

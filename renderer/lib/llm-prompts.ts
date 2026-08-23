@@ -140,9 +140,17 @@ export function sendingTotalChars(items: SendingItem[]): number {
   return items.reduce((sum, item) => sum + (item.chars ?? 0), 0);
 }
 
+/** Whether the script is too long to send whole. When it is, the prompt asks
+ *  for changed lines rather than a full file — and the Apply button must not
+ *  offer a full-file replacement built from a model that never saw the whole
+ *  file. One function, read by both, so they cannot disagree. */
+export function scriptWasTruncated(ctx: Pick<DebugContext, "script">): boolean {
+  return ctx.script.length > MAX_SCRIPT_CHARS;
+}
+
 export function buildDebugMessages(ctx: DebugContext): LlmMessage[] {
   const slowMo = slowMoFor(ctx.speed);
-  const scriptTruncated = ctx.script.length > MAX_SCRIPT_CHARS;
+  const scriptTruncated = scriptWasTruncated(ctx);
   const contextLines = [
     `Test: "${ctx.testName}"`,
     `Target URL: ${ctx.testUrl}`,
@@ -162,6 +170,12 @@ export function buildDebugMessages(ctx: DebugContext): LlmMessage[] {
     // If the spec was too long to include in full, the model can't reproduce
     // a complete file — ask for just the changed lines so no partial file gets
     // offered as an applyable full-file replacement.
+    // The step the run failed on, when the reporter placed it. Threaded in
+    // from the run since 2026-08-12 and never read until 2026-08-23 — the
+    // anchor "explain this failure" wants was already here and dropped.
+    typeof ctx.failedStepIndex === "number" && ctx.failedStepIndex >= 0
+      ? `Failed step: the run's per-step markers place the failure at step ${ctx.failedStepIndex + 1} (counting the test's steps from 1). Start there.`
+      : null,
     scriptTruncated
       ? "NOTE: the spec below was truncated because it is long, so do NOT output a full-file replacement — show only the specific changed lines in a code block instead."
       : null,
@@ -486,4 +500,113 @@ export function buildGenerateStepsMessages(ctx: GenerateStepsContext): LlmMessag
         `Output the steps as a single fenced \`\`\`json array.`,
     },
   ];
+}
+
+// ── Inline AI in the Script editor ────────────────────────────────────
+// Two affordances the Script tab offers on the script the user is looking
+// at. REWRITE (⌘K): an instruction over the whole file or the selection,
+// answered with ONE fenced block that replaces exactly that span — applied
+// into the edit buffer, never straight to disk, so the pre-save check and
+// the divergence confirm still stand between the model and the file.
+// EXPLAIN: why the last run failed, anchored at the caret's statement, in
+// prose — no code block, nothing to apply.
+//
+// Version the prompts: the journal records which prompt produced a change
+// (`promptVersion`), so a regression in the model's output can be traced to
+// the prompt edit that caused it. Bump on any wording change.
+
+export const INLINE_PROMPT_VERSION = "inline-1";
+
+/** Rough token count for a budget line: four characters a token is close
+ *  enough for English and code, and the reader wants an order of magnitude. */
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+export interface RewriteContext {
+  testName: string;
+  testUrl: string;
+  /** The whole script as it stands in the editor. */
+  script: string;
+  /** The selected span, when the rewrite is scoped to one; null = whole file. */
+  selection: { from: number; to: number; text: string } | null;
+  instruction: string;
+  /** Standing instructions the user wrote (Settings → AI, and per host). */
+  instructions?: string;
+}
+
+const REWRITE_SYSTEM_PROMPT = `You are an expert Playwright engineer editing a test spec inside a test recorder app. The user asks for a change; you answer with code.
+
+Rules of the house:
+- Specs are TypeScript using @playwright/test. Keep the imports and the test() shape.
+- Each user action or assertion is wrapped as \`await test.step("…", async () => { … });\` with ONE statement per wrapper, so the app can show the step list next to the code. Keep that shape for every step you touch or add; give each new wrapper a short plain-English title.
+- Prefer semantic locators (getByRole, getByLabel, getByPlaceholder, getByText, getByTestId) over CSS. Use web-first assertions (await expect(locator).toBeVisible()) rather than waits.
+- Change what was asked and nothing else. Do not reformat untouched lines.
+
+Output: ONE fenced code block tagged "ts" holding the replacement, and at most one sentence before it. When the request is about the whole file, the block is the whole file. When the request is about a selected span, the block is the replacement for that span only — no surrounding lines.`;
+
+export function buildRewriteMessages(ctx: RewriteContext): LlmMessage[] {
+  const scoped = ctx.selection !== null;
+  const header = [
+    `Test: "${ctx.testName}"`,
+    `Target URL: ${ctx.testUrl}`,
+    scoped
+      ? "Scope: the SELECTED SPAN below. Answer with the replacement for that span only."
+      : "Scope: the WHOLE FILE. Answer with the complete file.",
+    ctx.instructions?.trim() ? `Standing instructions from the user:\n${ctx.instructions.trim()}` : null,
+  ].filter((l): l is string => l !== null);
+  const body = scoped
+    ? `Whole spec, for context:\n\`\`\`ts\n${truncateHead(ctx.script, MAX_SCRIPT_CHARS)}\n\`\`\`\n\nSelected span (lines ${lineOf(ctx.script, ctx.selection!.from)}–${lineOf(ctx.script, ctx.selection!.to)}):\n\`\`\`ts\n${ctx.selection!.text}\n\`\`\``
+    : `Spec:\n\`\`\`ts\n${ctx.script}\n\`\`\``;
+  return [
+    { role: "system", content: REWRITE_SYSTEM_PROMPT },
+    { role: "user", content: `${header.join("\n")}\n\n${body}\n\nRequest: ${ctx.instruction.trim()}` },
+  ];
+}
+
+export interface ExplainContext {
+  testName: string;
+  testUrl: string;
+  script: string;
+  /** 1-based line the caret is on, and that line's statement. */
+  caretLine: number;
+  caretStatement: string;
+  /** 0-based index of the step the run failed on, with its label, when the
+   *  reporter placed it. */
+  failedStepIndex?: number;
+  failedStepLabel?: string;
+  output: string;
+  instructions?: string;
+}
+
+const EXPLAIN_SYSTEM_PROMPT = `You are an expert Playwright engineer. A recorded test failed on its last run, and the user is reading the spec with the caret on one statement. Explain the failure as it relates to that statement: what the run output says went wrong, whether this statement is the one that failed or an earlier one set it up, and the single most likely fix.
+
+Answer in plain prose, four sentences at most. No headings, no bold, no code block — the user is in the editor and will make the change themselves.`;
+
+export function buildExplainMessages(ctx: ExplainContext): LlmMessage[] {
+  const lines = [
+    `Test: "${ctx.testName}"`,
+    `Target URL: ${ctx.testUrl}`,
+    typeof ctx.failedStepIndex === "number" && ctx.failedStepIndex >= 0
+      ? `Failed step: ${ctx.failedStepIndex + 1}${ctx.failedStepLabel ? ` — ${ctx.failedStepLabel}` : ""} (counting the test's steps from 1).`
+      : "Failed step: not placed by the reporter.",
+    `Caret: line ${ctx.caretLine}: ${ctx.caretStatement.trim() || "(blank line)"}`,
+    ctx.instructions?.trim() ? `Standing instructions from the user:\n${ctx.instructions.trim()}` : null,
+  ].filter((l): l is string => l !== null);
+  return [
+    { role: "system", content: EXPLAIN_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content:
+        `${lines.join("\n")}\n\nSpec:\n\`\`\`ts\n${truncateHead(ctx.script, MAX_SCRIPT_CHARS)}\n\`\`\`\n\n` +
+        `Run output (failed):\n\`\`\`\n${truncateTail(ctx.output, MAX_OUTPUT_CHARS)}\n\`\`\``,
+    },
+  ];
+}
+
+function lineOf(text: string, offset: number): number {
+  let n = 1;
+  const end = Math.min(offset, text.length);
+  for (let i = 0; i < end; i++) if (text.charCodeAt(i) === 10) n++;
+  return n;
 }

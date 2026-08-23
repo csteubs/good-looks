@@ -31,6 +31,15 @@ vi.mock("./app-window.js", () => ({
   setMainWindow: () => {},
 }));
 
+// The send path refreshes the secret snapshot from the stores before it
+// scrubs — under the test stub that refresh finds nothing and would wipe a
+// planted secret. Refresh is a no-op here; what the redaction test proves
+// is the scrub on the send path, which is the part that has no other cover.
+vi.mock("./secret-redaction.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./secret-redaction.js")>()),
+  refreshSecretSnapshot: async () => {},
+}));
+
 const realFetch = globalThis.fetch;
 
 /** Make fetch fail the way a down local provider does. */
@@ -353,6 +362,75 @@ describe("chat() streaming", () => {
 
   /** Last element. This project targets ES2020 — no Array.prototype.at. */
   const last = <T,>(xs: T[]): T | undefined => xs[xs.length - 1];
+
+  /** Same as `collect`, against the Anthropic branch (a key is stored). */
+  async function collectAnthropic(lines: string[]) {
+    const { setEncryptionAvailable } = await import("./__tests__/shell-backend-stub.js");
+    setEncryptionAvailable(true);
+    const { anthropicKeyStore } = await import("./anthropic-key-store.js");
+    await anthropicKeyStore.setKey("sk-ant-test");
+    sentEvents.length = 0;
+    sseFetch(lines);
+    await llmService.chat({ messages: [{ role: "user", content: "hi" }], provider: "anthropic", model: "claude-sonnet-5" });
+    for (let i = 0; i < 200; i++) {
+      if (sentEvents.some((e) => e.channel === "llm:done" || e.channel === "llm:error")) break;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    return { events: [...sentEvents] };
+  }
+
+  it("resolves a role's slot and reports it, falling back to the chat pair for a role with no slot", async () => {
+    const { llmConfigStore } = await import("./llm-config-store.js");
+    llmConfigStore.set({ provider: "lmstudio", model: "chat-model", roles: { instant: { provider: "ollama", model: "tiny" } } });
+    sseFetch(['data: {"choices":[{"delta":{"content":"ok"}}]}', "data: [DONE]"]);
+    const instant = llmService.chat({ messages: [{ role: "user", content: "hi" }], role: "instant" });
+    expect([instant.provider, instant.model]).toEqual(["ollama", "tiny"]);
+    const auto = llmService.chat({ messages: [{ role: "user", content: "hi" }], role: "autocomplete" });
+    expect([auto.provider, auto.model]).toEqual(["lmstudio", "chat-model"]);
+    const plain = llmService.chat({ messages: [{ role: "user", content: "hi" }] });
+    expect([plain.provider, plain.model]).toEqual(["lmstudio", "chat-model"]);
+    llmConfigStore.set({ provider: "ollama", model: null, roles: { instant: null } });
+  });
+
+  it("reads Claude's thinking deltas and its stop reason", async () => {
+    const { events } = await collectAnthropic([
+      'data: {"type":"message_start"}',
+      'data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"hmm"}}',
+      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"answer"}}',
+      'data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"}}',
+      'data: {"type":"message_stop"}',
+    ]);
+    const chunks = events.filter((e) => e.channel === "llm:chunk").map((e) => e.payload);
+    expect(chunks).toEqual([{ requestId: expect.any(String), delta: "hmm", reasoning: true }, { requestId: expect.any(String), delta: "answer" }]);
+    expect(last(events)?.channel).toBe("llm:done");
+  });
+
+  it("scrubs every stored secret out of the messages before they leave, on a local provider too", async () => {
+    // The egress chokepoint: the prompt builders quote scripts, run output
+    // and (Phase 3) the user's own text; the one place all of them pass is
+    // streamChatOnce, and the snapshot it scrubs with is refreshed first.
+    const { setSecretSnapshotForTesting, REDACTED } = await import("./secret-redaction.js");
+    setSecretSnapshotForTesting(["hunter2-planted-secret-value"]);
+    sentEvents.length = 0;
+    sseFetch(['data: {"choices":[{"delta":{"content":"ok"}}]}', "data: [DONE]"]);
+    await llmService.chat({
+      messages: [
+        { role: "system", content: "rules" },
+        { role: "user", content: 'the page said "hunter2-planted-secret-value"' },
+      ],
+      provider: "lmstudio",
+      model: "test-model",
+    });
+    for (let i = 0; i < 200; i++) {
+      if (sentEvents.some((e) => e.channel === "llm:done" || e.channel === "llm:error")) break;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    const body = String((calls[calls.length - 1][1] as { body: string }).body);
+    expect(body).not.toContain("hunter2-planted-secret-value");
+    expect(body).toContain(REDACTED);
+    expect(body).toContain("rules");
+  });
 
   const chunk = (delta: Record<string, string>) =>
     `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}`;
@@ -824,5 +902,86 @@ describe("LM Studio API token", () => {
     okFetch({ models: [{ name: "llama3" }] });
     const s = await llmService.status("ollama");
     expect(s.hasToken).toBeUndefined();
+  });
+});
+
+describe("completeJson() and fim()", () => {
+  function jsonFetch(reply: (url: string, body: Record<string, unknown>) => unknown) {
+    globalThis.fetch = vi.fn(async (url: string, init: { body: string }) => ({
+      ok: true,
+      status: 200,
+      json: async () => reply(String(url), JSON.parse(init.body) as Record<string, unknown>),
+      text: async () => "",
+    })) as unknown as typeof fetch;
+  }
+  const calls = () => (globalThis.fetch as unknown as { mock: { calls: [string, { body: string }][] } }).mock.calls;
+  const SCHEMA = { type: "object", properties: { statement: { type: "string" } }, required: ["statement"] };
+
+  it("asks Ollama's native chat for the schema and parses the object", async () => {
+    const { llmConfigStore } = await import("./llm-config-store.js");
+    llmConfigStore.set({ roles: { instant: { provider: "ollama", model: "tiny" } } });
+    jsonFetch(() => ({ message: { content: JSON.stringify({ statement: 'await page.goto("x");' }) } }));
+    const r = await llmService.completeJson<{ statement: string }>({ messages: [{ role: "user", content: "rewrite" }], schema: SCHEMA }, { timeoutMs: 1000 });
+    expect(r.value.statement).toBe('await page.goto("x");');
+    expect([r.provider, r.model]).toEqual(["ollama", "tiny"]);
+    const [url, init] = calls()[0];
+    expect(url).toContain("/api/chat");
+    const body = JSON.parse(init.body) as Record<string, unknown>;
+    expect(body.format).toEqual(SCHEMA);
+    expect(body.stream).toBe(false);
+  });
+
+  it("asks LM Studio with response_format json_schema, and retries once when the answer is prose", async () => {
+    const { llmConfigStore } = await import("./llm-config-store.js");
+    llmConfigStore.set({ roles: { instant: { provider: "lmstudio", model: "small" } } });
+    let n = 0;
+    jsonFetch(() => ({ choices: [{ message: { content: n++ === 0 ? "Sure! Here you go." : '```json\n{"statement":"ok"}\n```' } }] }));
+    const r = await llmService.completeJson<{ statement: string }>({ messages: [{ role: "user", content: "rewrite" }], schema: SCHEMA }, { timeoutMs: 1000 });
+    expect(r.value.statement).toBe("ok");
+    expect(calls()).toHaveLength(2);
+    const body = JSON.parse(calls()[0][1].body) as { response_format: { type: string; json_schema: { strict: boolean } } };
+    expect(body.response_format.type).toBe("json_schema");
+    expect(body.response_format.json_schema.strict).toBe(true);
+    const retry = JSON.parse(calls()[1][1].body) as { messages: { role: string; content: string }[] };
+    expect(retry.messages[retry.messages.length - 1].content).toMatch(/ONLY the JSON object/);
+  });
+
+  it("is an error, not a guess, when both answers are not the object", async () => {
+    const { llmConfigStore } = await import("./llm-config-store.js");
+    llmConfigStore.set({ roles: { instant: { provider: "lmstudio", model: "small" } } });
+    jsonFetch(() => ({ choices: [{ message: { content: "no" } }] }));
+    await expect(
+      llmService.completeJson({ messages: [{ role: "user", content: "x" }], schema: SCHEMA }, { timeoutMs: 1000 }),
+    ).rejects.toMatchObject({ kind: "empty-response" });
+  });
+
+  it("fim sends Ollama the prefix and suffix natively, and LM Studio the family's template", async () => {
+    const { llmConfigStore } = await import("./llm-config-store.js");
+    llmConfigStore.set({ roles: { autocomplete: { provider: "ollama", model: "qwen2.5-coder:1.5b" } } });
+    jsonFetch(() => ({ response: "  await page.click();\n\n  more" }));
+    const r = await llmService.fim({ prefix: "test(", suffix: "});" }, { timeoutMs: 1000 });
+    expect(r.text).toBe("  await page.click();");
+    const body = JSON.parse(calls()[0][1].body) as Record<string, unknown>;
+    expect(calls()[0][0]).toContain("/api/generate");
+    expect(body.prompt).toBe("test(");
+    expect(body.suffix).toBe("});");
+    expect(body.keep_alive).toBe("10m");
+
+    llmConfigStore.set({ roles: { autocomplete: { provider: "lmstudio", model: "qwen2.5-coder-7b" } } });
+    jsonFetch(() => ({ choices: [{ text: "  await x();<|fim_middle|>" }] }));
+    const r2 = await llmService.fim({ prefix: "P", suffix: "S" }, { timeoutMs: 1000 });
+    expect(r2.text).toBe("  await x();");
+    const b2 = JSON.parse(calls()[0][1].body) as Record<string, unknown>;
+    expect(b2.prompt).toBe("<|fim_prefix|>P<|fim_suffix|>S<|fim_middle|>");
+    llmConfigStore.set({ roles: { autocomplete: null } });
+  });
+
+  it("fim refuses with no-model when nothing is assigned, and never runs hosted", async () => {
+    const { llmConfigStore } = await import("./llm-config-store.js");
+    llmConfigStore.set({ roles: { autocomplete: null } });
+    await expect(llmService.fim({ prefix: "a", suffix: "" }, { timeoutMs: 1000 })).rejects.toMatchObject({ kind: "no-model" });
+    // The store refuses the slot; the service's own refusal is pinned by check:editor-egress.
+    llmConfigStore.set({ roles: { autocomplete: { provider: "anthropic", model: "x" } } });
+    await expect(llmService.fim({ prefix: "a", suffix: "" }, { timeoutMs: 1000 })).rejects.toMatchObject({ kind: "no-model" });
   });
 });

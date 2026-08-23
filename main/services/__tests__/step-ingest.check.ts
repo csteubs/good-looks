@@ -223,6 +223,15 @@ function main(): void {
   // The reason the normalizer REBUILDS rather than filters. Spreading the input
   // and overwriting known keys would carry every unknown key along with it, so
   // the next field wired into the generator would silently be a hole again.
+  // A fenced code step's body is emitted VERBATIM into the spec, so the page
+  // path must refuse the type — a page that could author one would be
+  // writing the run's Node code. The IPC path is where it is accepted.
+  {
+    const fromPage = normalizeRawStep({ type: "code", code: NODE_CODE });
+    assert(fromPage === null, "a code step from the page is refused outright");
+    const viaIpc = normalizeStep({ id: "c", type: "code", code: "await page.mouse.wheel(0, 1);" });
+    assert(viaIpc?.type === "code", "a code step over IPC is accepted");
+  }
   {
     const out = normalizeRawStep({
       type: "click",

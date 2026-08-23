@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 
 import { makeController, renderPane, savedPatch } from "../__tests__/harness";
 import { EditorPane } from "./editor-pane";
@@ -32,5 +32,30 @@ describe("<EditorPane />", () => {
     controller.settings = { ...controller.settings, editorFontSize: 17 };
     renderPane(<EditorPane />, { controller });
     expect(screen.getByRole("button", { name: "17px", pressed: true })).toBeTruthy();
+  });
+});
+
+describe("keymap and formatting", () => {
+  it("lists the chosen preset's bindings and saves a switch of preset", () => {
+    const controller = makeController({ settings: { editorKeymap: "jetbrains" } });
+    renderPane(<EditorPane />, { controller });
+    // The table is the row's `details`, behind its "More" disclosure.
+    const row = screen.getByText(/stays the command palette/).closest(".gl-setting-row") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "More" }));
+    const table = screen.getByRole("table", { name: "Bindings in this keymap" });
+    expect(table.textContent).toContain("Duplicate line");
+    // jsdom reports no platform, so the chord prints in the non-Mac spelling.
+    expect(table.textContent).toMatch(/Duplicate line(⌘D|Ctrl\+D)/);
+    fireEvent.click(screen.getByRole("button", { name: "VS Code" }));
+    expect(controller.save).toHaveBeenCalledWith({ editorKeymap: "vscode" });
+  });
+
+  it("format on save is on by default and a toggle saves it", () => {
+    const controller = makeController();
+    renderPane(<EditorPane />, { controller });
+    const sw = screen.getByRole("switch", { name: "Format on save" });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(sw);
+    expect(controller.save).toHaveBeenCalledWith({ editorFormatOnSave: false });
   });
 });

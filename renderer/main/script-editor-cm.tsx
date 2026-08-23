@@ -34,6 +34,12 @@ import {
 
 import type { ScriptCheckError, SourceRange } from "../lib/recorder-types";
 import { codeHighlight, editorTheme } from "./script-editor-theme";
+import { ghostText, type GhostSource } from "./ghost-text";
+import { setTsDiagnostics, tsCompletionSource, tsDiagnosticsField, tsIntelligence, type TsIntelligence } from "./ts-intelligence";
+import { autocompletion } from "@codemirror/autocomplete";
+import { foldGutter, foldService } from "@codemirror/language";
+import { keymapFor, type EditorKeymap } from "./editor-keymaps";
+import { snippetSource } from "./editor-snippets";
 
 export type RunLineStatus = "running" | "passed" | "failed" | "skipped";
 export type CoverageKind = "skipped" | "error";
@@ -80,7 +86,61 @@ export interface ScriptEditorCmProps {
   tabSize: number;
   /** End-of-line inlays (the live page's match counts). */
   inlays?: LineInlay[];
+  /** Where ghost text comes from; null or undefined turns it off. Read
+   *  through a ref at request time, so a host may swap it without a remount. */
+  ghost?: GhostSource | null;
+  /** ⌘K inside the editor. Bound here, not on the window, so it wins over
+   *  the command palette only while the editor has focus. */
+  onAiRequest?: () => void;
+  /** The TypeScript service, when it is available; null keeps the editor
+   *  on syntax and CLI diagnostics alone. Read through a ref at call time. */
+  intelligence?: TsIntelligence | null;
+  /** Settings → Editor → Keymap. */
+  keymapPreset?: EditorKeymap;
+  /** The parser's step statements, for folding by step. */
+  stepRanges?: SourceRange[] | null;
 }
+
+// ── Fold by step ──────────────────────────────────────────────────────────
+// A `test.step` wrapper folds from the end of its first line to the start of
+// its last, so the title stays and the body goes. The ranges come from the
+// parser (`tests:previewScript`), mapped through edits until the next parse.
+
+const setStepRanges = StateEffect.define<SourceRange[]>();
+const stepRangesField = StateField.define<SourceRange[]>({
+  create: () => [],
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(setStepRanges)) return e.value;
+    if (tr.docChanged) return value.map((r) => ({ from: tr.changes.mapPos(r.from), to: tr.changes.mapPos(r.to, 1) })).filter((r) => r.to > r.from);
+    return value;
+  },
+});
+
+const stepFolding = foldService.of((state, lineStart, lineEnd) => {
+  for (const r of state.field(stepRangesField, false) ?? []) {
+    if (r.from < lineStart || r.from > lineEnd) continue;
+    const first = state.doc.lineAt(r.from);
+    const last = state.doc.lineAt(Math.max(r.from, r.to - 1));
+    if (last.number <= first.number + 1) continue;
+    if (!/test\.step\(/.test(first.text)) continue;
+    return { from: first.to, to: last.from - 1 };
+  }
+  return null;
+});
+
+const foldTheme = EditorView.theme(
+  {
+    ".cm-foldGutter .cm-gutterElement": { color: "var(--gl-tx-3)", cursor: "pointer" },
+    ".cm-foldPlaceholder": {
+      background: "var(--gl-sel-bg)",
+      border: "1px solid var(--gl-line-2)",
+      color: "var(--gl-tx-2)",
+      margin: "0 4px",
+      padding: "0 6px",
+    },
+  },
+  { dark: true },
+);
 
 // ── Gutters ───────────────────────────────────────────────────────────────
 //
@@ -299,15 +359,27 @@ export default function ScriptEditorCm({
   lineNumbers: showLineNumbers,
   tabSize,
   inlays,
+  ghost,
+  onAiRequest,
+  intelligence,
+  keymapPreset = "default",
+  stepRanges,
 }: ScriptEditorCmProps): React.ReactElement {
   const hostRef = React.useRef<HTMLDivElement | null>(null);
   const viewRef = React.useRef<EditorView | null>(null);
   const onChangeRef = React.useRef(onChange);
   const onCaretRef = React.useRef(onCaretLine);
+  const ghostRef = React.useRef<GhostSource | null>(ghost ?? null);
+  ghostRef.current = ghost ?? null;
+  const onAiRef = React.useRef(onAiRequest);
+  onAiRef.current = onAiRequest;
+  const intelRef = React.useRef<TsIntelligence | null>(intelligence ?? null);
+  intelRef.current = intelligence ?? null;
   const readOnlyCompartment = React.useRef(new Compartment());
   const wrapCompartment = React.useRef(new Compartment());
   const numbersCompartment = React.useRef(new Compartment());
   const tabCompartment = React.useRef(new Compartment());
+  const keymapCompartment = React.useRef(new Compartment());
   onChangeRef.current = onChange;
   onCaretRef.current = onCaretLine;
 
@@ -323,6 +395,10 @@ export default function ScriptEditorCm({
         extensions: [
           runGutter,
           numbersCompartment.current.of(showLineNumbers ? lineNumbers() : []),
+          stepRangesField,
+          stepFolding,
+          foldGutter(),
+          foldTheme,
           lintGutter(),
           coverageGutter,
           highlightActiveLineGutter(),
@@ -340,15 +416,40 @@ export default function ScriptEditorCm({
           coverageField,
           inlayField,
           cliErrorsField,
-          linter((v) => [...lezerDiagnostics(v.state), ...cliDiagnostics(v.state, v.state.field(cliErrorsField))], {
+          linter(
+            (v) => [...lezerDiagnostics(v.state), ...cliDiagnostics(v.state, v.state.field(cliErrorsField)), ...v.state.field(tsDiagnosticsField)],
+            {
             delay: 300,
-            needsRefresh: (update) => update.transactions.some((tr) => tr.effects.some((e) => e.is(setCliErrors))),
+            needsRefresh: (update) =>
+              update.transactions.some((tr) => tr.effects.some((e) => e.is(setCliErrors) || e.is(setTsDiagnostics))),
           }),
           readOnlyCompartment.current.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),
           wrapCompartment.current.of(lineWrap ? EditorView.lineWrapping : []),
           tabCompartment.current.of(EditorState.tabSize.of(tabSize)),
           EditorView.contentAttributes.of({ "aria-label": ariaLabel, "aria-multiline": "true" }),
+          // Before the keymap below: its Tab must win over indentWithTab
+          // while a completion is shown, and fall through when none is.
+          ghostText(() => ghostRef.current),
+          tsIntelligence(() => intelRef.current),
+          // One popup for the service's completions and the snippets.
+          autocompletion({
+            override: [tsCompletionSource(() => intelRef.current), snippetSource],
+            activateOnTyping: true,
+            maxRenderedOptions: 40,
+          }),
+          // The preset's bindings win over the defaults below; ⌘K is never
+          // bound here (it is the app's palette, inside a field too), and
+          // inline AI is ⌘I as in VS Code.
+          keymapCompartment.current.of(keymap.of(keymapFor(keymapPreset))),
           keymap.of([
+            {
+              key: "Mod-i",
+              run: () => {
+                if (!onAiRef.current) return false;
+                onAiRef.current();
+                return true;
+              },
+            },
             ...closeBracketsKeymap,
             ...defaultKeymap,
             ...searchKeymap,
@@ -376,6 +477,14 @@ export default function ScriptEditorCm({
     };
     // Mount-only by design; see the comment above.
   }, []);
+
+  React.useEffect(() => {
+    viewRef.current?.dispatch({ effects: keymapCompartment.current.reconfigure(keymap.of(keymapFor(keymapPreset))) });
+  }, [keymapPreset]);
+
+  React.useEffect(() => {
+    viewRef.current?.dispatch({ effects: setStepRanges.of(stepRanges ?? []) });
+  }, [stepRanges]);
 
   // External value changes (a reload, a revert) replace the document; the
   // editor's own edits already match `value` and are left alone.

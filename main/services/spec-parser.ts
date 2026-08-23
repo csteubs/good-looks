@@ -25,7 +25,7 @@ import type { CompareOp } from "../../shared/step-semantics.mjs";
 import { parseTestIdSelector } from "../../shared/testid-attr.mjs";
 import { parseFrameSelector } from "../../shared/frame-ref.mjs";
 import type { FrameRef } from "../../shared/frame-ref.mjs";
-import { DEFAULT_WAIT_TIMEOUT_MS } from "./script-generator.js";
+import { DEFAULT_WAIT_TIMEOUT_MS, dedent } from "./script-generator.js";
 import { fromPlaywrightSameSite, isSafeUploadRelPath } from "../recorder/types.js";
 import type {
   AssertKind,
@@ -1227,10 +1227,23 @@ function parseBody(
         continue;
       }
       const innerResult = parseBody(src.slice(bodyOpen + 1, bodyClose), vars, pendingDownloads, base + bodyOpen + 1);
-      steps.push(...innerResult.steps);
-      stepRanges.push(...innerResult.stepRanges);
-      skippedRanges.push(...innerResult.skippedRanges);
-      skipped += innerResult.skipped;
+      if (innerResult.steps.length === 0 && innerResult.skipped > 0) {
+        // A wrapper whose body the parser cannot model at all is a FENCED
+        // CODE step: the wrapper is the fence, its title the label, and the
+        // body (from the original text, comments and all — `src` has them
+        // blanked) travels verbatim. Nothing in it is "skipped": it is
+        // tracked, as code. A wrapper that mixes modelled statements with
+        // unmodelled ones keeps the old accounting below.
+        const titleM = src.slice(callOpen + 1, arrow).match(/^\s*(["'`])((?:\\.|(?!\1).)*)\1/);
+        const label = titleM ? titleM[2].replace(/\\(["'`\\])/g, "$1") : undefined;
+        const code = dedent(body.slice(bodyOpen + 1, bodyClose));
+        steps.push(makeStep("code", { code, ...(label !== undefined && label !== "" ? { label } : {}) }));
+      } else {
+        steps.push(...innerResult.steps);
+        stepRanges.push(...innerResult.stepRanges);
+        skippedRanges.push(...innerResult.skippedRanges);
+        skipped += innerResult.skipped;
+      }
       // Past the callback's `}`, the call's `)` and a trailing `;`.
       let j = bodyClose + 1;
       while (j < src.length && /[\s)]/.test(src[j])) j++;

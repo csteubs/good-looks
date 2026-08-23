@@ -1,5 +1,6 @@
 // Shared recorder data model (backend). Mirror kept in renderer/lib/recorder-types.ts.
 
+import type { InspectionRule } from "../../shared/inspections.mjs";
 import type { LlmErrorKind } from "../services/llm/types.js";
 // Declared in shared/ because the settings store validates against the same
 // list the Settings pane offers and the Cost panel formats with — see the
@@ -133,6 +134,14 @@ export type StepType =
   // dialog nothing is listening for and a handler attached after the click
   // races the dialog it exists to answer (the download-arming argument).
   | "dialog"
+  // A FENCED CODE step: hand-written TypeScript held verbatim inside a
+  // test.step wrapper, so hand logic stays in step tracking and round-trips
+  // through the Script tab. Created by the parser (a wrapper whose body the
+  // parser cannot model) and over IPC from the renderer — NEVER from the
+  // page: `normalizeRawStep` refuses it, because the generator emits the
+  // code as written and a page that could author one would be authoring
+  // Node code for the run.
+  | "code"
   // Write a line into the run log: the value of a variable, or any
   // interpolated text. No assertion, never fails — the companion to a
   // `capture` step, answering "what IS orderId at this point" without making
@@ -450,6 +459,9 @@ export const MAX_TYPE_DELAY_MS = 60_000;
 export interface Step {
   id: string;
   type: StepType;
+  /** `code` steps: the statements, verbatim, as the wrapper's body. Capped at
+   *  MAX_CODE_CHARS on the IPC boundary; never accepted from the page. */
+  code?: string;
   locator?: Locator;
   /** fill value / selectOption value / key for press / expected value for value/attribute/url/title asserts */
   value?: string;
@@ -755,6 +767,9 @@ export function isRunBrowser(v: unknown): v is RunBrowser {
  *  garbage type and round it into range; four allowed values cannot be wedged. */
 export type EditorTabSize = 2 | 4;
 export const EDITOR_TAB_SIZES: EditorTabSize[] = [2, 4];
+/** Keymap presets (renderer/main/editor-keymaps.ts holds the tables). */
+export type EditorKeymap = "default" | "jetbrains" | "vscode";
+export const EDITOR_KEYMAPS: EditorKeymap[] = ["default", "jetbrains", "vscode"];
 export function isEditorTabSize(v: unknown): v is EditorTabSize {
   return v === 2 || v === 4;
 }
@@ -1175,7 +1190,7 @@ export function normalizeDatasets(input: unknown): Dataset[] {
 export const STEP_TYPES: StepType[] = [
   "goto", "click", "fill", "press", "select", "check", "uncheck", "assert",
   "wait", "viewport", "if", "else", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
-  "scroll", "download", "a11y", "upload", "api", "aiCheck", "group", "endGroup", "dialog",
+  "scroll", "download", "a11y", "upload", "api", "aiCheck", "group", "endGroup", "dialog", "code",
   "teardown",
   "reload", "echo", "dblclick", "rightclick", "drag",
 ];
@@ -1611,6 +1626,11 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   const s = input as Record<string, unknown>;
   const type = oneOf(s.type, STEP_TYPES);
   if (!type) return null;
+  // The page boundary: a code step's body is emitted VERBATIM into a spec
+  // that Playwright executes in Node. A page that could author one would be
+  // writing the run's code, so the raw path refuses the type outright; the
+  // IPC path (`normalizeStep`) is where it is accepted.
+  if (type === "code") return null;
 
   const out: RawStep = { type };
   const locator = normalizeLocator(s.locator);
@@ -2073,7 +2093,24 @@ export function normalizeRawSteps(input: unknown): RawStep[] {
  * neither — a step list is edited in place, so inventing an id here would
  * detach it from everything that references it (heal journal, visual masks).
  */
+/** Longest code step kept. A page of statements; anything longer is a file,
+ *  not a step. */
+export const MAX_CODE_CHARS = 20_000;
+
 export function normalizeStep(input: unknown): Step | null {
+  const s0 = input as Record<string, unknown> | null;
+  if (s0 && typeof s0 === "object" && !Array.isArray(s0) && s0.type === "code") {
+    // Rebuilt field by field like every other step — nothing unknown rides
+    // along — and only here: the raw (page) path returns null for the type.
+    const id = str(s0.id);
+    if (!id || typeof s0.code !== "string") return null;
+    const step: Step = { id, type: "code", code: s0.code.slice(0, MAX_CODE_CHARS), timestamp: int(s0.timestamp, 0, Number.MAX_SAFE_INTEGER) ?? 0 };
+    const label = str(s0.label);
+    if (label !== undefined) step.label = label;
+    if (bool(s0.continueOnFailure)) step.continueOnFailure = true;
+    if (bool(s0.disabled)) step.disabled = true;
+    return step;
+  }
   const raw = normalizeRawStep(input);
   if (!raw) return null;
   const s = input as Record<string, unknown>;
@@ -2934,6 +2971,28 @@ export interface RecorderSettings {
    *  Off, Save still refuses a draft the parser would lose statements from
    *  and a stale one; it stops asking Playwright whether the file loads. */
   editorCheckOnSave: boolean;
+  /** Run TypeScript's formatter over a draft before saving it (default on). */
+  editorFormatOnSave: boolean;
+  /** Which keymap preset the editor binds (default "default"). */
+  editorKeymap: EditorKeymap;
+  /** Standing instructions prepended to every inline-AI prompt from the
+   *  Script editor (⌘K rewrite, explain): house locator rules, a framework's
+   *  quirks. Free text, capped at AI_INSTRUCTIONS_MAX chars. */
+  aiInstructions: string;
+  /** The same, per site — keyed by host, applied when the test's address is
+   *  on that host. */
+  aiInstructionsByHost: Record<string, string>;
+  /** A stylesheet injected into every page the trainer loads AND every page
+   *  of a recorded test's runs (user-page-fixture-source.ts). Hide a chat
+   *  widget, pin a banner. Capped at USER_PAGE_TEXT_MAX. */
+  userStylesheet: string;
+  /** A script run in every such page before the page's own code (a run) or
+   *  on dom-ready (the trainer). The user's code, in the page, never in
+   *  Node — but it runs on every site the trainer visits. */
+  userInitScript: string;
+  /** Which of the Script IDE's inspections run (shared/inspections.mjs).
+   *  Default all on; rebuilt over the known rules on read. */
+  inspections: Record<InspectionRule, boolean>;
   /** Which symbol the Cost panel stamps on a money figure (default "usd").
    *
    *  "none" restores the panel's original behaviour — bare numbers, claiming

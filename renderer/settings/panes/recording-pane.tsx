@@ -21,6 +21,8 @@ import { PaneSection } from "../pane-section";
 
 export function RecordingPane() {
   const { settings, save } = useSettingsController();
+  const [cssDraft, setCssDraft] = React.useState<string | null>(null);
+  const [jsDraft, setJsDraft] = React.useState<string | null>(null);
 
   // Draft-local, saved on blur/Enter: the store normalizes hard (grammar,
   // dedupe, cap), and saving per keystroke would delete a half-typed
@@ -53,6 +55,49 @@ export function RecordingPane() {
           id="show-url-bar"
           checked={settings.showUrlBar ?? true}
           onCheckedChange={(checked) => void save({ showUrlBar: checked })}
+        />
+      </SettingRow>
+
+      <SettingRow
+        id="user-stylesheet"
+        label="Page stylesheet"
+        summary="CSS added to every page the trainer loads and to every page of a recorded test's runs. Hide a chat widget, pin a banner, make a fixed header static."
+        details="Both halves, by design: a widget hidden only while recording is a test that passes in the trainer and fails in the run. In a run the stylesheet is added on every document's domcontentloaded and load; in the trainer on dom-ready. Imported specs are never touched."
+      >
+        <textarea
+          id="user-stylesheet"
+          className="gl-setting-textarea"
+          rows={4}
+          spellCheck={false}
+          placeholder="#chat-widget, .cookie-banner { display: none !important; }"
+          value={cssDraft ?? settings.userStylesheet ?? ""}
+          onChange={(e) => setCssDraft(e.target.value)}
+          onBlur={() => {
+            if (cssDraft !== null && cssDraft !== (settings.userStylesheet ?? "")) void save({ userStylesheet: cssDraft });
+            setCssDraft(null);
+          }}
+        />
+      </SettingRow>
+
+      <SettingRow
+        id="user-init-script"
+        label="Page init script"
+        summary="JavaScript run in every page the trainer loads and in every page of a recorded test's runs — before the page's own code in a run, on dom-ready in the trainer."
+        risk="This is your code, and it runs on every site the trainer visits and every page a run opens, with that page's own access: its cookies, its storage, its network. Nothing here reaches the app or Node. Keep it to what every site you test needs."
+        flag="runs code in every page"
+      >
+        <textarea
+          id="user-init-script"
+          className="gl-setting-textarea"
+          rows={4}
+          spellCheck={false}
+          placeholder="window.__consentGiven = true;"
+          value={jsDraft ?? settings.userInitScript ?? ""}
+          onChange={(e) => setJsDraft(e.target.value)}
+          onBlur={() => {
+            if (jsDraft !== null && jsDraft !== (settings.userInitScript ?? "")) void save({ userInitScript: jsDraft });
+            setJsDraft(null);
+          }}
         />
       </SettingRow>
 

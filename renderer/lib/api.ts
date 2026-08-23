@@ -1,6 +1,7 @@
 // Typed wrappers over the exposed window.glazeAPI IPC bridge. Renderer code
 // never touches ipcRenderer directly.
 
+import type { Inspection, TextEdit, TsCompletion, TsDiagnostic, TsHover, TsServiceStatus } from "./ts-types";
 import type {
   Annotation,
   CustomFailureReason,
@@ -92,9 +93,12 @@ import type { CostBreakdown, DivergentStep } from "../../shared/step-insights.mj
 import type {
   LlmChatParams,
   LlmConfig,
+  LlmMessage,
   LlmModel,
   LlmProvider,
   LlmProviderStatus,
+  LlmRole,
+  LlmConfigPatch,
 } from "./llm-types";
 
 /** One reusable flow as `tests:listFlows` reports it — enough to offer the
@@ -268,6 +272,19 @@ export const api = {
       ipc().invoke<RecorderState>("recorder:applyHeal", { stepId, locator }),
   },
   /** The Script IDE's live page — a Playwright browser the editor owns. */
+  /** The TypeScript service behind the Script tab (main/services/ts-service). */
+  ts: {
+    status: () => ipc().invoke<TsServiceStatus>("ts:status"),
+    ensure: () => ipc().invoke<TsServiceStatus>("ts:ensure"),
+    update: (id: string, text: string) => ipc().invoke<void>("ts:update", { id, text }),
+    close: (id: string) => ipc().invoke<void>("ts:close", { id }),
+    diagnostics: (id: string) => ipc().invoke<TsDiagnostic[]>("ts:diagnostics", { id }),
+    completions: (id: string, offset: number) => ipc().invoke<TsCompletion[]>("ts:completions", { id, offset }),
+    hover: (id: string, offset: number) => ipc().invoke<TsHover | null>("ts:hover", { id, offset }),
+    inspections: (id: string) => ipc().invoke<Inspection[]>("ts:inspections", { id }),
+    /** Whole-document formatting edits (TypeScript's formatter). */
+    format: (id: string) => ipc().invoke<TextEdit[]>("ts:format", { id }),
+  },
   livePage: {
     status: () => ipc().invoke<LivePageStatus>("livePage:status"),
     open: (url: string, browser?: RunBrowser) =>
@@ -826,7 +843,7 @@ export const api = {
   },
   llm: {
     getConfig: () => ipc().invoke<LlmConfig>("llm:getConfig"),
-    setConfig: (update: Partial<LlmConfig>) => ipc().invoke<LlmConfig>("llm:setConfig", update),
+    setConfig: (update: LlmConfigPatch) => ipc().invoke<LlmConfig>("llm:setConfig", update),
     status: (provider: LlmProvider) =>
       ipc().invoke<LlmProviderStatus>("llm:status", { provider }),
     detect: () => ipc().invoke<LlmProviderStatus[]>("llm:detect"),
@@ -839,6 +856,12 @@ export const api = {
     chat: (params: LlmChatParams) =>
       ipc().invoke<{ requestId: string; provider: LlmProvider; model: string }>("llm:chat", params),
     cancel: (requestId: string) => ipc().invoke<void>("llm:cancel", { requestId }),
+    /** One awaited JSON answer shaped by `schema`, from the instant slot. */
+    json: <T = unknown>(params: { messages: LlmMessage[]; schema: object; role?: LlmRole; timeoutMs?: number }) =>
+      ipc().invoke<{ value: T; raw: string; provider: LlmProvider; model: string }>("llm:json", params),
+    /** Ghost text: fill in the middle from the autocomplete slot (local only). */
+    fim: (params: { prefix: string; suffix: string; maxTokens?: number }) =>
+      ipc().invoke<{ text: string; provider: LlmProvider; model: string }>("llm:fim", params),
     /** Whether a request is still streaming — used to re-adopt a session after
      *  a renderer reload without stranding it as permanently "thinking". */
     isActive: (requestId: string) =>

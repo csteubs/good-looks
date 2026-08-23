@@ -499,6 +499,12 @@ async function runStep(
    *  a real run. */
   ctx?: { variables: TestVariable[]; secretsTestId: string },
 ): Promise<ReplayStepResult> {
+  if (step.type === "code") {
+    // Hand-written code runs in Node inside a real run; the trainer's
+    // replayer is a page script and cannot run it. Reported as fine, with
+    // the reason in the log, rather than as a failure of the step.
+    return { ok: true, logs: [{ i: 0, t: Date.now(), level: "info", m: "Code steps run only in a real run; the trainer did not replay this one." }] };
+  }
   if (step.type === "viewport") {
     // `pageResizeHost()` — NOT the window — because the recorded number is the
     // page's size and the window's content box also holds the URL strip.
@@ -1350,6 +1356,33 @@ async function injectCapture(): Promise<void> {
     await applyStateAttributes();
   } catch (err) {
     logger.warn("recorder", "Failed to inject capture script", { err: String(err) });
+  }
+  await applyUserPage(page);
+}
+
+/** Settings → Recording → page stylesheet / init script, on this document.
+ *  The trainer's half of what user-page-fixture-source.ts does in a run: the
+ *  stylesheet through `insertCSS`, the script in the page's OWN world (it is
+ *  the user's code for the page, not the recorder's — the isolated world
+ *  would hide the page's globals from it). dom-ready is later than a run's
+ *  addInitScript; the run is the half that can act before the page's code. */
+async function applyUserPage(page: { insertCSS?: (css: string) => Promise<unknown>; executeJavaScript?: (code: string) => Promise<unknown> }): Promise<void> {
+  const settings = recorderSettingsStore.get();
+  const css = (settings.userStylesheet ?? "").trim();
+  const js = (settings.userInitScript ?? "").trim();
+  if (css && typeof page.insertCSS === "function") {
+    try {
+      await page.insertCSS(css);
+    } catch (err) {
+      logger.warn("recorder", "Page stylesheet failed", { err: String(err) });
+    }
+  }
+  if (js && typeof page.executeJavaScript === "function") {
+    try {
+      await page.executeJavaScript(js);
+    } catch (err) {
+      logger.warn("recorder", "Page init script failed", { err: String(err) });
+    }
   }
 }
 

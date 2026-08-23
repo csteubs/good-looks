@@ -49,6 +49,29 @@ await build({
   logLevel: "info",
 });
 
+// The TypeScript service child (main/services/ts-service/child.ts): forked by
+// `utilityProcess` from build/main/ts-service.js. `typescript` stays external —
+// 9 MB the child resolves at runtime from the node_modules the parent names,
+// the same tree @playwright/test's types are read from.
+await build({
+  entryPoints: ["main/services/ts-service/child.ts"],
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "es2022",
+  outfile: "build/main/ts-service.js",
+  sourcemap: true,
+  alias,
+  external: ["electron", "typescript"],
+  banner: {
+    js: [
+      `import { createRequire as __nodeCreateRequire } from "node:module";`,
+      `const require = __nodeCreateRequire(import.meta.url);`,
+    ].join("\n"),
+  },
+  logLevel: "info",
+});
+
 await build({
   entryPoints: ["renderer/preload.ts"],
   bundle: true,
@@ -61,4 +84,4 @@ await build({
   logLevel: "info",
 });
 
-console.log("[build] main + preload bundled");
+console.log("[build] main + ts-service + preload bundled");

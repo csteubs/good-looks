@@ -367,6 +367,11 @@ function describeState(step: Step, target: string | null): string {
 }
 
 export function describeStep(step: Step): string {
+  if (step.type === "code") {
+    const first = (step.code ?? "").split("\n").find((l) => l.trim() !== "")?.trim() ?? "";
+    const lines = (step.code ?? "").split("\n").filter((l) => l.trim() !== "").length;
+    return (step.label ? step.label + ": " : "code: ") + (first.length > 60 ? first.slice(0, 57) + "…" : first) + (lines > 1 ? ` (+${lines - 1} lines)` : "");
+  }
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
   if (step.type === "else") return "else";

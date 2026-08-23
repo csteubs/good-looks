@@ -5742,3 +5742,278 @@
   flex-direction: column;
   gap: 2px;
 }
+
+/* ── Inline AI in the Script tab (renderer/main/script-ai-panel.tsx) ──────
+ * Sits between the script bar and the editor, bounded in height so the
+ * editor keeps most of the column; the review's diff scrolls inside it. */
+.gl-script-ai {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-height: 45%;
+  overflow: auto;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--gl-line);
+  background: color-mix(in srgb, var(--gl-violet) 5%, transparent);
+}
+
+.gl-script-ai-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.gl-script-ai-title {
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+  white-space: nowrap;
+}
+
+/* The budget line: what is about to be sent, before it is. `margin-right:
+ * auto` keeps the Close / Apply button on the row's right. */
+.gl-script-ai-meta {
+  min-width: 0;
+  margin-right: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-2);
+}
+
+.gl-script-ai-input {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.gl-script-ai-input textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  resize: vertical;
+  padding: 6px 8px;
+  border: 1px solid var(--gl-line);
+  border-radius: 2px;
+  background: var(--gl-panel);
+  color: var(--gl-tx-1);
+  font-family: var(--gl-mono);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.gl-script-ai-input textarea:focus-visible {
+  outline: 1px solid var(--gl-sel-ring);
+  outline-offset: 0;
+}
+
+.gl-script-ai-note {
+  margin: 0;
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-2);
+}
+
+.gl-script-ai-answer {
+  margin: 0;
+  max-width: 72ch;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--gl-tx-1);
+  white-space: pre-wrap;
+}
+
+.gl-script-ai-review {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+
+/* ── Settings → AI → Standing instructions (ai-instructions-rows.tsx) ──── */
+.gl-setting-textarea {
+  /* A fixed width, not 100%: the row is a flex pair of label and control,
+   * and a control that asks for all of it squeezes the label to a word a
+   * line. */
+  width: 420px;
+  max-width: 100%;
+  resize: vertical;
+  padding: 6px 8px;
+  border: 1px solid var(--gl-line);
+  border-radius: 2px;
+  background: var(--gl-panel);
+  color: var(--gl-tx-1);
+  font-family: var(--gl-mono);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.gl-setting-textarea:focus-visible {
+  outline: 1px solid var(--gl-sel-ring);
+  outline-offset: 0;
+}
+
+.gl-setting-hosts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 420px;
+  max-width: 100%;
+}
+
+.gl-setting-hosts .gl-setting-textarea {
+  width: 100%;
+}
+
+.gl-setting-host {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gl-setting-host-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.gl-setting-host-name {
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--gl-tx-2);
+}
+
+.gl-setting-host-add {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ── Settings → Editor → Keymap: the bindings table behind "More" ─────── */
+.gl-keymap-table {
+  border-collapse: collapse;
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--gl-tx-2);
+}
+
+.gl-keymap-table td {
+  padding: 2px 16px 2px 0;
+  vertical-align: baseline;
+}
+
+.gl-keymap-table kbd {
+  font-family: var(--gl-mono);
+  color: var(--gl-tx-1);
+  white-space: nowrap;
+}
+
+/* ── Script outline (renderer/main/script-outline-panel.tsx) ───────────── */
+.gl-script-outline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-height: 45%;
+  overflow: auto;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.gl-script-outline-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.gl-script-outline-filter {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--gl-line);
+  border-radius: 2px;
+  background: var(--gl-panel);
+  color: var(--gl-tx-1);
+  font-family: var(--gl-mono);
+  font-size: 12px;
+}
+
+.gl-script-outline-filter:focus-visible {
+  outline: 1px solid var(--gl-sel-ring);
+  outline-offset: 0;
+}
+
+.gl-script-outline-count {
+  margin-right: auto;
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-2);
+  white-space: nowrap;
+}
+
+.gl-script-outline-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gl-script-outline-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 2px;
+  background: none;
+  text-align: left;
+  font-family: var(--gl-mono);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--gl-tx-1);
+  cursor: pointer;
+}
+
+.gl-script-outline-row[disabled] {
+  cursor: default;
+  color: var(--gl-tx-3);
+}
+
+.gl-script-outline-row[aria-current="true"] {
+  background: var(--gl-sel-bg);
+}
+
+.gl-script-outline-row:hover:not([disabled]) {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.gl-script-outline-num {
+  flex: 0 0 2.5ch;
+  color: var(--gl-tx-3);
+  text-align: right;
+}
+
+.gl-script-outline-line {
+  margin-left: auto;
+  color: var(--gl-tx-3);
+}
+
+.gl-script-outline-usages {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--gl-line);
+}

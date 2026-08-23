@@ -15,8 +15,13 @@ import * as React from "react";
 
 import type { ScriptCheckError, SourceRange } from "../lib/recorder-types";
 import type { LineInlay, RunLineStatus, ScriptEditorHandle } from "./script-editor-cm";
+import type { GhostSource } from "./ghost-text";
 
 export type { LineInlay, RunLineStatus, ScriptEditorHandle } from "./script-editor-cm";
+export type { GhostSource } from "./ghost-text";
+export type { TsIntelligence } from "./ts-intelligence";
+import type { TsIntelligence } from "./ts-intelligence";
+import type { EditorKeymap } from "./editor-keymaps";
 
 const ScriptEditorCm = React.lazy(() => import("./script-editor-cm"));
 
@@ -42,6 +47,15 @@ export interface ScriptEditorProps {
   tabSize?: number;
   /** End-of-line inlays — the live page's match counts. */
   inlays?: LineInlay[];
+  /** Ghost-text source; absent or null turns it off. */
+  ghost?: GhostSource | null;
+  /** ⌘K inside the editor. */
+  onAiRequest?: () => void;
+  /** The TypeScript service; null or absent keeps syntax + CLI diagnostics. */
+  intelligence?: TsIntelligence | null;
+  keymapPreset?: EditorKeymap;
+  /** The parser's step statements, for folding by step. */
+  stepRanges?: SourceRange[] | null;
 }
 
 const NO_ERRORS: ScriptCheckError[] = [];
@@ -61,6 +75,11 @@ export function ScriptEditor({
   lineNumbers = true,
   tabSize = 2,
   inlays,
+  ghost = null,
+  onAiRequest,
+  intelligence = null,
+  keymapPreset = "default",
+  stepRanges = null,
 }: ScriptEditorProps): React.ReactElement {
   return (
     <React.Suspense fallback={<div className="gl-script-ide-loading">Loading the editor…</div>}>
@@ -78,6 +97,11 @@ export function ScriptEditor({
         lineNumbers={lineNumbers}
         tabSize={tabSize}
         inlays={inlays}
+        ghost={ghost}
+        onAiRequest={onAiRequest}
+        intelligence={intelligence}
+        keymapPreset={keymapPreset}
+        stepRanges={stepRanges}
       />
     </React.Suspense>
   );

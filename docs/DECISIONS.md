@@ -11272,3 +11272,210 @@ two new `recorder-store.test.tsx` cases fail on `1:running` where `1:failed`
 and `0:passed` are expected; a third pins that a reported outcome is left
 alone. `preview-bridge.test.ts` pins the stop shape: exactly one `begin`
 reported, a non-zero code, and no tick of the stopped run firing afterwards.
+
+## 2026-08-23 — Script IDE View, Phase 3: AI in the editor
+
+**Three role slots, not one model.** The app had one provider + model pair
+that every AI feature shared. The editor adds two jobs that pair is wrong
+for: ghost text wants a small fill-in-the-middle code model answering in
+under a second on every pause in typing, and "explain this failure" wants a
+fast answer rather than the best one. `LlmConfig.roles` now names a slot per
+job — `chat` (Debug with AI, Generate, ⌘K rewrite), `instant` (explain,
+rewrite classification, vision verdicts) and `autocomplete` (ghost text) —
+resolved by `resolveSlot(role)` in `llm-service.ts`. The chat slot IS the
+old flat pair (the store keeps them in step, so older readers and the MCP
+see the same answer), and a slot that is absent follows it. The pane spells
+that absence as "Same as chat"; the store therefore never seeds an instant
+copy of chat, which would look identical until chat changed and instant
+silently stayed behind (`llm-config-store.test.ts` pins the round trip).
+
+**Autocomplete is local-only by construction, pinned at three layers.**
+Ghost text sends the script around the caret on every pause in typing. A
+hosted provider would mean every pause leaves the machine, and an editor
+affordance is the one place a user spends money by holding a key down. So
+the Settings row offers Ollama and LM Studio only, the store drops a hosted
+autocomplete slot on read and on write, and `llmService.fim` refuses one
+before building a request. `check:editor-egress` pins all three, because
+any one of them alone is a layer the next change can remove.
+
+**Ghost text is an extension with no opinion about its source.**
+`renderer/main/ghost-text.ts` asks a `(prefix, suffix, signal) => text`
+source once per pause, shows the answer after the caret, accepts on Tab
+(bound with highest precedence, falling through to `indentWithTab` when
+nothing is shown), dismisses on Escape, clears on any edit, aborts the
+in-flight request on the next keystroke, and drops a late answer by document
+IDENTITY — the doc object is immutable, so `now.doc !== askedDoc` is an
+exact version check that costs nothing. The host side
+(`renderer/lib/ghost-source.ts`) bounds the window sent (6000 chars before,
+2000 after, cut at line boundaries) and backs off fifteen seconds from a
+server that is not answering, so an Ollama that is not running costs one
+failed request per window rather than one per pause.
+
+**⌘K applies into the buffer, never to disk.** A rewrite's one fenced block
+becomes a diff; Apply puts it into the edit buffer, where the pre-save
+check, the divergence confirm and the stale-base refusal still stand between
+the model's text and the file. Save then records the change as
+`ai-inline` (with `affordance`, `provider`, `model` and `promptVersion`) so
+the Heals tab files it as the model's even though the user pressed Save.
+The alternative — applying straight through `tests:updateScript` as the
+debug panel does — was rejected because the editor is already open on the
+draft: writing under it is the "two writers, one file" shape Phase 1 built
+the dirty registry to refuse. Scope is whole-file or whole-selection; a
+hunk-by-hunk review is deferred (the plan's open question stands).
+
+**Budget before sending, cap on hosted.** The panel's header says what is
+about to be sent and roughly how many tokens (four characters each) before
+the user sends it; a 2000-line spec is a choice, not a surprise. Hosted
+requests from the editor are capped at six a minute, module-level state
+because the cap is per app, not per panel mount.
+
+**Standing instructions are settings, not a store.** `aiInstructions` (global)
+and `aiInstructionsByHost` (exact host, not its subdomains) live on
+`RecorderSettings` — capped at 4000 characters each, hosts lowercased, the
+per-host table replaced whole on save so a host can be removed — and are
+prepended to every ⌘K and Explain prompt. A separate store was the other
+candidate; it would have meant a second reset path and a second place for
+the Settings search to not find.
+
+**Not done here.** The round-trip rewrite through `llm:json` (asking the
+instant model which of a rewrite's newly-skipped statements are steps it
+could spell in the recorder's vocabulary) is built on the service side
+(`completeJson`) but not wired to the panel: the panel instead tells the
+user how many new statements the step list cannot show, from
+`tests:previewScript`, which is the fact that matters before Apply. Ghost
+text has no telemetry on acceptance rate yet.
+
+**CI gate fix that rode along (#240).** `check:live-page` launches real
+headless Chromium and the gate's unit job never installed one, so it failed
+in CI with an unhandled rejection while every sibling check passed. The job
+now installs Chromium (same cache key as the e2e job), and the check names
+the missing browser and the command to install it instead of dumping a
+stack.
+
+## 2026-08-23 — Script IDE View, Phase 4: a TypeScript service and the app's own inspections
+
+**TypeScript ships with the app, in a `utilityProcess`.** The editor now has
+completions, hover, type errors and inspections, and all four come from one
+`typescript` language service running in an Electron `utilityProcess`
+(`main/services/ts-service/`). The alternatives were a renderer Web Worker
+(the first worker under `app://`, and 9 MB of compiler in the renderer
+bundle) and no type service at all (syntax and the `--list` check only).
+The child keeps the compiler out of every renderer and out of the main
+bundle too: `typescript` is a runtime dependency resolved at runtime from
+the same `node_modules` the runner's Playwright CLI comes from, so the
+`@playwright/test` types the user sees are the ones the run uses. The
+editor's document is a virtual file placed beside that `node_modules`
+(`__gl_editor__/<id>.spec.ts`), and the generated runtime helper is a second
+virtual file handed in as text — a spec importing `./glaze-runtime.mjs`
+type-checks without the service knowing where the scripts directory is.
+
+**"Type intelligence unavailable" is a state, not an error.** A fork that
+fails, a child that died more than three times, a request that hangs ten
+seconds — each sets `status().available = false` with a reason the script
+bar shows, and every request answers empty. The editor keeps the Lezer
+syntax marks and the Playwright `--list` verdict, which is the diagnostics
+it had before this phase. A restarted child is replayed the open documents.
+`utilityProcess` is the one Electron API added to `main/shell/backend.ts`;
+the test stub's `fork` throws, which is how the unit tests exercise the
+unavailable path, and the client takes an injectable forker for the rest.
+
+**Four layers of proof, because each sees something the others cannot.**
+`core.test.ts` runs the language service over the real typescript and the
+real `@playwright/test` types; `client.test.ts` runs the client over an
+in-process child; `check:ts-service` forks the BUILT `ts-service.js` under
+plain Node (the child speaks Node IPC when there is no `parentPort`), which
+is what proves esbuild's bundle and the runtime `typescript` resolution;
+`e2e/ts-service.spec.ts` asks the running app, which is the only place the
+real `utilityProcess`, the child path computed from the main bundle, and
+`process.parentPort` exist.
+
+**Inspections are the app's rules, written over the TS AST, not ESLint.**
+Bundling ESLint and `eslint-plugin-playwright` was the other option: broad
+coverage, ~15 MB more on disk, a slower cold start, and a second
+configuration surface to keep consistent with the first. The six rules here
+(`shared/inspections.mjs` names them; `core.ts` runs them) are opinions
+about Playwright tests as this app records them — an un-awaited promise, a
+fixed-time wait, `force: true` without a comment saying why, a statement
+outside a `test.step` wrapper, a CSS locator, a locator pinned by index —
+and four of them carry a quick fix as text edits, applied through the lint
+panel's action button as one transaction. Settings → Inspections switches
+each rule off; a rule switched off stops marking and changes nothing about
+a run. The rule list is a `shared/` module for the usual reason: the pane
+and the service must name the same rules, and a rule named on one side only
+is a switch that toggles nothing.
+
+**Not done here.** Signature help, rename, go-to-definition across the
+library, and format-on-save are Phase 5 material; a quick fix from the live
+page (a narrowed locator when the count is not one) and from Auto-Heal
+history were offered and declined for this phase.
+
+## 2026-08-23 — Script IDE View, Phase 5: configuration and structure
+
+**Keymaps are tables in the repo.** Three presets — Default, JetBrains,
+VS Code — each a (command, key) table over CodeMirror's commands in
+`renderer/main/editor-keymaps.ts`, switched in Settings → Editor, where the
+chosen preset's bindings are listed behind the row's "More". A preset as
+code is reviewed, tested (`editor-keymaps.test.tsx` pins the core commands,
+the absence of duplicate keys and the two reserved chords) and documented
+like any change; a user-JSON keymap was the alternative and was declined
+for v1. Two chords are never bound by a preset: ⌘K, the command palette
+everywhere including inside a field, and ⌘I, inline AI. **Inline AI moved
+from ⌘K to ⌘I** in this phase: the palette's window listener fires after
+the editor's handler, so the Phase 3 binding opened both at once — a
+conflict the unit test could not see because it dispatches on the
+editor's DOM, not the window.
+
+**Format on save is TypeScript's formatter, through the service that
+already ships.** `getFormattingEditsForDocument` in the utilityProcess
+(Phase 4), two-space indent and TypeScript's defaults, which is how the
+generator writes a spec. Prettier would have been ~3 MB more and a second
+formatter to keep consistent with the generator's output. The formatted
+text becomes the draft before the `--list` check and the write, so what
+was checked is what is saved and what the editor shows afterwards; with
+the service unavailable, no formatting happens and the save proceeds.
+
+**The fenced code step.** A `test.step` wrapper whose body the parser
+cannot model at all becomes a `code` step: tracked, shown as code in the
+Steps tab, emitted back verbatim under a wrapper titled by the label. The
+wrapper is the fence. A wrapper that mixes modelled statements with
+unmodelled ones keeps the old accounting (its steps, its skipped ranges),
+so only a deliberately-fenced body is held whole. **The page path refuses
+the type**: a code step's body is emitted as written into a spec that
+Playwright executes in Node, so `normalizeRawStep` returns null for it and
+only `normalizeStep` — the IPC path from the renderer, and the parser —
+accepts it, capped at 20 000 characters. `check:step-ingest` pins both
+halves. The trainer's replayer reports a code step as passed with a log
+line saying it runs only in a real run: the replayer is a page script and
+cannot run Node. The unwrapped-statement quick fix (Phase 4) therefore
+round-trips: wrap a statement, save, and the Steps tab shows a code step.
+
+**A page stylesheet and init script, taught once, applied in both
+halves.** Settings → Recording → "Page stylesheet" and "Page init script"
+are applied in the trainer (on every document's dom-ready:
+`insertCSS`, and the script in the page's OWN world, since it is the
+user's code for the page) and in every recorded test's run through a new
+fixture (`user-page-fixture-source.ts`: `context.addInitScript`, and
+`addStyleTag` on every document's domcontentloaded and load). Both halves
+by design, as with overlay rules: a widget hidden only while recording is
+a test that passes in the trainer and fails in the run. The run's half is
+the stronger one — an init script there runs before the page's own code,
+which dom-ready cannot. Both values travel as one base64 environment
+value each, never split. Imported specs are never touched. The init
+script is arbitrary code in every page the trainer visits; the row says
+so in its risk block, which is the place for a consequence the user has
+to read (setting-row.tsx). `record-then-run.spec.ts` proves both reach a
+real run through the app's runner: the stylesheet hides a heading, the
+script marks the document, a recorded test asserts both and passes.
+
+**Outline and Find Usages, one panel.** "Outline" in the script bar lists
+the parsed steps with their lines (filter + Enter jumps to the first
+match) and, for the step under the caret, where its locator is used
+across the library — equality by the generator's spelling of the locator
+(`locatorExpr`), so two steps recorded on different days that emit the
+same expression are the same usage and a differently-scoped one is not.
+It is the Script tab's File Structure popup and Find Usages together,
+because both answer "where is this" about the script being read.
+
+**Not done here.** Flow-block decorations and the re-inline quick fix;
+signature help; rename; a user-JSON keymap; hunk-by-hunk AI review (still
+open from Phase 3).

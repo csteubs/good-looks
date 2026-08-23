@@ -1,5 +1,6 @@
 // Mirror of main/recorder/types.ts for the renderer. Keep shapes in sync.
 
+import type { InspectionRule } from "../../shared/inspections.mjs";
 import type { LlmErrorKind } from "./llm-types";
 import type { FlakeReport as SharedFlakeReport } from "../../shared/flake-analysis.mjs";
 import type { CostCurrency } from "../../shared/cost-units.mjs";
@@ -92,6 +93,8 @@ export type StepType =
   // rather than a pair.
   | "teardown"
   | "dialog"
+  // A fenced code step (mirror; see main/recorder/types.ts).
+  | "code"
   | "reload"
   // A line in the run log — no assertion, never fails. Mirror of the
   // main-process type.
@@ -324,6 +327,8 @@ export function isCssPropName(v: unknown): v is string {
 export interface Step {
   id: string;
   type: StepType;
+  /** `code` steps: the statements, verbatim. */
+  code?: string;
   locator?: Locator;
   value?: string;
   label?: string;
@@ -515,6 +520,8 @@ export type UiScale = 0.9 | 1 | 1.1 | 1.25;
 /** Mirror of main/recorder/types.ts. */
 export type EditorTabSize = 2 | 4;
 export const EDITOR_TAB_SIZES: EditorTabSize[] = [2, 4];
+export type EditorKeymap = "default" | "jetbrains" | "vscode";
+export const EDITOR_KEYMAPS: EditorKeymap[] = ["default", "jetbrains", "vscode"];
 export const EDITOR_FONT_SIZE_MIN = 10;
 export const EDITOR_FONT_SIZE_MAX = 20;
 export const EDITOR_FONT_SIZE_DEFAULT = 13;
@@ -843,7 +850,9 @@ export interface HealListEntry extends HealEntry {
 }
 
 /** Where a whole-script change came from (mirror of script-change-store.ts). */
-export type ScriptChangeOrigin = "ai-debug" | "manual";
+export type ScriptChangeOrigin = "ai-debug" | "ai-inline" | "manual";
+/** Which AI affordance wrote a change (mirror of `AFFORDANCES`). */
+export type ScriptChangeAffordance = "debug" | "inline-rewrite" | "roundtrip-rewrite";
 
 /** What the renderer sends with a script write, so the journal can say who did
  *  it. `reviewed: false` means the change landed without the user reading it —
@@ -852,6 +861,9 @@ export type ScriptChangeOrigin = "ai-debug" | "manual";
 export interface ScriptChangeSource {
   by: ScriptChangeOrigin;
   model?: string;
+  provider?: string;
+  affordance?: ScriptChangeAffordance;
+  promptVersion?: string;
   reviewed?: boolean;
 }
 
@@ -933,6 +945,9 @@ export interface ScriptChangeEntry {
   /** Which model wrote the fix. May be absent even on an `ai-debug` entry, so
    *  every label must degrade to a bare "AI Debug". */
   model?: string;
+  provider?: string;
+  affordance?: ScriptChangeAffordance;
+  promptVersion?: string;
   reviewed: boolean;
   /** The previous spec — the undo. Empty when `truncated`. */
   before: string;
@@ -1473,6 +1488,17 @@ export interface RecorderSettings {
   editorLineNumbers: boolean;
   editorTabSize: EditorTabSize;
   editorCheckOnSave: boolean;
+  editorFormatOnSave: boolean;
+  editorKeymap: EditorKeymap;
+  /** Standing instructions for the Script editor's inline AI (mirror of
+   *  main/recorder/types.ts): one global text, and one per host. */
+  aiInstructions: string;
+  aiInstructionsByHost: Record<string, string>;
+  /** Page stylesheet and init script (mirror; see main/recorder/types.ts). */
+  userStylesheet: string;
+  userInitScript: string;
+  /** Which of the Script IDE's inspections run (mirror; shared/inspections.mjs). */
+  inspections: Record<InspectionRule, boolean>;
   /** Which symbol the Cost panel stamps on a money figure (default "usd").
    *  "none" restores bare numbers — see `shared/cost-units.mjs`. */
   costCurrency: CostCurrency;

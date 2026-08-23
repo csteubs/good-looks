@@ -1126,6 +1126,8 @@ export function stepTitle(step: Step): string {
     return JSON.stringify(text.length > 40 ? text.slice(0, 37) + "…" : text);
   };
   switch (step.type) {
+    case "code":
+      return step.label?.trim() || "code";
     case "click":
     case "dblclick":
     case "rightclick":
@@ -1169,6 +1171,13 @@ export function stepTitle(step: Step): string {
  *  reference shows as written rather than as the `V.name` the spec compiles to
  *  — the step list is meant to read like what the user typed. */
 export function describeStep(step: Step): string {
+  // Kept identical to the renderer's mirror — describe-step-parity.test.ts
+  // compares the two for every step type.
+  if (step.type === "code") {
+    const first = (step.code ?? "").split("\n").find((l) => l.trim() !== "")?.trim() ?? "";
+    const lines = (step.code ?? "").split("\n").filter((l) => l.trim() !== "").length;
+    return (step.label ? step.label + ": " : "code: ") + (first.length > 60 ? first.slice(0, 57) + "…" : first) + (lines > 1 ? ` (+${lines - 1} lines)` : "");
+  }
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
   if (step.type === "else") return "else";
@@ -1954,6 +1963,24 @@ export function generateSpecDetailed(
       depth += 1;
       continue;
     }
+    if (step.type === "code") {
+      // Verbatim, by definition: the code IS the step. Each line re-indented
+      // under the wrapper; a disabled one is commented out line by line so
+      // the parser reads the wrapper back as disabled rather than as code.
+      const indent = "  ".repeat(depth);
+      const lines = dedent(step.code ?? "").split("\n");
+      record1(sourceIndex);
+      if (step.disabled) {
+        body.push(commentSafe(indent + "// disabled — skipped: " + stepOpen("", step).trim()));
+        for (const l of lines) body.push(commentSafe(indent + "// disabled — skipped: " + l));
+        body.push(commentSafe(indent + "// disabled — skipped: });"));
+        continue;
+      }
+      body.push(stepOpen(indent, step));
+      for (const l of lines) body.push(l.trim() === "" ? "" : indent + "  " + l);
+      body.push(stepClose(indent));
+      continue;
+    }
     if (step.type === "aiCheck") {
       const indent = "  ".repeat(depth);
       if (step.disabled) {
@@ -2174,4 +2201,17 @@ export function generateSpecDetailed(
 
 export function generateSpec(record: SpecSource, opts: GenerateOptions = {}): string {
   return generateSpecDetailed(record, opts).source;
+}
+
+/** Strip the indentation the lines share, so a code step's text is the
+ *  same whether it was typed at column 0 or read back from under a wrapper. */
+export function dedent(text: string): string {
+  const lines = text.replace(/^\n+|\s+$/g, "").split("\n");
+  let common: number | null = null;
+  for (const l of lines) {
+    if (l.trim() === "") continue;
+    const n = l.match(/^[ \t]*/)![0].length;
+    common = common === null ? n : Math.min(common, n);
+  }
+  return lines.map((l) => l.slice(common ?? 0)).join("\n");
 }

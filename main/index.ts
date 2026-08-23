@@ -24,6 +24,7 @@ import { registerHandlers } from "./handlers/index.js";
 import { getPreloadPath, getWindowUrl } from "./windows/window-paths.js";
 import { openSettingsWindow } from "./windows/settings-window.js";
 import { sendToMain, setMainWindow } from "./services/app-window.js";
+import { tsService } from "./services/ts-service/client.js";
 import { attachUiScale, scaled } from "./services/ui-scale.js";
 import { fillWorkArea } from "./services/window-fill.js";
 import type { Bounds } from "./services/panel-dock.js";
@@ -440,6 +441,7 @@ app.on("activate", (_event, hasVisibleWindows) => {
 
 app.on("before-quit", () => {
   logger.info("main", "App before-quit, cleaning up...");
+  tsService.stop();
 });
 
 // ── App ready ─────────────────────────────────────────────────────────

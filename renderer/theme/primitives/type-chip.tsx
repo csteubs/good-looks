@@ -45,6 +45,7 @@ const SYNTAX: Record<SyntaxTheme, Record<StepType, string>> = {
     scroll: "#8fd0e8",
     upload: "#8fd0e8",
     dialog: "#8fd0e8",
+    code: "#b9a6e0",
     // Claims — the things that can be wrong.
     assert: "#d7c98a",
     state: "#d7c98a",
@@ -77,6 +78,7 @@ const LABEL: Partial<Record<StepType, string>> = {
   loop: "repeat",
   endLoop: "end repeat",
   group: "group",
+  code: "code",
   endGroup: "end group",
   runFlow: "flow",
   viewport: "size",

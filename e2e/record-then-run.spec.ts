@@ -294,3 +294,29 @@ test("the generated spec is on disk and is what the runner executed", async ({ a
     await site.close();
   }
 });
+
+// The page stylesheet and init script reach a REAL run through the app's own
+// runner — the fixture is a string the Playwright CLI loads, so nothing
+// short of a run proves it installs. The stylesheet hides the heading; the
+// init script marks the document before the page's own code. A recorded
+// test then asserts both, and passes only if the fixture did its work.
+test("the page stylesheet and init script are applied in a run", async ({ app, window, userDataDir }) => {
+  test.skip(!seedBrowsers(userDataDir), "no local Chromium matching this Playwright — run `npx playwright install chromium`");
+  const site = await serveSite();
+  try {
+    await invoke(window, "recorder:setSettings", {
+      userStylesheet: '[data-testid="heading"] { display: none !important; }',
+      userInitScript: 'document.documentElement.setAttribute("data-gl-init", "yes");',
+    });
+    const record = await recordSession(app, window, site.url, "user-page", [
+      { type: "assert", assert: "hidden", locator: { k: "testid", v: "heading" } },
+      { type: "assert", assert: "attr", attr: "data-gl-init", value: "yes", locator: { k: "css", v: "html" } },
+    ] as Partial<Step>[]);
+    const { status, output } = await runTest(window, record.id);
+    expect(status, `the run should pass with the stylesheet and init script installed. Output:\n${output}`).toBe("passed");
+    expect(output).toMatch(/\[glaze-user-page\] installed: init script \(\d+ chars\), stylesheet \(\d+ chars\)/);
+  } finally {
+    await invoke(window, "recorder:setSettings", { userStylesheet: "", userInitScript: "" });
+    await site.close();
+  }
+});

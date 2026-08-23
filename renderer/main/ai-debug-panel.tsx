@@ -50,8 +50,7 @@ import {
   buildDebugMessages,
   buildStepDebugMessages,
   describeSending,
-  sendingTotalChars,
-} from "../lib/llm-prompts";
+  sendingTotalChars, scriptWasTruncated } from "../lib/llm-prompts";
 import { extractCorrectedScript, parseResponse } from "../lib/parse-llm-response";
 import type { AiDebugStatus } from "../lib/recorder-types";
 import { useDisabledEnhancements } from "../lib/use-disabled-enhancements";
@@ -864,8 +863,12 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
     setTimeout(() => setCopied(false), 1500);
   };
 
-  // A full, applyable corrected spec is only offered once streaming finishes.
-  const correctedScript = status === "done" ? extractCorrectedScript(content) : null;
+  // A full, applyable corrected spec is only offered once streaming finishes
+  // — and never when the model was shown a TRUNCATED script: the prompt asked
+  // it for changed lines, and a fenced block that happens to look whole is a
+  // file missing everything past the cut.
+  const correctedScript =
+    status === "done" && !(runCtx && scriptWasTruncated(runCtx)) ? extractCorrectedScript(content) : null;
   const liveScript = runCtx?.script ?? null;
   const diff = React.useMemo<DiffLine[] | null>(() => {
     if (!correctedScript || liveScript === null) return null;

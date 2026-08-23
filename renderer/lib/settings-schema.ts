@@ -11,6 +11,7 @@
 // where the only way to test "9999 runs is refused" was to render a window and
 // fire a change event.
 
+import { INSPECTIONS, defaultInspections } from "../../shared/inspections.mjs";
 import type { RecorderSettings } from "./recorder-types";
 import { blockText } from "./doc-blocks";
 import { APP_DOCS, docRowId } from "./docs";
@@ -28,6 +29,7 @@ import { PROXY_DEFAULTS } from "../../shared/proxy-config.mjs";
 export type PaneId =
   | "appearance"
   | "editor"
+  | "inspections"
   | "recording"
   | "test-defaults"
   | "auto-heal"
@@ -77,6 +79,12 @@ export const PANES: readonly PaneDef[] = [
     id: "editor",
     title: "Editor",
     subtitle: "The Script tab's code editor: type, wrap, gutters, and what a save checks.",
+    group: "Testing",
+  },
+  {
+    id: "inspections",
+    title: "Inspections",
+    subtitle: "What the Script tab flags in a spec, and which of it offers a fix.",
     group: "Testing",
   },
   {
@@ -308,6 +316,8 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
   { id: "editor-line-numbers", pane: "editor", label: "Line numbers", keywords: "code script ide gutter", key: "editorLineNumbers" },
   { id: "editor-tab-size", pane: "editor", label: "Tab size", keywords: "code script ide indent spaces two four", key: "editorTabSize" },
   { id: "editor-check-on-save", pane: "editor", label: "Check with Playwright before saving", keywords: "code script ide save verify load syntax dry run list cli", key: "editorCheckOnSave" },
+  { id: "editor-format-on-save", pane: "editor", label: "Format on save", keywords: "code script ide prettier indent whitespace typescript formatter", key: "editorFormatOnSave" },
+  { id: "editor-keymap", pane: "editor", label: "Keymap", keywords: "code script ide keyboard shortcuts bindings jetbrains intellij vscode preset", key: "editorKeymap" },
   // Keywords cover the words someone reaches for when the app is too small to
   // read — "zoom", "scale", "bigger", "accessibility" — and not just the label.
   // Whoever needs this setting most is the person least able to browse for it.
@@ -361,6 +371,20 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     label: "Show URL bar in training window",
     keywords: "address title bar trainer",
     key: "showUrlBar",
+  },
+  {
+    id: "user-stylesheet",
+    pane: "recording",
+    label: "Page stylesheet",
+    keywords: "css inject hide widget banner chat overlay style every page run trainer",
+    key: "userStylesheet",
+  },
+  {
+    id: "user-init-script",
+    pane: "recording",
+    label: "Page init script",
+    keywords: "javascript inject script every page addInitScript run trainer",
+    key: "userInitScript",
   },
   {
     id: "trainer-panel",
@@ -582,6 +606,41 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "lm studio bearer authentication unauthorized 401 credential secret",
   },
   { id: "llm-model", pane: "ai", label: "Model", keywords: "llm ollama claude sonnet opus haiku" },
+  {
+    id: "llm-role-instant",
+    pane: "ai",
+    label: "Instant helpers",
+    keywords: "role slot explain failure classify vision screenshot small fast model",
+  },
+  {
+    id: "llm-role-autocomplete",
+    pane: "ai",
+    label: "Autocomplete",
+    keywords: "ghost text inline completion fim fill in the middle code model editor",
+  },
+  {
+    id: "llm-instructions",
+    pane: "ai",
+    label: "Standing instructions",
+    keywords: "prompt rules house style locator conventions system instructions context",
+    key: "aiInstructions",
+  },
+  {
+    id: "llm-instructions-by-host",
+    pane: "ai",
+    label: "Instructions per site",
+    keywords: "prompt rules host site domain per-site instructions",
+    key: "aiInstructionsByHost",
+  },
+
+  // Inspections — one row per rule, all writing the one `inspections` key.
+  ...INSPECTIONS.map((i) => ({
+    id: `inspection-${i.id}`,
+    pane: "inspections" as const,
+    label: i.label,
+    keywords: `inspection lint rule ${i.id.replace(/-/g, " ")} ${i.severity} quick fix`,
+    key: "inspections" as const,
+  })),
 
   // Failure reasons
   {
@@ -894,6 +953,13 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   editorLineNumbers: true,
   editorTabSize: 2,
   editorCheckOnSave: true,
+  editorFormatOnSave: true,
+  editorKeymap: "default",
+  aiInstructions: "",
+  aiInstructionsByHost: {},
+  inspections: defaultInspections(),
+  userStylesheet: "",
+  userInitScript: "",
   showUrlBar: true,
   trainerPanelEnabled: false,
   defaultRunSpeed: "slow",

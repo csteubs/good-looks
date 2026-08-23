@@ -52,6 +52,7 @@ import {
   dismissEnvNames,
   dismissFixtureSource,
 } from "./dismiss-fixture-source.js";
+import { USER_PAGE_FIXTURE_FILE, userPageEnv, userPageFixtureSource } from "./user-page-fixture-source.js";
 import { SETTLE_FIXTURE_FILE, settleFixtureSource } from "./settle-fixture-source.js";
 import { buildHealProbeScript } from "./auto-heal.js";
 import { healJournalStore } from "./heal-journal-store.js";
@@ -433,6 +434,12 @@ function ensureSignatureFixture(scriptsDir: string): void {
 // a run with no rules for its host still has to be able to resolve the file.
 function ensureDismissFixture(scriptsDir: string): void {
   writeIfChanged(path.join(scriptsDir, DISMISS_FIXTURE_FILE), dismissFixtureSource);
+}
+
+/** The user stylesheet / init script fixture (user-page-fixture-source.ts).
+ *  Unconditional like the dismiss fixture: the capture fixture imports it. */
+function ensureUserPageFixture(scriptsDir: string): void {
+  writeIfChanged(path.join(scriptsDir, USER_PAGE_FIXTURE_FILE), userPageFixtureSource);
 }
 
 /**
@@ -1470,6 +1477,11 @@ export const playwrightRunner = {
           ? []
           : armedRulesFor(overlayRuleStore.listRules(), rec.url ?? "");
         let dismissing = overlayRules.length > 0;
+        // Settings → Recording → page stylesheet / init script: applied to a
+        // recorded test's runs, never an imported spec's (same rule as the
+        // overlay rules — somebody else's file is not redirected).
+        const userPage = rec.sourceDir ? {} : userPageEnv(recorderSettingsStore.get());
+        const userPageOn = Object.keys(userPage).length > 0;
         await announceSignatureState({
           runId,
           testHost,
@@ -1508,7 +1520,7 @@ export const playwrightRunner = {
         // the fixture is where capture, healing AND crawl's page-settling live
         // — so a heal-only or crawl-only run needs it too.
         if (
-          (captureArtifacts || healing || a11y || recordLogs || settling || signing || dismissing) &&
+          (captureArtifacts || healing || a11y || recordLogs || settling || signing || dismissing || userPageOn) &&
           !rec.sourceDir
         ) {
           ensureCaptureFixture(scriptsDir);
@@ -1516,6 +1528,7 @@ export const playwrightRunner = {
           ensureSettleFixture(scriptsDir);
           ensureSignatureFixture(scriptsDir);
           ensureDismissFixture(scriptsDir);
+          ensureUserPageFixture(scriptsDir);
           const prepared = prepareCaptureSpec(scriptsDir, specToRun, recordId);
           if (prepared) {
             tempSpecPath = prepared;
@@ -1752,6 +1765,7 @@ export const playwrightRunner = {
             GLAZE_RUN_ID: recordId,
             ...signatureEnv(signing ? signatureEntries : []),
             ...dismissEnv(dismissing ? overlayRules : []),
+            ...userPage,
           },
           processTimeoutMs,
         );

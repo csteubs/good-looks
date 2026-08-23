@@ -74,6 +74,8 @@ import { shopifySignatureStore } from "../services/shopify-signature-store.js";
 import { parseSpecDetailed } from "../services/spec-parser.js";
 import { checkTestScript } from "../services/script-check.js";
 import { livePageService } from "../services/live-page-service.js";
+import { tsService } from "../services/ts-service/client.js";
+import { glazeRuntimeSource } from "../services/glaze-runtime-source.js";
 import { SCRIPT_CHANGED_ON_DISK } from "../../shared/script-save.mjs";
 import { activeProviderEndpoint, llmService } from "../services/llm-service.js";
 import { proxyPasswordStore } from "../services/proxy-password-store.js";
@@ -82,7 +84,7 @@ import {
   verifyAppConnectivity,
   verifyTestConnectivity,
 } from "../services/proxy-service.js";
-import { llmConfigStore } from "../services/llm-config-store.js";
+import { llmConfigStore, type LlmConfigPatch } from "../services/llm-config-store.js";
 import { aiDebugStore } from "../services/ai-debug-store.js";
 import { aiDebugHistoryStore } from "../services/ai-debug-history-store.js";
 import { recorderDebugStore } from "../services/recorder-debug-store.js";
@@ -142,10 +144,15 @@ import {
   RUN_BROWSERS,
 } from "../recorder/types.js";
 import type { AiDebugSession, AssertKind, CookieSpec, Locator, RawStep, RecorderSettings, RunBrowser, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
-import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
+import type { LlmRole, LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
 import type { EmitterId } from "../../shared/emitters.mjs";
 
 import { ipcMain, logger } from "@shell/backend";
+
+/** A role name off the wire, or undefined — the service then resolves chat. */
+function asRole(v: unknown): LlmRole | undefined {
+  return v === "chat" || v === "instant" || v === "autocomplete" ? v : undefined;
+}
 
 function asProvider(v: unknown): LlmProvider {
   if (v === "ollama" || v === "lmstudio" || v === "anthropic") return v;
@@ -1247,6 +1254,34 @@ export function registerHandlers(): void {
   ipcMain.handle("livePage:pick", async () => livePageService.pick());
   ipcMain.handle("livePage:cancelPick", async () => livePageService.cancelPick());
 
+  // The TypeScript service (ts-service/client.ts): a utilityProcess the
+  // Script tab asks for diagnostics, completions, hover and inspections.
+  // Documents are keyed by the renderer's id (the test id); the generated
+  // runtime helper is attached here so a spec importing it type-checks.
+  const docId = (v: unknown): string => {
+    if (typeof v !== "string" || !v) throw new Error("A document id is required.");
+    return v.slice(0, 200);
+  };
+  const offset = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0);
+  ipcMain.handle("ts:status", async () => tsService.status());
+  ipcMain.handle("ts:ensure", async () => tsService.ensure());
+  ipcMain.handle("ts:update", async (_e, params: { id: unknown; text: unknown }) => {
+    const text = typeof params?.text === "string" ? params.text : "";
+    await tsService.update(docId(params?.id), text, glazeRuntimeSource);
+  });
+  ipcMain.handle("ts:close", async (_e, params: { id: unknown }) => tsService.close(docId(params?.id)));
+  ipcMain.handle("ts:diagnostics", async (_e, params: { id: unknown }) => tsService.diagnostics(docId(params?.id)));
+  ipcMain.handle("ts:completions", async (_e, params: { id: unknown; offset: unknown }) =>
+    tsService.completions(docId(params?.id), offset(params?.offset)),
+  );
+  ipcMain.handle("ts:hover", async (_e, params: { id: unknown; offset: unknown }) =>
+    tsService.hover(docId(params?.id), offset(params?.offset)),
+  );
+  ipcMain.handle("ts:format", async (_e, params: { id: unknown }) => tsService.format(docId(params?.id)));
+  ipcMain.handle("ts:inspections", async (_e, params: { id: unknown }) =>
+    tsService.inspections(docId(params?.id), recorderSettingsStore.get().inspections),
+  );
+
   /** What saving `source` over this test's script WOULD do, without doing it:
    *  the steps the parser would read back, where it read each from, where it
    *  could not, and which of those misses are NEW against the stored script.
@@ -1527,14 +1562,19 @@ export function registerHandlers(): void {
   ipcMain.handle("llm:getConfig", async () => llmConfigStore.get());
   ipcMain.handle(
     "llm:setConfig",
-    async (_e, params: { provider?: unknown; model?: unknown; baseUrls?: unknown }) => {
-      const update: Partial<LlmConfig> = {};
+    async (_e, params: { provider?: unknown; model?: unknown; baseUrls?: unknown; roles?: unknown }) => {
+      const update: LlmConfigPatch = {};
       if (params?.provider !== undefined) update.provider = asProvider(params.provider);
       if (params?.model !== undefined) {
         update.model = params.model === null ? null : String(params.model);
       }
       if (params?.baseUrls && typeof params.baseUrls === "object") {
         update.baseUrls = params.baseUrls as LlmConfig["baseUrls"];
+      }
+      // Handed through raw: the store rebuilds every slot and refuses what it
+      // must (a hosted autocomplete), and `null` clears a slot.
+      if (params?.roles && typeof params.roles === "object") {
+        update.roles = params.roles as LlmConfigPatch["roles"];
       }
       return llmConfigStore.set(update);
     },
@@ -1550,18 +1590,47 @@ export function registerHandlers(): void {
     "llm:chat",
     async (
       _e,
-      params: { messages?: unknown; provider?: unknown; model?: unknown; temperature?: unknown },
+      params: { messages?: unknown; role?: unknown; provider?: unknown; model?: unknown; temperature?: unknown },
     ) => {
       // The resolved provider and model come back with the id: both default to
       // the configured values, which only this side knows, and a caller that
       // read them from settings later would read whatever is selected THEN.
       return llmService.chat({
         messages: asMessages(params?.messages),
+        role: asRole(params?.role),
         provider: params?.provider === undefined ? undefined : asProvider(params.provider),
         model: params?.model === undefined ? undefined : String(params.model),
         temperature: typeof params?.temperature === "number" ? params.temperature : undefined,
       });
     },
+  );
+  /** One awaited JSON-shaped answer from the instant slot (or the role
+   *  named). The shape is the caller's schema; the service parses and retries
+   *  once, and a renderer never sees text it has to scrape. */
+  ipcMain.handle(
+    "llm:json",
+    async (_e, params: { messages?: unknown; schema?: unknown; role?: unknown; timeoutMs?: unknown }) => {
+      const schema = params?.schema && typeof params.schema === "object" ? (params.schema as object) : null;
+      if (!schema) throw new Error("llm:json needs a JSON schema.");
+      return llmService.completeJson(
+        { messages: asMessages(params?.messages), role: asRole(params?.role) ?? "instant", schema },
+        { timeoutMs: typeof params?.timeoutMs === "number" ? Math.min(120_000, Math.max(1_000, params.timeoutMs)) : 30_000 },
+      );
+    },
+  );
+  /** Fill-in-the-middle from the autocomplete slot — the ghost text. Short,
+   *  local only (the store refuses a hosted slot; the service refuses again). */
+  ipcMain.handle(
+    "llm:fim",
+    async (_e, params: { prefix?: unknown; suffix?: unknown; maxTokens?: unknown }) =>
+      llmService.fim(
+        {
+          prefix: typeof params?.prefix === "string" ? params.prefix : "",
+          suffix: typeof params?.suffix === "string" ? params.suffix : "",
+          maxTokens: typeof params?.maxTokens === "number" ? params.maxTokens : undefined,
+        },
+        { timeoutMs: 8_000 },
+      ),
   );
   ipcMain.handle("llm:cancel", async (_e, params: { requestId?: unknown }) => {
     llmService.cancel(String(params?.requestId ?? ""));

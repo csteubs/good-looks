@@ -6,6 +6,8 @@ import * as path from "path";
 
 import { app, logger } from "@shell/backend";
 
+import { defaultInspections, normalizeInspections } from "../../shared/inspections.mjs";
+
 import {
   isInsightsCadence,
   isRunBrowser,
@@ -18,6 +20,8 @@ import {
   EDITOR_FONT_SIZE_DEFAULT,
   editorFontSizeOrDefault,
   isEditorTabSize,
+  EDITOR_KEYMAPS,
+  EditorKeymap,
 } from "../recorder/types.js";
 import type { BatchRowOptions, RecorderSettings } from "../recorder/types.js";
 import { normalizeViewport } from "../recorder/window-size.js";
@@ -121,6 +125,42 @@ function clampBatchDefault(value: unknown, fallback: number): number {
  *    zero-engine row is a ticked test that never runs, and falling back to the
  *    defaults is the recoverable outcome.
  */
+/** Longest standing-instruction text kept, global or per host. Generous for
+ *  a page of house rules; a cap because the text is prepended to every prompt
+ *  the editor sends, and the budget line would otherwise be the only warning. */
+export const AI_INSTRUCTIONS_MAX = 4000;
+const AI_INSTRUCTION_HOSTS_MAX = 100;
+
+function isEditorKeymap(v: unknown): v is EditorKeymap {
+  return (EDITOR_KEYMAPS as readonly unknown[]).includes(v);
+}
+
+/** Longest page stylesheet or init script kept. */
+export const USER_PAGE_TEXT_MAX = 50_000;
+function normalizeUserPageText(raw: unknown): string {
+  return typeof raw === "string" ? raw.slice(0, USER_PAGE_TEXT_MAX) : "";
+}
+
+function normalizeAiInstructions(raw: unknown): string {
+  return typeof raw === "string" ? raw.slice(0, AI_INSTRUCTIONS_MAX) : "";
+}
+
+/** Hosts lowercased and trimmed, blank texts dropped, so a rule saved for
+ *  "Shop.Example.com " applies to shop.example.com. */
+function normalizeAiInstructionsByHost(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = Object.create(null) as Record<string, string>;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  let n = 0;
+  for (const [host, text] of Object.entries(raw as Record<string, unknown>)) {
+    const key = host.trim().toLowerCase();
+    const value = normalizeAiInstructions(text);
+    if (!key || !value.trim()) continue;
+    if (++n > AI_INSTRUCTION_HOSTS_MAX) break;
+    out[key] = value;
+  }
+  return out;
+}
+
 function normalizeBatchTestOptions(raw: unknown): Record<string, BatchRowOptions> {
   const out: Record<string, BatchRowOptions> = Object.create(null) as Record<
     string,
@@ -224,6 +264,13 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   editorLineNumbers: true,
   editorTabSize: 2,
   editorCheckOnSave: true,
+  editorFormatOnSave: true,
+  editorKeymap: "default",
+  aiInstructions: "",
+  aiInstructionsByHost: {},
+  inspections: defaultInspections(),
+  userStylesheet: "",
+  userInitScript: "",
   // USD, because the runner prices the Settings pane offers are published in
   // it. The two numbers below are the app's own conservative guesses, and the
   // Cost panel says so on screen for as long as they are unchanged.
@@ -428,6 +475,14 @@ function read(): RecorderSettings {
         typeof parsed.editorCheckOnSave === "boolean"
           ? parsed.editorCheckOnSave
           : DEFAULT_SETTINGS.editorCheckOnSave,
+      editorFormatOnSave:
+        typeof parsed.editorFormatOnSave === "boolean" ? parsed.editorFormatOnSave : DEFAULT_SETTINGS.editorFormatOnSave,
+      editorKeymap: isEditorKeymap(parsed.editorKeymap) ? parsed.editorKeymap : DEFAULT_SETTINGS.editorKeymap,
+      aiInstructions: normalizeAiInstructions(parsed.aiInstructions),
+      aiInstructionsByHost: normalizeAiInstructionsByHost(parsed.aiInstructionsByHost),
+      inspections: normalizeInspections(parsed.inspections),
+      userStylesheet: normalizeUserPageText(parsed.userStylesheet),
+      userInitScript: normalizeUserPageText(parsed.userInitScript),
       // Clamped rather than cast. Both numbers multiply every figure on the
       // Cost panel, so a hand-edited `0` or `1e9` on disk would render as a
       // confident "$0.00 spent" or an absurd one — a wrong answer that looks
@@ -645,6 +700,26 @@ export const recorderSettingsStore = {
       editorTabSize: isEditorTabSize(update.editorTabSize) ? update.editorTabSize : current.editorTabSize,
       editorCheckOnSave:
         typeof update.editorCheckOnSave === "boolean" ? update.editorCheckOnSave : current.editorCheckOnSave,
+      editorFormatOnSave:
+        typeof update.editorFormatOnSave === "boolean" ? update.editorFormatOnSave : current.editorFormatOnSave,
+      editorKeymap: isEditorKeymap(update.editorKeymap) ? update.editorKeymap : current.editorKeymap,
+      aiInstructions:
+        typeof update.aiInstructions === "string" ? normalizeAiInstructions(update.aiInstructions) : current.aiInstructions,
+      // Replaced whole, not merged: the pane sends the full table, and a
+      // removed host has to be removable.
+      aiInstructionsByHost:
+        update.aiInstructionsByHost !== undefined
+          ? normalizeAiInstructionsByHost(update.aiInstructionsByHost)
+          : current.aiInstructionsByHost,
+      userStylesheet:
+        typeof update.userStylesheet === "string" ? normalizeUserPageText(update.userStylesheet) : current.userStylesheet,
+      userInitScript:
+        typeof update.userInitScript === "string" ? normalizeUserPageText(update.userInitScript) : current.userInitScript,
+      // A patch names the rules it changes; the rest keep their setting.
+      inspections:
+        update.inspections !== undefined
+          ? normalizeInspections({ ...current.inspections, ...(update.inspections as object) })
+          : current.inspections,
       // Same clamps as `read()`, on the same principle as `uiScale` above: a
       // value refused on load but accepted on save is written to disk and then
       // ignored forever, which reads as "the setting does not work".

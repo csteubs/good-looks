@@ -111,3 +111,20 @@ describe("search filtering", () => {
     expect(screen.queryByRole("switch", { name: /show url bar/i })).toBeNull();
   });
 });
+
+describe("page stylesheet and init script", () => {
+  it("saves each on blur when it changed, and the init script row carries its risk", () => {
+    const { controller } = renderPane(<RecordingPane />);
+    const css = screen.getByLabelText("Page stylesheet") as HTMLTextAreaElement;
+    fireEvent.blur(css);
+    expect(controller.save).not.toHaveBeenCalled();
+    fireEvent.change(css, { target: { value: "#chat { display: none }" } });
+    fireEvent.blur(css);
+    expect(controller.save).toHaveBeenCalledWith({ userStylesheet: "#chat { display: none }" });
+    const js = screen.getByLabelText(/^Page init script/) as HTMLTextAreaElement;
+    fireEvent.change(js, { target: { value: "window.__x = 1;" } });
+    fireEvent.blur(js);
+    expect(controller.save).toHaveBeenLastCalledWith({ userInitScript: "window.__x = 1;" });
+    expect(screen.getByText(/runs on every site the trainer visits/)).toBeTruthy();
+  });
+});

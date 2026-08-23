@@ -47,7 +47,13 @@ import { EditStepsView } from "./edit-steps-view";
 import { RunOutput } from "./run-output";
 import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import { ScriptEditor, type LineInlay, type RunLineStatus, type ScriptEditorHandle } from "./script-view";
-import { markScriptDirty } from "../lib/script-buffer";
+import { isScriptDirty, markScriptDirty } from "../lib/script-buffer";
+import { makeGhostSource } from "../lib/ghost-source";
+import { resolveAiInstructions } from "../lib/ai-instructions";
+import { applyTextEdits } from "../lib/text-edits";
+import type { TsIntelligence } from "./script-view";
+import { ScriptAiPanel, type ScriptAiApplyMeta, type ScriptAiMode, type ScriptAiSelection } from "./script-ai-panel";
+import { ScriptOutlinePanel } from "./script-outline-panel";
 import { SCRIPT_CHANGED_ON_DISK, isScriptChangedOnDisk } from "../../shared/script-save.mjs";
 import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
@@ -153,6 +159,15 @@ export function TestDetailView() {
   const [editingName, setEditingName] = React.useState(false);
   const [nameDraft, setNameDraft] = React.useState("");
   const [editingScript, setEditingScript] = React.useState(false);
+  // The inline AI panel (⌘K rewrite / explain the failure), and the origin
+  // the NEXT save carries once an AI rewrite has been applied into the
+  // buffer — so the Heals tab files the change as the model's, not the
+  // user's, even though the user pressed Save.
+  const [aiPanel, setAiPanel] = React.useState<{ mode: ScriptAiMode; selection: ScriptAiSelection | null } | null>(null);
+  const aiOriginRef = React.useRef<ScriptChangeSource | null>(null);
+  // The outline (go to step, and the caret locator's usages across the library).
+  const [outlineOpen, setOutlineOpen] = React.useState(false);
+  const testsQuery = useQuery({ queryKey: ["tests"], queryFn: api.tests.list, enabled: outlineOpen });
   const [scriptDraft, setScriptDraft] = React.useState("");
   // The pre-save check's verdict on the draft. `checking` holds Save while the
   // Playwright CLI has the draft; `failed` keeps the editor open with the
@@ -275,6 +290,48 @@ export function TestDetailView() {
     queryKey: ["recorder-settings"],
     queryFn: () => api.recorder.getSettings(),
   });
+  // Ghost text is on while editing and an autocomplete slot is assigned
+  // (Settings → AI → Autocomplete). Settings is another window, so this
+  // cache cannot be invalidated from there; a short staleTime and the
+  // focus refetch are what notice a slot assigned while the editor was open.
+  const llmConfigQuery = useQuery({
+    queryKey: ["llm", "config"],
+    queryFn: () => api.llm.getConfig(),
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
+  const ghostSource = React.useMemo(() => makeGhostSource((p) => api.llm.fim(p)), []);
+  // The TypeScript service (Phase 4). Asked for once per view; "unavailable"
+  // is a state the bar reports, never an error, and the editor keeps its
+  // syntax and CLI diagnostics without it.
+  const tsStatusQuery = useQuery({
+    queryKey: ["ts", "status"],
+    queryFn: () => api.ts.ensure(),
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const tsAvailable = Boolean(tsStatusQuery.data?.available);
+  const intelligence = React.useMemo<TsIntelligence | null>(
+    () =>
+      tsAvailable
+        ? {
+            update: (text) => api.ts.update(id, text),
+            diagnostics: () => api.ts.diagnostics(id),
+            inspections: () => api.ts.inspections(id),
+            completions: (offset) => api.ts.completions(id, offset),
+            hover: (offset) => api.ts.hover(id, offset),
+          }
+        : null,
+    [id, tsAvailable],
+  );
+  React.useEffect(() => {
+    if (!tsAvailable) return;
+    return () => {
+      void api.ts.close(id).catch(() => {});
+    };
+  }, [id, tsAvailable]);
+  const ghostEnabled = editingScript && Boolean(llmConfigQuery.data?.roles?.autocomplete);
   // Settings → Editor → Font size lands on the two tokens every editor
   // column is sized from (renderer/theme/editor.css). Written on the document
   // so the theme extension's `var()` reads pick it up without a remount.
@@ -624,6 +681,29 @@ export function TestDetailView() {
       }
     }
   };
+  const openAi = (mode: ScriptAiMode) => {
+    const view = scriptEditorRef.current?.view();
+    const sel = view?.state.selection.main;
+    const selection: ScriptAiSelection | null =
+      mode === "rewrite" && view && sel && !sel.empty
+        ? { from: sel.from, to: sel.to, text: view.state.doc.sliceString(sel.from, sel.to) }
+        : null;
+    setAiPanel({ mode, selection });
+  };
+  const applyAi = (next: string, meta: ScriptAiApplyMeta) => {
+    setScriptDraft(next);
+    markScriptDirty(id, true);
+    aiOriginRef.current = {
+      by: "ai-inline",
+      affordance: meta.affordance,
+      provider: meta.provider,
+      model: meta.model,
+      promptVersion: meta.promptVersion,
+      reviewed: true,
+    };
+    setAiPanel(null);
+    scriptEditorRef.current?.focusLine(1);
+  };
   const recordHere = () => {
     if (!test) return;
     pendingCursorRef.current = caretStep ? caretStep.index + 1 : test.steps.length;
@@ -748,7 +828,14 @@ export function TestDetailView() {
       // step list wholesale — so this is the only moment the previous list
       // still exists anywhere.
       const before = qc.getQueryData<TestRecord | null>(["test", id])?.steps ?? [];
-      const updated = await api.tests.updateScript(id, source, origin);
+      // An AI fix lands under the same two rules a hand edit does: never over a
+      // draft the user has open, and never over a file that moved on since the
+      // fix was diffed — the base is the script the panel diffed against.
+      if (isScriptDirty(id)) {
+        throw new Error("The Script tab has an unsaved draft of this test — save or discard it before applying a fix.");
+      }
+      const base = qc.getQueryData<string>(["script", id]);
+      const updated = await api.tests.updateScript(id, source, origin, base);
       // Diff off the handler's return value rather than a refetch: the refetch
       // is async and the highlight would race it, and the record it returns is
       // the same one the invalidation is about to put in the cache anyway.
@@ -862,10 +949,10 @@ export function TestDetailView() {
    *  will the parser lose statements it could map before (asked once, over
    *  the new misses only), and is the draft still built on the file as it is
    *  (refused by the backend; answered with Reload or Overwrite). */
-  const writeScriptDraft = async (opts: { overwrite?: boolean; confirmedDiverge?: boolean } = {}) => {
+  const writeScriptDraft = async (opts: { overwrite?: boolean; confirmedDiverge?: boolean } = {}, text: string = scriptDraft) => {
     if (!opts.confirmedDiverge) {
       try {
-        const preview = await api.tests.previewScript(id, scriptDraft);
+        const preview = await api.tests.previewScript(id, text);
         if (preview.tracked && preview.newlySkipped.length > 0) {
           setDivergeConfirm({ newlySkipped: preview.newlySkipped, overwrite: Boolean(opts.overwrite) });
           return;
@@ -881,10 +968,11 @@ export function TestDetailView() {
       // Heals tab's labels honest if the default ever changes.
       await api.tests.updateScript(
         id,
-        scriptDraft,
-        { by: "manual", reviewed: true },
+        text,
+        aiOriginRef.current ?? { by: "manual", reviewed: true },
         opts.overwrite ? undefined : scriptBase,
       );
+      aiOriginRef.current = null;
     } catch (err) {
       if (isScriptChangedOnDisk(err)) {
         setStaleOpen(true);
@@ -923,17 +1011,34 @@ export function TestDetailView() {
    *  lines. A check that could not RUN is reported the same way — it is not a
    *  pass — and "Save anyway" is the way past either. */
   const saveScript = async () => {
+    // Settings → Editor → "Format on save": TypeScript's formatter over the
+    // draft, through the service, before the check and the write. The
+    // formatted text becomes the draft, so what was checked is what is saved
+    // and what the editor shows afterwards. Unavailable service: no format.
+    let draft = scriptDraft;
+    if (settingsQuery.data?.editorFormatOnSave !== false && tsAvailable) {
+      try {
+        await api.ts.update(id, draft);
+        const formatted = applyTextEdits(draft, await api.ts.format(id));
+        if (formatted !== draft) {
+          draft = formatted;
+          setScriptDraft(formatted);
+        }
+      } catch {
+        // A formatter that did not answer is not a reason to refuse a save.
+      }
+    }
     // Settings → Editor → "Check with Playwright before saving". Off, the
     // save still refuses a stale draft and still asks about statements the
     // parser would lose; it stops asking the CLI whether the file loads.
     if (settingsQuery.data?.editorCheckOnSave === false) {
-      await writeScriptDraft();
+      await writeScriptDraft({}, draft);
       return;
     }
     setScriptCheck({ status: "checking", errors: [] });
     let result: ScriptCheckResult;
     try {
-      result = await api.tests.checkScript(id, scriptDraft);
+      result = await api.tests.checkScript(id, draft);
     } catch (err) {
       setScriptCheck({
         status: "failed",
@@ -950,7 +1055,7 @@ export function TestDetailView() {
       setScriptCheck({ status: "failed", errors: result.errors });
       return;
     }
-    await writeScriptDraft();
+    await writeScriptDraft({}, draft);
   };
 
   /** Put the caret at the start of a reported line and bring it into view. */
@@ -1531,6 +1636,37 @@ export function TestDetailView() {
                       {livePage.closedReason}
                     </span>
                   ) : null}
+                  <Btn
+                    onClick={() => setOutlineOpen((v) => !v)}
+                    aria-pressed={outlineOpen}
+                    title="The steps as a list to jump to, and where the caret's locator is used across the library"
+                  >
+                    Outline
+                  </Btn>
+                  {tsStatusQuery.data ? (
+                    <span
+                      className="gl-script-live-status"
+                      data-gl="ts-status"
+                      {...(tsAvailable ? {} : { "data-muted": "" })}
+                      title={tsAvailable ? `TypeScript ${tsStatusQuery.data.typescript ?? ""} — completions, hover, type errors and inspections` : tsStatusQuery.data.reason}
+                    >
+                      {tsAvailable ? "Types ready" : "Types unavailable"}
+                    </span>
+                  ) : null}
+                  {typeof failedStepIndex === "number" && runOutput ? (
+                    <Btn
+                      tone="ai"
+                      onClick={() => openAi("explain")}
+                      title="Ask the instant model why the last run failed, starting from the caret's statement"
+                    >
+                      Explain failure
+                    </Btn>
+                  ) : null}
+                  {editingScript ? (
+                    <Btn tone="ai" onClick={() => openAi("rewrite")} title="Rewrite the selection or the whole file with AI (⌘K)">
+                      Ask AI
+                    </Btn>
+                  ) : null}
                   {editingScript ? (
                     <Btn
                       onClick={() => void pickLocator()}
@@ -1578,6 +1714,8 @@ export function TestDetailView() {
                       onClick={() => {
                         setEditingScript(false);
                         setScriptCheck(IDLE_CHECK);
+                        setAiPanel(null);
+                        aiOriginRef.current = null;
                       }}
                     >
                       Cancel
@@ -1607,6 +1745,38 @@ export function TestDetailView() {
                   </>
                 )}
               </div>
+              {outlineOpen ? (
+                <ScriptOutlinePanel
+                  steps={preview?.stepList ?? test.steps}
+                  stepRanges={preview?.stepRanges ?? []}
+                  script={shownScript}
+                  caretIndex={caretStep?.index ?? null}
+                  tests={testsQuery.data ?? []}
+                  currentTestId={id}
+                  onJumpToLine={jumpToScriptLine}
+                  onOpenTest={(testId) => navigate({ to: "/test/$id", params: { id: testId } })}
+                  onClose={() => setOutlineOpen(false)}
+                />
+              ) : null}
+              {aiPanel ? (
+                <ScriptAiPanel
+                  mode={aiPanel.mode}
+                  testId={id}
+                  testName={test.name}
+                  testUrl={test.url}
+                  script={shownScript}
+                  selection={aiPanel.selection}
+                  caretLine={caretLine ?? 1}
+                  failure={
+                    typeof failedStepIndex === "number"
+                      ? { index: failedStepIndex, label: test.steps[failedStepIndex] ? describeStep(test.steps[failedStepIndex]) : undefined, output: runOutput }
+                      : { output: runOutput }
+                  }
+                  instructions={resolveAiInstructions(settingsQuery.data, test.url)}
+                  onApply={applyAi}
+                  onClose={() => setAiPanel(null)}
+                />
+              ) : null}
               {editingScript && scriptCheck.status === "failed" ? (
                 <ul className="gl-script-check-errors" aria-label="Script problems">
                   {scriptCheck.errors.map((e, i) => (
@@ -1643,6 +1813,11 @@ export function TestDetailView() {
                 lineNumbers={settingsQuery.data?.editorLineNumbers ?? true}
                 tabSize={settingsQuery.data?.editorTabSize ?? 2}
                 inlays={liveInlays}
+                ghost={ghostEnabled ? ghostSource : null}
+                onAiRequest={editingScript ? () => openAi("rewrite") : undefined}
+                intelligence={intelligence}
+                keymapPreset={settingsQuery.data?.editorKeymap ?? "default"}
+                stepRanges={preview?.stepRanges ?? null}
               />
               <Dialog
                 open={staleOpen}
