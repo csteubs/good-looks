@@ -862,6 +862,60 @@ for (const c of WAIT_UNTIL_CASES) {
   assertEqual(parsed.skipped, 0, "the test.step wrappers themselves aren't counted as skipped");
 }
 
+// ── 18b. A wrapper inside a block, before an else, and with a hostile title ─
+//
+// The generator wraps every plain statement in `await test.step(…)` since
+// 2026-08-22. Three places the old walk-through-the-wrapper reading went
+// wrong, each pinned: the wrapper's `});` inside an `if` popped the block and
+// read as `endif`; a wrapper directly before `} else {` made the anchored
+// else matcher miss, losing the else; and a title quoting a statement was
+// scanned as one. None of these had a fixture before the generator emitted
+// the shape.
+{
+  const src = [
+    'import { test, expect } from "@playwright/test";',
+    "",
+    'test("wrapped", async ({ page }) => {',
+    '  await test.step("goto https://example.com", async () => {',
+    '    await page.goto("https://example.com");',
+    "  });",
+    '  if (await page.getByText("Promo").isVisible()) {',
+    '    await test.step("click page.getByTestId(\\"a\\").click()", async () => {',
+    '      await page.getByTestId("promo-close").click();',
+    "    });",
+    "  } else {",
+    '    await test.step("fill Email", async () => {',
+    '      await page.getByLabel("Email").fill("a@b.c");',
+    "    });",
+    "  }",
+    "  for (let i = 0; i < 2; i++) {",
+    '    await test.step("click Next", async () => {',
+    '      await page.getByRole("button", { name: "Next" }).click();',
+    "    });",
+    "  }",
+    "});",
+    "",
+  ].join("\n");
+  const parsed = parseSpecDetailed(src);
+  assertEqual(
+    parsed.steps.map((s) => s.type),
+    ["goto", "if", "click", "else", "fill", "endif", "loop", "click", "endLoop"],
+    "wrappers inside if/else/for read as their statements, with the blocks intact",
+  );
+  assertEqual(parsed.skipped, 0, "no wrapper, and no wrapper title, counts as a skip");
+  assertEqual(
+    parsed.steps.filter((s) => s.type === "click").map((s) => s.locator?.v),
+    ["promo-close", undefined],
+    "the title's quoted statement never became a step of its own",
+  );
+  assertEqual(parsed.stepRanges.length, parsed.steps.length, "every step has a range");
+  // The ranges land on the inner statements, never on the wrapper lines.
+  for (const r of parsed.stepRanges) {
+    const text = src.slice(r.from, r.to);
+    assertEqual(/test\.step/.test(text), false, "a step's range excludes the wrapper: " + JSON.stringify(text));
+  }
+}
+
 // ── 19. A locator bound to a `const` and used later ───────────────────────
 //
 // The app never generates this, but a model asked for a readable spec writes

@@ -1204,6 +1204,41 @@ function parseBody(
       continue;
     }
 
+    // await test.step("…", async () => { … }); — the per-step wrapper the
+    // generator emits since 2026-08-22, and the shape a model reaches for when
+    // it writes readable specs. Consumed as ONE unit, before the brace closer
+    // below: its `});` would otherwise pop whatever `if`/`for` is open, and
+    // its TITLE is never scanned — a title that quotes a statement
+    // (`click "Sign in"` is harmless; `page.getByTestId("a").click()` would
+    // have matched the locator branch from inside the string). Matched before
+    // `braceM` for the same reason the teardown latch is: the ordering is
+    // load-bearing. The body is parsed by recursion with the caller's
+    // variables and armed downloads, so a wrapper changes nothing about what
+    // its statement means.
+    const stepWrapM = rest.match(/^[\s;]*await\s+test\.step\s*\(/);
+    if (stepWrapM) {
+      const callOpen = i + stepWrapM[0].length - 1;
+      const arrow = src.indexOf("=>", callOpen);
+      const bodyOpen = arrow >= 0 ? src.indexOf("{", arrow) : -1;
+      const bodyClose = bodyOpen >= 0 ? matchBrace(src, bodyOpen) : -1;
+      if (bodyClose < 0) {
+        skipped++;
+        i = callOpen + 1;
+        continue;
+      }
+      const innerResult = parseBody(src.slice(bodyOpen + 1, bodyClose), vars, pendingDownloads, base + bodyOpen + 1);
+      steps.push(...innerResult.steps);
+      stepRanges.push(...innerResult.stepRanges);
+      skippedRanges.push(...innerResult.skippedRanges);
+      skipped += innerResult.skipped;
+      // Past the callback's `}`, the call's `)` and a trailing `;`.
+      let j = bodyClose + 1;
+      while (j < src.length && /[\s)]/.test(src[j])) j++;
+      if (src[j] === ";") j++;
+      i = j;
+      continue;
+    }
+
     // Closing brace of a recognized block → the closer for whatever opened it.
     const braceM = rest.match(/^[\s;]*\}/);
     // `} else {` re-opens the SAME if rather than closing it - matched before
