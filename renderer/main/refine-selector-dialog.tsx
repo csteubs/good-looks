@@ -33,7 +33,9 @@ export function formatLocator(l: Locator): string {
     case "placeholder":
       return `getByPlaceholder(${JSON.stringify(l.v ?? "")})`;
     case "text":
-      return `getByText(${JSON.stringify(l.v ?? "")})`;
+      return l.exact === true
+        ? `getByText(${JSON.stringify(l.v ?? "")}, { exact: true })`
+        : `getByText(${JSON.stringify(l.v ?? "")})`;
     case "css":
       return `locator(${JSON.stringify(l.v ?? "")})`;
     case "xpath":

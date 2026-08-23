@@ -77,7 +77,8 @@ const FACTORIES = {
   getByTestId: (args) => "testid|" + String(args[0]),
   getByLabel: (args) => "label|" + String(args[0]),
   getByPlaceholder: (args) => "placeholder|" + String(args[0]),
-  getByText: (args) => "text|" + String(args[0]),
+  // Exact and substring are two locators and two keys — see healKeyText.
+  getByText: (args) => healKeyText(String(args[0]), !!(args[1] && args[1].exact)),
   getByRole: (args) => {
     const name = args[1] && args[1].name != null ? String(args[1].name) : "";
     return "role|" + String(args[0]) + "|" + name;
@@ -117,7 +118,7 @@ function baseFromModel(root, loc) {
   }
   if (loc.k === "label") return root.getByLabel(loc.v);
   if (loc.k === "placeholder") return root.getByPlaceholder(loc.v);
-  if (loc.k === "text") return root.getByText(loc.v);
+  if (loc.k === "text") return loc.exact ? root.getByText(loc.v, { exact: true }) : root.getByText(loc.v);
   if (loc.k === "xpath") return root.locator("xpath=" + loc.v);
   if (loc.k === "role") {
     return loc.name ? root.getByRole(loc.role, { name: loc.name }) : root.getByRole(loc.role);

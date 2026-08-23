@@ -122,7 +122,9 @@ function locatorBaseExpr(loc: Locator): string {
     case "placeholder":
       return "getByPlaceholder(" + q(loc.v ?? "") + ")";
     case "text":
-      return "getByText(" + q(loc.v ?? "") + ")";
+      return loc.exact === true
+        ? "getByText(" + q(loc.v ?? "") + ", { exact: true })"
+        : "getByText(" + q(loc.v ?? "") + ")";
     case "xpath":
       return "locator(" + q("xpath=" + (loc.v ?? "")) + ")";
     case "css":

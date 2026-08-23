@@ -102,7 +102,13 @@ function countMatches(loc: Locator): number {
     ).length;
   }
   if (loc.k === "text") {
-    const hits = [...document.querySelectorAll("*")].filter((el) => has(el.textContent, loc.v ?? ""));
+    // `exact`: whole string, case-sensitive, whitespace normalized — spelled
+    // here independently of the script's pwIs.
+    const tidy = (s: string | null | undefined) => String(s ?? "").replace(/\s+/g, " ").trim();
+    const match = loc.exact === true
+      ? (hay: string | null | undefined, needle: string) => tidy(hay) === tidy(needle)
+      : has;
+    const hits = [...document.querySelectorAll("*")].filter((el) => match(el.textContent, loc.v ?? ""));
     return hits.filter((el) => !hits.some((o) => o !== el && el.contains(o))).length;
   }
   if (loc.k === "xpath") return 1; // positional by construction
@@ -264,6 +270,10 @@ describe("the locator the recorder chooses", () => {
     install(`<div><span>Browser</span></div><div><span>Browsers</span></div>`);
     const loc = clickAndCapture(document.querySelector("span"));
     expect(loc).not.toEqual({ k: "text", v: "Browser" });
+    // And what it records instead (2026-08-22): the EXACT form, which matches
+    // "Browser" and not "Browsers" — the locator the Will Pass Firefox test
+    // needed all along, ahead of any index or generated path.
+    expect(loc).toEqual({ k: "text", v: "Browser", exact: true });
     expectRunnable(loc);
   });
 
@@ -487,5 +497,68 @@ describe("the roles Playwright derives from a tag", () => {
     expect(resolve({ k: "role", role: "rowheader" }).map((el) => el.id)).toEqual(["row"]);
     expect(resolve({ k: "role", role: "cell" }).map((el) => el.id)).toEqual(["cell"]);
     expect(resolve({ k: "role", role: "gridcell" }).map((el) => el.id)).toEqual(["gridcell"]);
+  });
+});
+
+// ── The exact text candidate ──────────────────────────────────────────────
+//
+// getByText's default is a case-insensitive substring, and on a real page that
+// is the ambiguity: "Mountain" beside "mountains" resolves to both. Playwright
+// has the other form — getByText(v, { exact: true }), whole-string and
+// case-sensitive — and until 2026-08-22 the recorder could not spell it, so
+// the fallback from an ambiguous substring was an index or a generated path.
+// The exact candidate sits right after the substring one: a unique substring
+// still records as it always did, and the exact form is tried before any CSS.
+
+describe("the exact text candidate", () => {
+  it("records exact text where the substring is ambiguous and no role names the element", () => {
+    // The Unsplash shape with a <span> in place of the heading, so no role
+    // candidate exists and the text forms decide.
+    install(`
+      <span>Mountain</span>
+      <a href="/s/mountains">mountains</a>
+      <a href="/s/mountain-peak">mountain peak</a>
+    `);
+    const loc = clickAndCapture(document.querySelector("span"));
+    expect(loc).toEqual({ k: "text", v: "Mountain", exact: true });
+    expectRunnable(loc);
+  });
+
+  it("leaves a unique substring exactly as it was", () => {
+    install(`<span>Save</span><span>Cancel</span>`);
+    const loc = clickAndCapture(document.querySelector("span"));
+    expect(loc).toEqual({ k: "text", v: "Save" });
+    expectRunnable(loc);
+  });
+
+  it("is case-sensitive — the one thing the substring form is not", () => {
+    install(`<span>Mountain</span><span>mountain</span>`);
+    const loc = clickAndCapture(document.querySelector("span"));
+    expect(loc).toEqual({ k: "text", v: "Mountain", exact: true });
+    expectRunnable(loc);
+  });
+
+  it("does not name a wrapper by a child's whole text", () => {
+    // Playwright's smallest-element rule: the exact text of the <a> is the
+    // <span>'s, so the exact candidate resolves to the span, not the anchor.
+    // `found[0] === el` rejects it; the anchor records by its role instead.
+    install(`<a href="/x"><span>Go</span></a><a href="/y"><span>Go</span></a>`);
+    const loc = clickAndCapture(document.querySelector("a"));
+    expect(loc?.exact).toBeUndefined();
+    expectRunnable(loc);
+  });
+
+  it("survives the capture boundary and the generator spells it", () => {
+    install(`<span>Mountain</span><a href="/m">mountains</a>`);
+    const loc = clickAndCapture(document.querySelector("span"));
+    const src = generateSpec({
+      id: "t",
+      name: "exact",
+      url: "https://example.test",
+      createdAt: 0,
+      updatedAt: 0,
+      steps: [{ id: "s", type: "click", timestamp: 0, locator: loc }],
+    } as unknown as TestRecord);
+    expect(src).toContain('getByText("Mountain", { exact: true }).click()');
   });
 });

@@ -25,6 +25,7 @@ import { pathToFileURL } from "url";
 
 import { healFixtureSource } from "./heal-fixture-source.js";
 import { healKeyFor } from "./playwright-runner.js";
+import { healKeyOperatorSource } from "../../shared/heal-key.mjs";
 import { testIdSelector } from "../../shared/testid-attr.mjs";
 import type { Locator } from "../recorder/types.js";
 
@@ -228,6 +229,9 @@ describe("heal key agreement", () => {
     { loc: { k: "label", v: "Email" }, expected: "label|Email" },
     { loc: { k: "placeholder", v: "Search" }, expected: "placeholder|Search" },
     { loc: { k: "text", v: "Log in" }, expected: "text|Log in" },
+    // Two locators, two keys: a heal recorded for the substring form must not
+    // apply to the exact one, which resolves a different set.
+    { loc: { k: "text", v: "Log in", exact: true }, expected: "text!|Log in" },
     { loc: { k: "role", role: "button", name: "Save" }, expected: "role|button|Save" },
     { loc: { k: "role", role: "button" }, expected: "role|button|" },
     { loc: { k: "css", v: "#main .btn" }, expected: "css|#main .btn" },
@@ -245,10 +249,11 @@ describe("heal key agreement", () => {
     // just healing that silently never fires.
     const m = healFixtureSource.match(/const FACTORIES = \{[\s\S]*?\n\};/);
     expect(m, "FACTORIES table not found in the fixture source").toBeTruthy();
-    const factories = eval(`(${m![0].replace(/^const FACTORIES = /, "").replace(/;$/, "")})`) as Record<
-      string,
-      (args: unknown[]) => string
-    >;
+    // The table calls the shared key operators (healKeyText), which the
+    // fixture embeds as source — so they are embedded here the same way.
+    const factories = eval(
+      `${healKeyOperatorSource()}; (${m![0].replace(/^const FACTORIES = /, "").replace(/;$/, "")})`,
+    ) as Record<string, (args: unknown[]) => string>;
 
     // Each locator kind, as the runner keys it and as the fixture would tag it.
     const pairs: { loc: Locator; factory: string; args: unknown[] }[] = [
@@ -256,6 +261,7 @@ describe("heal key agreement", () => {
       { loc: { k: "label", v: "Email" }, factory: "getByLabel", args: ["Email"] },
       { loc: { k: "placeholder", v: "Search" }, factory: "getByPlaceholder", args: ["Search"] },
       { loc: { k: "text", v: "Log in" }, factory: "getByText", args: ["Log in"] },
+      { loc: { k: "text", v: "Log in", exact: true }, factory: "getByText", args: ["Log in", { exact: true }] },
       {
         loc: { k: "role", role: "button", name: "Save" },
         factory: "getByRole",

@@ -1092,6 +1092,34 @@ function main(): void {
     assertEqual(many[0].stepIndex, 0, "…in step order");
   }
 
+  // ── The exact-text flag on a locator ─────────────────────────────────────
+  //
+  // `exact` reaches the generator as an OPTIONS argument — `{ exact: true }`
+  // — so, like `nth`, it is pinned on both sides: the boundary admits only a
+  // literal `true` on a text locator, and the generator emits the option only
+  // for a literal `true`, because steps stored before the flag existed are
+  // regenerated from whatever their stored locator holds.
+  {
+    const forged = normalizeRawStep({ type: "click", locator: { k: "text", v: "Save", exact: "true" } });
+    assertEqual(forged?.locator?.exact, undefined, "a string \"true\" for exact is dropped at the boundary");
+    const offKind = normalizeRawStep({ type: "click", locator: { k: "css", v: "#x", exact: true } });
+    assertEqual(offKind?.locator?.exact, undefined, "exact on a non-text locator is dropped");
+    const real = normalizeRawStep({ type: "click", locator: { k: "text", v: "Save", exact: true } });
+    assertEqual(real?.locator?.exact, true, "a literal true on a text locator survives");
+
+    const stored = specFor([
+      { id: "a", type: "click", timestamp: 0, locator: { k: "text", v: "Save", exact: "true" } } as unknown as Step,
+      { id: "b", type: "click", timestamp: 0, locator: { k: "text", v: "Save", exact: 1 } } as unknown as Step,
+      { id: "c", type: "click", timestamp: 0, locator: { k: "text", v: "Save", exact: true } },
+    ]);
+    assertEqual(
+      stored.split("\n").filter((l) => l.includes("{ exact: true }")).length,
+      1,
+      "the generator emits the exact option for a literal true only",
+    );
+    assert(!stored.includes('exact: "true"'), "a stored string flag never reaches the source");
+  }
+
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed`);
     process.exit(1);

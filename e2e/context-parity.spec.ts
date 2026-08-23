@@ -207,6 +207,14 @@ const ROWS: Row[] = [
     expected: ["menu-in-nav"],
   },
 
+  {
+    // The exact form composes with context like any other base: the two Edit
+    // buttons are identical by exact text too, and the container decides.
+    label: "exact text within a container",
+    loc: { k: "text", v: "Edit", exact: true, ctx: { within: { k: "testid", v: "shipping-card" } } },
+    expected: ["edit-shipping"],
+  },
+
   // ---- withinHasText ------------------------------------------------------
   {
     label: "within + hasText picks the right row",

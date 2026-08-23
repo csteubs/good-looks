@@ -10,7 +10,7 @@ import { fileURLToPath } from "url";
 
 import { app, logger } from "@shell/backend";
 
-import { healKeyAnd, healKeyHasText, healKeyWithin } from "../../shared/heal-key.mjs";
+import { healKeyAnd, healKeyHasText, healKeyText, healKeyWithin } from "../../shared/heal-key.mjs";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 
 import { sendToMain } from "./app-window.js";
@@ -487,7 +487,7 @@ function healKeyBase(loc: Locator): string {
     case "placeholder":
       return `placeholder|${loc.v ?? ""}`;
     case "text":
-      return `text|${loc.v ?? ""}`;
+      return healKeyText(loc.v ?? "", loc.exact === true);
     case "role":
       return `role|${loc.role ?? ""}|${loc.name ?? ""}`;
     case "xpath":
