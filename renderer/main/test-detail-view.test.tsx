@@ -48,6 +48,8 @@ let signatures: {
 }[] = [];
 
 const run = vi.fn();
+/** The store's `start` — what "Edit in Trainer" and "Record here" call. */
+const startRecording = vi.fn(async (_url: string, _name: string, _testId?: string) => {});
 const setHeadless = vi.fn(async () => ({}) as TestRecord);
 const setBrowser = vi.fn(async () => ({}) as TestRecord);
 const setCaptureArtifacts = vi.fn(async () => ({}) as TestRecord);
@@ -82,6 +84,17 @@ const previewScript = vi.fn(async (_id: string, _source: string) => ({
   newlySkipped: [] as string[],
 }));
 const getScript = vi.fn(async (_id: string) => "import { test } from '@playwright/test';");
+/** The live page (a Playwright browser the editor owns). Closed unless a
+ *  test opens it. */
+let livePage: { open: boolean; url?: string; title?: string; picking?: boolean; closedReason?: string } = { open: false };
+const livePageOpen = vi.fn(async (url: string, _browser?: string) => {
+  livePage = { open: true, url, title: "Live" };
+  return livePage;
+});
+const countMany = vi.fn(async (_locators: unknown[]) => [] as { count: number | null; error?: string }[]);
+const highlightLocator = vi.fn(async (_locator: unknown) => {});
+const pickLocator = vi.fn(async () => null as null | { expr: string; locator: unknown });
+const setCursor = vi.fn(async (_index: number) => ({}));
 const checkScript = vi.fn(async (_id: string, _source: string) => ({
   ok: true,
   errors: [] as { message: string; line?: number; column?: number; snippet?: string }[],
@@ -108,7 +121,7 @@ vi.mock("./recorder-store", () => ({
         setEpoch((e) => e + 1);
       },
       stopRun: vi.fn(),
-      start: vi.fn(),
+      start: (...a: Parameters<typeof startRecording>) => startRecording(...a),
       runEpoch: epoch,
     };
   },
@@ -139,7 +152,21 @@ vi.mock("../lib/api", () => ({
       updateSteps: (...a: Parameters<typeof updateSteps>) => updateSteps(...a),
       dismissDiverged: (...a: Parameters<typeof dismissDiverged>) => dismissDiverged(...a),
     },
-    recorder: { getSettings: async () => settings as RecorderSettings },
+    recorder: {
+      getSettings: async () => settings as RecorderSettings,
+      setCursor: (...a: Parameters<typeof setCursor>) => setCursor(...a),
+    },
+    livePage: {
+      status: async () => livePage,
+      open: (...a: Parameters<typeof livePageOpen>) => livePageOpen(...a),
+      close: async () => {
+        livePage = { open: false };
+      },
+      countMany: (...a: Parameters<typeof countMany>) => countMany(...a),
+      highlight: (...a: Parameters<typeof highlightLocator>) => highlightLocator(...a),
+      pick: (...a: Parameters<typeof pickLocator>) => pickLocator(...a),
+      cancelPick: async () => {},
+    },
     runs: {
       // Returns a REAL summary on purpose: the toolbar must not render the old
       // "(adds ~…)" hint even when overhead data exists to show. With a null
@@ -1708,5 +1735,116 @@ describe("saving a script edit — stale drafts, divergence, and the dirty buffe
     setDraft(ta, "// edited");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("the Script tab's live page", () => {
+  const SCRIPT = [
+    'import { test, expect } from "@playwright/test";',
+    'test("Checkout", async ({ page }) => {',
+    '  await page.goto("https://example.com");',
+    '  await page.getByTestId("go").click();',
+    '  await page.getByRole("button").click();',
+    "});",
+  ].join("\n");
+  beforeEach(() => {
+    livePage = { open: false };
+    livePageOpen.mockClear();
+    countMany.mockReset();
+    countMany.mockImplementation(async (locators: unknown[]) =>
+      locators.map((l) => {
+        const loc = l as { k: string; name?: string };
+        if (loc.k === "testid") return { count: 1 };
+        if (loc.k === "role" && !loc.name) return { count: 3 };
+        return { count: 0 };
+      }),
+    );
+    highlightLocator.mockClear();
+    pickLocator.mockReset();
+    setCursor.mockClear();
+    getScript.mockReset();
+    getScript.mockImplementation(async () => SCRIPT);
+    previewScript.mockReset();
+    previewScript.mockImplementation(async (_id: string, source: string) => {
+      const lines = source.split("\n");
+      const at = (n: number) => lines.slice(0, n - 1).join("\n").length + (n > 1 ? 1 : 0);
+      const stepList = [
+        { id: "a", type: "goto", url: "https://example.com", timestamp: 0 },
+        { id: "b", type: "click", locator: { k: "testid", v: "go" }, timestamp: 0 },
+        { id: "c", type: "click", locator: { k: "role", role: "button" }, timestamp: 0 },
+      ] as unknown as Step[];
+      return {
+        tracked: true,
+        steps: 3,
+        skipped: 0,
+        stepRanges: [3, 4, 5].map((n) => ({ from: at(n) + 2, to: at(n) + lines[n - 1].length })),
+        skippedRanges: [],
+        newlySkipped: [],
+        stepList,
+      };
+    });
+    test_ = record({ url: "https://shop.example.com/${path}", variables: [{ name: "path", kind: "plain", value: "cart" }] as never });
+  });
+
+  async function openScriptTab() {
+    renderView();
+    await screen.findByText("Checkout");
+    selectTab(/Script/);
+    await screen.findByRole("textbox");
+  }
+
+  it("opens the live page at the test's address with its variables resolved, and shows the host", async () => {
+    await openScriptTab();
+    fireEvent.click(screen.getByRole("button", { name: "Live page" }));
+    await waitFor(() => expect(livePageOpen).toHaveBeenCalledWith("https://shop.example.com/cart", "chromium"));
+    await screen.findByText("shop.example.com");
+    expect(screen.getByRole("button", { name: "Live page ●" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("draws a match count after every locator once the page is open, in the outcome's tone", async () => {
+    await openScriptTab();
+    fireEvent.click(screen.getByRole("button", { name: "Live page" }));
+    await waitFor(() => expect(countMany).toHaveBeenCalled());
+    await waitFor(() => expect(document.querySelectorAll(".gl-ide-inlay")).toHaveLength(2));
+    const inlays = Array.from(document.querySelectorAll(".gl-ide-inlay")).map((el) => [(el as HTMLElement).textContent, (el as HTMLElement).dataset.tone]);
+    expect(inlays).toEqual([["1 match", "ok"], ["3 matches", "warn"]]);
+    // The goto has no locator and gets no inlay; the testid's inlay sits on its line.
+    const ok = document.querySelector('.gl-ide-inlay[data-tone="ok"]') as HTMLElement;
+    expect(ok.closest(".cm-line")?.textContent).toContain('getByTestId("go")');
+  });
+
+  it("outlines the caret's step in the live page as the caret moves", async () => {
+    await openScriptTab();
+    fireEvent.click(screen.getByRole("button", { name: "Live page" }));
+    await waitFor(() => expect(countMany).toHaveBeenCalled());
+    const v = EditorView.findFromDOM(screen.getByRole("textbox"))!;
+    act(() => v.dispatch({ selection: { anchor: v.state.doc.line(4).from + 4 } }));
+    await waitFor(() => expect(highlightLocator).toHaveBeenCalledWith({ k: "testid", v: "go" }));
+  });
+
+  it("Pick locator inserts the app's spelling of the picked element at the caret", async () => {
+    pickLocator.mockResolvedValue({ expr: "getByRole('button', { name: 'Sign in' })", locator: { k: "role", role: "button", name: "Sign in" } });
+    await openScriptTab();
+    fireEvent.click(screen.getByRole("button", { name: "Live page" }));
+    await screen.findByText("shop.example.com");
+    // Pick is an editing action: disabled until Edit script.
+    expect(screen.queryByRole("button", { name: "Pick locator" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Edit script" }));
+    const content = await screen.findByRole("textbox");
+    await waitFor(() => expect(content.getAttribute("contenteditable")).toBe("true"));
+    const v = EditorView.findFromDOM(content)!;
+    act(() => v.dispatch({ selection: { anchor: v.state.doc.line(5).to } }));
+    fireEvent.click(screen.getByRole("button", { name: "Pick locator" }));
+    await waitFor(() => expect(draftText()).toContain('page.getByRole("button", { name: "Sign in" })'));
+  });
+
+  it("Record here opens the trainer with the insert cursor just past the caret's step", async () => {
+    await openScriptTab();
+    const v = EditorView.findFromDOM(screen.getByRole("textbox"))!;
+    act(() => v.dispatch({ selection: { anchor: v.state.doc.line(4).from + 4 } }));
+    await screen.findByText(/step 2 ·/);
+    fireEvent.click(screen.getByRole("button", { name: "Record here" }));
+    await waitFor(() => expect(startRecording).toHaveBeenCalledWith("https://shop.example.com/${path}", "Checkout", "t1"));
+    await waitFor(() => expect(setCursor).toHaveBeenCalledWith(2));
   });
 });

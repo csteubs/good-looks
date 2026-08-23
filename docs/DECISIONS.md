@@ -10,6 +10,63 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-23 — Script IDE View, Phase 2: a live page the editor owns
+
+Chris's answers for this phase: three AI role slots (for Phase 3); the
+editor's live page is a Playwright browser the editor launches, not the
+trainer; Record here starts a trainer session with the insert cursor at the
+caret's step; and "prompt me for the remaining decisions as you encounter
+them" — so later phases proceed without a check-in.
+
+**Why not the trainer.** The plan's trainer tools (match-count inlay, caret
+→ highlight, pick) assumed the trainer could be the editor's live page. The
+cross-check of Phase 1 showed it cannot: `RootShell` swaps the whole outlet
+for `RecordingView` while a session is live, so the Script tab does not
+exist then. And the trainer's oracle is `matchesFor`, a model of Playwright's
+resolution that three parity specs exist to keep honest. Playwright 1.62
+(taken first, for exactly this) makes the alternative cheap: the library the
+CLI ships with launches a headed browser from the main process, and its
+`count()`, `highlight()` and `pickLocator()` ARE the engine — no parity
+question, because there is no model. No recording happens in it; the
+trainer stays the recorder.
+
+**A locator is evaluated, not interpolated.** The renderer sends the
+MODEL. The service rebuilds it through `normalizeLocator` (the capture-
+boundary rule), spells it with the generator's `locatorExpr`, and hands
+`page.<expr>` to `new Function`. That text is one the generator would have
+written into a spec — every user value is inside `q()` — so the trust is the
+trust a run already extends to the same text, and a renderer that sent a
+hostile string would get back "This locator could not be built", not an
+execution.
+
+**Pick answers twice.** `page.pickLocator()` resolves to a Locator whose
+`toString()` is Playwright's codegen spelling (`getByRole('button', { name:
+'Sign in' })`, verified on 1.62). The service also reads it with
+`parseLocatorExpression` — the spec parser's own locator reader — so a
+picked locator and a recorded one cannot mean different things. The editor
+inserts the app's spelling when there is a model and Playwright's verbatim
+when there is not; the coverage gutter then says so.
+
+**The answer is written where it was asked.** `livePage:changed` is a push,
+and `check:push-consumers` has its listener; but the window that called
+`open` does not wait for the broadcast — the call's return value lands in the
+`["live-page"]` query directly. The detail-view tests run with an inert push
+bridge (the trap DECISIONS has recorded before) and would have passed a view
+that only ever learned of its own open through the push.
+
+**Record here is the trainer's insert cursor, not a second recorder.** The
+caret's step index (from the parser's ranges) becomes `recorder:setCursor`
+(index + 1) after `start` resolves, through the same confirm dialog an
+edited script already raises. Nothing new records; the existing continue-
+recording path does.
+
+**Verified:** `check:live-page` against real headless Chromium over a
+served page (six locator kinds counted, highlight and clear, close);
+`live-page-service.test.ts` (8, fake browser); five live-page rows in
+`test-detail-view.test.tsx`; inlay and insert-at-caret rows in
+`script-editor-cm.test.tsx`; the preview at `?test=t-login` (toggle,
+host, inlays in all three tones, Pick inserting at the caret).
+
 ### 2026-08-22 — Script IDE View, Phase 1: the engine, the transactional save, and per-step wrappers
 
 The plan is `docs/plans/script-ide-view.md` (research memo 04). Chris chose

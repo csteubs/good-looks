@@ -16,6 +16,9 @@ import type {
   ScriptChangeSource,
   ScriptCheckResult,
   ScriptPreview,
+  LivePageCount,
+  LivePagePick,
+  LivePageStatus,
   SecretStatus,
   FlowScopeCommit,
   TestVariable,
@@ -263,6 +266,22 @@ export const api = {
     clearCookies: () => ipc().invoke<LiveCookie[]>("recorder:clearCookies"),
     applyHeal: (stepId: string, locator: Locator) =>
       ipc().invoke<RecorderState>("recorder:applyHeal", { stepId, locator }),
+  },
+  /** The Script IDE's live page — a Playwright browser the editor owns. */
+  livePage: {
+    status: () => ipc().invoke<LivePageStatus>("livePage:status"),
+    open: (url: string, browser?: RunBrowser) =>
+      ipc().invoke<LivePageStatus>("livePage:open", { url, browser }),
+    close: () => ipc().invoke<void>("livePage:close"),
+    /** Match counts, one per locator model, from Playwright's own resolution. */
+    countMany: (locators: Locator[]) =>
+      ipc().invoke<LivePageCount[]>("livePage:countMany", { locators }),
+    /** Outline a locator's matches in the live page; null clears. */
+    highlight: (locator: Locator | null) =>
+      ipc().invoke<void>("livePage:highlight", { locator }),
+    /** Resolves when the user clicks an element in the live page; null if cancelled. */
+    pick: () => ipc().invoke<LivePagePick | null>("livePage:pick"),
+    cancelPick: () => ipc().invoke<void>("livePage:cancelPick"),
   },
   tests: {
     list: () => ipc().invoke<TestRecord[]>("tests:list"),

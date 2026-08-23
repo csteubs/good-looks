@@ -2421,6 +2421,22 @@ function extractTestBodies(src: string): { body: string; offset: number }[] {
 }
 
 /**
+ * The app's model of ONE locator expression, as Playwright spells it —
+ * `getByRole('button', { name: 'Sign in' })`, with or without a leading
+ * `page.` — or null when the parser does not know the shape. What the live
+ * page's pick hands back, read with the same code that reads a spec, so a
+ * picked locator and a recorded one cannot disagree about what they mean.
+ */
+export function parseLocatorExpression(expr: string): Locator | null {
+  const parsed = parseLocator(expr.trim());
+  if (!parsed) return null;
+  // Only a locator with nothing meaningful after it: an action tail means the
+  // expression was a statement, not a locator.
+  if (parsed.rest.trim().replace(/^;/, "").trim() !== "") return null;
+  return parsed.locator;
+}
+
+/**
  * Parse a Playwright spec file's source into the app's Step[] model.
  * Returns [] if nothing could be parsed — the caller then falls back to a
  * stepless (script-only) import.

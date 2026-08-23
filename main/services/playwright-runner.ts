@@ -147,7 +147,7 @@ function killRun(runId: string, child: ChildProcess, reason: "user" | "process-t
  *  exactly that, hence this second map. */
 const inFlight = new Map<string, Promise<number>>();
 
-function browsersPath(): string {
+export function browsersPath(): string {
   return path.join(app.getPath("userData"), "recorder", "browsers");
 }
 
@@ -754,6 +754,21 @@ function isBrowserInstalled(browser: RunBrowser): boolean {
     return browserInstalledIn(fs.readdirSync(dir), browser, expected);
   } catch {
     return false;
+  }
+}
+
+/** Install `browser` into the app's directory if the bundled CLI's build of
+ *  it is not there. For the live page, which launches the library directly
+ *  and has no run to stream the install into — output lands on a synthetic
+ *  run id the Output panel never shows. */
+export async function ensureBrowserInstalled(browser: RunBrowser): Promise<void> {
+  if (isBrowserInstalled(browser)) return;
+  const { cliPath, nodeModules } = resolvePlaywright();
+  const scriptsDir = getScriptsDir();
+  ensureModuleResolution(scriptsDir, nodeModules);
+  await installBrowser("live-page", browser, cliPath, scriptsDir, baseEnv(nodeModules));
+  if (!isBrowserInstalled(browser)) {
+    throw new Error(`Could not install ${browser} — see the main log.`);
   }
 }
 

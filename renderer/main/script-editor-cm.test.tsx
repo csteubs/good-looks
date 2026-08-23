@@ -162,6 +162,44 @@ describe("<ScriptEditorCm />", () => {
   });
 });
 
+describe("<ScriptEditorCm /> inlays", () => {
+  it("draws each inlay at the end of its line with its tone, and replaces the set on change", () => {
+    const ref = React.createRef<ScriptEditorHandle>();
+    const { rerender } = render(
+      <ScriptEditorCm value={CODE} onChange={() => {}} readOnly errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" {...PREFS} handleRef={ref}
+        inlays={[{ line: 4, text: "1 match", tone: "ok" }, { line: 5, text: "no match", tone: "bad", title: "nothing" }]} />,
+    );
+    const inlays = () => Array.from(document.querySelectorAll(".gl-ide-inlay")).map((el) => [(el as HTMLElement).textContent, (el as HTMLElement).dataset.tone]);
+    expect(inlays()).toEqual([["1 match", "ok"], ["no match", "bad"]]);
+    // The widget sits after the line's text, inside that line.
+    const bad = document.querySelector('.gl-ide-inlay[data-tone="bad"]') as HTMLElement;
+    expect(bad.closest(".cm-line")?.textContent).toContain("page.mouse.move");
+    rerender(
+      <ScriptEditorCm value={CODE} onChange={() => {}} readOnly errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" {...PREFS} handleRef={ref} inlays={[{ line: 4, text: "3 matches", tone: "warn" }]} />,
+    );
+    expect(inlays()).toEqual([["3 matches", "warn"]]);
+  });
+
+  it("inserts at the caret through the handle, replacing a selection, and refuses while read-only", () => {
+    const ref = React.createRef<ScriptEditorHandle>();
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <ScriptEditorCm value={"ab\ncd"} onChange={onChange} readOnly errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" {...PREFS} handleRef={ref} />,
+    );
+    act(() => ref.current!.insertAtCaret("X"));
+    expect(view().state.doc.toString()).toBe("ab\ncd");
+    rerender(
+      <ScriptEditorCm value={"ab\ncd"} onChange={onChange} readOnly={false} errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="s" {...PREFS} handleRef={ref} />,
+    );
+    const v = view();
+    act(() => v.dispatch({ selection: { anchor: 3, head: 5 } }));
+    act(() => ref.current!.insertAtCaret("page.getByTestId(\"go\")"));
+    expect(v.state.doc.toString()).toBe('ab\npage.getByTestId("go")');
+    expect(v.state.selection.main.head).toBe(v.state.doc.length);
+    expect(onChange).toHaveBeenLastCalledWith('ab\npage.getByTestId("go")');
+  });
+});
+
 describe("<ScriptEditorCm /> settings", () => {
   it("reconfigures wrapping, line numbers and tab size live, without a remount", () => {
     const { rerender } = render(

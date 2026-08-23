@@ -3079,6 +3079,32 @@
   border-bottom: 1px solid var(--gl-line);
 }
 
+/* The live page's cluster, leftmost in the script bar: the toggle, the
+ * page's host (or the reason it closed), and Pick / Record here. `min-width:
+ * 0` so a long host ellipsizes rather than pushing Save off the row. */
+.gl-script-live {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.gl-script-live-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-2);
+}
+
+.gl-script-live-status[data-muted] {
+  color: var(--gl-tx-3);
+}
+
 /* The verdict of the pre-save check, on the bar's left. `margin-right: auto`
  * is what keeps the buttons right-aligned under Run test when it appears. */
 .gl-script-check-msg {

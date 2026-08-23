@@ -19,6 +19,7 @@ import { forceLinting, lintGutter, lintKeymap, linter, type Diagnostic } from "@
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
 import {
+  Decoration,
   drawSelection,
   EditorView,
   GutterMarker,
@@ -27,6 +28,8 @@ import {
   highlightActiveLineGutter,
   keymap,
   lineNumbers,
+  WidgetType,
+  type DecorationSet,
 } from "@codemirror/view";
 
 import type { ScriptCheckError, SourceRange } from "../lib/recorder-types";
@@ -39,8 +42,20 @@ export type CoverageKind = "skipped" | "error";
 export interface ScriptEditorHandle {
   /** Put the caret at the start of a 1-based line, scroll it into view, focus. */
   focusLine(line: number): void;
+  /** Replace the selection (or insert at the caret) with `text`, and focus. */
+  insertAtCaret(text: string): void;
   /** The live view, for tests and for the few callers that need the doc. */
   view(): EditorView | null;
+}
+
+/** An inlay drawn at the END of a 1-based line — the live page's match count
+ *  after a locator. `tone` is the outcome it reports: one match is what a
+ *  step wants, none or several is what a run will fail on. */
+export interface LineInlay {
+  line: number;
+  text: string;
+  tone: "ok" | "warn" | "bad" | "muted";
+  title?: string;
 }
 
 export interface ScriptEditorCmProps {
@@ -63,6 +78,8 @@ export interface ScriptEditorCmProps {
   lineWrap: boolean;
   lineNumbers: boolean;
   tabSize: number;
+  /** End-of-line inlays (the live page's match counts). */
+  inlays?: LineInlay[];
 }
 
 // ── Gutters ───────────────────────────────────────────────────────────────
@@ -155,6 +172,55 @@ const coverageGutter = gutter({
   initialSpacer: () => new CoverageMarker("skipped", true),
 });
 
+// ── Inlays ────────────────────────────────────────────────────────────────
+//
+// A widget decoration at each line's end, replaced wholesale by an effect —
+// the same shape as the gutters. `side: 1` puts it after the line's text and
+// keeps the caret in front of it.
+
+const setInlays = StateEffect.define<LineInlay[]>();
+
+class InlayWidget extends WidgetType {
+  constructor(readonly inlay: LineInlay) {
+    super();
+  }
+  eq(other: InlayWidget): boolean {
+    return other.inlay.text === this.inlay.text && other.inlay.tone === this.inlay.tone;
+  }
+  toDOM(): HTMLElement {
+    const el = document.createElement("span");
+    el.className = "gl-ide-inlay";
+    el.dataset.tone = this.inlay.tone;
+    el.textContent = this.inlay.text;
+    if (this.inlay.title) el.title = this.inlay.title;
+    el.setAttribute("aria-label", this.inlay.title ?? this.inlay.text);
+    return el;
+  }
+  ignoreEvent(): boolean {
+    return true;
+  }
+}
+
+function inlayDecorations(doc: EditorState["doc"], inlays: LineInlay[]): DecorationSet {
+  const marks: { from: number; deco: Decoration }[] = [];
+  for (const inlay of inlays) {
+    if (inlay.line < 1 || inlay.line > doc.lines) continue;
+    const line = doc.line(inlay.line);
+    marks.push({ from: line.to, deco: Decoration.widget({ widget: new InlayWidget(inlay), side: 1 }) });
+  }
+  marks.sort((a, b) => a.from - b.from);
+  return Decoration.set(marks.map((m) => m.deco.range(m.from)));
+}
+
+const inlayField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(setInlays)) return inlayDecorations(tr.state.doc, e.value);
+    return tr.docChanged ? value.map(tr.changes) : value;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
 /** Lines a list of ranges covers, as a line → kind map. */
 export function linesOf(doc: EditorState["doc"], ranges: SourceRange[], kind: CoverageKind): Record<number, CoverageKind> {
   const out: Record<number, CoverageKind> = {};
@@ -232,6 +298,7 @@ export default function ScriptEditorCm({
   lineWrap,
   lineNumbers: showLineNumbers,
   tabSize,
+  inlays,
 }: ScriptEditorCmProps): React.ReactElement {
   const hostRef = React.useRef<HTMLDivElement | null>(null);
   const viewRef = React.useRef<EditorView | null>(null);
@@ -271,6 +338,7 @@ export default function ScriptEditorCm({
           editorTheme,
           runStatusField,
           coverageField,
+          inlayField,
           cliErrorsField,
           linter((v) => [...lezerDiagnostics(v.state), ...cliDiagnostics(v.state, v.state.field(cliErrorsField))], {
             delay: 300,
@@ -361,6 +429,12 @@ export default function ScriptEditorCm({
     view.dispatch({ effects: setRunStatus.of(runStatus) });
   }, [runStatus]);
 
+  React.useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: setInlays.of(inlays ?? []) });
+  }, [inlays]);
+
   React.useImperativeHandle(
     handleRef,
     () => ({
@@ -370,6 +444,17 @@ export default function ScriptEditorCm({
         const n = Math.max(1, Math.min(line, view.state.doc.lines));
         const pos = view.state.doc.line(n).from;
         view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: "center" }) });
+        view.focus();
+      },
+      insertAtCaret(text: string) {
+        const view = viewRef.current;
+        if (!view || view.state.readOnly) return;
+        const { from, to } = view.state.selection.main;
+        view.dispatch({
+          changes: { from, to, insert: text },
+          selection: { anchor: from + text.length },
+          userEvent: "input.paste",
+        });
         view.focus();
       },
       view: () => viewRef.current,
