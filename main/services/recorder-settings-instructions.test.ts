@@ -11,6 +11,7 @@ const userData = fs.mkdtempSync(path.join(os.tmpdir(), "glaze-ai-instructions-te
 process.env.GLAZE_TEST_USERDATA = userData;
 
 const { recorderSettingsStore, AI_INSTRUCTIONS_MAX } = await import("./recorder-settings-store.js");
+const { INSPECTION_RULES } = await import("../../shared/inspections.mjs");
 const settingsFile = path.join(userData, "recorder", "recorder-settings.json");
 
 function writeRaw(patch: Record<string, unknown>): void {
@@ -46,5 +47,22 @@ describe("aiInstructions", () => {
     // An update that does not mention the table leaves it alone.
     recorderSettingsStore.set({ aiInstructions: "global" });
     expect(recorderSettingsStore.get().aiInstructionsByHost).toEqual({ "other.example": "x" });
+  });
+});
+
+describe("inspections", () => {
+  it("defaults every rule on, rebuilds over the known rules, and merges a patch", () => {
+    const all = recorderSettingsStore.get().inspections;
+    expect(Object.keys(all).sort()).toEqual([...INSPECTION_RULES].sort());
+    expect(Object.values(all).every((v) => v === true)).toBe(true);
+    writeRaw({ inspections: { "no-wait-for-timeout": false, "made-up": false, "missing-await": "no" } });
+    const read = recorderSettingsStore.get().inspections;
+    expect(read["no-wait-for-timeout"]).toBe(false);
+    expect(read["missing-await"]).toBe(true);
+    expect("made-up" in read).toBe(false);
+    recorderSettingsStore.set({ inspections: { "raw-css-locator": false } as never });
+    const after = recorderSettingsStore.get().inspections;
+    expect(after["raw-css-locator"]).toBe(false);
+    expect(after["no-wait-for-timeout"]).toBe(false);
   });
 });

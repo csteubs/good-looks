@@ -1,5 +1,6 @@
 // Mirror of main/recorder/types.ts for the renderer. Keep shapes in sync.
 
+import type { InspectionRule } from "../../shared/inspections.mjs";
 import type { LlmErrorKind } from "./llm-types";
 import type { FlakeReport as SharedFlakeReport } from "../../shared/flake-analysis.mjs";
 import type { CostCurrency } from "../../shared/cost-units.mjs";
@@ -1485,6 +1486,8 @@ export interface RecorderSettings {
    *  main/recorder/types.ts): one global text, and one per host. */
   aiInstructions: string;
   aiInstructionsByHost: Record<string, string>;
+  /** Which of the Script IDE's inspections run (mirror; shared/inspections.mjs). */
+  inspections: Record<InspectionRule, boolean>;
   /** Which symbol the Cost panel stamps on a money figure (default "usd").
    *  "none" restores bare numbers — see `shared/cost-units.mjs`. */
   costCurrency: CostCurrency;

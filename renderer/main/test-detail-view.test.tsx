@@ -200,6 +200,16 @@ vi.mock("../lib/api", () => ({
       history: async () => [],
       record: async (r: unknown) => r,
     },
+    ts: {
+      ensure: async () => ({ available: false, reason: "no service in tests" }),
+      status: async () => ({ available: false, reason: "no service in tests" }),
+      update: async () => {},
+      close: async () => {},
+      diagnostics: async () => [],
+      completions: async () => [],
+      hover: async () => null,
+      inspections: async () => [],
+    },
     llm: {
       getConfig: async () => ({ provider: "ollama", model: null, baseUrls: {} }),
       status: async () => ({ online: false, models: [] }),

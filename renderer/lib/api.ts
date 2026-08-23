@@ -1,6 +1,7 @@
 // Typed wrappers over the exposed window.glazeAPI IPC bridge. Renderer code
 // never touches ipcRenderer directly.
 
+import type { Inspection, TsCompletion, TsDiagnostic, TsHover, TsServiceStatus } from "./ts-types";
 import type {
   Annotation,
   CustomFailureReason,
@@ -271,6 +272,17 @@ export const api = {
       ipc().invoke<RecorderState>("recorder:applyHeal", { stepId, locator }),
   },
   /** The Script IDE's live page — a Playwright browser the editor owns. */
+  /** The TypeScript service behind the Script tab (main/services/ts-service). */
+  ts: {
+    status: () => ipc().invoke<TsServiceStatus>("ts:status"),
+    ensure: () => ipc().invoke<TsServiceStatus>("ts:ensure"),
+    update: (id: string, text: string) => ipc().invoke<void>("ts:update", { id, text }),
+    close: (id: string) => ipc().invoke<void>("ts:close", { id }),
+    diagnostics: (id: string) => ipc().invoke<TsDiagnostic[]>("ts:diagnostics", { id }),
+    completions: (id: string, offset: number) => ipc().invoke<TsCompletion[]>("ts:completions", { id, offset }),
+    hover: (id: string, offset: number) => ipc().invoke<TsHover | null>("ts:hover", { id, offset }),
+    inspections: (id: string) => ipc().invoke<Inspection[]>("ts:inspections", { id }),
+  },
   livePage: {
     status: () => ipc().invoke<LivePageStatus>("livePage:status"),
     open: (url: string, browser?: RunBrowser) =>

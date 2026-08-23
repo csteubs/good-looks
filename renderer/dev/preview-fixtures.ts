@@ -13,6 +13,7 @@
 // is far less obvious in review. Several of these shapes were wrong when this
 // file was first written against an older copy of the app.
 
+import { defaultInspections } from "../../shared/inspections.mjs";
 import type {
   AiDebugHistoryRecord,
   BatchRecord,
@@ -954,6 +955,7 @@ export const SETTINGS: RecorderSettings = {
   editorCheckOnSave: true,
   aiInstructions: "Prefer getByRole over CSS. Our buttons carry data-testid; use it when the role name is generic.",
   aiInstructionsByHost: { "shop.example.com": "The cart drawer is a dialog; assert on its heading, not the overlay." },
+  inspections: defaultInspections(),
   // The shipped cost guesses. Left at their defaults deliberately: the Cost
   // panel's "both are this app's guesses" sentence only renders while they are,
   // and the preview is the only place that sentence can be looked at.

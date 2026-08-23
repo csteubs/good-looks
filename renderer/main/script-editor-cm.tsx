@@ -35,6 +35,7 @@ import {
 import type { ScriptCheckError, SourceRange } from "../lib/recorder-types";
 import { codeHighlight, editorTheme } from "./script-editor-theme";
 import { ghostText, type GhostSource } from "./ghost-text";
+import { setTsDiagnostics, tsDiagnosticsField, tsIntelligence, type TsIntelligence } from "./ts-intelligence";
 
 export type RunLineStatus = "running" | "passed" | "failed" | "skipped";
 export type CoverageKind = "skipped" | "error";
@@ -87,6 +88,9 @@ export interface ScriptEditorCmProps {
   /** ⌘K inside the editor. Bound here, not on the window, so it wins over
    *  the command palette only while the editor has focus. */
   onAiRequest?: () => void;
+  /** The TypeScript service, when it is available; null keeps the editor
+   *  on syntax and CLI diagnostics alone. Read through a ref at call time. */
+  intelligence?: TsIntelligence | null;
 }
 
 // ── Gutters ───────────────────────────────────────────────────────────────
@@ -308,6 +312,7 @@ export default function ScriptEditorCm({
   inlays,
   ghost,
   onAiRequest,
+  intelligence,
 }: ScriptEditorCmProps): React.ReactElement {
   const hostRef = React.useRef<HTMLDivElement | null>(null);
   const viewRef = React.useRef<EditorView | null>(null);
@@ -317,6 +322,8 @@ export default function ScriptEditorCm({
   ghostRef.current = ghost ?? null;
   const onAiRef = React.useRef(onAiRequest);
   onAiRef.current = onAiRequest;
+  const intelRef = React.useRef<TsIntelligence | null>(intelligence ?? null);
+  intelRef.current = intelligence ?? null;
   const readOnlyCompartment = React.useRef(new Compartment());
   const wrapCompartment = React.useRef(new Compartment());
   const numbersCompartment = React.useRef(new Compartment());
@@ -353,9 +360,12 @@ export default function ScriptEditorCm({
           coverageField,
           inlayField,
           cliErrorsField,
-          linter((v) => [...lezerDiagnostics(v.state), ...cliDiagnostics(v.state, v.state.field(cliErrorsField))], {
+          linter(
+            (v) => [...lezerDiagnostics(v.state), ...cliDiagnostics(v.state, v.state.field(cliErrorsField)), ...v.state.field(tsDiagnosticsField)],
+            {
             delay: 300,
-            needsRefresh: (update) => update.transactions.some((tr) => tr.effects.some((e) => e.is(setCliErrors))),
+            needsRefresh: (update) =>
+              update.transactions.some((tr) => tr.effects.some((e) => e.is(setCliErrors) || e.is(setTsDiagnostics))),
           }),
           readOnlyCompartment.current.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),
           wrapCompartment.current.of(lineWrap ? EditorView.lineWrapping : []),
@@ -364,6 +374,7 @@ export default function ScriptEditorCm({
           // Before the keymap below: its Tab must win over indentWithTab
           // while a completion is shown, and fall through when none is.
           ghostText(() => ghostRef.current),
+          tsIntelligence(() => intelRef.current),
           keymap.of([
             {
               key: "Mod-k",

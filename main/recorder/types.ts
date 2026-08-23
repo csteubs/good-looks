@@ -1,5 +1,6 @@
 // Shared recorder data model (backend). Mirror kept in renderer/lib/recorder-types.ts.
 
+import type { InspectionRule } from "../../shared/inspections.mjs";
 import type { LlmErrorKind } from "../services/llm/types.js";
 // Declared in shared/ because the settings store validates against the same
 // list the Settings pane offers and the Cost panel formats with — see the
@@ -2941,6 +2942,9 @@ export interface RecorderSettings {
   /** The same, per site — keyed by host, applied when the test's address is
    *  on that host. */
   aiInstructionsByHost: Record<string, string>;
+  /** Which of the Script IDE's inspections run (shared/inspections.mjs).
+   *  Default all on; rebuilt over the known rules on read. */
+  inspections: Record<InspectionRule, boolean>;
   /** Which symbol the Cost panel stamps on a money figure (default "usd").
    *
    *  "none" restores the panel's original behaviour — bare numbers, claiming
