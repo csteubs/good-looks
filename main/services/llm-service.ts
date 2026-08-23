@@ -14,6 +14,7 @@ import { logger } from "@shell/backend";
 import { anthropicKeyStore } from "./anthropic-key-store.js";
 import { sendToMain } from "./app-window.js";
 import { llmConfigStore } from "./llm-config-store.js";
+import { fimTemplateFor, trimCompletion } from "./llm/fim.js";
 import { lmStudioTokenStore } from "./lm-studio-token-store.js";
 // Every provider request goes through appFetch: identical to global fetch
 // until Settings → Proxy covers app traffic. Local providers stay direct
@@ -27,6 +28,7 @@ import {
   providerLabel,
 } from "./llm/provider-errors.js";
 import type {
+  LlmRole,
   LlmChatParams,
   LlmErrorKind,
   LlmMessage,
@@ -92,11 +94,22 @@ function baseUrlFor(provider: LlmProvider): string {
   return (override && override.trim()) || DEFAULT_BASE_URLS[provider];
 }
 
-/** The active provider and the URL its requests go to — what the proxy
+/** The provider and model a role resolves to. A role with no slot falls
+ *  back to the flat pair — which IS the chat slot — so every caller that
+ *  never named a role keeps exactly the behaviour it had. */
+function resolveSlot(role: LlmRole | undefined): { provider: LlmProvider; model: string | null } {
+  const config = llmConfigStore.get();
+  const slot = role ? config.roles?.[role] : undefined;
+  return slot ?? { provider: config.provider, model: config.model };
+}
+
+/** The CHAT provider and the URL its requests go to — what the proxy
  *  validator's "Verify app connectivity" checks, so the verification exercises
- *  the endpoint the app actually talks to rather than one invented for it. */
+ *  the endpoint the app actually talks to rather than one invented for it.
+ *  Three roles can name three providers now; this is the one a user is most
+ *  likely waiting on. */
 export function activeProviderEndpoint(): { provider: LlmProvider; url: string } {
-  const provider = llmConfigStore.get().provider;
+  const provider = resolveSlot("chat").provider;
   return { provider, url: baseUrlFor(provider) };
 }
 
@@ -333,9 +346,24 @@ async function streamChatOnce(
       try {
         const json = JSON.parse(data) as Record<string, unknown>;
         if (provider === "anthropic") {
+          eventCount++;
           const type = json.type as string | undefined;
+          if (type === "message_delta") {
+            // Where Anthropic says why it stopped. `max_tokens` here is the
+            // one a user would want to know about: the answer was cut.
+            const stop = (json.delta as { stop_reason?: string | null } | undefined)?.stop_reason;
+            if (stop) finishReason = stop;
+          }
           if (type === "content_block_delta") {
-            const delta = (json.delta as { text?: string } | undefined)?.text;
+            const d = json.delta as { type?: string; text?: string; thinking?: string } | undefined;
+            if (d) for (const [k, v] of Object.entries(d)) if (typeof v === "string" ? v.length > 0 : v != null) deltaFields.add(k);
+            // Extended thinking streams as its own delta type. Flagged, not
+            // merged, for the same reason the OpenAI branch flags it.
+            if (d?.type === "thinking_delta" && d.thinking) {
+              sawReasoning = true;
+              sink.chunk(d.thinking, true);
+            }
+            const delta = d?.text;
             if (delta) {
               // Feeds the same flag the OpenAI branch feeds. It didn't until
               // 2026-08-18, and the miss was silent in the worst way: a
@@ -559,10 +587,13 @@ export async function visionVerdict(params: {
   claim: string;
   pngBase64: string;
 }): Promise<{ pass: boolean; reason: string }> {
-  const cfg = llmConfigStore.get();
-  const provider = cfg.provider;
-  const model = cfg.model;
-  if (!model) throw new Error("No model selected — pick one in Settings → AI.");
+  // The INSTANT slot: a strict-JSON verdict is the small task that role
+  // exists for, and a user who points it at a local model keeps screenshots
+  // on the machine while chat goes to a hosted one.
+  const slot = resolveSlot("instant");
+  const provider = slot.provider;
+  const model = slot.model;
+  if (!model) throw new Error("No model is assigned to the instant-helpers role — pick one in Settings → AI.");
   const base = baseUrlFor(provider);
   const prompt =
     "You are verifying a UI screenshot against a claim from an automated test.\n" +
@@ -745,9 +776,9 @@ export const llmService = {
    */
   chat(params: LlmChatParams): { requestId: string; provider: LlmProvider; model: string } {
     const requestId = randomUUID();
-    const config = llmConfigStore.get();
-    const provider = params.provider ?? config.provider;
-    const model = params.model ?? config.model ?? "";
+    const slot = resolveSlot(params.role);
+    const provider = params.provider ?? slot.provider;
+    const model = params.model ?? slot.model ?? "";
     void runChat(requestId, provider, model, params);
     return { requestId, provider, model };
   },
@@ -803,9 +834,9 @@ export const llmService = {
     params: LlmChatParams,
     opts: { timeoutMs: number; signal?: AbortSignal },
   ): Promise<LlmCompletion> {
-    const config = llmConfigStore.get();
-    const provider = params.provider ?? config.provider;
-    const model = params.model ?? config.model ?? "";
+    const slot = resolveSlot(params.role);
+    const provider = params.provider ?? slot.provider;
+    const model = params.model ?? slot.model ?? "";
     if (!model) throw new LlmCompletionError("No model selected.", "no-model");
     const base = baseUrlFor(provider);
     const controller = new AbortController();
@@ -867,6 +898,211 @@ export const llmService = {
     } finally {
       clearTimeout(timer);
       opts.signal?.removeEventListener("abort", onExternalAbort);
+    }
+  },
+
+  /**
+   * One awaited answer shaped by a JSON schema — the INSTANT role's call.
+   * Ollama and LM Studio are asked for the schema natively (Ollama's native
+   * chat `format`, LM Studio's `response_format.json_schema`); Claude is told
+   * the schema and asked for only the object. Whatever comes back is parsed,
+   * and a first answer that is not the object is retried ONCE with the
+   * instruction restated — small local models decorate — before it is an
+   * error. Non-streaming, hard-deadlined, never in `activeRequests`.
+   */
+  async completeJson<T = unknown>(
+    params: LlmChatParams & { schema: object; schemaName?: string },
+    opts: { timeoutMs: number },
+  ): Promise<{ value: T; raw: string; provider: LlmProvider; model: string }> {
+    const slot = resolveSlot(params.role ?? "instant");
+    const provider = params.provider ?? slot.provider;
+    const model = params.model ?? slot.model ?? "";
+    if (!model) throw new LlmCompletionError("No model is assigned to the instant-helpers role (Settings → AI).", "no-model");
+    const base = baseUrlFor(provider);
+    await refreshSecretSnapshot();
+    const messages = redactedMessages(params.messages);
+    const schemaName = params.schemaName ?? "answer";
+    const once = async (extra: LlmMessage[]): Promise<string> => {
+      const all = [...messages, ...extra];
+      const signal = AbortSignal.timeout(opts.timeoutMs);
+      let text = "";
+      if (provider === "anthropic") {
+        const key = await anthropicKeyStore.getKey();
+        if (!key) throw new LlmCompletionError("Add your Anthropic API key.", "auth");
+        const { system, messages: rest } = toAnthropicPayload(all);
+        const res = await appFetch(`${base}/v1/messages`, {
+          method: "POST",
+          headers: anthropicHeaders(key),
+          body: JSON.stringify({
+            model,
+            max_tokens: 1024,
+            system: `${system}\n\nRespond with ONLY a JSON object matching this JSON schema, no prose and no code fence:\n${JSON.stringify(params.schema)}`,
+            messages: rest,
+            temperature: 0,
+          }),
+          signal,
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          const f = describeHttpFailure({ status: res.status, body, provider, model, hasToken: false });
+          throw new LlmCompletionError(f.message, f.kind);
+        }
+        const data = (await res.json()) as { content?: Array<{ text?: string }> };
+        text = (data.content ?? []).map((c) => c.text ?? "").join("");
+      } else if (provider === "ollama") {
+        const res = await appFetch(`${base}/api/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model,
+            stream: false,
+            messages: all,
+            format: params.schema,
+            options: { temperature: 0 },
+            keep_alive: "10m",
+          }),
+          signal,
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          const f = describeHttpFailure({ status: res.status, body, provider, model, hasToken: false });
+          throw new LlmCompletionError(f.message, f.kind);
+        }
+        const data = (await res.json()) as { message?: { content?: string } };
+        text = data.message?.content ?? "";
+      } else {
+        const headers = await localAuthHeaders(provider);
+        const res = await appFetch(`${base}/v1/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...headers },
+          body: JSON.stringify({
+            model,
+            stream: false,
+            temperature: 0,
+            messages: all,
+            response_format: { type: "json_schema", json_schema: { name: schemaName, schema: params.schema, strict: true } },
+          }),
+          signal,
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          const f = describeHttpFailure({ status: res.status, body, provider, model, hasToken: Boolean(headers.Authorization) });
+          throw new LlmCompletionError(f.message, f.kind);
+        }
+        const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+        text = data.choices?.[0]?.message?.content ?? "";
+      }
+      return text;
+    };
+    const parse = (text: string): T | undefined => {
+      const candidates = [text.trim(), text.replace(/^```(?:json)?\s*|```\s*$/g, "").trim()];
+      const m = /\{[\s\S]*\}/.exec(text);
+      if (m) candidates.push(m[0]);
+      for (const c of candidates) {
+        try {
+          const v = JSON.parse(c) as T;
+          if (v && typeof v === "object") return v;
+        } catch {
+          /* next */
+        }
+      }
+      return undefined;
+    };
+    let raw = "";
+    try {
+      raw = await once([]);
+      let value = parse(raw);
+      if (value === undefined) {
+        raw = await once([
+          { role: "assistant", content: raw },
+          { role: "user", content: "That was not the JSON object. Output ONLY the JSON object matching the schema — no prose, no code fence." },
+        ]);
+        value = parse(raw);
+      }
+      if (value === undefined) {
+        throw new LlmCompletionError("The model did not answer with the requested JSON.", "empty-response");
+      }
+      return { value, raw, provider, model };
+    } catch (err) {
+      if (err instanceof LlmCompletionError) throw err;
+      const { message, kind } = decodeChatFailure(err, provider, base);
+      throw new LlmCompletionError(message, kind);
+    }
+  },
+
+  /**
+   * Fill-in-the-middle for the AUTOCOMPLETE role — the ghost text. Local
+   * only, twice over: the config store never stores a hosted autocomplete
+   * slot, and this refuses one anyway, because the prefix it sends is a
+   * slice of the user's script on every pause in typing. Short, cold-start
+   * aware (`keep_alive`), hard-deadlined, and never in `activeRequests`.
+   */
+  async fim(
+    params: { prefix: string; suffix: string; maxTokens?: number },
+    opts: { timeoutMs: number },
+  ): Promise<{ text: string; provider: LlmProvider; model: string }> {
+    const slot = llmConfigStore.get().roles?.autocomplete;
+    if (!slot || !slot.model) {
+      throw new LlmCompletionError("No autocomplete model is assigned (Settings → AI).", "no-model");
+    }
+    if (slot.provider === "anthropic") {
+      throw new LlmCompletionError("Autocomplete never runs on a hosted provider.", "provider");
+    }
+    const { provider, model } = slot;
+    const base = baseUrlFor(provider);
+    await refreshSecretSnapshot();
+    const prefix = redactWithSnapshot(params.prefix);
+    const suffix = redactWithSnapshot(params.suffix);
+    const maxTokens = Math.min(256, Math.max(8, params.maxTokens ?? 64));
+    const signal = AbortSignal.timeout(opts.timeoutMs);
+    try {
+      if (provider === "ollama") {
+        const res = await appFetch(`${base}/api/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model,
+            prompt: prefix,
+            suffix,
+            stream: false,
+            options: { temperature: 0, num_predict: maxTokens, stop: ["\n\n"] },
+            keep_alive: "10m",
+          }),
+          signal,
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          const f = describeHttpFailure({ status: res.status, body, provider, model, hasToken: false });
+          throw new LlmCompletionError(f.message, f.kind);
+        }
+        const data = (await res.json()) as { response?: string };
+        return { text: trimCompletion(data.response ?? "", []), provider, model };
+      }
+      const template = fimTemplateFor(model);
+      const headers = await localAuthHeaders(provider);
+      const res = await appFetch(`${base}/v1/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify({
+          model,
+          prompt: template ? template.prompt(prefix, suffix) : prefix,
+          max_tokens: maxTokens,
+          temperature: 0,
+          stop: template ? template.stop.slice(0, 4) : ["\n\n"],
+        }),
+        signal,
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        const f = describeHttpFailure({ status: res.status, body, provider, model, hasToken: Boolean(headers.Authorization) });
+        throw new LlmCompletionError(f.message, f.kind);
+      }
+      const data = (await res.json()) as { choices?: Array<{ text?: string }> };
+      return { text: trimCompletion(data.choices?.[0]?.text ?? "", template ? template.stop : []), provider, model };
+    } catch (err) {
+      if (err instanceof LlmCompletionError) throw err;
+      const { message, kind } = decodeChatFailure(err, provider, base);
+      throw new LlmCompletionError(message, kind);
     }
   },
 };

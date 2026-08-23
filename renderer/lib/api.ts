@@ -92,9 +92,11 @@ import type { CostBreakdown, DivergentStep } from "../../shared/step-insights.mj
 import type {
   LlmChatParams,
   LlmConfig,
+  LlmMessage,
   LlmModel,
   LlmProvider,
   LlmProviderStatus,
+  LlmRole,
 } from "./llm-types";
 
 /** One reusable flow as `tests:listFlows` reports it — enough to offer the
@@ -839,6 +841,12 @@ export const api = {
     chat: (params: LlmChatParams) =>
       ipc().invoke<{ requestId: string; provider: LlmProvider; model: string }>("llm:chat", params),
     cancel: (requestId: string) => ipc().invoke<void>("llm:cancel", { requestId }),
+    /** One awaited JSON answer shaped by `schema`, from the instant slot. */
+    json: <T = unknown>(params: { messages: LlmMessage[]; schema: object; role?: LlmRole; timeoutMs?: number }) =>
+      ipc().invoke<{ value: T; raw: string; provider: LlmProvider; model: string }>("llm:json", params),
+    /** Ghost text: fill in the middle from the autocomplete slot (local only). */
+    fim: (params: { prefix: string; suffix: string; maxTokens?: number }) =>
+      ipc().invoke<{ text: string; provider: LlmProvider; model: string }>("llm:fim", params),
     /** Whether a request is still streaming — used to re-adopt a session after
      *  a renderer reload without stranding it as permanently "thinking". */
     isActive: (requestId: string) =>

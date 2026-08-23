@@ -89,7 +89,7 @@ import type {
   TestVariable,
   VisualMask,
 } from "../lib/recorder-types";
-import type { LlmConfig, LlmModel, LlmProviderStatus } from "../lib/llm-types";
+import type { LlmConfig, LlmModel, LlmProviderStatus, LlmRoleSlot } from "../lib/llm-types";
 import type { BranchStatus } from "../lib/branch-types";
 import type {
   ConnectionStatus,
@@ -1597,8 +1597,51 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     },
     "llm:getConfig": (): LlmConfig => state.llmConfig,
     "llm:setConfig": (p): LlmConfig => {
-      Object.assign(state.llmConfig, p ?? {});
+      // Merges the way the real store does: `roles` per key (a patch naming
+      // one role keeps the other two; `null` clears one), and the chat slot
+      // and the flat pair kept in step.
+      const patch = (p ?? {}) as Partial<LlmConfig> & { roles?: Record<string, LlmRoleSlot | null> };
+      const roles: Record<string, LlmRoleSlot> = { ...(state.llmConfig.roles ?? {}) };
+      for (const [role, slot] of Object.entries(patch.roles ?? {})) {
+        if (slot === null) delete roles[role];
+        else if (slot && (role !== "autocomplete" || slot.provider !== "anthropic")) roles[role] = { provider: slot.provider, model: slot.model ?? null };
+      }
+      let provider = patch.provider ?? state.llmConfig.provider;
+      let model = patch.model !== undefined ? patch.model : state.llmConfig.model;
+      if (patch.roles?.chat && roles.chat) {
+        provider = roles.chat.provider;
+        model = roles.chat.model;
+      } else if (patch.provider !== undefined || patch.model !== undefined) {
+        roles.chat = { provider, model };
+      }
+      if (!roles.chat) roles.chat = { provider, model };
+      if (!roles.instant) roles.instant = roles.chat;
+      state.llmConfig = {
+        provider,
+        model,
+        baseUrls: { ...state.llmConfig.baseUrls, ...(patch.baseUrls ?? {}) },
+        roles: roles as LlmConfig["roles"],
+      };
       return state.llmConfig;
+    },
+    /** The instant slot's JSON answer. One canned shape per affordance the
+     *  preview can reach: a statement the parser reads back. */
+    "llm:json": async (): Promise<{ value: unknown; raw: string; provider: string; model: string }> => {
+      await new Promise((r) => setTimeout(r, 500));
+      const value = { statement: 'await page.getByRole("button", { name: "Next" }).click();' };
+      return { value, raw: JSON.stringify(value), provider: "ollama", model: "preview-instant" };
+    },
+    /** Ghost text: a plausible next statement, after the pause a local model
+     *  would take. */
+    "llm:fim": async (p): Promise<{ text: string; provider: string; model: string }> => {
+      await new Promise((r) => setTimeout(r, 350));
+      const prefix = String(p?.prefix ?? "");
+      const atLineStart = /\n\s*$/.test(prefix) || prefix === "";
+      return {
+        text: atLineStart ? '  await expect(page.getByRole("heading", { name: "Products" })).toBeVisible();' : "",
+        provider: "ollama",
+        model: "preview-fim",
+      };
     },
     /** One status per provider — the AI pane renders a row for each. */
     "llm:detect": (): LlmProviderStatus[] => LLM_STATUS,
