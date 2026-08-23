@@ -10,6 +10,64 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-22 — The recorder learns Playwright's role table
+
+A run of "Unsplash Integration Test" failed with `strict mode violation:
+getByTestId('search-route').getByText('Mountain') resolved to 3 elements`
+(the triage entry of the same date is about how that run was mislabelled;
+this one is about how the locator was recorded). Two rows in that test were
+wrong in the same way: the click on `<h1>Mountain</h1>` recorded
+`div:nth-of-type(2) > … > h1` and earned the positional warning, and the
+assertion on it recorded `getByText("Mountain")`, which is a case-insensitive
+substring and also matched the "mountains" and "mountain peak" tag links
+beside it. Playwright's own error named the locator it would have used —
+`getByRole('heading', { name: 'Mountain' })` — and the recorder never offered
+it, because `roleOf` knew five tags (`a`, `button`, `select`, `textarea`,
+`input`) and a heading had no role.
+
+**The table is now Playwright's table.** `GL_IMPLICIT_ROLES` in
+`DOM_HELPERS` transcribes `kImplicitRoleByTagName` from playwright-core's
+injected script, conditional entries included: a `<header>` is a banner only
+outside `article/aside/main/nav/section`, a `<section>` is a region and a
+`<form>` a form only with an accessible name, an `<img alt="">` is
+presentation, a `<th>` is a column or row header by `scope`, a `<td>` is a
+gridcell inside a `role="grid"` table. Transcribed rather than imported,
+because the helpers are a string built at module load and Playwright's table
+lives inside a generated bundle; the cost is that a transcription verifies as
+unique against itself, which is why every conditional entry has a row in
+`e2e/assert-parity.spec.ts` where a real browser answers.
+
+**Three rules had to come with it, or the table would have made things worse.**
+
+- *A name from content only where Playwright takes one.* `accName` used to
+  read every element's text. With `<li>` now a listitem that would record
+  `getByRole("listitem", { name: "Beta" })` — unique against our own oracle,
+  and matching nothing in the run, because listitem is not a name-from-content
+  role. `GL_NAME_FROM_CONTENT` is Playwright's `allowsNameFromContent` list;
+  everything else is named by `aria-label`/`aria-labelledby`, `alt` for an
+  image, `title` last. A side effect worth knowing: a `<select>` with no label
+  no longer gets its options' text as a name.
+- *No nameless locator for a content role.* Every `<p>` has the paragraph
+  role now, and the candidate list's indexed fallback would have preferred
+  `getByRole("paragraph").nth(7)` to the positional path it falls to today —
+  an "indexed" grade in place of a "positional" one, breaking the same way.
+  `bareRoleOk` excludes `GL_BARE_ROLE_SKIP` from the nameless candidate in
+  all three builders, including Auto-Heal's own copy of `candidatesFor`.
+- *One table, one scan.* The role arm of `matchesForBase` scanned a
+  hand-written list of six tags. Its selector is now derived from the table
+  (`roleScanSelector`), so a tag cannot be added to one and missed by the
+  other — and a scan for "heading" walks six tags rather than the document.
+
+**What changes on screen.** A heading, an image with alt, a table cell and a
+link inside a cell record by role. The context picker offers "Inside nav" /
+"Inside main" for bare landmarks, which `GL_SCOPE_ROLES` always listed and
+`roleOf` could never produce. The positional warning and the substring text
+locator on those two Unsplash rows both go away.
+
+Rejected: importing the table from playwright-core at build time. The
+injected script is a string, the package's table is not exported, and reaching
+into `lib/generated` from the bundler is a dependency on an internal that
+every Playwright upgrade would break at the worst moment.
 ### 2026-08-22 — A run-time heal is baked into the test only when the whole run passed
 
 mabl's rule, adopted: *if the test passes, the auto-heal is saved; if it fails,

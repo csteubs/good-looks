@@ -70,6 +70,9 @@ const FIXTURE = `<!doctype html>
   <section data-test="legacy-card" data-el="legacy-card">
     <button data-test-id="legacy-save" data-el="legacy-save">Keep</button>
   </section>
+  <!-- A landmark by its TAG: no role attribute anywhere on the nav. -->
+  <nav data-el="nav"><button data-el="menu-in-nav" aria-label="Menu">Menu</button></nav>
+  <button data-el="menu-outside" aria-label="Menu">Menu</button>
   <i data-testid="dup-id" data-el="dup-modern">m</i>
   <i data-test="dup-id" data-el="dup-legacy">l</i>
 </body></html>`;
@@ -187,6 +190,21 @@ const ROWS: Row[] = [
     label: "a container is not a match for itself",
     loc: { k: "role", role: "group", ctx: { within: { k: "testid", v: "outer-group" } } },
     expected: ["inner-group"],
+  },
+
+  {
+    // The container's role comes from its TAG — roleOf derives `navigation`
+    // from <nav> — which is what lets the picker offer "Inside nav" for a
+    // landmark with no role attribute. The trainer's DOM walk and real
+    // Playwright have to agree that the bare tag IS the landmark.
+    label: "within a bare <nav>, resolved as navigation from the tag",
+    loc: {
+      k: "role",
+      role: "button",
+      name: "Menu",
+      ctx: { within: { k: "role", role: "navigation" } },
+    },
+    expected: ["menu-in-nav"],
   },
 
   // ---- withinHasText ------------------------------------------------------

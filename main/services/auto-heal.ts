@@ -104,7 +104,7 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
     if (ph) out.push({ k: "placeholder", v: ph });
     var t = txt(el);
     if (t && t.length <= 40) out.push({ k: "text", v: t });
-    if (role && !nm) out.push({ k: "role", role: role });
+    if (role && !nm && bareRoleOk(role)) out.push({ k: "role", role: role });
     out.push({ k: "css", v: cssPath(el) });
     return out;
   }

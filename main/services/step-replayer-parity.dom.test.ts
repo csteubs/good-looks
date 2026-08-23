@@ -538,3 +538,24 @@ describe("count capture in the preview", () => {
     expect((none as { captured?: string }).captured).toBe("0");
   });
 });
+
+describe("roles the run derives from a tag", () => {
+  // The replayer resolves roles through the same DOM_HELPERS the recorder
+  // grades uniqueness with. A heading recorded by role has to preview green
+  // here, or the trainer would report "element not found" for a step every
+  // run resolves — the direction that costs an afternoon.
+  it("resolves a heading by role and name beside a link containing the word", () => {
+    document.body.innerHTML = `<h1>Mountain</h1><a href="/m">mountains</a>`;
+    const r = run(
+      step({ type: "assert", assert: "visible", locator: { k: "role", role: "heading", name: "Mountain" } }),
+    );
+    expect(r.ok, why(r)).toBe(true);
+  });
+
+  it("still refuses the substring text locator on that page", () => {
+    document.body.innerHTML = `<h1>Mountain</h1><a href="/m">mountains</a>`;
+    const r = run(step({ type: "assert", assert: "visible", locator: { k: "text", v: "Mountain" } }));
+    expect(r.ok).toBe(false);
+    expect(why(r)).toContain("strict mode violation");
+  });
+});
