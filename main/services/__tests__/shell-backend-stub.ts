@@ -351,3 +351,14 @@ export async function invokeHandler<T = unknown>(channel: string, params?: unkno
 export function clearHandlers(): void {
   handlers.clear();
 }
+
+/** `utilityProcess` is Electron's child-process API; there is none under
+ *  Vitest. Forking throws, which is the path the TS-service client turns into
+ *  "type intelligence unavailable" — tests that want a live service hand the
+ *  client a forker of their own (`tsService.useForker`). */
+export const utilityProcess = {
+  fork(): never {
+    throw new Error("utilityProcess is not available outside Electron");
+  },
+};
+export type UtilityProcess = never;

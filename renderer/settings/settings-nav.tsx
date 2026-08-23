@@ -49,6 +49,7 @@ import {
   Tags,
   Video,
   Wrench,
+  SearchCheck,
 } from "lucide-react";
 import { Fragment } from "react";
 import type { ComponentType } from "react";
@@ -61,6 +62,7 @@ import type { RecorderSettings } from "../lib/recorder-types";
 const PANE_ICONS: Record<PaneId, ComponentType<{ className?: string }>> = {
   appearance: Palette,
   editor: Code2,
+  inspections: SearchCheck,
   recording: Video,
   "test-defaults": Settings2,
   "auto-heal": Bandage,

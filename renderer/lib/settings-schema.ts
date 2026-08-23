@@ -11,6 +11,7 @@
 // where the only way to test "9999 runs is refused" was to render a window and
 // fire a change event.
 
+import { INSPECTIONS, defaultInspections } from "../../shared/inspections.mjs";
 import type { RecorderSettings } from "./recorder-types";
 import { blockText } from "./doc-blocks";
 import { APP_DOCS, docRowId } from "./docs";
@@ -28,6 +29,7 @@ import { PROXY_DEFAULTS } from "../../shared/proxy-config.mjs";
 export type PaneId =
   | "appearance"
   | "editor"
+  | "inspections"
   | "recording"
   | "test-defaults"
   | "auto-heal"
@@ -77,6 +79,12 @@ export const PANES: readonly PaneDef[] = [
     id: "editor",
     title: "Editor",
     subtitle: "The Script tab's code editor: type, wrap, gutters, and what a save checks.",
+    group: "Testing",
+  },
+  {
+    id: "inspections",
+    title: "Inspections",
+    subtitle: "What the Script tab flags in a spec, and which of it offers a fix.",
     group: "Testing",
   },
   {
@@ -609,6 +617,15 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     key: "aiInstructionsByHost",
   },
 
+  // Inspections — one row per rule, all writing the one `inspections` key.
+  ...INSPECTIONS.map((i) => ({
+    id: `inspection-${i.id}`,
+    pane: "inspections" as const,
+    label: i.label,
+    keywords: `inspection lint rule ${i.id.replace(/-/g, " ")} ${i.severity} quick fix`,
+    key: "inspections" as const,
+  })),
+
   // Failure reasons
   {
     id: "auto-failure-reasons",
@@ -922,6 +939,7 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   editorCheckOnSave: true,
   aiInstructions: "",
   aiInstructionsByHost: {},
+  inspections: defaultInspections(),
   showUrlBar: true,
   trainerPanelEnabled: false,
   defaultRunSpeed: "slow",

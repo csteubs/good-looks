@@ -11351,3 +11351,60 @@ in CI with an unhandled rejection while every sibling check passed. The job
 now installs Chromium (same cache key as the e2e job), and the check names
 the missing browser and the command to install it instead of dumping a
 stack.
+
+## 2026-08-23 — Script IDE View, Phase 4: a TypeScript service and the app's own inspections
+
+**TypeScript ships with the app, in a `utilityProcess`.** The editor now has
+completions, hover, type errors and inspections, and all four come from one
+`typescript` language service running in an Electron `utilityProcess`
+(`main/services/ts-service/`). The alternatives were a renderer Web Worker
+(the first worker under `app://`, and 9 MB of compiler in the renderer
+bundle) and no type service at all (syntax and the `--list` check only).
+The child keeps the compiler out of every renderer and out of the main
+bundle too: `typescript` is a runtime dependency resolved at runtime from
+the same `node_modules` the runner's Playwright CLI comes from, so the
+`@playwright/test` types the user sees are the ones the run uses. The
+editor's document is a virtual file placed beside that `node_modules`
+(`__gl_editor__/<id>.spec.ts`), and the generated runtime helper is a second
+virtual file handed in as text — a spec importing `./glaze-runtime.mjs`
+type-checks without the service knowing where the scripts directory is.
+
+**"Type intelligence unavailable" is a state, not an error.** A fork that
+fails, a child that died more than three times, a request that hangs ten
+seconds — each sets `status().available = false` with a reason the script
+bar shows, and every request answers empty. The editor keeps the Lezer
+syntax marks and the Playwright `--list` verdict, which is the diagnostics
+it had before this phase. A restarted child is replayed the open documents.
+`utilityProcess` is the one Electron API added to `main/shell/backend.ts`;
+the test stub's `fork` throws, which is how the unit tests exercise the
+unavailable path, and the client takes an injectable forker for the rest.
+
+**Four layers of proof, because each sees something the others cannot.**
+`core.test.ts` runs the language service over the real typescript and the
+real `@playwright/test` types; `client.test.ts` runs the client over an
+in-process child; `check:ts-service` forks the BUILT `ts-service.js` under
+plain Node (the child speaks Node IPC when there is no `parentPort`), which
+is what proves esbuild's bundle and the runtime `typescript` resolution;
+`e2e/ts-service.spec.ts` asks the running app, which is the only place the
+real `utilityProcess`, the child path computed from the main bundle, and
+`process.parentPort` exist.
+
+**Inspections are the app's rules, written over the TS AST, not ESLint.**
+Bundling ESLint and `eslint-plugin-playwright` was the other option: broad
+coverage, ~15 MB more on disk, a slower cold start, and a second
+configuration surface to keep consistent with the first. The six rules here
+(`shared/inspections.mjs` names them; `core.ts` runs them) are opinions
+about Playwright tests as this app records them — an un-awaited promise, a
+fixed-time wait, `force: true` without a comment saying why, a statement
+outside a `test.step` wrapper, a CSS locator, a locator pinned by index —
+and four of them carry a quick fix as text edits, applied through the lint
+panel's action button as one transaction. Settings → Inspections switches
+each rule off; a rule switched off stops marking and changes nothing about
+a run. The rule list is a `shared/` module for the usual reason: the pane
+and the service must name the same rules, and a rule named on one side only
+is a switch that toggles nothing.
+
+**Not done here.** Signature help, rename, go-to-definition across the
+library, and format-on-save are Phase 5 material; a quick fix from the live
+page (a narrowed locator when the count is not one) and from Auto-Heal
+history were offered and declined for this phase.

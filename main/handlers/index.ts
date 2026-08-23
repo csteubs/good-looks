@@ -74,6 +74,8 @@ import { shopifySignatureStore } from "../services/shopify-signature-store.js";
 import { parseSpecDetailed } from "../services/spec-parser.js";
 import { checkTestScript } from "../services/script-check.js";
 import { livePageService } from "../services/live-page-service.js";
+import { tsService } from "../services/ts-service/client.js";
+import { glazeRuntimeSource } from "../services/glaze-runtime-source.js";
 import { SCRIPT_CHANGED_ON_DISK } from "../../shared/script-save.mjs";
 import { activeProviderEndpoint, llmService } from "../services/llm-service.js";
 import { proxyPasswordStore } from "../services/proxy-password-store.js";
@@ -1251,6 +1253,33 @@ export function registerHandlers(): void {
   );
   ipcMain.handle("livePage:pick", async () => livePageService.pick());
   ipcMain.handle("livePage:cancelPick", async () => livePageService.cancelPick());
+
+  // The TypeScript service (ts-service/client.ts): a utilityProcess the
+  // Script tab asks for diagnostics, completions, hover and inspections.
+  // Documents are keyed by the renderer's id (the test id); the generated
+  // runtime helper is attached here so a spec importing it type-checks.
+  const docId = (v: unknown): string => {
+    if (typeof v !== "string" || !v) throw new Error("A document id is required.");
+    return v.slice(0, 200);
+  };
+  const offset = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0);
+  ipcMain.handle("ts:status", async () => tsService.status());
+  ipcMain.handle("ts:ensure", async () => tsService.ensure());
+  ipcMain.handle("ts:update", async (_e, params: { id: unknown; text: unknown }) => {
+    const text = typeof params?.text === "string" ? params.text : "";
+    await tsService.update(docId(params?.id), text, glazeRuntimeSource);
+  });
+  ipcMain.handle("ts:close", async (_e, params: { id: unknown }) => tsService.close(docId(params?.id)));
+  ipcMain.handle("ts:diagnostics", async (_e, params: { id: unknown }) => tsService.diagnostics(docId(params?.id)));
+  ipcMain.handle("ts:completions", async (_e, params: { id: unknown; offset: unknown }) =>
+    tsService.completions(docId(params?.id), offset(params?.offset)),
+  );
+  ipcMain.handle("ts:hover", async (_e, params: { id: unknown; offset: unknown }) =>
+    tsService.hover(docId(params?.id), offset(params?.offset)),
+  );
+  ipcMain.handle("ts:inspections", async (_e, params: { id: unknown }) =>
+    tsService.inspections(docId(params?.id), recorderSettingsStore.get().inspections),
+  );
 
   /** What saving `source` over this test's script WOULD do, without doing it:
    *  the steps the parser would read back, where it read each from, where it

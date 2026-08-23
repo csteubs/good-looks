@@ -34,6 +34,7 @@ import {
   safeStorage,
   screen,
   session,
+  utilityProcess,
   WebContentsView,
 } from "electron";
 import type { BrowserWindowConstructorOptions } from "electron";
@@ -56,8 +57,10 @@ export {
   safeStorage,
   screen,
   session,
+  utilityProcess,
   WebContentsView,
 };
+export type { UtilityProcess } from "electron";
 export { logger } from "./logger.js";
 
 export type { MenuItemConstructorOptions, Cookie, CookiesSetDetails } from "electron";

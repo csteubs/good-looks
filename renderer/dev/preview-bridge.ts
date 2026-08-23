@@ -1648,6 +1648,16 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "llm:status": (p): LlmProviderStatus =>
       LLM_STATUS.find((s) => s.provider === p?.provider) ?? LLM_STATUS[0],
     "llm:listModels": (): LlmModel[] => [],
+    // The TypeScript service needs a main process; the preview says so and
+    // the editor keeps its syntax and CLI diagnostics.
+    "ts:status": () => ({ available: false, reason: "No backend in preview mode — type intelligence needs the app." }),
+    "ts:ensure": () => ({ available: false, reason: "No backend in preview mode — type intelligence needs the app." }),
+    "ts:update": () => undefined,
+    "ts:close": () => undefined,
+    "ts:diagnostics": () => [],
+    "ts:completions": () => [],
+    "ts:hover": () => null,
+    "ts:inspections": () => [],
     "llm:hasApiKey": () => ({ hasKey: false }),
     "llm:hasLmStudioToken": () => ({ hasToken: false }),
     "llm:isActive": () => ({ active: false }),
