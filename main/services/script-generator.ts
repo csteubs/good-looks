@@ -753,7 +753,7 @@ function cookieLiteral(spec: CookieSpec): string {
 }
 
 /** Filter for clearCookies — deleting ONE cookie rather than all of them.
- *  Playwright 1.43+ accepts {name, domain, path}; the bundled runner is 1.53. */
+ *  Playwright 1.43+ accepts {name, domain, path}; the bundled runner is 1.62. */
 function cookieFilterLiteral(spec: CookieSpec): string {
   const parts: string[] = [`name: ${q(spec.name)}`];
   if (spec.domain) parts.push(`domain: ${q(spec.domain)}`);
@@ -1103,6 +1103,64 @@ function stepLogLine(step: Step): string | null {
     q("[viewport] resized to " + w + "x" + h + " — page reports ") +
     " + JSON.stringify(page.viewportSize()));"
   );
+}
+
+/** The title a step's `test.step` wrapper carries — a PHRASE, never code.
+ *
+ *  `describeStep` falls through to the emitted statement for the common
+ *  types, and a title that quotes the statement is wrong twice over: it
+ *  doubles every line of the spec, and it puts `page.getByTestId("a")` inside
+ *  a string where a scan of the file can find it (the parser consumes the
+ *  wrapper whole, but every other reader of the file — a grep, a model, a
+ *  reviewer — would not). So the common types get a short spelling here:
+ *  the verb, the locator as `kind "value"`, and a capped value. Types
+ *  `describeStep` already phrases keep that phrase. */
+export function stepTitle(step: Step): string {
+  const loc = (l: Locator | undefined): string => {
+    if (!l) return "";
+    const name = l.name ? ` ${JSON.stringify(String(l.name))}` : "";
+    return `${l.k} ${JSON.stringify(String(l.v ?? ""))}${name}`;
+  };
+  const short = (v: unknown): string => {
+    const text = String(v ?? "");
+    return JSON.stringify(text.length > 40 ? text.slice(0, 37) + "…" : text);
+  };
+  switch (step.type) {
+    case "click":
+    case "dblclick":
+    case "rightclick":
+    case "check":
+    case "uncheck":
+      return `${step.type} ${loc(step.locator)}`.trim();
+    case "fill":
+    case "select":
+      return `${step.type} ${loc(step.locator)} ${short(step.value)}`.replace(/\s+/g, " ").trim();
+    case "press":
+      return `press ${short(step.value ?? step.text ?? "")}${step.locator ? " on " + loc(step.locator) : ""}`;
+    case "goto":
+      return `goto ${short(step.url ?? "")}`;
+    case "assert": {
+      const subject = step.locator ? loc(step.locator) : "page";
+      const expected =
+        step.value !== undefined && step.value !== "" ? " " + short(step.value) : "";
+      return `${step.soft ? "soft " : ""}expect ${subject} ${step.assert ?? ""}${expected}`.replace(/\s+/g, " ").trim();
+    }
+    case "wait":
+      return step.waitUntil ? describeStep(step) : `wait for ${loc(step.locator)}`.trim();
+    case "viewport":
+      return `viewport ${num(step.width, 0)}x${num(step.height, 0)}`;
+    case "scroll":
+      return step.locator ? `scroll to ${loc(step.locator)}` : describeStep(step);
+    default: {
+      // Anything `describeStep` phrases stays a phrase; anything it spells
+      // as the statement gets the type and the target instead, so no title
+      // ever carries code.
+      const phrase = describeStep(step);
+      return /\bpage\.|\bexpect\(|\bglaze[A-Z]/.test(phrase)
+        ? `${step.type} ${loc(step.locator)}`.trim()
+        : phrase;
+    }
+  }
 }
 
 /** Short human description of a step for the UI.
@@ -1667,6 +1725,19 @@ export function generateSpecDetailed(
   const record1 = (index: number): void => {
     relLines.push([body.length, index]);
   };
+  // Every plain statement is wrapped in `await test.step(<description>, …)`
+  // since 2026-08-22: Playwright's own reports and trace viewer then show the
+  // step by the name the Steps tab gives it, and the Script IDE folds and
+  // reports per step. Three rules keep the wrapper from changing what runs:
+  // only a STATEMENT is wrapped, never a brace half (`if`/`else`/`endif`, a
+  // loop's `for`/`}`), never a comment, and never a download's arming line,
+  // which must stay in the scope its `await downloadN` reads from; the
+  // wrapped line is the one `record1` attributes, so the run highlight and
+  // the reporter's `pw:api` markers land on the statement, not the header.
+  // The title goes through `q()` like every free string.
+  const stepOpen = (indent: string, step: Step): string =>
+    indent + "await test.step(" + q(stepTitle(step)) + ", async () => {";
+  const stepClose = (indent: string): string => indent + "});";
 
   // TWO loop bookkeepings, for the two loop constructs. `loopNames` holds the
   // open `loop`/`endLoop` BLOCK variables (`i`, `i2`, …) so nested blocks
@@ -1899,8 +1970,10 @@ export function generateSpecDetailed(
       // helper's screenshot file with this step after the run and is OURS
       // (a counter, never a step field).
       aiCheckIdx += 1;
+      body.push(stepOpen(indent, step));
       record1(sourceIndex);
-      body.push(indent + "await glazeAiCheck(page, " + q(step.text ?? "") + ", " + aiCheckIdx + ");");
+      body.push(indent + "  await glazeAiCheck(page, " + q(step.text ?? "") + ", " + aiCheckIdx + ");");
+      body.push(stepClose(indent));
       continue;
     }
     if (step.type === "group" || step.type === "endGroup") {
@@ -1946,11 +2019,14 @@ export function generateSpecDetailed(
         parts.push(`V.${step.captureVar} = ${d}.suggestedFilename();`);
       }
       const stmt = `{ ${parts.join(" ")} }`;
+      body.push(stepOpen(indent, step));
       record1(sourceIndex);
       body.push(
         indent +
+          "  " +
           (step.continueOnFailure ? `try ${stmt} catch { /* continue on failure */ }` : stmt),
       );
+      body.push(stepClose(indent));
       continue;
     }
     const line = stepLine(step, vars);
@@ -1988,15 +2064,24 @@ export function generateSpecDetailed(
       // "Continue on Failure" wraps the step's statement in a try/catch so a
       // failure is swallowed and the test proceeds to the next step. Only
       // applies to action/assert steps — structural `if`/`endif` are never wrapped.
+      // The test.step sits INSIDE the try: a step that is allowed to fail is
+      // still a step, and Playwright's report should show it failing.
       body.push(indent + "try {");
+      body.push(stepOpen(indent + "  ", step));
+      record1(sourceIndex);
+      body.push(indent + "    " + line);
+      if (logLine) body.push(indent + "    " + logLine);
+      body.push(stepClose(indent + "  "));
+      body.push(indent + "} catch { /* continue on failure */ }");
+    } else if (step.type === "if" || step.type === "endif") {
+      record1(sourceIndex);
+      body.push(indent + line);
+    } else {
+      body.push(stepOpen(indent, step));
       record1(sourceIndex);
       body.push(indent + "  " + line);
       if (logLine) body.push(indent + "  " + logLine);
-      body.push(indent + "} catch { /* continue on failure */ }");
-    } else {
-      record1(sourceIndex);
-      body.push(indent + line);
-      if (logLine) body.push(indent + logLine);
+      body.push(stepClose(indent));
     }
     if (step.type === "if") blockKinds.push({ kind: "if" });
     if (step.type === "if") depth += 1;

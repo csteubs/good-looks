@@ -39,11 +39,14 @@ describe("emission", () => {
     const ifLine = lines.find((l) => l.trimStart().startsWith("if ("))!;
     const elseLine = lines.find((l) => l.includes("} else {"))!;
     expect(elseLine.match(/^ */)![0].length).toBe(ifLine.match(/^ */)![0].length);
-    // Both bodies sit one level deeper.
-    const thenLine = lines.find((l) => l.includes('"then"'))!;
-    const otherLine = lines.find((l) => l.includes('"other"'))!;
-    expect(thenLine.match(/^ */)![0].length).toBe(ifLine.match(/^ */)![0].length + 2);
-    expect(otherLine.match(/^ */)![0].length).toBe(ifLine.match(/^ */)![0].length + 2);
+    // Both bodies sit one level deeper — their wrappers at +2, the
+    // statements inside them at +4.
+    const thenWrap = lines.find((l) => l.includes("then") && l.includes("test.step"))!;
+    const thenLine = lines.find((l) => l.includes('"then"') && l.includes("await page"))!;
+    const otherLine = lines.find((l) => l.includes('"other"') && l.includes("await page"))!;
+    expect(thenWrap.match(/^ */)![0].length).toBe(ifLine.match(/^ */)![0].length + 2);
+    expect(thenLine.match(/^ */)![0].length).toBe(ifLine.match(/^ */)![0].length + 4);
+    expect(otherLine.match(/^ */)![0].length).toBe(ifLine.match(/^ */)![0].length + 4);
     expect(balanced(src)).toBe(true);
   });
 

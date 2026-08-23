@@ -46,12 +46,14 @@ import {
 import { EditStepsView } from "./edit-steps-view";
 import { RunOutput } from "./run-output";
 import { IssueComposeDialog } from "../components/issue-compose-dialog";
-import { ScriptEditor, ScriptView } from "./script-view";
+import { ScriptEditor, type RunLineStatus, type ScriptEditorHandle } from "./script-view";
+import { markScriptDirty } from "../lib/script-buffer";
+import { SCRIPT_CHANGED_ON_DISK, isScriptChangedOnDisk } from "../../shared/script-save.mjs";
 import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
 import { HealsPanel } from "./heals-panel";
 import { A11yPanel } from "./a11y-panel";
-import { computeStepDepths } from "../lib/describe-step";
+import { computeStepDepths, describeStep } from "../lib/describe-step";
 import { gradeCounts } from "../lib/locator-grade";
 import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
 import { latestA11yRun } from "../lib/a11y-format";
@@ -63,6 +65,9 @@ import {
   RUN_BROWSER_LABELS,
   type RunBrowser,
   type ScriptChangeSource,
+  type ScriptCheckError,
+  type ScriptCheckResult,
+  editorLineHeight,
   type Step,
   type TestRecord,
   type TestVariable,
@@ -107,6 +112,24 @@ export async function persistRunBrowser(qc: QueryClient, id: string, browser: Ru
   qc.invalidateQueries({ queryKey: ["test", id] });
 }
 
+/** What the pre-save check has said about the current draft. */
+interface ScriptCheckState {
+  status: "idle" | "checking" | "failed";
+  errors: ScriptCheckError[];
+}
+
+const IDLE_CHECK: ScriptCheckState = { status: "idle", errors: [] };
+
+/** The body of the divergence question: the first few statements the parser
+ *  will not map, then what that costs. The script runs as written either
+ *  way — what changes is that the Steps tab stops tracking those lines. */
+function describeDiverge(newlySkipped: string[]): string {
+  const shown = newlySkipped.slice(0, 3).map((t) => `“${t}”`);
+  const more = newlySkipped.length - shown.length;
+  const list = shown.join(", ") + (more > 0 ? ` and ${more} more` : "");
+  return `The parser can't map ${list} back to a step. The script still runs exactly as written; the Steps tab just won't show or track ${newlySkipped.length === 1 ? "that line" : "those lines"} until the test is retrained or its script regenerated.`;
+}
+
 export function TestDetailView() {
   const { id } = useParams({ from: "/test/$id" });
   const navigate = useNavigate();
@@ -118,6 +141,35 @@ export function TestDetailView() {
   const [nameDraft, setNameDraft] = React.useState("");
   const [editingScript, setEditingScript] = React.useState(false);
   const [scriptDraft, setScriptDraft] = React.useState("");
+  // The pre-save check's verdict on the draft. `checking` holds Save while the
+  // Playwright CLI has the draft; `failed` keeps the editor open with the
+  // problems listed and offers "Save anyway" — the file is the user's, and a
+  // draft that does not load yet is still theirs to keep.
+  const [scriptCheck, setScriptCheck] = React.useState<ScriptCheckState>(IDLE_CHECK);
+  const scriptEditorRef = React.useRef<ScriptEditorHandle | null>(null);
+  // The caret's line while editing, for the step readout in the bar.
+  const [caretLine, setCaretLine] = React.useState<number | null>(null);
+  // The script the draft STARTED from. Sent with every save so the backend
+  // can refuse a draft built on text that something else has since replaced
+  // (an AI fix landing unattended, a flow edit regenerating this caller, a
+  // heal). `staleOpen` is that refusal, with Reload and Overwrite as the two
+  // ways past it. `divergeConfirm` is the other question a save can raise —
+  // statements the parser will not map back to steps — asked only for misses
+  // the stored script did not already have.
+  const [scriptBase, setScriptBase] = React.useState("");
+  const [staleOpen, setStaleOpen] = React.useState(false);
+  const [divergeConfirm, setDivergeConfirm] = React.useState<{
+    newlySkipped: string[];
+    overwrite: boolean;
+  } | null>(null);
+  // The dirty registry is what holds an unattended AI apply off a test whose
+  // draft is open (ai-debug-store.tsx). Cleared when editing ends, and on
+  // unmount, so a draft abandoned by navigating away does not pin the test.
+  const scriptDirty = editingScript && scriptDraft !== scriptBase;
+  React.useEffect(() => {
+    markScriptDirty(id, scriptDirty);
+    return () => markScriptDirty(id, false);
+  }, [id, scriptDirty]);
   const [editingSteps, setEditingSteps] = React.useState(false);
   // Edited steps waiting on the "what about the script?" question. Only set for
   // a test whose script isn't generated from its steps; null the rest of the
@@ -210,6 +262,18 @@ export function TestDetailView() {
     queryKey: ["recorder-settings"],
     queryFn: () => api.recorder.getSettings(),
   });
+  // Settings → Editor → Font size lands on the two tokens every editor
+  // column is sized from (renderer/theme/editor.css). Written on the document
+  // so the theme extension's `var()` reads pick it up without a remount.
+  const editorFontSize = settingsQuery.data?.editorFontSize;
+  React.useEffect(() => {
+    const root = document.documentElement;
+    if (typeof editorFontSize === "number") {
+      root.style.setProperty("--gl-code-size", `${editorFontSize}px`);
+      root.style.setProperty("--gl-code-line", `${editorLineHeight(editorFontSize)}px`);
+    }
+  }, [editorFontSize]);
+
   const test = testQuery.data;
   const scriptChanges = scriptChangesQuery.data ?? [];
   // Which tests call this one as a flow. Fetched for every test rather than
@@ -370,6 +434,58 @@ export function TestDetailView() {
   const aiDebug = useAiDebug();
   const aiKey = runSessionKey(id);
   const script = scriptQuery.data ?? "";
+  // The text the editor shows: the draft while editing, the file otherwise.
+  const shownScript = editingScript ? scriptDraft : script;
+  // What the parser makes of the shown text — the coverage gutter and the
+  // step readout draw from it. Keyed by the text itself so a draft is
+  // re-parsed as it changes (debounced below), and the saved script once.
+  const [previewText, setPreviewText] = React.useState(shownScript);
+  React.useEffect(() => {
+    if (!editingScript) {
+      setPreviewText(script);
+      return;
+    }
+    const t = setTimeout(() => setPreviewText(scriptDraft), 500);
+    return () => clearTimeout(t);
+  }, [editingScript, script, scriptDraft]);
+  const previewQuery = useQuery({
+    queryKey: ["script-preview", id, previewText],
+    queryFn: () => api.tests.previewScript(id, previewText),
+    enabled: previewText.length > 0,
+    staleTime: Infinity,
+  });
+  const preview = previewQuery.data ?? null;
+  // Run status by LINE for the editor's gutter: the line each step index
+  // last ran from when the run reported one, else the line the parser reads
+  // that step from in the saved script. Only while the shown text is the
+  // saved script — a draft's lines have moved.
+  const runLineStatus = React.useMemo<Record<number, RunLineStatus>>(() => {
+    const out: Record<number, RunLineStatus> = {};
+    if (!runInfo || editingScript) return out;
+    const lineOfOffset = (offset: number): number => script.slice(0, offset).split("\n").length;
+    for (const [k, status] of Object.entries(runInfo.stepStatus)) {
+      const index = Number(k);
+      const reported = runInfo.stepLines?.[index];
+      const range = preview && preview.tracked !== undefined ? preview.stepRanges[index] : undefined;
+      const line = reported ?? (range ? lineOfOffset(range.from) : undefined);
+      if (line) out[line] = status;
+    }
+    return out;
+  }, [runInfo, editingScript, preview, script]);
+  // The step the caret is on, for the readout: the index whose range holds
+  // the caret's line, described the way the Steps tab describes it.
+  const caretStep = React.useMemo(() => {
+    if (caretLine === null || !preview || !test) return null;
+    const lineOfOffset = (offset: number): number => shownScript.slice(0, offset).split("\n").length;
+    const index = preview.stepRanges.findIndex((r) => {
+      const first = lineOfOffset(r.from);
+      const last = lineOfOffset(Math.max(r.from, r.to - 1));
+      return caretLine >= first && caretLine <= last;
+    });
+    if (index < 0) return null;
+    const step = test.steps[index];
+    return { index, label: step ? describeStep(step) : `step ${index + 1}` };
+  }, [caretLine, preview, test, shownScript]);
   const runOutput = runInfo?.lines.join("") ?? "";
   const recordId = runInfo?.recordId;
   // Identifies the execution being debugged, STABLY for its whole life. Hashing
@@ -597,15 +713,105 @@ export function TestDetailView() {
       });
   };
 
-  const saveScript = async () => {
-    // No origin: a hand edit the user is looking at as they save it. The
-    // backend defaults to exactly that, but saying it here is what keeps the
-    // Heals tab's labels honest if the default ever changes.
-    await api.tests.updateScript(id, scriptDraft, { by: "manual", reviewed: true });
+  /** Write the draft over the script. No load check here — the callers
+   *  decide whether that has to be true first — but two questions of its own:
+   *  will the parser lose statements it could map before (asked once, over
+   *  the new misses only), and is the draft still built on the file as it is
+   *  (refused by the backend; answered with Reload or Overwrite). */
+  const writeScriptDraft = async (opts: { overwrite?: boolean; confirmedDiverge?: boolean } = {}) => {
+    if (!opts.confirmedDiverge) {
+      try {
+        const preview = await api.tests.previewScript(id, scriptDraft);
+        if (preview.tracked && preview.newlySkipped.length > 0) {
+          setDivergeConfirm({ newlySkipped: preview.newlySkipped, overwrite: Boolean(opts.overwrite) });
+          return;
+        }
+      } catch {
+        // A preview that could not run must not stand between the user and
+        // their save; the divergence banner still reports it afterwards.
+      }
+    }
+    try {
+      // No origin: a hand edit the user is looking at as they save it. The
+      // backend defaults to exactly that, but saying it here is what keeps the
+      // Heals tab's labels honest if the default ever changes.
+      await api.tests.updateScript(
+        id,
+        scriptDraft,
+        { by: "manual", reviewed: true },
+        opts.overwrite ? undefined : scriptBase,
+      );
+    } catch (err) {
+      if (isScriptChangedOnDisk(err)) {
+        setStaleOpen(true);
+        return;
+      }
+      toast.error(err instanceof Error ? err.message : String(err));
+      return;
+    }
     qc.invalidateQueries({ queryKey: ["script", id] });
     qc.invalidateQueries({ queryKey: ["test", id] });
     qc.invalidateQueries({ queryKey: ["script-changes", id] });
     setEditingScript(false);
+    setScriptCheck(IDLE_CHECK);
+  };
+
+  /** The way back from a stale draft that keeps the file's side: fetch the
+   *  script as it is now and start the draft over from it. */
+  const reloadScript = async () => {
+    setStaleOpen(false);
+    let fresh = "";
+    try {
+      fresh = await api.tests.getScript(id);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    qc.setQueryData(["script", id], fresh);
+    setScriptDraft(fresh);
+    setScriptBase(fresh);
+    setScriptCheck(IDLE_CHECK);
+  };
+
+  /** Save = check, then write. The check hands the draft to the real
+   *  Playwright CLI (`tests:checkScript`, see script-check.ts): a draft it
+   *  cannot load stays in the editor with its problems listed against the
+   *  lines. A check that could not RUN is reported the same way — it is not a
+   *  pass — and "Save anyway" is the way past either. */
+  const saveScript = async () => {
+    // Settings → Editor → "Check with Playwright before saving". Off, the
+    // save still refuses a stale draft and still asks about statements the
+    // parser would lose; it stops asking the CLI whether the file loads.
+    if (settingsQuery.data?.editorCheckOnSave === false) {
+      await writeScriptDraft();
+      return;
+    }
+    setScriptCheck({ status: "checking", errors: [] });
+    let result: ScriptCheckResult;
+    try {
+      result = await api.tests.checkScript(id, scriptDraft);
+    } catch (err) {
+      setScriptCheck({
+        status: "failed",
+        errors: [
+          {
+            message:
+              "Couldn't check the script: " + (err instanceof Error ? err.message : String(err)),
+          },
+        ],
+      });
+      return;
+    }
+    if (!result.ok) {
+      setScriptCheck({ status: "failed", errors: result.errors });
+      return;
+    }
+    await writeScriptDraft();
+  };
+
+  /** Put the caret at the start of a reported line and bring it into view. */
+  const jumpToScriptLine = (line: number) => {
+    scriptEditorRef.current?.focusLine(line);
   };
 
   if (!test) {
@@ -624,11 +830,18 @@ export function TestDetailView() {
   // edited script is preserved on disk before the trainer can regenerate it.
   const saveAndEditInTrainer = async () => {
     if (editingScript) {
-      await api.tests.updateScript(id, scriptDraft, { by: "manual", reviewed: true });
-      qc.invalidateQueries({ queryKey: ["script", id] });
-      qc.invalidateQueries({ queryKey: ["test", id] });
-      qc.invalidateQueries({ queryKey: ["script-changes", id] });
-      setEditingScript(false);
+      // Unchecked on purpose: this path exists so the edit is not LOST to the
+      // regeneration that follows, and a draft the CLI rejects is still the
+      // edit the user made. The divergence question is moot here too — the
+      // trainer regenerates the steps it is about to edit. A stale draft
+      // still stops: the dialog it opens is the answer, and the trainer is
+      // not started over a refusal.
+      await writeScriptDraft({ confirmedDiverge: true });
+      if (scriptDraft !== scriptBase && editingScript) {
+        // writeScriptDraft returned without closing the editor — it refused.
+        setTrainerConfirmOpen(false);
+        return;
+      }
     }
     start(test.url, test.name, test.id);
     // The composed `Dialog` never closes itself on a resolved confirm — callers
@@ -1153,9 +1366,36 @@ export function TestDetailView() {
               <div className="gl-detail-script-bar">
                 {editingScript ? (
                   <>
-                    <Btn onClick={() => setEditingScript(false)}>Cancel</Btn>
-                    <Btn tone="go" onClick={saveScript}>
-                      Save
+                    {scriptCheck.status === "checking" ? (
+                      <span className="gl-script-check-msg" data-checking="" role="status">
+                        Checking with Playwright…
+                      </span>
+                    ) : scriptCheck.status === "failed" ? (
+                      <span className="gl-script-check-msg" role="status">
+                        {scriptCheck.errors.length === 1
+                          ? "Playwright can't load this script — 1 problem"
+                          : `Playwright can't load this script — ${scriptCheck.errors.length} problems`}
+                      </span>
+                    ) : caretStep ? (
+                      <span className="gl-script-check-msg" data-checking="" data-gl="caret-step">
+                        step {caretStep.index + 1} · {caretStep.label}
+                      </span>
+                    ) : null}
+                    <Btn
+                      onClick={() => {
+                        setEditingScript(false);
+                        setScriptCheck(IDLE_CHECK);
+                      }}
+                    >
+                      Cancel
+                    </Btn>
+                    {scriptCheck.status === "failed" ? (
+                      <Btn tone="stop" onClick={() => void writeScriptDraft()}>
+                        Save anyway
+                      </Btn>
+                    ) : null}
+                    <Btn tone="go" onClick={saveScript} disabled={scriptCheck.status === "checking"}>
+                      {scriptCheck.status === "checking" ? "Checking…" : "Save"}
                     </Btn>
                   </>
                 ) : (
@@ -1164,6 +1404,8 @@ export function TestDetailView() {
                     <Btn
                       onClick={() => {
                         setScriptDraft(scriptQuery.data ?? "");
+                        setScriptBase(scriptQuery.data ?? "");
+                        setScriptCheck(IDLE_CHECK);
                         setEditingScript(true);
                       }}
                     >
@@ -1172,11 +1414,79 @@ export function TestDetailView() {
                   </>
                 )}
               </div>
-              {editingScript ? (
-                <ScriptEditor value={scriptDraft} onChange={setScriptDraft} />
-              ) : (
-                <ScriptView code={scriptQuery.data ?? ""} />
-              )}
+              {editingScript && scriptCheck.status === "failed" ? (
+                <ul className="gl-script-check-errors" aria-label="Script problems">
+                  {scriptCheck.errors.map((e, i) => (
+                    <li key={i}>
+                      <button
+                        type="button"
+                        className="gl-script-check-row"
+                        disabled={!e.line}
+                        title={e.snippet}
+                        onClick={() => {
+                          if (e.line) jumpToScriptLine(e.line);
+                        }}
+                      >
+                        <span className="gl-script-check-loc">
+                          {e.line ? `Line ${e.line}${e.column ? ":" + e.column : ""}` : "Script"}
+                        </span>
+                        <span>{e.message}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <ScriptEditor
+                value={shownScript}
+                onChange={setScriptDraft}
+                readOnly={!editingScript}
+                errors={scriptCheck.errors}
+                skippedRanges={preview?.skippedRanges ?? null}
+                runStatus={runLineStatus}
+                onCaretLine={setCaretLine}
+                ariaLabel={`Script of ${test.name}`}
+                handleRef={scriptEditorRef}
+                lineWrap={settingsQuery.data?.editorLineWrap ?? false}
+                lineNumbers={settingsQuery.data?.editorLineNumbers ?? true}
+                tabSize={settingsQuery.data?.editorTabSize ?? 2}
+              />
+              <Dialog
+                open={staleOpen}
+                onOpenChange={setStaleOpen}
+                title="The script changed on disk"
+                description={SCRIPT_CHANGED_ON_DISK}
+                confirmLabel="Overwrite with my draft"
+                confirmVariant="destructive"
+                onConfirm={() => {
+                  setStaleOpen(false);
+                  void writeScriptDraft({ overwrite: true, confirmedDiverge: true });
+                }}
+                destructiveAction={{
+                  label: "Reload (discard draft)",
+                  onClick: () => void reloadScript(),
+                }}
+              />
+              <Dialog
+                open={divergeConfirm !== null}
+                onOpenChange={(open) => {
+                  if (!open) setDivergeConfirm(null);
+                }}
+                title={
+                  divergeConfirm && divergeConfirm.newlySkipped.length === 1
+                    ? "One statement won't become a step"
+                    : `${divergeConfirm?.newlySkipped.length ?? 0} statements won't become steps`
+                }
+                description={describeDiverge(divergeConfirm?.newlySkipped ?? [])}
+                confirmLabel="Save anyway"
+                confirmVariant="accent"
+                onConfirm={() => {
+                  const pending = divergeConfirm;
+                  setDivergeConfirm(null);
+                  if (pending) {
+                    void writeScriptDraft({ overwrite: pending.overwrite, confirmedDiverge: true });
+                  }
+                }}
+              />
             </TabsContent>
             {imported ? null : (
               <TabsContent value="variables" className="min-h-0 flex-1">

@@ -10,6 +10,225 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-22 — Script IDE View, Phase 1: the engine, the transactional save, and per-step wrappers
+
+The plan is `docs/plans/script-ide-view.md` (research memo 04). Chris chose
+CodeMirror 6, the TypeScript service in an Electron `utilityProcess` (Phase 4,
+not here), Phase 1 only before a check-in, `test.step` wrappers in generated
+specs, the save gate as a setting defaulting on, a confirmation when a save
+would lose statements, the editor blocked during a live session, and the
+Playwright upgrade first. What landed, and the decisions inside each.
+
+**CodeMirror 6, lazily.** Measured at 153 KB gz for the whole host against
+Monaco's ~1.1 MB plus a 1.55 MB TypeScript worker, and — the deciding fact —
+`EditorView.theme` passes `var(--gl-*)` through verbatim where Monaco's
+`defineTheme` rejects CSS variables, so the editor is on the token layer and
+`check:script-ide-layout` can prove every name it reads is declared, the way
+`check:theme-tokens` does for a stylesheet. The host is the renderer's first
+dynamic import: the trainer, settings and URL-strip windows never show a
+script. The chunk is budgeted (260 KB gz) so a later `import "typescript"`
+inside it fails the gate. Theme rules live in the extension and NOT in
+`editor.css`, because CodeMirror injects its base rules after the app's
+stylesheet under a generated class — a plain `.cm-gutters` rule of ours ties
+on specificity and loses on order. `editor.css` styles the host and the marks
+our own `GutterMarker`s create.
+
+**One diagnostics set, two sources.** Lezer's error nodes give an instant
+"this cannot load yet" underline; the CLI's verdict from `tests:checkScript`
+is authoritative by line. `linter()` replaces the whole set on each run, so
+both come from one source: the CLI errors sit in a `StateField`, and the
+plugin's `needsRefresh` names the effect that replaces them as a reason to
+run — `forceLinting` alone does nothing unless a lint is already pending,
+which is why the first version's CLI diagnostics never appeared.
+
+**Stale drafts are refused by TEXT, not by a revision number.** The plan
+said "revision rule"; the cross-check of the code found that the writers a
+counter misses are the ones that matter — `regenerateCallers` rewrites
+every caller's spec FILE after a flow edit and never saves their records.
+So `tests:updateScript` takes the text the draft started from and compares
+it with the file. The renderer offers Reload (discard the draft) or
+Overwrite; a three-way merge is Phase 2+ work. The live-session refusal
+moved to `main`: the plan put it in the renderer, but `RootShell` swaps the
+whole outlet for `RecordingView` while any session is live, so there is no
+Script tab to block — what is reachable is a save from another path landing
+underneath `recorderService.finalize`, which regenerates and discards it.
+
+**The divergence question is asked once, over the NEW misses.** An imported
+spec or a hand-written block already has statements the parser cannot map;
+prompting on every save for those would train the user to confirm without
+reading. `tests:previewScript` diffs the draft's unmapped statements
+against the stored script's (trimmed, trailing `;` dropped — the skip branch
+consumes it and the step branches leave it) and the dialog lists only what
+is new. A preview that fails never blocks the save; the banner still
+reports afterwards.
+
+**Unattended AI apply waits for a dirty buffer.** The auto-apply path was
+already gated on the script being byte-identical to what the prompt saw; a
+draft open in the editor leaves the FILE unchanged, so that gate passed and
+the fix would have landed under the user's draft — whose next Save is then a
+stale refusal, the first they hear of it. `renderer/lib/script-buffer.ts` is
+the one place the editor's view state and the store above the router meet.
+
+**`test.step` wrappers, with rules the code forced.** The map of the
+generator found five places a naive "wrap every line" breaks the file or
+the run: brace halves cannot be wrapped; a download's arming `const` must
+stay in the scope its `await` reads from; the continue-on-failure `try`
+must enclose the wrapper, not sit inside it; `record1` must point at the
+inner statement or every highlight shifts a line; and — found by the tests,
+not the map — `describeStep` falls through to the emitted statement for the
+common types, so a title built from it doubles the file and puts
+`page.getByTestId("a")` inside a string, where `force-click.test.ts`'s
+`replace("{ force: true }", …)` promptly hit the title instead of the code.
+`stepTitle` is a phrase for those types. The parser consumes a wrapper
+whole and before the brace closer (the same load-bearing ordering as the
+teardown latch); the runner's fallback line map sees through headers and
+closers. The AI prompts were saying the opposite ("do NOT wrap") and now
+ask for one statement per wrapper. Playwright 1.62 collects the shape
+(`check:runtime-boot`) and `e2e/step-progress.spec.ts` reports through it.
+
+**Deferred from Phase 1, by the check-in rule:** the TypeScript language
+service, ESLint, the trainer tools (match-count inlay, caret → trainer
+highlight, pick-locator insert, record at cursor), the inline AI
+affordances, keymap presets, folding by step, and the three-way merge.
+
+**Verified:** the full gate on every commit of the series; `check:script-
+ide-layout` (token reads, one scroller, the lazy chunk and its budget);
+`script-editor-cm.test.tsx` (gutters, diagnostics, compartments, the
+handle); the "saving a script edit" blocks in `test-detail-view.test.tsx`
+(stale → Reload/Overwrite, divergence confirmation, dirty registry, the
+check-on-save switch); `tests:checkScript`/`tests:previewScript`/stale/live-
+session rows in `handlers.test.ts`; `spec-parser-positions.test.ts`;
+`step-line-map.test.ts`; the §18b wrapper fixtures in `check:spec-parser`;
+the preview at `?test=t-login` (wrap off, syntax colours, Lezer underline,
+coverage mark, the failed-check strip with click-to-line) and `?test=t-long`
+(2000 lines); and the e2e suite on the new spec shape.
+
+### 2026-08-22 — Playwright 1.53.0 → 1.62.1, as its own change ahead of the Script IDE work
+
+The Script IDE plan (`docs/plans/script-ide-view.md`) wanted three things the
+pinned runner did not have — `page.pickLocator()` (1.59), the bundled MCP
+server and `playwright-cli` (1.62), and a `--list` that accepts `declare`
+class fields — and Chris chose to take the upgrade FIRST, so the editor work
+lands on the runner it will ship with rather than re-verifying twice.
+
+**What was checked, because a runner pin is gate-wide.** The release notes
+from 1.54 to 1.62 were read for removals and behaviour changes and each one
+grepped for in what this app emits: `:light` selector suffix (1.58),
+`_react`/`_vue` engines (1.58), `page.accessibility` (1.57), the `devtools`
+launch option (1.58), `Locator.ariaRef()` / `videosPath` / `videoSize` (1.62),
+`?` and `[]` in `page.route()` globs (1.54) — none are used. One change DID
+touch shipped code: since 1.54 `route.continue()` cannot override the `Cookie`
+header, and `signature-fixture-source.ts` merges `allHeaders()` (cookie
+included) into its `continue({headers})`. Probed on both versions with a real
+Chromium, a real cookie and a real route: on 1.62.1 the signature header
+arrives, the cookie arrives, and nothing throws — the runner ignores the
+cookie entry rather than rejecting the call, so the fixture's catch-and-
+continue-unsigned fallback is never entered. Stated here because that
+fallback is the silent failure mode: a throw would have meant every Shopify
+request going out unsigned with a run that still looked green.
+
+**What changed on disk.** `package.json`, the lockfile, the pin line in
+ARCHITECTURE.md, one comment in `script-generator.ts`. `reporter.onError`
+gained a `workerInfo` argument in 1.60; the list reporter in
+`script-check.ts` ignores extra arguments. Chrome for Testing replaced the
+Chromium build in 1.57; the app's runner installs browsers through the CLI
+into `userData/recorder/browsers`, so a first run on the new version
+downloads the new build exactly as a fresh install does.
+
+**Verified:** the full gate on 1.62.1 (lint, type-check, 82 checks including
+`check:runtime-boot`, `check:script-check` and `check:step-progress`, 5422
+Vitest tests, build) and the full `e2e/` suite under `_electron` —
+`assert-parity`, `context-parity`, `shadow-parity` and `step-progress` are the
+rows that would have moved if the transform, the matchers or the reporter
+categories had.
+
+### 2026-08-22 — The Script tab verifies a draft with the real Playwright CLI before saving it, and its two editor layers stop drifting
+
+Two bugs in the Script tab's Edit mode, both reported from use. Fixed ahead of
+the Script IDE work (see the research memo linked from the PR), because both
+fixes survive whatever editor engine that work chooses: the overlay fix is the
+stopgap until the engine is replaced, and the pre-save check is the oracle the
+IDE keeps.
+
+**Lines broke and the view shifted.** `ScriptEditor` overlays a transparent
+`<textarea>` on a highlighted `<pre>`. The textarea soft-wrapped — a
+`<textarea>`'s default — while the pre was `white-space: pre`, so the first
+line wider than the pane took two rows in one layer and one in the other, and
+every row below it sat one line off from the text the caret was on. Separately,
+the only scroll sync wrote `scrollTop` to the gutter's inner div, which does not
+scroll, so it did nothing, and the pre scrolled on its own past the first
+screenful. Now the textarea is `wrap="off"` + `white-space: pre`, both layers
+share one style object for metrics, padding, tab size and border, the pre is
+`overflow: hidden` and follows the textarea's scroll programmatically, and the
+gutter follows by transform. jsdom cannot see wrapping or scrolling, so
+`script-view.test.tsx` pins the structure that decides them (the attribute, the
+`white-space`, the shared metrics, and that a scroll event on the textarea
+writes the pre's scroll and the gutter's transform); each assertion was
+reverted and watched fail. The visual half was confirmed in `dev:web` with a
+190-character line and a 50-line draft scrolled to 300px.
+
+**Save wrote anything.** A missing bracket was found on the next run, as "No
+tests found" in the run console, with the editor closed and nothing pointing at
+the line. Save now hands the draft to `tests:checkScript`, which runs the REAL
+Playwright CLI over it in `--list` mode — the same binary, the same Babel
+transform, the same module resolution a run uses — and refuses the write when
+it cannot load. The choice of oracle is the decision here:
+
+- **Not a renderer-side parser.** A tokenizer or a TypeScript parse in the
+  renderer would answer "is this syntactically TypeScript", which is not the
+  question. The question is whether the file a run will load loads, and that
+  includes Playwright's own transform, `./glaze-runtime.mjs` and an imported
+  test's sibling modules resolving from the spec's directory, duplicate test
+  titles, and anything thrown at module scope. `check:runtime-boot` exists
+  because a model of the transform was wrong once (DECISIONS 2026-08-21); this
+  check takes the same side.
+- **Not a type check.** Playwright strips types rather than checking them, so
+  `const n: number = "x"` loads and runs. `check:script-check` pins that as a
+  row — if it ever fails, the check has grown a type pass and the editor's
+  wording ("loads") needs revisiting. A type-aware check is the Script IDE's
+  job, with a language service that can also drive completion.
+- **A custom reporter writing to a FILE, not `--reporter=json` on stdout.**
+  `--list` executes the draft's module scope, and a `console.log` there lands
+  on the same stdout as the JSON; the first version of this corrupted its own
+  report on exactly that. `glaze-list-reporter.mjs` is emitted next to the
+  specs like the step reporter, collects `onError` (a load failure) and
+  `onBegin` (the collected tests), and writes both to `GLAZE_LIST_OUT`.
+- **The draft sits BESIDE the real spec**, under a name that still matches the
+  default `testMatch` (or the CLI finds nothing) and that no record ever points
+  at, and is removed whatever happens. Written anywhere else, relative imports
+  would resolve differently from a run, which would make the check answer a
+  different question than the one it is asked. The CLI spells that path three
+  ways in its messages — absolute, realpath'd (macOS keeps the temp dir and
+  `/var` behind symlinks) and relative to its root — so the rename keys on the
+  draft's basename and eats whatever path precedes it; the first version
+  matched the absolute path only and left `../../../../private…` fragments in
+  a duplicate-title message.
+- **Save anyway exists, and a check that could not run is not a pass.** The
+  file is the user's. A draft the CLI rejects is still their edit, so the
+  refusal keeps the editor open with the problems listed against their lines
+  (click → caret on the line; the gutter number goes red and the row is
+  tinted on the layer BEHIND the textarea, so the mark cannot shift the text
+  it is about) and adds a second, red button. A thrown IPC call (no CLI, no
+  `node_modules`) is shown as a problem with the same button, never written
+  through silently. The "Save & continue" path into the trainer writes
+  unchecked on purpose — it exists so the edit is not lost to the regeneration
+  that follows.
+- **`--list` runs the draft's top-level code.** Stated rather than hidden: a
+  spec is the user's own program and every run executes all of it, so the
+  trust level is unchanged, but it is why the check is a child process under a
+  run's env with a 20s kill and never an in-process parse.
+
+`check:selection-neutral` rejected the first version's hover on the problem
+row (red, an outcome hue); hover now brightens and underlines, and the
+location span carries the red.
+
+**Verified:** `check:script-check` (nine rows through the real CLI, ~0.6s
+each), `script-check.test.ts`, `tests:checkScript` in `handlers.test.ts`
+(real CLI through the handler; the spec on disk and the record are untouched
+and no draft is left behind), seven "saving a script edit" tests in
+`test-detail-view.test.tsx`, and the preview: long line unwrapped, scroll
+synced at 300px, a failing check listing its problem, click-to-line, Save
+anyway closing the editor.
 ### 2026-08-22 — A text locator can be exact
 
 The same Unsplash run as the two entries below. With the role table in place

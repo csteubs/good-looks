@@ -156,7 +156,7 @@ function browsersPath(): string {
  * project root's `node_modules` — two levels up either way (build/main → root,
  * or main/services → root when run from source). The extra candidate covers a
  * packaged layout where the app contents sit one level deeper. */
-function resolvePlaywright(): { cliPath: string; nodeModules: string } {
+export function resolvePlaywright(): { cliPath: string; nodeModules: string } {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const candidateRoots = [
     // build/main -> approot/node_modules (also main/services -> root in dev)
@@ -207,7 +207,7 @@ let tmpSeq = 0;
  * fixture; renaming into place is, and the content of these files is fixed per
  * app build, so after the first run of a session this writes nothing at all.
  */
-function writeIfChanged(filePath: string, content: string): void {
+export function writeIfChanged(filePath: string, content: string): void {
   try {
     if (fs.readFileSync(filePath, "utf-8") === content) return;
   } catch {
@@ -285,7 +285,7 @@ export function ensureModuleResolution(scriptsDir: string, nodeModules: string):
 // Contents live in shared/playwright-config-source.mjs — see there for why ONE
 // definition serves both this and the MCP server, and for what each env-driven
 // field is for. The write is `writeIfChanged`, like every other fixture here.
-function ensureConfig(scriptsDir: string): string {
+export function ensureConfig(scriptsDir: string): string {
   const configPath = path.join(scriptsDir, PLAYWRIGHT_CONFIG_FILE);
   writeIfChanged(configPath, playwrightConfigSource);
   return configPath;
@@ -311,7 +311,7 @@ function ensureCaptureFixture(scriptsDir: string): void {
 // reporter: it's a few hundred bytes, and writing it only when a capture step
 // exists would mean a test that gains one mid-session runs against a missing
 // module until the next app start.
-function ensureRuntime(scriptsDir: string): void {
+export function ensureRuntime(scriptsDir: string): void {
   writeIfChanged(path.join(scriptsDir, GLAZE_RUNTIME_FILE), glazeRuntimeSource);
 }
 
@@ -688,10 +688,22 @@ function buildStepLineMap(scriptPath: string): Map<number, number> | null {
   } catch {
     return null;
   }
+  return buildStepLineMapFromSource(src);
+}
+
+/** The scan behind `buildStepLineMap`, on text, so it can be tested without
+ *  a file. A `test.step("…", async () => {` header is NOT a step — it is the
+ *  wrapper the generator puts around one — and its `});` is not the end of
+ *  the body: depth is counted, and the body ends at the `});` that closes
+ *  the `test(` callback itself. Before 2026-08-22 the first wrapper header
+ *  counted as step 0 and its closer ended the scan, so an edited spec in the
+ *  new shape mapped one step and then nothing. */
+export function buildStepLineMapFromSource(src: string): Map<number, number> | null {
   const lines = src.split("\n");
   const map = new Map<number, number>();
   let stepIndex = 0;
   let inBody = false;
+  let depth = 0;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     // The test body starts after the `test("...", async ({ page }) => {` line.
@@ -699,13 +711,20 @@ function buildStepLineMap(scriptPath: string): Map<number, number> | null {
       if (/^\s*test\s*\(/.test(line) && line.includes("async")) inBody = true;
       continue;
     }
-    // Body ends at the closing `});`.
-    if (/^\s*}\s*\)/.test(line)) break;
+    const opens = (line.match(/\{/g) ?? []).length;
+    const closes = (line.match(/\}/g) ?? []).length;
+    // Body ends at the `});` that brings the depth back below the callback.
+    if (/^\s*}\s*\)/.test(line) && depth + opens - closes < 0) break;
+    if (/^\s*await\s+test\.step\s*\(/.test(line)) {
+      depth += opens - closes;
+      continue;
+    }
     // Each step is a single indented line starting with `await `.
     if (/^\s+await /.test(line)) {
       map.set(i + 1, stepIndex); // location.line is 1-based
       stepIndex++;
     }
+    depth += opens - closes;
   }
   return map.size > 0 ? map : null;
 }
@@ -761,7 +780,7 @@ async function installBrowser(
   }
 }
 
-function baseEnv(nodeModules: string): NodeJS.ProcessEnv {
+export function baseEnv(nodeModules: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
     PLAYWRIGHT_BROWSERS_PATH: browsersPath(),
@@ -1014,12 +1033,23 @@ const logBuffers = new Map<string, string[]>();
 // runner:step stream is otherwise ephemeral.
 const stepStatusMaps = new Map<string, Record<number, "passed" | "failed">>();
 
-function emitStep(runId: string, index: number, status: "begin" | "end", ok: boolean): void {
+function emitStep(
+  runId: string,
+  index: number,
+  status: "begin" | "end",
+  ok: boolean,
+  // The 1-based spec line the marker came from. Carried to the renderer
+  // since 2026-08-22 so the Script IDE can paint run status on the line
+  // that RAN rather than on the line it believes step `index` sits on — the
+  // two agree for a generated spec and can disagree for a hand-edited one,
+  // where the runner's fallback line map is a heuristic.
+  line: number,
+): void {
   if (status === "end") {
     const map = stepStatusMaps.get(runId);
     if (map) map[index] = ok ? "passed" : "failed";
   }
-  sendToMain("runner:step", { runId, index, status, ok });
+  sendToMain("runner:step", { runId, index, status, ok, line });
 }
 
 // Parse a stdout chunk: extract the step markers, map their line number to a
@@ -1040,7 +1070,7 @@ function processStdout(runId: string, chunk: string): string {
     for (const marker of markers) {
       const stepIndex = map.get(marker.line);
       if (typeof stepIndex === "number") {
-        emitStep(runId, stepIndex, marker.event, marker.ok);
+        emitStep(runId, stepIndex, marker.event, marker.ok, marker.line);
       }
     }
   }

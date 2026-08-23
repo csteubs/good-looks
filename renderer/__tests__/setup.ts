@@ -90,3 +90,19 @@ if (!globalThis.ResizeObserver) {
     disconnect() {}
   } as unknown as typeof ResizeObserver;
 }
+
+// CodeMirror measures text with DOM Ranges, which jsdom creates but cannot
+// measure: `Range.getClientRects` is simply absent, and the first lint or
+// selection draw throws `textRange(...).getClientRects is not a function`
+// from inside a dispatch — which reads as a diagnostics bug rather than a
+// missing API. Empty geometry is the honest answer a layout-less DOM can
+// give; the editor's own tests assert on state and on the DOM it builds,
+// never on a pixel.
+if (typeof Range !== "undefined") {
+  const emptyRect = () =>
+    ({ x: 0, y: 0, width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0, toJSON: () => ({}) }) as DOMRect;
+  const emptyRects = () =>
+    ({ length: 0, item: () => null, [Symbol.iterator]: function* () {} }) as unknown as DOMRectList;
+  if (!Range.prototype.getClientRects) Range.prototype.getClientRects = emptyRects;
+  if (!Range.prototype.getBoundingClientRect) Range.prototype.getBoundingClientRect = emptyRect;
+}

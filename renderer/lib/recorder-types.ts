@@ -512,6 +512,17 @@ export const RUN_BROWSER_LABELS: Record<RunBrowser, string> = {
  *  number reaches `setZoomFactor` — see `main/recorder/types.ts`. */
 export type UiScale = 0.9 | 1 | 1.1 | 1.25;
 
+/** Mirror of main/recorder/types.ts. */
+export type EditorTabSize = 2 | 4;
+export const EDITOR_TAB_SIZES: EditorTabSize[] = [2, 4];
+export const EDITOR_FONT_SIZE_MIN = 10;
+export const EDITOR_FONT_SIZE_MAX = 20;
+export const EDITOR_FONT_SIZE_DEFAULT = 13;
+/** Line height the editor derives from a font size: ×1.4, whole pixels. */
+export function editorLineHeight(fontSize: number): number {
+  return Math.round(fontSize * 1.4);
+}
+
 export const UI_SCALES: UiScale[] = [0.9, 1, 1.1, 1.25];
 
 /** Labels for the size picker.
@@ -842,6 +853,47 @@ export interface ScriptChangeSource {
   by: ScriptChangeOrigin;
   model?: string;
   reviewed?: boolean;
+}
+
+/** One reason a draft of a script failed to load (mirror of
+ *  main/services/script-check.ts). `line` is 1-based and absent when the CLI
+ *  could not place the error (a module-scope throw, a missing module). */
+export interface ScriptCheckError {
+  message: string;
+  line?: number;
+  column?: number;
+  snippet?: string;
+}
+
+/** A half-open character range [from, to) into a script (mirror of
+ *  main/services/spec-parser.ts `SourceRange`). */
+export interface SourceRange {
+  from: number;
+  to: number;
+}
+
+/** What `tests:previewScript` answers: the parse a save would perform, with
+ *  positions. `tracked` is false when a save keeps the stored steps anyway
+ *  (an imported test, a test that calls flows). `newlySkipped` holds the
+ *  statements the parser cannot map that the stored script did not already
+ *  have — the only ones worth asking about before a save. */
+export interface ScriptPreview {
+  tracked: boolean;
+  steps: number;
+  skipped: number;
+  stepRanges: SourceRange[];
+  skippedRanges: SourceRange[];
+  newlySkipped: string[];
+}
+
+/** What `tests:checkScript` answers: whether the real Playwright CLI could
+ *  load and collect the draft, and what it found. `tests` are the test()
+ *  calls it collected, with their lines. */
+export interface ScriptCheckResult {
+  ok: boolean;
+  errors: ScriptCheckError[];
+  tests: { title: string; line: number }[];
+  durationMs: number;
 }
 
 /** One recorded change to a test's whole spec, and the means to undo it.
@@ -1391,6 +1443,12 @@ export interface RecorderSettings {
    *  `lib/typeface.ts`, which writes it to `data-gl-typeface` on the document
    *  element; the families themselves live in `renderer/theme/tokens.css`. */
   uiTypeface: UiTypeface;
+  /** The Script IDE's rows (mirror of main/recorder/types.ts). */
+  editorFontSize: number;
+  editorLineWrap: boolean;
+  editorLineNumbers: boolean;
+  editorTabSize: EditorTabSize;
+  editorCheckOnSave: boolean;
   /** Which symbol the Cost panel stamps on a money figure (default "usd").
    *  "none" restores bare numbers — see `shared/cost-units.mjs`. */
   costCurrency: CostCurrency;

@@ -52,7 +52,7 @@ Output format:
 - When you can suggest a concrete fix, output the COMPLETE corrected spec as a single fenced code block: the entire file from the imports down, ready to save and run — not just the changed lines. Keep everything that was already correct exactly as-is; only change what is needed for the fix. The app shows this block to the user as a one-click "Apply to script", so it must be the whole, self-contained, valid file (it must still contain the imports and the test(...) call).
 - If the run output lacks enough detail to diagnose, say what additional information would help instead of guessing, and do NOT output a code block.
 
-Applying your spec REPLACES the user's step list, which is rebuilt by re-reading the file — so keep the shapes the reader understands. Write each action as one self-contained statement (await page.<builder>(...).<action>(...);). A .nth(k) between the builder and the action is fine and is how this app pins one of several matches; .first(), .filter() and .or() are not, and a step written that way is lost on the way back in. Do not bind locators to variables or wrap anything in test.step(...). Leave any "// UNGENERATABLE STEP" comment exactly where it is: it marks a step the user has that this app could not turn into code, and deleting it deletes their step.`;
+Applying your spec REPLACES the user's step list, which is rebuilt by re-reading the file — so keep the shapes the reader understands. Write each action as one self-contained statement (await page.<builder>(...).<action>(...);). A .nth(k) between the builder and the action is fine and is how this app pins one of several matches; .first(), .filter() and .or() are not, and a step written that way is lost on the way back in. Do not bind locators to variables. Every step in the file is wrapped in await test.step("<description>", async () => { … }); keep those wrappers as they are, put a corrected statement inside the wrapper it belongs to, and wrap a new statement the same way with a short description as its title. Leave any "// UNGENERATABLE STEP" comment exactly where it is: it marks a step the user has that this app could not turn into code, and deleting it deletes their step.`;
 
 export interface DebugContext {
   testName: string;
@@ -280,7 +280,7 @@ The spec is also read back into the app's own step list, which is what the train
 - Supported actions: .click(), .fill(), .selectOption(), .check(), .uncheck(), .press(), .hover(), .focus(), .waitFor({ state }). Plus page.goto(), page.setViewportSize(), page.keyboard.press().
 - Every expect() must take a locator or \`page\` as its subject: expect(page.getByText('Welcome')).toBeVisible(), expect(page).toHaveURL(...). Never expect() a JavaScript value.
 - Do NOT read data out of the page (.textContent(), .allTextContents(), .isVisible() into a variable), and do NOT use if/ternary branching, loops, or intermediate variables to decide what to assert. Assert the expected state directly.
-- Do NOT wrap the flow in test.step(...) blocks — write the statements directly in the test body.
+- Wrap each statement in await test.step("<short description>", async () => { … }); — one statement per wrapper, the description a phrase (e.g. "click the Sign in button"), never code. The app reads the statement inside and ignores the title.
 - Comments and console.log() calls are welcome and are ignored by the step reader — use them to label the phases of the flow.
 
 Output format:

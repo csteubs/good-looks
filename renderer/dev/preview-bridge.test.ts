@@ -389,7 +389,7 @@ describe("the scripted run", () => {
     await ipc().invoke("runner:stop", { runId: "t-checkout" });
     await done;
     expect(code).not.toBe(0);
-    expect(steps).toEqual([{ runId: "t-checkout", index: 0, status: "begin", ok: true }]);
+    expect(steps).toEqual([{ runId: "t-checkout", index: 0, status: "begin", ok: true, line: 4 }]);
     // Cancelled, not merely superseded: no tick of the stopped run fires
     // afterwards, which would report steps on a run the store has closed.
     await new Promise((r) => setTimeout(r, 120));

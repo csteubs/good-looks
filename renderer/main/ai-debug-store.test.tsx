@@ -14,6 +14,7 @@ import * as React from "react";
 
 import { clearToastCalls, toastCalls, toastTexts } from "../__tests__/sonner-stub";
 import { hashScript } from "../lib/ai-debug-sessions";
+import { markScriptDirty } from "../lib/script-buffer";
 import type { AiDebugSession, ScriptChangeSource } from "../lib/recorder-types";
 import {
   AiDebugProvider,
@@ -891,6 +892,39 @@ describe("finishing while minimized", () => {
     await waitFor(() =>
       expect(toastTexts().some((t) => t.title.includes("Applied the AI fix"))).toBe(true),
     );
+  });
+
+  it("holds the fix for review while the Script tab has an unsaved draft of that test", async () => {
+    // The draft is the newer fact. Applying underneath it would turn the
+    // user's next Save into a stale-draft refusal — so the fix waits, and the
+    // review toast says so.
+    h.settings = { autoAcceptAiDebugFixes: true };
+    const onApplyScript = vi.fn(async (_source: string) => {});
+    render(
+      <AiDebugProvider>
+        <Capture />
+        <ViewWithApply onApplyScript={onApplyScript} />
+      </AiDebugProvider>,
+    );
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    await act(async () => {
+      await store.startStream(
+        KEY,
+        [{ role: "user", content: "fix it" }],
+        { scriptHash: hashScript("the script") },
+      );
+    });
+    act(() => store.minimize());
+    markScriptDirty(store.sessions[0].testId, true);
+
+    emit("llm:chunk", { requestId: "req-1", delta: CORRECTED_ANSWER });
+    emit("llm:done", { requestId: "req-1" });
+
+    await waitFor(() =>
+      expect(toastTexts().some((t) => t.title.includes("AI debug finished"))).toBe(true),
+    );
+    expect(onApplyScript).not.toHaveBeenCalled();
+    markScriptDirty(store.sessions[0].testId, false);
   });
 
   it("tells the journal this fix landed unread, and which model wrote it", async () => {

@@ -122,6 +122,10 @@ test.afterAll(async () => {
  *  `runStep` does — the injected replayer acts on exactly what it is handed.
  *  Skipping that here would compare a resolved run against an unresolved
  *  preview and report a difference this app does not have. */
+/** What `test.step(title, fn)` does when a generated body runs in this
+ *  process: the callback, nothing else. */
+const FAKE_TEST = { step: async (_title: string, fn: () => Promise<unknown>) => fn() };
+
 async function replayerVerdict(page: Page, step: Step, vars?: TestVariable[]): Promise<boolean> {
   const resolved = vars && vars.length > 0 ? resolveStepForReplay(step, vars).step : step;
   const result = (await page.evaluate(buildReplayScript(resolved))) as { ok: boolean };
@@ -550,8 +554,10 @@ test("a repeated flow call runs its steps exactly N times, and an assertion insi
     const close = src.lastIndexOf("});");
     const body = src.slice(open + 4, close);
     const fast = expect.configure({ timeout: 1500 });
-    const run = new Function("page", "expect", `return (async () => { ${body} })();`);
-    await run(page, fast);
+    // `test.step` wrappers around every statement since 2026-08-22: the
+    // body runs here with a `test` whose step just calls its callback.
+    const run = new Function("page", "expect", "test", `return (async () => { ${body} })();`);
+    await run(page, fast, FAKE_TEST);
   };
 
   await page.goto(base);
@@ -585,7 +591,8 @@ test("a select step refuses an option that does not exist, in both engines", asy
   // the difference between a diagnosis and a stack trace.
   const step = { id: "sel", type: "select", value: "gone", locator: { k: "testid", v: "country" } } as Step;
   const src = generateSpec({ name: "p", url: base, steps: [step] });
-  const line = src.split("\n").find((l) => l.trim().startsWith("await"))!.trim();
+  // The statement, not the `await test.step(` wrapper around it.
+  const line = src.split("\n").find((l) => l.trim().startsWith("await page"))!.trim();
   const run = new Function("page", `return (async () => { ${line} })();`);
   const raced = await Promise.race([
     run(page).then(() => "succeeded").catch(() => "rejected"),
@@ -644,7 +651,7 @@ test("an element scroll step emits a native call that reaches the element", asyn
   await page.goto(base);
   const step = { id: "el", type: "scroll", locator: { k: "testid", v: "deep" } } as Step;
   const src = generateSpec({ name: "deep", url: base, steps: [step] });
-  const line = src.split("\n").find((l) => l.trim().startsWith("await"))!.trim();
+  const line = src.split("\n").find((l) => l.trim().startsWith("await page"))!.trim();
   expect(line).toBe('await page.getByTestId("deep").scrollIntoViewIfNeeded();');
   const run = new Function("page", `return (async () => { ${line} })();`);
   await run(page);

@@ -79,6 +79,8 @@ import type {
   RunNoticeKind,
   RunReplay,
   RunReplaySummary,
+  ScriptCheckResult,
+  ScriptPreview,
   SecretStatus,
   TestRecord,
   TestVariable,
@@ -625,6 +627,28 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "tests:getScript": (p) => {
       const test = findTest(p?.id);
       if (!test) return "";
+      // `?test=t-long`: a 2000-line spec, for looking at the Script IDE under
+      // a file the size of an imported suite — the virtualised viewport,
+      // the gutters and the search panel at a scale no fixture step list
+      // reaches. Every 97th line is one the parser cannot map, so the
+      // coverage gutter has something to show.
+      if (test.id === "t-long") {
+        const lines = [
+          'import { test, expect } from "@playwright/test";',
+          "",
+          `test(${JSON.stringify(test.name)}, async ({ page }) => {`,
+          `  await page.goto(${JSON.stringify(test.url)});`,
+        ];
+        for (let i = 1; lines.length < 1998; i++) {
+          lines.push(
+            i % 97 === 0
+              ? `  await page.mouse.move(${i}, ${i * 2});`
+              : `  await page.getByRole("button", { name: "Step ${i}" }).click();`,
+          );
+        }
+        lines.push("});", "");
+        return lines.join("\n");
+      }
       return [
         'import { test, expect } from "@playwright/test";',
         "",
@@ -634,6 +658,81 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
         "});",
         "",
       ].join("\n");
+    },
+    /** The real handler hands the draft to the Playwright CLI. The preview has
+     *  no CLI, so it answers the one thing the editor's error path needs to be
+     *  visible here: an unbalanced bracket is reported on the line it is on,
+     *  and anything that balances loads. Deliberately crude — the point is to
+     *  render the failed-check state, not to parse TypeScript. */
+    "tests:checkScript": (p): ScriptCheckResult => {
+      const source = String(p?.source ?? "");
+      const lines = source.split("\n");
+      let depth = 0;
+      let badLine = 0;
+      for (let i = 0; i < lines.length; i++) {
+        for (const ch of lines[i]) {
+          if (ch === "(" || ch === "{" || ch === "[") depth += 1;
+          else if (ch === ")" || ch === "}" || ch === "]") depth -= 1;
+          if (depth < 0 && !badLine) badLine = i + 1;
+        }
+      }
+      if (depth !== 0 && !badLine) badLine = lines.length;
+      const tests: { title: string; line: number }[] = [];
+      lines.forEach((l, i) => {
+        const m = l.match(/^\s*test\(\s*"([^"]*)"/);
+        if (m) tests.push({ title: m[1], line: i + 1 });
+      });
+      if (badLine) {
+        return {
+          ok: false,
+          errors: [{ message: 'SyntaxError: Unexpected token, expected "," (' + badLine + ":1)", line: badLine, column: 1 }],
+          tests: [],
+          durationMs: 420,
+        };
+      }
+      if (tests.length === 0) {
+        return {
+          ok: false,
+          errors: [{ message: "This script defines no tests — Playwright found nothing to run." }],
+          tests: [],
+          durationMs: 380,
+        };
+      }
+      return { ok: true, errors: [], tests, durationMs: 410 };
+    },
+    /** The real handler runs the spec parser. The preview draws the parse-
+     *  coverage gutter from line shapes instead: an `await page.…` statement
+     *  is a step, `page.mouse`/`page.keyboard` calls are the parser's known
+     *  misses, and the first miss that is not in the fixture's own script
+     *  counts as new. Enough to see the gutter and the confirmation. */
+    "tests:previewScript": (p): ScriptPreview => {
+      const source = String(p?.source ?? "");
+      const stepRanges: { from: number; to: number }[] = [];
+      const skippedRanges: { from: number; to: number }[] = [];
+      const newlySkipped: string[] = [];
+      let offset = 0;
+      for (const line of source.split("\n")) {
+        const m = line.match(/^(\s*)(await page\.[\w.]+\(.*\);?)\s*$/);
+        if (m) {
+          const from = offset + m[1].length;
+          const to = from + m[2].length;
+          if (/^await page\.(mouse|keyboard|clock)\./.test(m[2])) {
+            skippedRanges.push({ from, to });
+            if (!/Step \d+|\/\/ …generated/.test(m[2])) newlySkipped.push(m[2].replace(/;$/, ""));
+          } else {
+            stepRanges.push({ from, to });
+          }
+        }
+        offset += line.length + 1;
+      }
+      return {
+        tracked: !findTest(p?.id)?.sourceDir,
+        steps: stepRanges.length,
+        skipped: skippedRanges.length,
+        stepRanges,
+        skippedRanges,
+        newlySkipped,
+      };
     },
     "tests:rename": (p) => {
       const test = findTest(p?.id);
@@ -2152,10 +2251,12 @@ function startFakeRun(
   emit("runner:output", { runId, chunk: `Running ${steps.length} steps…\n` });
   for (let i = 0; i < steps.length; i++) {
     const index = i;
-    later(() => emit("runner:step", { runId, index, status: "begin", ok: true }));
+    // `line` mirrors the fixture's own getScript: the goto sits on line 4 and
+    // every later step is imagined one line further down.
+    later(() => emit("runner:step", { runId, index, status: "begin", ok: true, line: 4 + index }));
     later(() => {
       const ok = index !== failAt;
-      emit("runner:step", { runId, index, status: "end", ok });
+      emit("runner:step", { runId, index, status: "end", ok, line: 4 + index });
       emit("runner:output", {
         runId,
         chunk: ok

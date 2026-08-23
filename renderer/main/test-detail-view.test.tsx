@@ -9,7 +9,7 @@
 
 import * as React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { RecorderSettings, RunRecord, Step, StepType, TestRecord } from "../lib/recorder-types";
@@ -17,6 +17,9 @@ import { TestDetailView, persistRunBrowser } from "./test-detail-view";
 import { runSessionKey, useAiDebug, type AiDebugRunContext } from "./ai-debug-store";
 import { withAiDebug } from "../__tests__/ai-debug-harness";
 import { clearToastCalls, toastTexts } from "../__tests__/sonner-stub";
+import { EditorView } from "./script-editor-cm";
+import { isScriptDirty, resetScriptDirty } from "../lib/script-buffer";
+import { SCRIPT_CHANGED_ON_DISK } from "../../shared/script-save.mjs";
 
 let test_: TestRecord | null = null;
 let settings: Partial<RecorderSettings> = {};
@@ -62,7 +65,29 @@ const updateSteps = vi.fn(
 // record with a WHOLLY REBUILT step list — new ids and all. Tests that exercise
 // the AI-apply path override this to model that; everything else keeps the
 // inert default.
-const updateScript = vi.fn(async (_id: string, _source: string) => ({}) as TestRecord);
+const updateScript = vi.fn(
+  async (_id: string, _source: string, _origin?: unknown, _base?: string) => ({}) as TestRecord,
+);
+/** What `tests:checkScript` answers. Passes by default: most of this file is
+ *  about what happens AFTER a save, and a save now goes through the check. */
+/** What `tests:previewScript` answers. Nothing unmapped by default: the
+ *  divergence question is asked only over NEW misses, and most saves have
+ *  none. */
+const previewScript = vi.fn(async (_id: string, _source: string) => ({
+  tracked: true,
+  steps: 1,
+  skipped: 0,
+  stepRanges: [] as { from: number; to: number }[],
+  skippedRanges: [] as { from: number; to: number }[],
+  newlySkipped: [] as string[],
+}));
+const getScript = vi.fn(async (_id: string) => "import { test } from '@playwright/test';");
+const checkScript = vi.fn(async (_id: string, _source: string) => ({
+  ok: true,
+  errors: [] as { message: string; line?: number; column?: number; snippet?: string }[],
+  tests: [] as { title: string; line: number }[],
+  durationMs: 1,
+}));
 /** Models the real handler: it SAVES the flag and hands back the stored record,
  *  which is what keeps the banner down after the view reconciles. A mock that
  *  returned a bare object would let a purely optimistic implementation pass. */
@@ -98,7 +123,7 @@ vi.mock("../lib/api", () => ({
   api: {
     tests: {
       get: async (id: string) => library[id] ?? test_,
-      getScript: async () => "import { test } from '@playwright/test';",
+      getScript: (...a: Parameters<typeof getScript>) => getScript(...a),
       setHeadless: (...a: unknown[]) => setHeadless(...(a as [])),
       setBrowser: (...a: unknown[]) => setBrowser(...(a as [])),
       setCaptureArtifacts: (...a: unknown[]) => setCaptureArtifacts(...(a as [])),
@@ -109,6 +134,8 @@ vi.mock("../lib/api", () => ({
       flowUsage: async () => flowUsage,
       unwrapFlow: (...a: Parameters<typeof unwrapFlow>) => unwrapFlow(...a),
       updateScript: (...a: Parameters<typeof updateScript>) => updateScript(...a),
+      checkScript: (...a: Parameters<typeof checkScript>) => checkScript(...a),
+      previewScript: (...a: Parameters<typeof previewScript>) => previewScript(...a),
       updateSteps: (...a: Parameters<typeof updateSteps>) => updateSteps(...a),
       dismissDiverged: (...a: Parameters<typeof dismissDiverged>) => dismissDiverged(...a),
     },
@@ -902,6 +929,31 @@ function selectTab(name: RegExp) {
   return tab;
 }
 
+/** Replace the editor's document the way typing would: through the view.
+ *  A CodeMirror content element is contenteditable, so `fireEvent.change`
+ *  reaches nothing. */
+function setDraft(content: HTMLElement, text: string): void {
+  const view = EditorView.findFromDOM(content);
+  if (!view) throw new Error("no EditorView behind the textbox");
+  act(() => {
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+  });
+}
+
+/** The editor stays mounted read-only after a save or a cancel; "closed"
+ *  means it stopped taking edits and the Edit button is back. */
+async function editorClosed(): Promise<void> {
+  await screen.findByRole("button", { name: "Edit script" });
+  await waitFor(() => expect(screen.getByRole("textbox").getAttribute("contenteditable")).toBe("false"));
+}
+
+/** What the editor currently shows. */
+function draftText(): string {
+  const content = document.querySelector(".cm-content") as HTMLElement | null;
+  const view = content ? EditorView.findFromDOM(content) : null;
+  return view ? view.state.doc.toString() : "";
+}
+
 /** The rows currently claiming to be newly added. */
 function glowingRows(): HTMLElement[] {
   return Array.from(document.querySelectorAll<HTMLElement>('[data-new-step="true"]'));
@@ -1354,5 +1406,307 @@ describe("flows — the used-by strip and the guarded delete", () => {
     expect(await screen.findByText(/call is replaced by a copy/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Unwrap" }));
     await waitFor(() => expect(unwrapFlow).toHaveBeenCalledWith("t1", "s1"));
+  });
+});
+
+describe("saving a script edit", () => {
+  // Save hands the draft to the Playwright CLI before it writes anything. A
+  // draft the CLI cannot load stays in the editor with its problems listed
+  // against the lines; "Save anyway" is the way past that, and the only way.
+  beforeEach(() => {
+    updateScript.mockReset();
+    updateScript.mockImplementation(async () => ({}) as TestRecord);
+    checkScript.mockReset();
+    checkScript.mockImplementation(async () => ({ ok: true, errors: [], tests: [], durationMs: 1 }));
+  });
+
+  async function openEditor(): Promise<HTMLElement> {
+    renderView();
+    await screen.findByText("Checkout");
+    selectTab(/Script/);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
+    // The CodeMirror host is lazy; the textbox appears once it has loaded and
+    // is editable once the Edit click has flipped it.
+    const content = await screen.findByRole("textbox");
+    await waitFor(() => expect(content.getAttribute("contenteditable")).toBe("true"));
+    return content;
+  }
+
+  it("checks the draft with Playwright before writing it", async () => {
+    const ta = await openEditor();
+    setDraft(ta, "// edited");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
+    expect(checkScript).toHaveBeenCalledWith("t1", "// edited");
+    expect(updateScript).toHaveBeenCalledWith("t1", "// edited", { by: "manual", reviewed: true }, expect.any(String));
+    // Order matters: the write must wait for the verdict.
+    expect(checkScript.mock.invocationCallOrder[0]).toBeLessThan(
+      updateScript.mock.invocationCallOrder[0],
+    );
+    await editorClosed();
+  });
+
+  it("keeps the editor open and lists the problems when the draft does not load", async () => {
+    checkScript.mockResolvedValue({
+      ok: false,
+      errors: [{ message: 'SyntaxError: Unexpected token, expected "," (3:9)', line: 3, column: 9 }],
+      tests: [],
+      durationMs: 1,
+    });
+    const ta = await openEditor();
+    setDraft(ta, "a\nb\nc(\nd");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText(/can't load this script — 1 problem/);
+    expect(updateScript).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox")).toBe(ta);
+    // The problem, where it is, and the line marked in the gutter.
+    const row = screen.getByRole("button", { name: /Line 3:9/ });
+    expect(row.textContent).toContain('SyntaxError: Unexpected token, expected "," (3:9)');
+    // …and as a diagnostic on its line in the editor.
+    await waitFor(() => expect(document.querySelector(".cm-lintRange-error")).not.toBeNull());
+    expect(screen.getByRole("button", { name: "Save anyway" })).toBeTruthy();
+  });
+
+  it("moves the caret to a problem's line when its row is clicked", async () => {
+    checkScript.mockResolvedValue({
+      ok: false,
+      errors: [{ message: "SyntaxError: x", line: 3, column: 1 }],
+      tests: [],
+      durationMs: 1,
+    });
+    const ta = await openEditor();
+    setDraft(ta, "ab\ncd\nef");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const row = await screen.findByRole("button", { name: /Line 3:1/ });
+    fireEvent.click(row);
+    const v = EditorView.findFromDOM(ta)!;
+    expect(v.state.selection.main.head).toBe(6);
+    expect(v.state.selection.main.anchor).toBe(6);
+  });
+
+  it("Save anyway writes the draft the check refused", async () => {
+    checkScript.mockResolvedValue({
+      ok: false,
+      errors: [{ message: "SyntaxError: x", line: 1, column: 1 }],
+      tests: [],
+      durationMs: 1,
+    });
+    const ta = await openEditor();
+    setDraft(ta, "broken(");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save anyway" }));
+
+    await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
+    expect(updateScript).toHaveBeenCalledWith("t1", "broken(", { by: "manual", reviewed: true }, expect.any(String));
+    // One check, not two: Save anyway is the way past the verdict, not a retry.
+    expect(checkScript).toHaveBeenCalledTimes(1);
+    await editorClosed();
+  });
+
+  it("treats a check that could not run as a failure, not a pass", async () => {
+    checkScript.mockRejectedValue(new Error("Could not find @playwright/test"));
+    const ta = await openEditor();
+    setDraft(ta, "// edited");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText(/Couldn't check the script: Could not find @playwright\/test/);
+    expect(updateScript).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Save anyway" })).toBeTruthy();
+  });
+
+  it("holds Save while the check is running", async () => {
+    let release: (() => void) | null = null;
+    checkScript.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ ok: true, errors: [], tests: [], durationMs: 1 });
+        }),
+    );
+    const ta = await openEditor();
+    setDraft(ta, "// edited");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const checking = await screen.findByRole("button", { name: "Checking…" });
+    expect((checking as HTMLButtonElement).disabled).toBe(true);
+    await screen.findByText("Checking with Playwright…");
+    await act(async () => {
+      release!();
+    });
+    await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
+  });
+
+  it("Cancel discards the verdict with the draft", async () => {
+    checkScript.mockResolvedValue({
+      ok: false,
+      errors: [{ message: "SyntaxError: x", line: 1, column: 1 }],
+      tests: [],
+      durationMs: 1,
+    });
+    await openEditor();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText(/can't load this script/);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await editorClosed();
+    // Re-opening starts clean: no stale problems from the last draft.
+    fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
+    await screen.findByRole("textbox");
+    expect(screen.queryByText(/can't load this script/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save anyway" })).toBeNull();
+  });
+});
+
+describe("saving a script edit — stale drafts, divergence, and the dirty buffer", () => {
+  const LOADED = "import { test } from '@playwright/test';";
+  beforeEach(() => {
+    updateScript.mockReset();
+    updateScript.mockImplementation(async () => ({}) as TestRecord);
+    checkScript.mockReset();
+    checkScript.mockImplementation(async () => ({ ok: true, errors: [], tests: [], durationMs: 1 }));
+    previewScript.mockReset();
+    previewScript.mockImplementation(async () => ({
+      tracked: true,
+      steps: 1,
+      skipped: 0,
+      stepRanges: [],
+      skippedRanges: [],
+      newlySkipped: [],
+    }));
+    getScript.mockReset();
+    getScript.mockImplementation(async () => LOADED);
+    resetScriptDirty();
+  });
+
+  async function openEditor(): Promise<HTMLElement> {
+    renderView();
+    await screen.findByText("Checkout");
+    selectTab(/Script/);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit script" }));
+    // The CodeMirror host is lazy; the textbox appears once it has loaded and
+    // is editable once the Edit click has flipped it.
+    const content = await screen.findByRole("textbox");
+    await waitFor(() => expect(content.getAttribute("contenteditable")).toBe("true"));
+    return content;
+  }
+
+  it("sends the script it loaded as the draft's base", async () => {
+    const ta = await openEditor();
+    setDraft(ta, "// edited");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
+    expect(updateScript.mock.calls[0][3]).toBe(LOADED);
+  });
+
+  it("marks the buffer dirty while the draft differs from what it loaded, and clean after a save", async () => {
+    const ta = await openEditor();
+    expect(isScriptDirty("t1")).toBe(false);
+    setDraft(ta, "// edited");
+    await waitFor(() => expect(isScriptDirty("t1")).toBe(true));
+    setDraft(ta, LOADED);
+    await waitFor(() => expect(isScriptDirty("t1")).toBe(false));
+    setDraft(ta, "// edited again");
+    await waitFor(() => expect(isScriptDirty("t1")).toBe(true));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await editorClosed();
+    expect(isScriptDirty("t1")).toBe(false);
+  });
+
+  it("a stale refusal opens the dialog; Overwrite saves again without a base", async () => {
+    updateScript.mockImplementationOnce(async () => {
+      throw new Error(SCRIPT_CHANGED_ON_DISK);
+    });
+    const ta = await openEditor();
+    setDraft(ta, "// edited");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("The script changed on disk");
+    expect(updateScript).toHaveBeenCalledTimes(1);
+    // Still editing underneath the (modal, aria-hiding) dialog.
+    expect(document.querySelector(".cm-content")).toBe(ta);
+
+    fireEvent.click(screen.getByRole("button", { name: "Overwrite with my draft" }));
+    await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(2));
+    expect(updateScript.mock.calls[1][1]).toBe("// edited");
+    expect(updateScript.mock.calls[1][3]).toBeUndefined();
+    await editorClosed();
+  });
+
+  it("Reload replaces the draft with the script as it is now, and keeps editing", async () => {
+    updateScript.mockImplementationOnce(async () => {
+      throw new Error(SCRIPT_CHANGED_ON_DISK);
+    });
+    const ta = await openEditor();
+    setDraft(ta, "// edited");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("The script changed on disk");
+    getScript.mockImplementation(async () => "// version two");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reload (discard draft)" }));
+    await waitFor(() => expect(draftText()).toBe("// version two"));
+    expect(updateScript).toHaveBeenCalledTimes(1);
+    expect(isScriptDirty("t1")).toBe(false);
+    // The reloaded text is the new base: saving it sends it as such.
+    setDraft(screen.getByRole("textbox"), "// version three");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(2));
+    expect(updateScript.mock.calls[1][3]).toBe("// version two");
+  });
+
+  it("asks before saving a draft whose new statements the parser cannot map, and saves on confirm", async () => {
+    previewScript.mockResolvedValue({
+      tracked: true,
+      steps: 1,
+      skipped: 1,
+      stepRanges: [],
+      skippedRanges: [{ from: 0, to: 1 }],
+      newlySkipped: ['await page.keyboard.down("Shift")'],
+    });
+    const ta = await openEditor();
+    setDraft(ta, 'await page.keyboard.down("Shift")');
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("One statement won't become a step");
+    // Scoped to the dialog: the editor's highlight layer shows the draft too.
+    expect(within(screen.getByRole("dialog")).getByText(/keyboard\.down\("Shift"\)/)).toBeTruthy();
+    expect(updateScript).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save anyway" }));
+    await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
+    // Asked once: the confirmed save does not raise the question again.
+    await editorClosed();
+    expect(screen.queryByText(/won't become/)).toBeNull();
+  });
+
+  it("does not ask when the misses are ones the stored script already had, or the steps are not tracked", async () => {
+    previewScript.mockResolvedValue({
+      tracked: false,
+      steps: 0,
+      skipped: 3,
+      stepRanges: [],
+      skippedRanges: [],
+      newlySkipped: ["await page.mouse.move(1, 2)"],
+    });
+    const ta = await openEditor();
+    setDraft(ta, "// imported");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/won't become/)).toBeNull();
+  });
+
+  it("skips the Playwright check when Settings → Editor turns it off, and still saves", async () => {
+    settings = { ...settings, editorCheckOnSave: false };
+    const ta = await openEditor();
+    setDraft(ta, "// edited");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
+    expect(checkScript).not.toHaveBeenCalled();
+    await editorClosed();
+  });
+
+  it("a preview that fails does not stand between the user and the save", async () => {
+    previewScript.mockRejectedValue(new Error("no parser today"));
+    const ta = await openEditor();
+    setDraft(ta, "// edited");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
   });
 });

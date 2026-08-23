@@ -150,6 +150,12 @@ function Probe() {
       <span data-testid="run-finished">
         {runs["t1"]?.finishedAt === undefined ? "none" : "set"}
       </span>
+      <span data-testid="run-step-lines">
+        {Object.entries(runs["t1"]?.stepLines ?? {})
+          .map(([i, v]) => `${i}@${v}`)
+          .sort()
+          .join("|")}
+      </span>
       <span data-testid="run-steps">
         {Object.entries(runs["t1"]?.stepStatus ?? {})
           .map(([i, v]) => `${i}:${v}`)
@@ -357,6 +363,21 @@ describe("run output", () => {
     emit("runner:step", { runId: "t1", index: 0, status: "begin", ok: true });
     emit("runner:done", { runId: "t1", code: 0 });
     expect(text("run-steps")).toBe("0:passed");
+  });
+
+  it("remembers the spec line each step index last ran from", () => {
+    // The Script IDE paints run status on the line that RAN. For a generated
+    // spec that is the line the parser would name too; for a hand-edited one
+    // the runner's line map is a heuristic, and the marker's own line is the
+    // only fact. A marker without a line — an older backend — leaves the map
+    // alone rather than writing a 0.
+    renderStore();
+    emit("runner:step", { runId: "t1", index: 0, status: "begin", ok: true, line: 4 });
+    emit("runner:step", { runId: "t1", index: 0, status: "end", ok: true, line: 4 });
+    emit("runner:step", { runId: "t1", index: 1, status: "begin", ok: true, line: 9 });
+    emit("runner:step", { runId: "t1", index: 2, status: "begin", ok: true });
+    expect(text("run-step-lines")).toBe("0@4|1@9");
+    expect(text("run-steps")).toBe("0:passed|1:running|2:running");
   });
 
   it("leaves a reported outcome alone when the run ends", () => {

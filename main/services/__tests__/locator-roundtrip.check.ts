@@ -359,9 +359,13 @@ function main(): void {
     ];
     const source = gen(steps);
     const lines = source.split("\n");
-    const at = lines.findIndex((l) => l.includes("Edit"));
+    // The STATEMENT, not its test.step wrapper's title (which names "Edit"
+    // too); the splice lands after the wrapper closes, between two steps.
+    const at = lines.findIndex((l) => l.includes("Edit") && l.includes("await page"));
     assert(at >= 0, "the context-carrying line is in the generated source");
-    lines.splice(at + 1, 0, "  await page.waitForTimeout(500);");
+    const after = lines.findIndex((l, k) => k > at && /^\s*\}\);\s*$/.test(l));
+    assert(after > at, "the statement's wrapper closes after it");
+    lines.splice(after + 1, 0, "  await page.waitForTimeout(500);");
     const reparsed = parseSpec(lines.join("\n"));
     assertEqual(reparsed.length, 4, "the spliced script parses to 4 steps");
     assertEqual(

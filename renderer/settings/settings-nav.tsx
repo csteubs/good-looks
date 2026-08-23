@@ -36,6 +36,7 @@ import {
   BarChart3,
   BookOpen,
   Bell,
+  Code2,
   Coins,
   EyeOff,
   FlaskConical,
@@ -59,6 +60,7 @@ import type { RecorderSettings } from "../lib/recorder-types";
 
 const PANE_ICONS: Record<PaneId, ComponentType<{ className?: string }>> = {
   appearance: Palette,
+  editor: Code2,
   recording: Video,
   "test-defaults": Settings2,
   "auto-heal": Bandage,

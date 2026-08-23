@@ -39,6 +39,26 @@ import type {
   WaitUntilKind,
 } from "../recorder/types.js";
 
+/** A half-open character range [from, to) into the ORIGINAL source. */
+export interface SourceRange {
+  from: number;
+  to: number;
+}
+
+/** What `parseSpecDetailed` answers. `stepRanges[k]` is where `steps[k]` was
+ *  read from; `skippedRanges` is where each statement the parser could not
+ *  classify sits. Both are what the Script IDE's parse-coverage gutter draws
+ *  from: a line inside no range is structure (the `test(` header, a closing
+ *  `});`, the `const V` header), not a statement the parser ignored. */
+export interface ParsedSpec {
+  steps: Step[];
+  skipped: number;
+  stepRanges: SourceRange[];
+  skippedRanges: SourceRange[];
+}
+
+type ParsedBody = ParsedSpec;
+
 /**
  * Read `{ … }` object literals out of an argument string into CookieSpecs.
  * Deliberately narrow: it understands the shape script-generator emits
@@ -99,6 +119,12 @@ function parseCookieObjects(argsStr: string): CookieSpec[] {
  * Strip line and block comments from a source snippet. String-aware so a
  * `//` inside a string literal (e.g. a URL like "https://…") is NOT treated
  * as a line comment — critical since page.goto args contain URLs.
+ *
+ * OFFSET-PRESERVING since 2026-08-22: a stripped comment becomes the same
+ * number of spaces (newlines kept), so every index into the output is the
+ * same index into the input. That is what lets `parseBody` report WHERE each
+ * statement it recognised — or could not — sits in the file the user is
+ * editing, without a second pass over the original text.
  */
 function stripComments(src: string): string {
   let out = "";
@@ -168,13 +194,16 @@ function stripComments(src: string): string {
         continue;
       }
       const nl = src.indexOf("\n", i);
-      if (nl < 0) break;
-      i = nl;
+      const stop = nl < 0 ? src.length : nl;
+      out += " ".repeat(stop - i);
+      i = stop;
       continue;
     }
     if (two === "/*") {
       const end = src.indexOf("*/", i + 2);
-      i = end < 0 ? src.length : end + 2;
+      const stop = end < 0 ? src.length : end + 2;
+      for (let k = i; k < stop; k++) out += src[k] === "\n" ? "\n" : " ";
+      i = stop;
       continue;
     }
     out += ch;
@@ -1089,21 +1118,47 @@ function parseBody(
   // continue-on-failure try-block, which parses by RECURSION: a map local to
   // one call would make every wrapped download read as skipped.
   pendingDownloads: Map<string, { timeoutMs: number }> = new Map(),
-): { steps: Step[]; skipped: number } {
+  // Where `body` starts in the file, so every range below is FILE-relative.
+  // A recursive call (a try wrapper, a disabled line) passes its slice's own
+  // start; the top-level call passes the test body's offset.
+  base = 0,
+): ParsedBody {
   const steps: Step[] = [];
   let skipped = 0;
+  // One range per step, aligned with `steps` by index, plus one per skip.
+  // Filled by `record` below from the scan's own progress rather than by
+  // each branch: an iteration that recognised something moved `i` past it,
+  // so whatever it pushed sits in [prevI, i). Recursive branches push their
+  // inner ranges themselves (already file-relative), and `record` only fills
+  // what is still missing.
+  const stepRanges: SourceRange[] = [];
+  const skippedRanges: SourceRange[] = [];
+  let prevI = 0;
+  let prevSkipped = 0;
+  const record = (i: number): void => {
+    if (steps.length > stepRanges.length || skipped > prevSkipped) {
+      const from = base + firstCode(srcForRanges, prevI, i);
+      const to = base + i;
+      while (stepRanges.length < steps.length) stepRanges.push({ from, to });
+      if (skipped > prevSkipped) skippedRanges.push({ from, to });
+    }
+    prevI = i;
+    prevSkipped = skipped;
+  };
   // Recognized open blocks awaiting their closing `}`, innermost last. A
   // STACK of kinds rather than the old single counter, because a `}` must
   // close back into the step that opened it: `endif` for an `if`, `endLoop`
   // for a `for` — one counter cannot tell `if { for {` from `for { if {`.
   const blockStack: { kind: "if" | "loop"; elsed?: boolean }[] = [];
   const src = stripComments(body);
+  const srcForRanges = src;
 
   // A single forward scan. At each position we test the known call shapes;
   // when one matches we consume the whole balanced call (and, for expect/locator,
   // the chained `.action(...)` call that follows) before advancing.
   let i = 0;
   while (i < src.length) {
+    record(i);
     const rest = src.slice(i);
 
     // ── The teardown latch ─────────────────────────────────────────────────
@@ -1146,6 +1201,41 @@ function parseBody(
     if (tdRefusedM) {
       steps.push(makeStep("teardown", {}));
       i += tdRefusedM[0].length;
+      continue;
+    }
+
+    // await test.step("…", async () => { … }); — the per-step wrapper the
+    // generator emits since 2026-08-22, and the shape a model reaches for when
+    // it writes readable specs. Consumed as ONE unit, before the brace closer
+    // below: its `});` would otherwise pop whatever `if`/`for` is open, and
+    // its TITLE is never scanned — a title that quotes a statement
+    // (`click "Sign in"` is harmless; `page.getByTestId("a").click()` would
+    // have matched the locator branch from inside the string). Matched before
+    // `braceM` for the same reason the teardown latch is: the ordering is
+    // load-bearing. The body is parsed by recursion with the caller's
+    // variables and armed downloads, so a wrapper changes nothing about what
+    // its statement means.
+    const stepWrapM = rest.match(/^[\s;]*await\s+test\.step\s*\(/);
+    if (stepWrapM) {
+      const callOpen = i + stepWrapM[0].length - 1;
+      const arrow = src.indexOf("=>", callOpen);
+      const bodyOpen = arrow >= 0 ? src.indexOf("{", arrow) : -1;
+      const bodyClose = bodyOpen >= 0 ? matchBrace(src, bodyOpen) : -1;
+      if (bodyClose < 0) {
+        skipped++;
+        i = callOpen + 1;
+        continue;
+      }
+      const innerResult = parseBody(src.slice(bodyOpen + 1, bodyClose), vars, pendingDownloads, base + bodyOpen + 1);
+      steps.push(...innerResult.steps);
+      stepRanges.push(...innerResult.stepRanges);
+      skippedRanges.push(...innerResult.skippedRanges);
+      skipped += innerResult.skipped;
+      // Past the callback's `}`, the call's `)` and a trailing `;`.
+      let j = bodyClose + 1;
+      while (j < src.length && /[\s)]/.test(src[j])) j++;
+      if (src[j] === ";") j++;
+      i = j;
       continue;
     }
 
@@ -1324,11 +1414,14 @@ function parseBody(
       if (nl < 0) nl = src.length;
       const stmt = src.slice(stmtStart, nl).trim();
       if (stmt) {
-        const innerResult = parseBody(stmt, vars);
+        // Untrimmed, so the inner ranges land on the real columns.
+        const innerResult = parseBody(src.slice(stmtStart, nl), vars, undefined, base + stmtStart);
         if (innerResult.steps.length > 0) {
           const s = innerResult.steps[0];
           s.disabled = true;
           steps.push(...innerResult.steps);
+          stepRanges.push(...innerResult.stepRanges);
+          skippedRanges.push(...innerResult.skippedRanges);
           skipped += innerResult.skipped;
         } else if (innerResult.skipped > 0) {
           // Zero steps AND zero skips means the statement was recognized but
@@ -1358,12 +1451,14 @@ function parseBody(
         continue;
       }
       const inner = src.slice(braceOpen + 1, braceClose);
-      const innerResult = parseBody(inner, vars, pendingDownloads);
+      const innerResult = parseBody(inner, vars, pendingDownloads, base + braceOpen + 1);
       if (innerResult.steps.length > 0) {
         // The wrapper always encloses a single statement; tag it and push.
         const s = innerResult.steps[0];
         s.continueOnFailure = true;
         steps.push(...innerResult.steps);
+        stepRanges.push(...innerResult.stepRanges);
+        skippedRanges.push(...innerResult.skippedRanges);
         skipped += innerResult.skipped;
         // Find and skip the matching catch { … } block that follows.
         const after = src.slice(braceClose + 1);
@@ -2258,8 +2353,18 @@ function parseBody(
 
     i++;
   }
+  record(i);
 
-  return { steps, skipped };
+  return { steps, skipped, stepRanges, skippedRanges };
+}
+
+/** First index in [from, to) that is not whitespace or a stray `;` — every
+ *  branch's regex swallows `^[\s;]*` ahead of its statement, and a range
+ *  that began there would start on the PREVIOUS line. */
+function firstCode(src: string, from: number, to: number): number {
+  let k = from;
+  while (k < to && /[\s;]/.test(src[k])) k++;
+  return k;
 }
 
 /**
@@ -2267,9 +2372,9 @@ function parseBody(
  * `test.describe(...)` and `test.beforeEach(...)` are skipped — only the
  * actual test bodies contribute steps.
  */
-function extractTestBodies(src: string): string[] {
+function extractTestBodies(src: string): { body: string; offset: number }[] {
   const clean = stripComments(src);
-  const bodies: string[] = [];
+  const bodies: { body: string; offset: number }[] = [];
   const testRe = /\btest(?:\.\w+)?\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = testRe.exec(clean)) !== null) {
@@ -2308,7 +2413,9 @@ function extractTestBodies(src: string): string[] {
         }
       }
     }
-    if (end >= 0) bodies.push(clean.slice(braceStart + 1, end));
+    // `clean` is offset-preserving, so an index into it is an index into
+    // `src` — the offset is what makes a body's ranges file-relative.
+    if (end >= 0) bodies.push({ body: clean.slice(braceStart + 1, end), offset: braceStart + 1 });
   }
   return bodies;
 }
@@ -2329,15 +2436,19 @@ export function parseSpec(source: string): Step[] {
  * script — callers that treat steps as authoritative (e.g. resyncing after
  * a script edit) should surface that instead of trusting the count silently.
  */
-export function parseSpecDetailed(source: string): { steps: Step[]; skipped: number } {
+export function parseSpecDetailed(source: string): ParsedSpec {
   const bodies = extractTestBodies(source);
-  if (bodies.length === 0) return { steps: [], skipped: 0 };
+  if (bodies.length === 0) return { steps: [], skipped: 0, stepRanges: [], skippedRanges: [] };
   const steps: Step[] = [];
+  const stepRanges: SourceRange[] = [];
+  const skippedRanges: SourceRange[] = [];
   let skipped = 0;
-  for (const body of bodies) {
-    const result = parseBody(body);
+  for (const { body, offset } of bodies) {
+    const result = parseBody(body, undefined, undefined, offset);
     steps.push(...result.steps);
+    stepRanges.push(...result.stepRanges);
+    skippedRanges.push(...result.skippedRanges);
     skipped += result.skipped;
   }
-  return { steps, skipped };
+  return { steps, skipped, stepRanges, skippedRanges };
 }

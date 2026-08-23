@@ -1,0 +1,109 @@
+/*
+ * The Script IDE's host — what the Script tab IS once the editor is
+ * CodeMirror (B-phase, 2026-08-22).
+ *
+ * Only the HOST is styled here. Everything inside `.cm-editor` is styled by
+ * `renderer/main/script-editor-theme.ts` through `EditorView.theme`, whose
+ * rules CodeMirror injects at runtime with a precedence a stylesheet cannot
+ * reach (its base rules are scoped by a generated class and inserted after
+ * this file). That module reads the same `--gl-*` tokens; `check:script-ide-
+ * layout` verifies every name it reads is declared in tokens.css, which is
+ * the job `check:theme-tokens` does for this file.
+ *
+ * FLAT RULES ONLY. `check:renderer-classes` refuses a style rule nested inside
+ * another in any theme stylesheet (a bad merge once parked a whole screen's
+ * section inside `.gl-detail-tabs [role="tab"]`, valid CSS that styled
+ * nothing).
+ */
+
+/* The column the editor fills: the tab panel's remaining height, no more.
+   `min-height: 0` is what lets a flex child shrink below its content, and
+   without it the editor grows to its document and the whole tab scrolls
+   instead of the editor — the exact failure `check:scroll-layout` exists for
+   on the step list. */
+.gl-script-ide {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  font-family: var(--gl-mono);
+  font-size: var(--gl-code-size);
+  line-height: var(--gl-code-line);
+}
+
+/* Shown while the editor chunk is being fetched (it is the renderer's one
+   dynamic import). The same metrics as the code it is about to become, so
+   the first paint does not jump. */
+.gl-script-ide-loading {
+  padding: 8px 16px;
+  font-family: var(--gl-mono);
+  font-size: var(--gl-code-size);
+  line-height: var(--gl-code-line);
+  color: var(--gl-tx-3);
+}
+
+/* The two gutter COLUMNS our markers live in, named so the editor can give
+   each a width that does not jump when its first mark appears: CodeMirror
+   sizes a gutter from its widest element, and a column that is empty until
+   the first run would otherwise push the line numbers sideways mid-run. */
+.gl-ide-run-gutter {
+  min-width: 14px;
+}
+
+.gl-ide-cov-gutter {
+  min-width: 6px;
+}
+
+/* ── Gutter marks ─────────────────────────────────────────────────────────
+   Elements our own GutterMarkers create (CodeMirror only positions them), so
+   their classes are ours to declare. Two gutters: run status on the left of
+   the number, parse coverage on its right.
+
+   Run status takes the four status hues because IT IS an outcome — the one
+   place in the editor those colours appear. */
+.gl-ide-run {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin: 0 4px;
+  vertical-align: middle;
+  background: var(--gl-tx-3);
+}
+
+.gl-ide-run[data-status="passed"] {
+  background: var(--gl-phos);
+}
+
+.gl-ide-run[data-status="failed"] {
+  background: var(--gl-red);
+}
+
+.gl-ide-run[data-status="running"] {
+  background: var(--gl-cyan);
+}
+
+.gl-ide-run[data-status="skipped"] {
+  background: var(--gl-amber);
+}
+
+/* Parse coverage is NOT an outcome, so it gets no hue: a mapped statement
+   shows nothing, an unmapped one a dim tick, so the eye lands on what will
+   NOT follow the test into its steps — never on what will. */
+.gl-ide-cov {
+  display: inline-block;
+  width: 2px;
+  height: var(--gl-code-line);
+  margin-left: 3px;
+  vertical-align: top;
+  background: transparent;
+}
+
+.gl-ide-cov[data-coverage="skipped"] {
+  background: var(--gl-tx-3);
+}
+
+.gl-ide-cov[data-coverage="error"] {
+  background: var(--gl-red);
+}
