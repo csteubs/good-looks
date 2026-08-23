@@ -47,7 +47,7 @@ import { EditStepsView } from "./edit-steps-view";
 import { RunOutput } from "./run-output";
 import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import { ScriptEditor, type LineInlay, type RunLineStatus, type ScriptEditorHandle } from "./script-view";
-import { markScriptDirty } from "../lib/script-buffer";
+import { isScriptDirty, markScriptDirty } from "../lib/script-buffer";
 import { SCRIPT_CHANGED_ON_DISK, isScriptChangedOnDisk } from "../../shared/script-save.mjs";
 import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
@@ -748,7 +748,14 @@ export function TestDetailView() {
       // step list wholesale — so this is the only moment the previous list
       // still exists anywhere.
       const before = qc.getQueryData<TestRecord | null>(["test", id])?.steps ?? [];
-      const updated = await api.tests.updateScript(id, source, origin);
+      // An AI fix lands under the same two rules a hand edit does: never over a
+      // draft the user has open, and never over a file that moved on since the
+      // fix was diffed — the base is the script the panel diffed against.
+      if (isScriptDirty(id)) {
+        throw new Error("The Script tab has an unsaved draft of this test — save or discard it before applying a fix.");
+      }
+      const base = qc.getQueryData<string>(["script", id]);
+      const updated = await api.tests.updateScript(id, source, origin, base);
       // Diff off the handler's return value rather than a refetch: the refetch
       // is async and the highlight would race it, and the record it returns is
       // the same one the invalidation is about to put in the cache anyway.

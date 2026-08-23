@@ -22,6 +22,7 @@ import {
   buildDebugMessages,
   buildGenerateMessages,
   describeSending,
+  scriptWasTruncated,
   sendingTotalChars,
 } from "./llm-prompts";
 import type { DebugContext } from "./llm-prompts";
@@ -189,5 +190,30 @@ describe("the Sending strip (B9)", () => {
     if (prompt.includes(c.testName)) {
       expect(declared.some((l) => l.includes("name"))).toBe(true);
     }
+  });
+});
+
+describe("what the debug prompt says about the failed step, and about a truncated script", () => {
+  const base: DebugContext = {
+    testName: "Checkout",
+    testUrl: "https://example.com",
+    script: 'import { test } from "@playwright/test";\ntest("t", async () => {});\n',
+    output: "Error: boom",
+    imported: false,
+  };
+
+  it("names the failed step when the run placed one, counting from 1", () => {
+    const text = buildDebugMessages({ ...base, failedStepIndex: 3 }).map((m) => m.content).join("\n");
+    expect(text).toContain("Failed step:");
+    expect(text).toContain("step 4");
+    expect(buildDebugMessages(base).map((m) => m.content).join("\n")).not.toContain("Failed step:");
+  });
+
+  it("scriptWasTruncated is the one rule the prompt and the Apply gate share", () => {
+    expect(scriptWasTruncated(base)).toBe(false);
+    const long = { ...base, script: "x".repeat(200_000) };
+    expect(scriptWasTruncated(long)).toBe(true);
+    const text = buildDebugMessages(long).map((m) => m.content).join("\n");
+    expect(text).toContain("do NOT output a full-file replacement");
   });
 });

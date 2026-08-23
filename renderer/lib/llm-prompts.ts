@@ -140,9 +140,17 @@ export function sendingTotalChars(items: SendingItem[]): number {
   return items.reduce((sum, item) => sum + (item.chars ?? 0), 0);
 }
 
+/** Whether the script is too long to send whole. When it is, the prompt asks
+ *  for changed lines rather than a full file — and the Apply button must not
+ *  offer a full-file replacement built from a model that never saw the whole
+ *  file. One function, read by both, so they cannot disagree. */
+export function scriptWasTruncated(ctx: Pick<DebugContext, "script">): boolean {
+  return ctx.script.length > MAX_SCRIPT_CHARS;
+}
+
 export function buildDebugMessages(ctx: DebugContext): LlmMessage[] {
   const slowMo = slowMoFor(ctx.speed);
-  const scriptTruncated = ctx.script.length > MAX_SCRIPT_CHARS;
+  const scriptTruncated = scriptWasTruncated(ctx);
   const contextLines = [
     `Test: "${ctx.testName}"`,
     `Target URL: ${ctx.testUrl}`,
@@ -162,6 +170,12 @@ export function buildDebugMessages(ctx: DebugContext): LlmMessage[] {
     // If the spec was too long to include in full, the model can't reproduce
     // a complete file — ask for just the changed lines so no partial file gets
     // offered as an applyable full-file replacement.
+    // The step the run failed on, when the reporter placed it. Threaded in
+    // from the run since 2026-08-12 and never read until 2026-08-23 — the
+    // anchor "explain this failure" wants was already here and dropped.
+    typeof ctx.failedStepIndex === "number" && ctx.failedStepIndex >= 0
+      ? `Failed step: the run's per-step markers place the failure at step ${ctx.failedStepIndex + 1} (counting the test's steps from 1). Start there.`
+      : null,
     scriptTruncated
       ? "NOTE: the spec below was truncated because it is long, so do NOT output a full-file replacement — show only the specific changed lines in a code block instead."
       : null,
