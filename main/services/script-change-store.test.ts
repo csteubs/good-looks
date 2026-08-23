@@ -19,7 +19,7 @@ process.env.GLAZE_TEST_USERDATA = userData;
 
 // Imported after the env var is set — `app.getPath` is resolved lazily on every
 // call, but the index path is derived from it at call time.
-const { scriptChangeStore, countLineChanges, MAX_SOURCE_BYTES } = await import(
+const { scriptChangeStore, countLineChanges, MAX_SOURCE_BYTES, normalizeScriptChangeOrigin } = await import(
   "./script-change-store.js"
 );
 
@@ -200,5 +200,54 @@ describe("countLineChanges", () => {
 
   it("counts duplicates once each", () => {
     expect(countLineChanges("a\n", "a\na\n")).toEqual({ addedLines: 1, removedLines: 0 });
+  });
+});
+
+describe("the AI-inline origin and the fields an AI origin carries", () => {
+  beforeEach(reset);
+
+  it("normalizes an inline rewrite's origin with its provider, affordance and prompt version, capped and stripped", () => {
+    expect(
+      normalizeScriptChangeOrigin({
+        by: "ai-inline",
+        model: "qwen2.5-coder:7b",
+        provider: "ollama\u0007",
+        affordance: "inline-rewrite",
+        promptVersion: "inline-rewrite/1",
+        reviewed: true,
+      }),
+    ).toEqual({
+      origin: "ai-inline",
+      model: "qwen2.5-coder:7b",
+      provider: "ollama",
+      affordance: "inline-rewrite",
+      promptVersion: "inline-rewrite/1",
+      reviewed: true,
+    });
+    // An affordance outside the vocabulary is dropped, never stored as text.
+    expect(normalizeScriptChangeOrigin({ by: "ai-inline", affordance: "<script>" }).affordance).toBeUndefined();
+    // A hand edit carries none of them, whatever the payload claims.
+    expect(normalizeScriptChangeOrigin({ by: "manual", model: "x", provider: "y", affordance: "debug" })).toEqual({
+      origin: "manual",
+      reviewed: true,
+    });
+  });
+
+  it("stores the fields with the entry and lists them back", () => {
+    const entry = record({
+      origin: "ai-inline",
+      model: "m",
+      provider: "lmstudio",
+      affordance: "roundtrip-rewrite",
+      promptVersion: "roundtrip/1",
+    })!;
+    const listed = scriptChangeStore.list(entry.testId)[0];
+    expect(listed).toMatchObject({
+      origin: "ai-inline",
+      model: "m",
+      provider: "lmstudio",
+      affordance: "roundtrip-rewrite",
+      promptVersion: "roundtrip/1",
+    });
   });
 });

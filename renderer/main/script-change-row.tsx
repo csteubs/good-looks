@@ -23,10 +23,16 @@ import type { ScriptChangeEntry } from "../lib/recorder-types";
  *  should be asserting the SAME string the row renders — a copy in the test is
  *  a copy that can go stale without anything failing. */
 export function originLabel(entry: ScriptChangeEntry): string {
-  if (entry.origin !== "ai-debug") return "Edited by hand";
+  if (entry.origin === "manual") return "Edited by hand";
   // A model name may be missing on an entry recorded before the session
   // stamped one. "AI Debug - undefined" is worse than saying less.
-  return entry.model ? `AI Debug - ${entry.model}` : "AI Debug";
+  const who =
+    entry.origin === "ai-inline"
+      ? entry.affordance === "roundtrip-rewrite"
+        ? "AI rewrite for the Steps tab"
+        : "AI inline edit"
+      : "AI Debug";
+  return entry.model ? `${who} - ${entry.model}` : who;
 }
 
 /** The counts as one line, for a caller that wants the whole sentence.
