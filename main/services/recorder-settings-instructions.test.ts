@@ -66,3 +66,18 @@ describe("inspections", () => {
     expect(after["no-wait-for-timeout"]).toBe(false);
   });
 });
+
+describe("page stylesheet and init script", () => {
+  it("default to empty, keep text as written, cap it, and read a non-string as empty", async () => {
+    const { USER_PAGE_TEXT_MAX } = await import("./recorder-settings-store.js");
+    expect(recorderSettingsStore.get().userStylesheet).toBe("");
+    expect(recorderSettingsStore.get().userInitScript).toBe("");
+    recorderSettingsStore.set({ userStylesheet: "#a {\n  display: none;\n}", userInitScript: "window.x = 1;" });
+    expect(recorderSettingsStore.get().userStylesheet).toBe("#a {\n  display: none;\n}");
+    expect(recorderSettingsStore.get().userInitScript).toBe("window.x = 1;");
+    recorderSettingsStore.set({ userInitScript: "y".repeat(USER_PAGE_TEXT_MAX + 1) });
+    expect(recorderSettingsStore.get().userInitScript).toHaveLength(USER_PAGE_TEXT_MAX);
+    writeRaw({ userStylesheet: 7 });
+    expect(recorderSettingsStore.get().userStylesheet).toBe("");
+  });
+});

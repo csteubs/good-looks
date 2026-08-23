@@ -93,6 +93,8 @@ export type StepType =
   // rather than a pair.
   | "teardown"
   | "dialog"
+  // A fenced code step (mirror; see main/recorder/types.ts).
+  | "code"
   | "reload"
   // A line in the run log — no assertion, never fails. Mirror of the
   // main-process type.
@@ -325,6 +327,8 @@ export function isCssPropName(v: unknown): v is string {
 export interface Step {
   id: string;
   type: StepType;
+  /** `code` steps: the statements, verbatim. */
+  code?: string;
   locator?: Locator;
   value?: string;
   label?: string;
@@ -1490,6 +1494,9 @@ export interface RecorderSettings {
    *  main/recorder/types.ts): one global text, and one per host. */
   aiInstructions: string;
   aiInstructionsByHost: Record<string, string>;
+  /** Page stylesheet and init script (mirror; see main/recorder/types.ts). */
+  userStylesheet: string;
+  userInitScript: string;
   /** Which of the Script IDE's inspections run (mirror; shared/inspections.mjs). */
   inspections: Record<InspectionRule, boolean>;
   /** Which symbol the Cost panel stamps on a money figure (default "usd").

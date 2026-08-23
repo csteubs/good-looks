@@ -34,3 +34,10 @@ describe("a testid locator in the step list", () => {
     expect(describeStep(s)).toContain('getByTestId("x")');
   });
 });
+
+describe("code steps", () => {
+  it("describes a code step by its label or first line, with the line count", () => {
+    expect(describeStep({ id: "c", type: "code", code: "await page.mouse.wheel(0, 1);", timestamp: 0 })).toBe("code: await page.mouse.wheel(0, 1);");
+    expect(describeStep({ id: "c", type: "code", code: "\nconst a = 1;\n\nconst b = 2;\n", label: "setup", timestamp: 0 })).toBe("setup: const a = 1; (+1 lines)");
+  });
+});

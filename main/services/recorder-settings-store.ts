@@ -135,6 +135,12 @@ function isEditorKeymap(v: unknown): v is EditorKeymap {
   return (EDITOR_KEYMAPS as readonly unknown[]).includes(v);
 }
 
+/** Longest page stylesheet or init script kept. */
+export const USER_PAGE_TEXT_MAX = 50_000;
+function normalizeUserPageText(raw: unknown): string {
+  return typeof raw === "string" ? raw.slice(0, USER_PAGE_TEXT_MAX) : "";
+}
+
 function normalizeAiInstructions(raw: unknown): string {
   return typeof raw === "string" ? raw.slice(0, AI_INSTRUCTIONS_MAX) : "";
 }
@@ -263,6 +269,8 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   aiInstructions: "",
   aiInstructionsByHost: {},
   inspections: defaultInspections(),
+  userStylesheet: "",
+  userInitScript: "",
   // USD, because the runner prices the Settings pane offers are published in
   // it. The two numbers below are the app's own conservative guesses, and the
   // Cost panel says so on screen for as long as they are unchanged.
@@ -473,6 +481,8 @@ function read(): RecorderSettings {
       aiInstructions: normalizeAiInstructions(parsed.aiInstructions),
       aiInstructionsByHost: normalizeAiInstructionsByHost(parsed.aiInstructionsByHost),
       inspections: normalizeInspections(parsed.inspections),
+      userStylesheet: normalizeUserPageText(parsed.userStylesheet),
+      userInitScript: normalizeUserPageText(parsed.userInitScript),
       // Clamped rather than cast. Both numbers multiply every figure on the
       // Cost panel, so a hand-edited `0` or `1e9` on disk would render as a
       // confident "$0.00 spent" or an absurd one — a wrong answer that looks
@@ -701,6 +711,10 @@ export const recorderSettingsStore = {
         update.aiInstructionsByHost !== undefined
           ? normalizeAiInstructionsByHost(update.aiInstructionsByHost)
           : current.aiInstructionsByHost,
+      userStylesheet:
+        typeof update.userStylesheet === "string" ? normalizeUserPageText(update.userStylesheet) : current.userStylesheet,
+      userInitScript:
+        typeof update.userInitScript === "string" ? normalizeUserPageText(update.userInitScript) : current.userInitScript,
       // A patch names the rules it changes; the rest keep their setting.
       inspections:
         update.inspections !== undefined

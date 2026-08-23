@@ -26,6 +26,7 @@ import {
 import { actionsLiteral, LOCATOR_ACTIONS, PAGE_ACTIONS } from "./page-actions.js";
 import { SETTLE_FIXTURE_FILE } from "./settle-fixture-source.js";
 import { DISMISS_COUNT_ENV, DISMISS_FIXTURE_FILE } from "./dismiss-fixture-source.js";
+import { USER_CSS_ENV, USER_INIT_ENV, USER_PAGE_FIXTURE_FILE } from "./user-page-fixture-source.js";
 import { SIGNATURE_COUNT_ENV, SIGNATURE_FIXTURE_FILE } from "./signature-fixture-source.js";
 import { STEP_MARKER } from "./step-marker.js";
 
@@ -36,6 +37,7 @@ import { installHealing } from "./glaze-heal.mjs";
 import { installSettle } from "./${SETTLE_FIXTURE_FILE}";
 import { installSignatureHeaders, reportSignedRequests } from "./${SIGNATURE_FIXTURE_FILE}";
 import { dismissalsSoFar, installOverlayDismissal } from "./${DISMISS_FIXTURE_FILE}";
+import { installUserPage } from "./${USER_PAGE_FIXTURE_FILE}";
 
 export { expect };
 
@@ -48,6 +50,8 @@ const HEAL_ON = process.env.GLAZE_HEAL === "1";
 // Standing overlay rules. Gated on there being any, not on a toggle: a run
 // with no rules for its host loads the fixture and installs nothing.
 const DISMISS_ON = (Number(process.env.${DISMISS_COUNT_ENV}) || 0) > 0;
+// Settings → Recording → page stylesheet / init script, base64 in the env.
+const USER_PAGE_ON = Boolean(process.env.${USER_CSS_ENV} || process.env.${USER_INIT_ENV});
 // Accessibility checks, gated separately from screenshots: a11y is useful
 // without them, and it costs far more, so nobody should pay for one by asking
 // for the other.
@@ -464,7 +468,7 @@ function reportDismissals() {
   } catch (e) { /* reporting is best-effort */ }
 }
 
-export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON || SIG_ON || DISMISS_ON || SAVE_STATE) ? base.extend({
+export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON || SIG_ON || DISMISS_ON || USER_PAGE_ON || SAVE_STATE) ? base.extend({
   page: async ({ page }, use, testInfo) => {
     // The signature goes on FIRST, and is the only one of these that is not an
     // action patch — it routes the network. Installed ahead of the three
@@ -480,6 +484,16 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
     // no business inside a wrapper's unwind. Announcing what was armed is part
     // of the install — a run that clicks things on a page without saying which
     // rules were active is a run whose surprises point nowhere.
+    // The user's own stylesheet and init script, ahead of the overlay rules
+    // for the same reason: a context init script and page listeners, no
+    // action wrapped.
+    if (USER_PAGE_ON) {
+      try {
+        await installUserPage(page);
+      } catch (e) {
+        process.stderr.write("[glaze-user-page] install failed: " + String(e) + "\\n");
+      }
+    }
     if (DISMISS_ON) {
       try {
         const armed = await installOverlayDismissal(page);
