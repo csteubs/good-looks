@@ -236,3 +236,27 @@ describe("linesOf", () => {
     expect(linesOf(doc, [{ from: 50, to: 60 }], "skipped")).toEqual({ 4: "skipped" });
   });
 });
+
+describe("⌘K", () => {
+  it("calls the host's onAiRequest and swallows the key; without one, the key falls through", () => {
+    const onAi = vi.fn();
+    const { rerender } = render(
+      <ScriptEditorCm value={CODE} onChange={() => {}} readOnly={false} errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="t" onAiRequest={onAi} {...PREFS} />,
+    );
+    const v = view();
+    // "Mod" is Meta on a Mac and Ctrl elsewhere; jsdom reports no platform, so
+    // CodeMirror reads it as Ctrl here.
+    const ev = new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true, cancelable: true });
+    v.contentDOM.dispatchEvent(ev);
+    expect(onAi).toHaveBeenCalledTimes(1);
+    expect(ev.defaultPrevented).toBe(true);
+
+    rerender(
+      <ScriptEditorCm value={CODE} onChange={() => {}} readOnly={false} errors={[]} skippedRanges={null} runStatus={{}} ariaLabel="t" {...PREFS} />,
+    );
+    const ev2 = new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true, cancelable: true });
+    v.contentDOM.dispatchEvent(ev2);
+    expect(onAi).toHaveBeenCalledTimes(1);
+    expect(ev2.defaultPrevented).toBe(false);
+  });
+});

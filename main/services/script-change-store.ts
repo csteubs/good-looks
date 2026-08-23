@@ -28,7 +28,9 @@ import { app, logger } from "@shell/backend";
 
 /** Where the change came from. `manual` is the Script tab; `ai-debug` is a
  *  corrected spec from the AI debug panel. */
-export type ScriptChangeOrigin = "ai-debug" | "manual";
+/** Who wrote a change: an AI-debug answer, an inline AI action in the Script
+ *  IDE (a Cmd-K rewrite, a round-trip rewrite), or the user by hand. */
+export type ScriptChangeOrigin = "ai-debug" | "ai-inline" | "manual";
 
 /** Mirrors `HealStatus`, and for the same reason: "pending" is a change nobody
  *  has looked at, and settling it is the user's decision either way. */
@@ -43,6 +45,12 @@ export interface ScriptChangeEntry {
    *  every surface must degrade to a bare "AI Debug" rather than print
    *  "undefined". */
   model?: string;
+  /** The provider, the affordance and the prompt version behind an AI
+   *  origin — see `ScriptChangeJournal`. Optional on every row: entries
+   *  written before 2026-08-23 carry none. */
+  provider?: string;
+  affordance?: ScriptChangeAffordance;
+  promptVersion?: string;
   /** Did the user read this change before it landed? `false` is the case the
    *  review queue exists for: the fix was applied automatically while the job
    *  was minimized, so nobody has seen it. */
@@ -122,8 +130,19 @@ export function countLineChanges(
 export interface ScriptChangeJournal {
   origin: ScriptChangeOrigin;
   model?: string;
+  /** The provider the model ran on, once the origin is an AI. */
+  provider?: string;
+  /** Which AI affordance wrote it — a debug answer, an inline rewrite, the
+   *  round-trip rewrite. Closed vocabulary; see `AFFORDANCES`. */
+  affordance?: ScriptChangeAffordance;
+  /** The prompt's version tag, so a regression can be traced to a prompt
+   *  change rather than only to a model change. */
+  promptVersion?: string;
   reviewed: boolean;
 }
+
+export const AFFORDANCES = ["debug", "inline-rewrite", "roundtrip-rewrite"] as const;
+export type ScriptChangeAffordance = (typeof AFFORDANCES)[number];
 
 /** Longest model name kept. Real ids are well under this; the cap is here so a
  *  label can't become a paragraph in a chip. */
@@ -145,16 +164,30 @@ const MAX_MODEL_CHARS = 80;
  */
 export function normalizeScriptChangeOrigin(input: unknown): ScriptChangeJournal {
   const raw = (input ?? {}) as Record<string, unknown>;
-  const origin: ScriptChangeOrigin = raw.by === "ai-debug" ? "ai-debug" : "manual";
-  const model =
-    origin === "ai-debug" && typeof raw.model === "string"
-      ? // Matching control characters is the POINT here — this IS the strip.
-        // eslint-disable-next-line no-control-regex
-        raw.model.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, MAX_MODEL_CHARS)
+  const origin: ScriptChangeOrigin =
+    raw.by === "ai-debug" ? "ai-debug" : raw.by === "ai-inline" ? "ai-inline" : "manual";
+  const ai = origin !== "manual";
+  // Every free string an AI origin carries gets the same treatment: control
+  // characters stripped (this IS the strip — matching them is the point),
+  // trimmed, capped. They are rendered as chip labels and written to disk.
+  const short = (v: unknown): string =>
+    typeof v === "string"
+      ? // eslint-disable-next-line no-control-regex
+        v.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, MAX_MODEL_CHARS)
       : "";
+  const model = ai ? short(raw.model) : "";
+  const provider = ai ? short(raw.provider) : "";
+  const promptVersion = ai ? short(raw.promptVersion) : "";
+  const affordance =
+    ai && (AFFORDANCES as readonly string[]).includes(String(raw.affordance))
+      ? (raw.affordance as ScriptChangeAffordance)
+      : undefined;
   return {
     origin,
     ...(model ? { model } : {}),
+    ...(provider ? { provider } : {}),
+    ...(affordance ? { affordance } : {}),
+    ...(promptVersion ? { promptVersion } : {}),
     // Only an explicit `false` means "nobody looked at this". Anything else —
     // absent, garbage, a string — is treated as reviewed, so a malformed
     // payload cannot silently fill the review queue.
@@ -214,6 +247,9 @@ export const scriptChangeStore = {
       testId: input.testId,
       origin: input.origin,
       ...(input.model ? { model: input.model } : {}),
+      ...(input.provider ? { provider: input.provider } : {}),
+      ...(input.affordance ? { affordance: input.affordance } : {}),
+      ...(input.promptVersion ? { promptVersion: input.promptVersion } : {}),
       reviewed: input.reviewed,
       before: oversized ? "" : input.before,
       after: oversized ? "" : input.after,

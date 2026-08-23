@@ -15,8 +15,10 @@ import * as React from "react";
 
 import type { ScriptCheckError, SourceRange } from "../lib/recorder-types";
 import type { LineInlay, RunLineStatus, ScriptEditorHandle } from "./script-editor-cm";
+import type { GhostSource } from "./ghost-text";
 
 export type { LineInlay, RunLineStatus, ScriptEditorHandle } from "./script-editor-cm";
+export type { GhostSource } from "./ghost-text";
 
 const ScriptEditorCm = React.lazy(() => import("./script-editor-cm"));
 
@@ -42,6 +44,10 @@ export interface ScriptEditorProps {
   tabSize?: number;
   /** End-of-line inlays — the live page's match counts. */
   inlays?: LineInlay[];
+  /** Ghost-text source; absent or null turns it off. */
+  ghost?: GhostSource | null;
+  /** ⌘K inside the editor. */
+  onAiRequest?: () => void;
 }
 
 const NO_ERRORS: ScriptCheckError[] = [];
@@ -61,6 +67,8 @@ export function ScriptEditor({
   lineNumbers = true,
   tabSize = 2,
   inlays,
+  ghost = null,
+  onAiRequest,
 }: ScriptEditorProps): React.ReactElement {
   return (
     <React.Suspense fallback={<div className="gl-script-ide-loading">Loading the editor…</div>}>
@@ -78,6 +86,8 @@ export function ScriptEditor({
         lineNumbers={lineNumbers}
         tabSize={tabSize}
         inlays={inlays}
+        ghost={ghost}
+        onAiRequest={onAiRequest}
       />
     </React.Suspense>
   );

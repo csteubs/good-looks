@@ -47,7 +47,10 @@ import { EditStepsView } from "./edit-steps-view";
 import { RunOutput } from "./run-output";
 import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import { ScriptEditor, type LineInlay, type RunLineStatus, type ScriptEditorHandle } from "./script-view";
-import { markScriptDirty } from "../lib/script-buffer";
+import { isScriptDirty, markScriptDirty } from "../lib/script-buffer";
+import { makeGhostSource } from "../lib/ghost-source";
+import { resolveAiInstructions } from "../lib/ai-instructions";
+import { ScriptAiPanel, type ScriptAiApplyMeta, type ScriptAiMode, type ScriptAiSelection } from "./script-ai-panel";
 import { SCRIPT_CHANGED_ON_DISK, isScriptChangedOnDisk } from "../../shared/script-save.mjs";
 import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
@@ -153,6 +156,12 @@ export function TestDetailView() {
   const [editingName, setEditingName] = React.useState(false);
   const [nameDraft, setNameDraft] = React.useState("");
   const [editingScript, setEditingScript] = React.useState(false);
+  // The inline AI panel (⌘K rewrite / explain the failure), and the origin
+  // the NEXT save carries once an AI rewrite has been applied into the
+  // buffer — so the Heals tab files the change as the model's, not the
+  // user's, even though the user pressed Save.
+  const [aiPanel, setAiPanel] = React.useState<{ mode: ScriptAiMode; selection: ScriptAiSelection | null } | null>(null);
+  const aiOriginRef = React.useRef<ScriptChangeSource | null>(null);
   const [scriptDraft, setScriptDraft] = React.useState("");
   // The pre-save check's verdict on the draft. `checking` holds Save while the
   // Playwright CLI has the draft; `failed` keeps the editor open with the
@@ -275,6 +284,18 @@ export function TestDetailView() {
     queryKey: ["recorder-settings"],
     queryFn: () => api.recorder.getSettings(),
   });
+  // Ghost text is on while editing and an autocomplete slot is assigned
+  // (Settings → AI → Autocomplete). Settings is another window, so this
+  // cache cannot be invalidated from there; a short staleTime and the
+  // focus refetch are what notice a slot assigned while the editor was open.
+  const llmConfigQuery = useQuery({
+    queryKey: ["llm", "config"],
+    queryFn: () => api.llm.getConfig(),
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
+  const ghostSource = React.useMemo(() => makeGhostSource((p) => api.llm.fim(p)), []);
+  const ghostEnabled = editingScript && Boolean(llmConfigQuery.data?.roles?.autocomplete);
   // Settings → Editor → Font size lands on the two tokens every editor
   // column is sized from (renderer/theme/editor.css). Written on the document
   // so the theme extension's `var()` reads pick it up without a remount.
@@ -624,6 +645,29 @@ export function TestDetailView() {
       }
     }
   };
+  const openAi = (mode: ScriptAiMode) => {
+    const view = scriptEditorRef.current?.view();
+    const sel = view?.state.selection.main;
+    const selection: ScriptAiSelection | null =
+      mode === "rewrite" && view && sel && !sel.empty
+        ? { from: sel.from, to: sel.to, text: view.state.doc.sliceString(sel.from, sel.to) }
+        : null;
+    setAiPanel({ mode, selection });
+  };
+  const applyAi = (next: string, meta: ScriptAiApplyMeta) => {
+    setScriptDraft(next);
+    markScriptDirty(id, true);
+    aiOriginRef.current = {
+      by: "ai-inline",
+      affordance: meta.affordance,
+      provider: meta.provider,
+      model: meta.model,
+      promptVersion: meta.promptVersion,
+      reviewed: true,
+    };
+    setAiPanel(null);
+    scriptEditorRef.current?.focusLine(1);
+  };
   const recordHere = () => {
     if (!test) return;
     pendingCursorRef.current = caretStep ? caretStep.index + 1 : test.steps.length;
@@ -748,7 +792,14 @@ export function TestDetailView() {
       // step list wholesale — so this is the only moment the previous list
       // still exists anywhere.
       const before = qc.getQueryData<TestRecord | null>(["test", id])?.steps ?? [];
-      const updated = await api.tests.updateScript(id, source, origin);
+      // An AI fix lands under the same two rules a hand edit does: never over a
+      // draft the user has open, and never over a file that moved on since the
+      // fix was diffed — the base is the script the panel diffed against.
+      if (isScriptDirty(id)) {
+        throw new Error("The Script tab has an unsaved draft of this test — save or discard it before applying a fix.");
+      }
+      const base = qc.getQueryData<string>(["script", id]);
+      const updated = await api.tests.updateScript(id, source, origin, base);
       // Diff off the handler's return value rather than a refetch: the refetch
       // is async and the highlight would race it, and the record it returns is
       // the same one the invalidation is about to put in the cache anyway.
@@ -882,9 +933,10 @@ export function TestDetailView() {
       await api.tests.updateScript(
         id,
         scriptDraft,
-        { by: "manual", reviewed: true },
+        aiOriginRef.current ?? { by: "manual", reviewed: true },
         opts.overwrite ? undefined : scriptBase,
       );
+      aiOriginRef.current = null;
     } catch (err) {
       if (isScriptChangedOnDisk(err)) {
         setStaleOpen(true);
@@ -1531,6 +1583,20 @@ export function TestDetailView() {
                       {livePage.closedReason}
                     </span>
                   ) : null}
+                  {typeof failedStepIndex === "number" && runOutput ? (
+                    <Btn
+                      tone="ai"
+                      onClick={() => openAi("explain")}
+                      title="Ask the instant model why the last run failed, starting from the caret's statement"
+                    >
+                      Explain failure
+                    </Btn>
+                  ) : null}
+                  {editingScript ? (
+                    <Btn tone="ai" onClick={() => openAi("rewrite")} title="Rewrite the selection or the whole file with AI (⌘K)">
+                      Ask AI
+                    </Btn>
+                  ) : null}
                   {editingScript ? (
                     <Btn
                       onClick={() => void pickLocator()}
@@ -1578,6 +1644,8 @@ export function TestDetailView() {
                       onClick={() => {
                         setEditingScript(false);
                         setScriptCheck(IDLE_CHECK);
+                        setAiPanel(null);
+                        aiOriginRef.current = null;
                       }}
                     >
                       Cancel
@@ -1607,6 +1675,25 @@ export function TestDetailView() {
                   </>
                 )}
               </div>
+              {aiPanel ? (
+                <ScriptAiPanel
+                  mode={aiPanel.mode}
+                  testId={id}
+                  testName={test.name}
+                  testUrl={test.url}
+                  script={shownScript}
+                  selection={aiPanel.selection}
+                  caretLine={caretLine ?? 1}
+                  failure={
+                    typeof failedStepIndex === "number"
+                      ? { index: failedStepIndex, label: test.steps[failedStepIndex] ? describeStep(test.steps[failedStepIndex]) : undefined, output: runOutput }
+                      : { output: runOutput }
+                  }
+                  instructions={resolveAiInstructions(settingsQuery.data, test.url)}
+                  onApply={applyAi}
+                  onClose={() => setAiPanel(null)}
+                />
+              ) : null}
               {editingScript && scriptCheck.status === "failed" ? (
                 <ul className="gl-script-check-errors" aria-label="Script problems">
                   {scriptCheck.errors.map((e, i) => (
@@ -1643,6 +1730,8 @@ export function TestDetailView() {
                 lineNumbers={settingsQuery.data?.editorLineNumbers ?? true}
                 tabSize={settingsQuery.data?.editorTabSize ?? 2}
                 inlays={liveInlays}
+                ghost={ghostEnabled ? ghostSource : null}
+                onAiRequest={editingScript ? () => openAi("rewrite") : undefined}
               />
               <Dialog
                 open={staleOpen}

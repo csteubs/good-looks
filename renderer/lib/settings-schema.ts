@@ -582,6 +582,32 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "lm studio bearer authentication unauthorized 401 credential secret",
   },
   { id: "llm-model", pane: "ai", label: "Model", keywords: "llm ollama claude sonnet opus haiku" },
+  {
+    id: "llm-role-instant",
+    pane: "ai",
+    label: "Instant helpers",
+    keywords: "role slot explain failure classify vision screenshot small fast model",
+  },
+  {
+    id: "llm-role-autocomplete",
+    pane: "ai",
+    label: "Autocomplete",
+    keywords: "ghost text inline completion fim fill in the middle code model editor",
+  },
+  {
+    id: "llm-instructions",
+    pane: "ai",
+    label: "Standing instructions",
+    keywords: "prompt rules house style locator conventions system instructions context",
+    key: "aiInstructions",
+  },
+  {
+    id: "llm-instructions-by-host",
+    pane: "ai",
+    label: "Instructions per site",
+    keywords: "prompt rules host site domain per-site instructions",
+    key: "aiInstructionsByHost",
+  },
 
   // Failure reasons
   {
@@ -894,6 +920,8 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   editorLineNumbers: true,
   editorTabSize: 2,
   editorCheckOnSave: true,
+  aiInstructions: "",
+  aiInstructionsByHost: {},
   showUrlBar: true,
   trainerPanelEnabled: false,
   defaultRunSpeed: "slow",

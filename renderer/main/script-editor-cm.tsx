@@ -34,6 +34,7 @@ import {
 
 import type { ScriptCheckError, SourceRange } from "../lib/recorder-types";
 import { codeHighlight, editorTheme } from "./script-editor-theme";
+import { ghostText, type GhostSource } from "./ghost-text";
 
 export type RunLineStatus = "running" | "passed" | "failed" | "skipped";
 export type CoverageKind = "skipped" | "error";
@@ -80,6 +81,12 @@ export interface ScriptEditorCmProps {
   tabSize: number;
   /** End-of-line inlays (the live page's match counts). */
   inlays?: LineInlay[];
+  /** Where ghost text comes from; null or undefined turns it off. Read
+   *  through a ref at request time, so a host may swap it without a remount. */
+  ghost?: GhostSource | null;
+  /** ⌘K inside the editor. Bound here, not on the window, so it wins over
+   *  the command palette only while the editor has focus. */
+  onAiRequest?: () => void;
 }
 
 // ── Gutters ───────────────────────────────────────────────────────────────
@@ -299,11 +306,17 @@ export default function ScriptEditorCm({
   lineNumbers: showLineNumbers,
   tabSize,
   inlays,
+  ghost,
+  onAiRequest,
 }: ScriptEditorCmProps): React.ReactElement {
   const hostRef = React.useRef<HTMLDivElement | null>(null);
   const viewRef = React.useRef<EditorView | null>(null);
   const onChangeRef = React.useRef(onChange);
   const onCaretRef = React.useRef(onCaretLine);
+  const ghostRef = React.useRef<GhostSource | null>(ghost ?? null);
+  ghostRef.current = ghost ?? null;
+  const onAiRef = React.useRef(onAiRequest);
+  onAiRef.current = onAiRequest;
   const readOnlyCompartment = React.useRef(new Compartment());
   const wrapCompartment = React.useRef(new Compartment());
   const numbersCompartment = React.useRef(new Compartment());
@@ -348,7 +361,18 @@ export default function ScriptEditorCm({
           wrapCompartment.current.of(lineWrap ? EditorView.lineWrapping : []),
           tabCompartment.current.of(EditorState.tabSize.of(tabSize)),
           EditorView.contentAttributes.of({ "aria-label": ariaLabel, "aria-multiline": "true" }),
+          // Before the keymap below: its Tab must win over indentWithTab
+          // while a completion is shown, and fall through when none is.
+          ghostText(() => ghostRef.current),
           keymap.of([
+            {
+              key: "Mod-k",
+              run: () => {
+                if (!onAiRef.current) return false;
+                onAiRef.current();
+                return true;
+              },
+            },
             ...closeBracketsKeymap,
             ...defaultKeymap,
             ...searchKeymap,

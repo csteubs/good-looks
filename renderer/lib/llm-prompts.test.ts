@@ -22,7 +22,11 @@ import {
   buildDebugMessages,
   buildGenerateMessages,
   describeSending,
+  scriptWasTruncated,
   sendingTotalChars,
+  buildRewriteMessages,
+  buildExplainMessages,
+  estimateTokens,
 } from "./llm-prompts";
 import type { DebugContext } from "./llm-prompts";
 
@@ -189,5 +193,89 @@ describe("the Sending strip (B9)", () => {
     if (prompt.includes(c.testName)) {
       expect(declared.some((l) => l.includes("name"))).toBe(true);
     }
+  });
+});
+
+describe("what the debug prompt says about the failed step, and about a truncated script", () => {
+  const base: DebugContext = {
+    testName: "Checkout",
+    testUrl: "https://example.com",
+    script: 'import { test } from "@playwright/test";\ntest("t", async () => {});\n',
+    output: "Error: boom",
+    imported: false,
+  };
+
+  it("names the failed step when the run placed one, counting from 1", () => {
+    const text = buildDebugMessages({ ...base, failedStepIndex: 3 }).map((m) => m.content).join("\n");
+    expect(text).toContain("Failed step:");
+    expect(text).toContain("step 4");
+    expect(buildDebugMessages(base).map((m) => m.content).join("\n")).not.toContain("Failed step:");
+  });
+
+  it("scriptWasTruncated is the one rule the prompt and the Apply gate share", () => {
+    expect(scriptWasTruncated(base)).toBe(false);
+    const long = { ...base, script: "x".repeat(200_000) };
+    expect(scriptWasTruncated(long)).toBe(true);
+    const text = buildDebugMessages(long).map((m) => m.content).join("\n");
+    expect(text).toContain("do NOT output a full-file replacement");
+  });
+});
+
+describe("inline AI prompts (Script editor)", () => {
+  const SPEC = 'import { test } from "@playwright/test";\ntest("t", async ({ page }) => {\n  await page.goto("https://a.example");\n  await page.getByRole("button").click();\n});\n';
+
+  it("a whole-file rewrite sends the whole file and asks for the whole file back", () => {
+    const [system, user] = buildRewriteMessages({
+      testName: "T",
+      testUrl: "https://a.example",
+      script: SPEC,
+      selection: null,
+      instruction: "Add an assertion on the heading",
+    });
+    expect(system.role).toBe("system");
+    expect(system.content).toContain("test.step");
+    expect(user.content).toContain("Scope: the WHOLE FILE");
+    expect(user.content).toContain(SPEC);
+    expect(user.content).toMatch(/Request: Add an assertion on the heading$/);
+    expect(user.content).not.toContain("Standing instructions");
+  });
+
+  it("a selection rewrite names the lines, sends the span, and carries the standing instructions", () => {
+    const from = SPEC.indexOf("  await page.getByRole");
+    const to = SPEC.indexOf("\n});");
+    const [, user] = buildRewriteMessages({
+      testName: "T",
+      testUrl: "https://a.example",
+      script: SPEC,
+      selection: { from, to, text: SPEC.slice(from, to) },
+      instruction: "force the click",
+      instructions: "Never use waitForTimeout.",
+    });
+    expect(user.content).toContain("Scope: the SELECTED SPAN");
+    expect(user.content).toContain("Selected span (lines 4–4)");
+    expect(user.content).toContain('await page.getByRole("button").click();');
+    expect(user.content).toContain("Standing instructions from the user:\nNever use waitForTimeout.");
+  });
+
+  it("explain anchors on the caret's statement and the failed step, and asks for prose only", () => {
+    const [system, user] = buildExplainMessages({
+      testName: "T",
+      testUrl: "https://a.example",
+      script: SPEC,
+      caretLine: 4,
+      caretStatement: '  await page.getByRole("button").click();',
+      failedStepIndex: 1,
+      failedStepLabel: "Click button",
+      output: "Error: strict mode violation",
+    });
+    expect(system.content).toContain("No headings, no bold, no code block");
+    expect(user.content).toContain("Failed step: 2 — Click button");
+    expect(user.content).toContain('Caret: line 4: await page.getByRole("button").click();');
+    expect(user.content).toContain("Error: strict mode violation");
+  });
+
+  it("estimates tokens at four characters each, rounded up", () => {
+    expect(estimateTokens("")).toBe(0);
+    expect(estimateTokens("abcde")).toBe(2);
   });
 });

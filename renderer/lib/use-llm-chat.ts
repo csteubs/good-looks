@@ -5,7 +5,7 @@
 import * as React from "react";
 
 import { api } from "./api";
-import type { LlmErrorKind, LlmMessage, LlmProvider } from "./llm-types";
+import type { LlmErrorKind, LlmMessage, LlmProvider, LlmRole } from "./llm-types";
 
 export type LlmChatStatus = "idle" | "streaming" | "done" | "error" | "cancelled";
 
@@ -56,7 +56,7 @@ export function useLlmChat() {
   // {model}" name matches the model the backend actually uses instead of a
   // value captured once at dialog open that may have gone stale.
   const start = React.useCallback(
-    async (messages: LlmMessage[], options?: { model?: string; provider?: LlmProvider; temperature?: number }) => {
+    async (messages: LlmMessage[], options?: { model?: string; provider?: LlmProvider; temperature?: number; role?: LlmRole }) => {
       setContent("");
       setReasoning("");
       setError(null);
