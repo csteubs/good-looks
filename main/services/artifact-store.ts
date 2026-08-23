@@ -620,13 +620,15 @@ export const artifactStore = {
   },
 
   /** Read what each failing locator resolved to, or an empty list. Returned
-   *  RAW: every field is page-authored, and the rebuild belongs at the IPC
-   *  edge with the other boundary normalizers, not here. */
+   *  RAW in shape: every field is page-authored, and the rebuild belongs at
+   *  the IPC edge with the other boundary normalizers, not here. Redacted in
+   *  CONTENT, like `readLogs`: this is what `artifacts:getStructure` hands to
+   *  a hosted model, and a page that echoed a secret into an element's text
+   *  is a page this file quotes. */
   readStepMatches(testId: string, runId: string): unknown[] {
     try {
-      const raw = fs.readFileSync(
-        path.join(this.runDir(testId, runId), "step-matches.json"),
-        "utf-8",
+      const raw = redactWithSnapshot(
+        fs.readFileSync(path.join(this.runDir(testId, runId), "step-matches.json"), "utf-8"),
       );
       const parsed = JSON.parse(raw) as { entries?: unknown[] };
       return Array.isArray(parsed.entries) ? parsed.entries : [];
@@ -635,12 +637,12 @@ export const artifactStore = {
     }
   },
 
-  /** Read a run's failed heal attempts, or an empty list. */
+  /** Read a run's failed heal attempts, or an empty list. Redacted, as
+   *  `readStepMatches` is and for the same reason. */
   readHealFailures(testId: string, runId: string): HealFailure[] {
     try {
-      const raw = fs.readFileSync(
-        path.join(this.runDir(testId, runId), "heal-failures.json"),
-        "utf-8",
+      const raw = redactWithSnapshot(
+        fs.readFileSync(path.join(this.runDir(testId, runId), "heal-failures.json"), "utf-8"),
       );
       const parsed = JSON.parse(raw) as { entries?: HealFailure[] };
       return Array.isArray(parsed.entries) ? parsed.entries : [];
