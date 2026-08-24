@@ -33,6 +33,12 @@ import {
 
 import { api } from "../lib/api";
 import { blinkIntervalMs, wipeAfterKey, wipeFromPointer } from "../lib/visual-compare";
+import {
+  type CarriedFrame,
+  carriedFrameFor,
+  carriedFrom,
+  carriedNote,
+} from "../lib/carried-frame";
 import { baselineProvenance, isStale, provenanceLine } from "../lib/baseline-provenance";
 import { dominantRegion, formatShare, regionPlace, regionsLine } from "../lib/diff-regions";
 import {
@@ -626,17 +632,45 @@ function CompareShot({
   );
 }
 
+/**
+ * What a carried frame says about itself — `carried-frame.ts` decides the words.
+ *
+ * UNDER THE FRAME AND OUTSIDE THE BEZEL, like Blink's "which frame am I looking
+ * at". `check:crt-untreated` forbids marking the picture itself and is right to:
+ * a tint or a dimming laid over evidence is indistinguishable from a tint in the
+ * page under test, which is the whole reason that rule exists.
+ *
+ * NEUTRAL, NOT AMBER. This screen's standing rule is that colour means OUTCOME —
+ * the frame rail leaves an unrun step grey for exactly this reason — and "this
+ * frame belongs to an earlier step" is not a finding about the page. Amber here
+ * would read as the visual-change warning it means everywhere else in this view.
+ */
+function CarriedBar({ carried }: { carried: CarriedFrame }) {
+  return (
+    <div className="gl-visual-carried">
+      <ImageOff aria-hidden="true" />
+      <span className="gl-visual-carried-tag">{carriedFrom(carried)}</span>
+      <span className="gl-visual-carried-note">{carriedNote(carried)}</span>
+    </div>
+  );
+}
+
 function StepScreenshot({
   testId,
   runId,
   step,
   mode,
+  carried,
   children,
 }: {
   testId: string;
   runId: string;
   step: ReplayStep;
   mode: ShotMode;
+  /** The frame to fall back to when this step captured none of its own.
+   *  Resolved by the caller, which is the one place holding the whole step
+   *  list; null means there is nothing to carry and the empty state stands. */
+  carried?: CarriedFrame | null;
   /** Overlay rendered on top of the image. Handed to `CRT` rather than laid
    *  beside it, because CRT's plate is the one box that IS the image — a
    *  sibling of the bezel is positioned against the pane, which drifts by
@@ -648,8 +682,16 @@ function StepScreenshot({
   // the current frame or the diff map it would be describing something else.
   const caption = useBaselineCaption(testId, step.stepId);
   // Resolve the image source for the active view mode.
-  const file =
+  const own =
     mode === "diff" ? (step.diff?.diffFile ?? null) : mode === "current" ? step.screenshot : null;
+  // THE FALLBACK IS `current`-ONLY. The other two modes are COMPARISONS pinned
+  // to this step — its baseline, its diff map — and an earlier step's frame is
+  // not a comparison of anything, so carrying one in would answer a question
+  // nobody asked with a picture that cannot answer it. Unreachable in practice
+  // (`hasBaselineView` and `canDiff` both require `step.screenshot`); the guard
+  // stays because that is a fact about the caller, not about this component.
+  const carriedFile = mode === "current" && !own ? (carried?.file ?? null) : null;
+  const file = own ?? carriedFile;
 
   const runShotQuery = useQuery({
     queryKey: ["shot", testId, runId, file],
@@ -701,12 +743,35 @@ function StepScreenshot({
     );
   }
 
+  // A CARRIED FRAME SAYS SO IN ITS ALT TEXT. The bar below is the sighted
+  // reader's marker; without this, a screen-reader user is told "Screenshot for
+  // step 6" about step 4's picture, which is the misreading this whole feature
+  // is built to prevent — only with no way at all to notice it.
   const alt =
-    mode === "baseline"
-      ? `Baseline for step ${step.index + 1}`
-      : mode === "diff"
-        ? `Visual diff for step ${step.index + 1}`
-        : `Screenshot for step ${step.index + 1}`;
+    carried && carriedFile !== null
+      ? `Last captured frame, from step ${carried.fromIndex + 1} — step ${
+          step.index + 1
+        } captured none of its own`
+      : mode === "baseline"
+        ? `Baseline for step ${step.index + 1}`
+        : mode === "diff"
+          ? `Visual diff for step ${step.index + 1}`
+          : `Screenshot for step ${step.index + 1}`;
+
+  if (carried && carriedFile !== null) {
+    return (
+      <div className="relative flex h-full w-full flex-col items-center justify-center gap-2 overflow-hidden">
+        {/* NO OVERLAYS ON A CARRIED FRAME, deliberately — `children` is dropped
+            here. Every one of them is an annotation of THIS step measured in
+            coordinates normalized against THIS step's capture: the element-scope
+            box, the ignore masks, the diff regions. Laid over an earlier step's
+            picture they land wherever the two frames happen to line up, which
+            is a measurement the app never made. */}
+        <CRT className="gl-visual-frame" src={src} alt={alt} />
+        <CarriedBar carried={carried} />
+      </div>
+    );
+  }
   // THE BEZEL IS `CRT`, AND WHAT IS INSIDE IT IS NEVER TREATED. This is the one
   // rule in the design system that is about correctness rather than taste, and
   // this screen is the reason it exists: every frame here is EVIDENCE, the whole
@@ -1571,6 +1636,11 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
     changedOnly && changedCount > 0
       ? steps.filter((s) => s.diff?.state === "changed" || s.index === idx)
       : steps;
+  // What a gap in the filmstrip shows: the last known visual state, from the
+  // nearest earlier step that captured one. Resolved HERE because finding it
+  // needs the whole step list, which the frame components do not have — see
+  // `carried-frame.ts` for why a gap gets a picture at all.
+  const carried = carriedFrameFor(steps, idx);
   const canDiff = Boolean(step.diff?.diffFile);
   const hasBaselineView =
     step.diff !== undefined && step.diff.state !== "unable" && Boolean(step.screenshot);
@@ -1889,6 +1959,7 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
                 runId={summary.runId}
                 step={step}
                 mode={effectiveMode}
+                carried={carried}
               >
                 {overlays}
               </StepScreenshot>

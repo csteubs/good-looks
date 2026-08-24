@@ -1147,6 +1147,13 @@ export interface ReplayStep {
   status: ReplayStepStatus;
   /** filename within the run dir (e.g. "3.png"), or null when uncaptured. */
   screenshot: string | null;
+  /** This step's index in ACTION order — the capture manifest entry it matched.
+   *  Persisted by `buildReplay` whenever an entry matched, WHETHER OR NOT the
+   *  screenshot succeeded, which is what makes it the renderer's only way to
+   *  tell a failed capture from a step type that captures nothing. Absent for
+   *  a step that captures nothing (assertions, waits, scrolls, if/endif).
+   *  Mirrors main/services/artifact-store.ts. */
+  actionIndex?: number;
   /** the acted-on element's normalized rect at capture time, when recorded. */
   rect?: NormalizedRect;
   diff?: VisualDiff;
