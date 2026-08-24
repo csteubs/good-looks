@@ -16,6 +16,7 @@ import { render, screen, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { RecorderState, Step } from "../lib/recorder-types";
+import { toastTexts, clearToastCalls } from "../__tests__/sonner-stub";
 // Safe above the vi.mock below: Vitest hoists vi.mock above imports.
 import { RecorderProvider, REPLAY_FLASH_MS, useRecorder } from "./recorder-store";
 
@@ -218,6 +219,7 @@ beforeEach(() => {
   holdInserts = false;
   releaseInsert = [];
   actionsUnderTest = null;
+  clearToastCalls();
 });
 
 describe("catching up on a session already under way", () => {
@@ -289,6 +291,48 @@ describe("recorder state events", () => {
     renderStore();
     emit("recorder:steps", null);
     expect(text("steps")).toBe("");
+  });
+});
+
+describe("a Shopify crawler signature the trainer will not send", () => {
+  // Three reasons, one channel. Each is a session that will sit on the store's
+  // bot wall for its whole life while every control in the trainer looks
+  // perfectly healthy — the page just serves a password form, which is a 200.
+  // Silence here is indistinguishable from a store that has no protection, so
+  // what is asserted is that the SENTENCE names the fix.
+
+  it("names the domains a signature IS registered for", () => {
+    // The one that was silence until now, and the likeliest cause by far: a
+    // signature covers exactly one authority, so a user who registered the
+    // apex and trains against the `www` has a working run and a walled
+    // trainer. Naming what is registered is the whole message.
+    renderStore();
+    emit("recorder:signatureNotSent", {
+      host: "www.shop.example",
+      reason: "other-host",
+      registered: ["shop.example", "shop.myshopify.com"],
+    });
+    const t = toastTexts().find((x) => x.title.includes("No Shopify crawler signature"));
+    expect(t?.title).toContain("www.shop.example");
+    expect(t?.title).toContain("shop.example, shop.myshopify.com");
+  });
+
+  it("says an expired signature was not sent, and why not sending it is right", () => {
+    renderStore();
+    emit("recorder:signatureNotSent", { host: "shop.example", reason: "expired" });
+    const t = toastTexts().find((x) => x.title.includes("has expired"));
+    expect(t?.title).toContain("shop.example");
+    expect(t?.title).toContain("can't be renewed");
+  });
+
+  it("distinguishes a signature that could not be read from one that is absent", () => {
+    // `unreadable` never collapses into "none configured" — that collapse is
+    // the llm-service bug the signature store was built to avoid repeating.
+    renderStore();
+    emit("recorder:signatureNotSent", { host: "shop.example", reason: "unreadable" });
+    expect(
+      toastTexts().some((x) => x.title.includes("couldn't be read on this Mac")),
+    ).toBe(true);
   });
 });
 

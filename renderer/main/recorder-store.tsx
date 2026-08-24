@@ -451,16 +451,32 @@ export function RecorderProvider({
     // recorded but was NOT sent. Surfaced now rather than left to the run,
     // because this recording will be throttled or blocked for its whole life —
     // and knowing that at step one is what makes it worth abandoning.
-    const offSignature = api.on<{ host: string; reason: "expired" | "unreadable" }>(
-      "recorder:signatureNotSent",
-      ({ host, reason }) => {
+    const offSignature = api.on<{
+      host: string;
+      reason: "expired" | "unreadable" | "other-host";
+      /** `other-host` only: what IS registered, so the toast can name it. */
+      registered?: string[];
+    }>("recorder:signatureNotSent", ({ host, reason, registered }) => {
+      if (reason === "expired") {
         toast.warning(
-          reason === "expired"
-            ? `The Shopify crawler signature for ${host} has expired, so it wasn't sent. Create a new one in your Shopify admin — signatures last three months and can't be renewed.`
-            : `A Shopify crawler signature is registered for ${host} but couldn't be read on this Mac, so it wasn't sent.`,
+          `The Shopify crawler signature for ${host} has expired, so it wasn't sent. Create a new one in your Shopify admin — signatures last three months and can't be renewed.`,
         );
-      },
-    );
+        return;
+      }
+      if (reason === "unreadable") {
+        toast.warning(
+          `A Shopify crawler signature is registered for ${host} but couldn't be read on this Mac, so it wasn't sent.`,
+        );
+        return;
+      }
+      // The wrong-domain case, worded like the run's own line: a signature
+      // covers one authority, so naming what IS registered is the whole
+      // message — the user is one edit away from a working recording, and
+      // without the list they cannot see which edit.
+      toast.warning(
+        `No Shopify crawler signature for ${host}. One is registered for ${(registered ?? []).join(", ")} — a signature is bound to one domain and can't be used for another.`,
+      );
+    });
     // A standing overlay rule taught from the training browser's context menu.
     // Surfaced because the action has NO visible result in the step list — it
     // deliberately records no step — so without this the user cannot tell a
