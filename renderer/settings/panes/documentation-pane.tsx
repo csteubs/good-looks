@@ -10,9 +10,11 @@
 //   • It is reachable by SEARCH. Every topic is indexed by its full text, so
 //     typing "webhook" or "flaky" into the settings search finds the passage
 //     about it, next to the settings it is about.
-//   • It is reachable by DEEP LINK. The Help menu opens this window on a topic
-//     (`settings-window.html#documentation/setup`), which is the only reason
-//     the slugs in `REQUIRED_TOPIC_SLUGS` are a contract.
+//   • It is reachable by DEEP LINK. The Help menu opens the app on a topic
+//     (`/settings/documentation/setup`), which is the only reason the slugs in
+//     `REQUIRED_TOPIC_SLUGS` are a contract. It used to be the second segment
+//     of a URL fragment on a window's own `loadURL`; it is a route param now,
+//     and this pane still knows nothing about the router — see the props.
 //   • It knows things the document cannot. The setup topic ends with THIS
 //     machine's MCP server path and a command that can be copied — a file path
 //     nobody should be asked to type, and one the markdown cannot know.
@@ -39,14 +41,6 @@ const TOPICS: readonly { docLabel: string; topic: DocTopic }[] = APP_DOCS.flatMa
 );
 
 const DOC_TITLE = APP_DOCS[0].page.title;
-
-/** The topic a `#documentation/<slug>` fragment asks for. Read once, like the
- *  pane fragment itself — after mount this is ordinary state, so clicking a
- *  topic is not fighting the address bar. */
-function slugFromHash(): string | null {
-  const parts = window.location.hash.slice(1).split("/");
-  return parts.length > 1 && parts[1].length > 0 ? parts[1] : null;
-}
 
 function isOpenableLink(href: string | undefined): href is string {
   return href !== undefined && /^https:\/\/([a-z0-9-]+\.)*github\.com(\/|$)/i.test(href);
@@ -265,7 +259,22 @@ function McpServerCard() {
   );
 }
 
-export function DocumentationPane() {
+export interface DocumentationPaneProps {
+  /** The topic the address names, when there is one.
+   *
+   *  PROPS RATHER THAN `useParams`, and it is not squeamishness about a hook:
+   *  every pane in this directory is a set of controls over the settings
+   *  controller and nothing else, which is what lets `panes/*.test.tsx` render
+   *  one against a hand-built controller with no router in sight. The routed
+   *  wrapper lives beside `PANE_COMPONENTS` in `settings-view.tsx`, where the
+   *  rest of this screen's router knowledge already is. */
+  topic?: string;
+  /** Called when the reader picks another topic. Without it selection is local
+   *  state — which is what happens wherever this renders outside the router. */
+  onSelectTopic?: (slug: string) => void;
+}
+
+export function DocumentationPane({ topic, onSelectTopic }: DocumentationPaneProps = {}) {
   const matched = useMatchedIds();
 
   // Topics a running search left standing. `null` means no search.
@@ -273,19 +282,21 @@ export function DocumentationPane() {
     () =>
       matched === null
         ? TOPICS
-        : TOPICS.filter(({ topic }) => matched.indexOf(docRowId(topic.slug)) !== -1),
+        : TOPICS.filter(({ topic: t }) => matched.indexOf(docRowId(t.slug)) !== -1),
     [matched],
   );
 
-  const [selected, setSelected] = useState<string>(
-    () => slugFromHash() ?? TOPICS[0].topic.slug,
-  );
+  // The uncontrolled half. Never written while `onSelectTopic` is supplied, so
+  // there is no second answer to "which topic" that could disagree with the
+  // address.
+  const [local, setLocal] = useState<string>(TOPICS[0].topic.slug);
+  const selected = topic ?? local;
 
   // A search that filters the open topic away moves to one that survived —
   // same rule the pane list follows, for the same reason: a heading over blank
   // space reads as broken search rather than as a narrowed list.
   const current =
-    visible.filter(({ topic }) => topic.slug === selected)[0] ?? visible[0] ?? null;
+    visible.filter(({ topic: t }) => t.slug === selected)[0] ?? visible[0] ?? null;
 
   if (current === null) return null;
 
@@ -297,17 +308,17 @@ export function DocumentationPane() {
             contract (arrow keys move selection) that plain buttons do not
             honour. `aria-current` is the same announcement `RailRow` makes. */}
         <nav className="gl-doc-toc" aria-label="Topics">
-          {visible.map(({ topic }) => (
+          {visible.map(({ topic: t }) => (
             <button
-              key={topic.slug}
+              key={t.slug}
               type="button"
-              id={docRowId(topic.slug)}
-              aria-current={topic.slug === current.topic.slug ? "true" : undefined}
-              data-current={topic.slug === current.topic.slug ? "" : undefined}
+              id={docRowId(t.slug)}
+              aria-current={t.slug === current.topic.slug ? "true" : undefined}
+              data-current={t.slug === current.topic.slug ? "" : undefined}
               className="gl-doc-tab"
-              onClick={() => setSelected(topic.slug)}
+              onClick={() => (onSelectTopic ? onSelectTopic(t.slug) : setLocal(t.slug))}
             >
-              {topic.title}
+              {t.title}
             </button>
           ))}
         </nav>

@@ -540,11 +540,17 @@ has added since A2 was unguarded.
 
 Also: the rail becomes the settings nav while in settings (the panes *are* the
 navigation), and the library list hides. Same surface, two jobs. ✅ **with a
-caveat** — Settings is its own `BrowserWindow` here, so there is no library list
-to hide and no single element to repurpose. What the sentence actually buys is
-recognition, so `SettingsNav` is built from `Rail`/`RailGroup`/`RailRow`, the
-same components the main window's library uses, with the search field in the
-rail's pinned `search` slot.
+caveat, discharged 2026-08-24.** B4 shipped it as recognition only — Settings
+was its own `BrowserWindow` here, so there was no library list to hide and no
+single element to repurpose — and bought that recognition by building
+`SettingsNav` from `Rail`/`RailGroup`/`RailRow`, the same components the main
+window's library uses, with the search field in the rail's pinned `search` slot.
+Settings became two routes in the main window on 2026-08-24
+(docs/plans/settings-view.md), so the sentence is now literal: those rows render
+in the app's own rail, the library list is what they replace, and the swap is
+the one `library-sidebar.tsx` already performs for Routines on `/batch`. The gear
+in the top strip went with it — Settings is a labelled row in the Views nav, like
+every other screen.
 
 ### B5. Test detail — `test-detail-view.tsx` + `step-row.tsx` + `run-output.tsx` + `script-view.tsx` + `run-triage.tsx` — **B5a done, 2026-08-10**
 

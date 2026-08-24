@@ -1,10 +1,13 @@
-import { Outlet, useNavigate } from "@tanstack/react-router";
+import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { SplitView } from "@ui";
 
 import { Atmosphere, BootPlate } from "../theme";
 import { api } from "../lib/api";
+import { isSettingsPath } from "../lib/settings-route";
+import { paneById } from "../lib/settings-schema";
+import { SettingsScope } from "../settings/settings-scope";
 import { AiDebugChip } from "./ai-debug-chip";
 import { AppStrip } from "./app-strip";
 import { AiDebugHost } from "./ai-debug-panel";
@@ -18,7 +21,19 @@ import { MissedRunsDialog } from "./missed-runs-dialog";
 
 function RootShell() {
   const { state } = useRecorder();
-  return (
+  // Settings needs its controller and its search query above BOTH the rail and
+  // the content, because on that screen the rail lists the panes and the search
+  // filters them together with the rows inside one — and the two are the
+  // SplitView's `sidebar` and its `children`, so neither can hold what the
+  // other reads. Mounted only while a settings route is open, so the fourteen
+  // loads it fires cost nothing on any other screen. See settings-scope.tsx.
+  //
+  // `isSettingsPath` and nothing else decides this, here and in the rail: a
+  // rail that swapped to the pane list on a path the scope did not mount for
+  // would throw out of `useSettingsController`.
+  const onSettings = useRouterState({ select: (s) => isSettingsPath(s.location.pathname) });
+
+  const shell = (
     <SplitView
       // The strip is the `header` slot rather than a sibling, because its rail
       // handle reads the SplitView context — see the note on the prop. It
@@ -34,19 +49,24 @@ function RootShell() {
       {state.recording ? <RecordingView /> : <Outlet />}
     </SplitView>
   );
+
+  return onSettings ? <SettingsScope>{shell}</SettingsScope> : shell;
 }
 
 /**
- * Re-read persisted settings when the OTHER window writes them.
+ * Re-read persisted settings when something else writes them.
  *
- * NOTHING IN THIS WINDOW WOULD NOTICE ON ITS OWN, and the reason is specific
- * enough to be worth stating: react-query's focus refetch is driven by
- * `visibilitychange`, which never fires when focus moves between two
- * BrowserWindows of the same app — a background window's `visibilityState`
- * stays "visible". The views that appeared to stay current were getting it from
- * remount on route change instead. Stats does not: it is the view the user is
- * standing on while they correct the CI price in Settings, and a Cost panel
- * that ignores the price you just set is worse than one that never offered it.
+ * WRITTEN FOR TWO WINDOWS AND STILL EARNING ITS KEEP WITH ONE. It existed
+ * because react-query's focus refetch is driven by `visibilitychange`, which
+ * never fires when focus moves between two BrowserWindows of the same app — a
+ * background window's `visibilityState` stays "visible" — so the main window
+ * could not see what the settings window had just saved. Settings is a route in
+ * this window now, and the channel is still the only thing that keeps the rest
+ * of the app current: the settings controller holds its own copy in `useState`
+ * and every other view reads `["recorder-settings"]` through react-query, so
+ * without this the Cost panel on Stats would go on quoting the CI price you
+ * corrected two screens ago. The backend remains the single source; this is
+ * what makes both readers ask it again.
  *
  * Its own hook so it can be tested without a router — `RootView` needs one and
  * this does not.
@@ -94,6 +114,30 @@ export function RootView() {
         // view shows, and the test is the thing that has an address. Landing
         // somewhere is the whole contract.
         navigate({ to: "/test/$id", params: { id: testId } });
+      },
+    );
+  }, [navigate]);
+
+  // ── The application menu's way in ───────────────────────────────────
+  // ⌘, and the six Help items live in the MAIN PROCESS, and what they open is
+  // now a route rather than a window — so they push a target and this navigates
+  // to it. Same shape as the deep link above, including the re-check: the main
+  // process has already refused anything that is not a legal segment
+  // (`main/services/settings-target.ts`), and `paneById` is the half that knows
+  // whether the segment names a pane that exists. A null target — plain ⌘, —
+  // opens the board.
+  React.useEffect(() => {
+    return api.on<{ pane?: unknown; topic?: unknown } | null>(
+      "settings:open",
+      (target: { pane?: unknown; topic?: unknown } | null) => {
+        const pane = typeof target?.pane === "string" ? paneById(target.pane)?.id : undefined;
+        if (!pane) {
+          navigate({ to: "/settings" });
+          return;
+        }
+        const topic = typeof target?.topic === "string" ? target.topic : undefined;
+        if (topic) navigate({ to: "/settings/$pane/$topic", params: { pane, topic } });
+        else navigate({ to: "/settings/$pane", params: { pane } });
       },
     );
   }, [navigate]);

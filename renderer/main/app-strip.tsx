@@ -20,13 +20,16 @@
 import * as React from "react";
 import { useNavigate, useParams, useRouter, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, PanelLeft, Settings } from "lucide-react";
+import { ChevronLeft, ChevronRight, PanelLeft } from "lucide-react";
 import { useSplitView } from "@ui";
 
 import { ChromeButton, TopStrip, type Crumb } from "../theme";
 import { JobTicker } from "./job-ticker";
 import { api } from "../lib/api";
 import { categoryMeta, facetLabel } from "../lib/stats-categories";
+import { parseSettingsPath } from "../lib/settings-route";
+import { paneById } from "../lib/settings-schema";
+import { topicTitle } from "../lib/docs";
 import { useCommandPalette } from "./command-palette";
 
 /** Route path → what that screen is called. The router's own `staticData.title`
@@ -43,13 +46,8 @@ const VIEW_LABEL: Record<string, string> = {
   "/batch": "Routines",
   "/heals": "Heals",
   "/branches": "Branches",
+  "/settings": "Settings",
 };
-
-function openSettingsWindow(): void {
-  (window as unknown as { glazeAPI: { glaze: { ipc: { invoke: (c: string) => Promise<void> } } } })
-    .glazeAPI.glaze.ipc.invoke("window:openSettings")
-    .catch(() => {});
-}
 
 /** The rail handle.
  *
@@ -155,9 +153,9 @@ function HistoryNav(): React.ReactElement {
  *  pretending to be a control.
  *
  *  Renders nothing when there is no palette above it. That is not defensive
- *  coding — the settings window and the trainer panel draw their own chrome and
- *  have no command list, and a cap there would be exactly the promise the app
- *  cannot keep that this slot was left empty to avoid. */
+ *  coding — the trainer panel draws its own chrome and has no command list, and
+ *  a cap there would be exactly the promise the app cannot keep that this slot
+ *  was left empty to avoid. */
 function CommandKey(): React.ReactElement | null {
   const setOpen = useCommandPalette();
   if (!setOpen) return null;
@@ -241,6 +239,33 @@ export function AppStrip({ recording = false }: AppStripProps): React.ReactEleme
       ];
     }
 
+    // Settings drills, on the same rule as the Stats ones above: the segment is
+    // looked up in the registry rather than title-cased from the param, so
+    // `/settings/nonsense` gets no crumb of its own and the view below says
+    // what happened. The third level exists for the Documentation pane's topic
+    // and is checked against the shipped documents for the same reason.
+    const settings = parseSettingsPath(pathname);
+    if (settings?.pane !== undefined) {
+      const toSettings: Crumb = {
+        label: "Settings",
+        onClick: () => navigate({ to: "/settings" }),
+      };
+      const pane = paneById(decodeURIComponent(settings.pane));
+      if (!pane) return [home, toSettings];
+      if (settings.topic === undefined) return [home, toSettings, { label: pane.title }];
+      const title = topicTitle(decodeURIComponent(settings.topic));
+      if (title === null) return [home, toSettings, { label: pane.title }];
+      return [
+        home,
+        toSettings,
+        {
+          label: pane.title,
+          onClick: () => navigate({ to: "/settings/$pane", params: { pane: pane.id } }),
+        },
+        { label: title },
+      ];
+    }
+
     const label = VIEW_LABEL[pathname];
     return label === undefined ? [home] : [home, { label }];
   }, [recording, pathname, params.id, testName, home, navigate]);
@@ -260,11 +285,12 @@ export function AppStrip({ recording = false }: AppStripProps): React.ReactEleme
       // something only when there is something to say.
       command={<CommandKey />}
       ticker={<JobTicker />}
-      actions={
-        <ChromeButton label="Settings" onClick={openSettingsWindow}>
-          <Settings aria-hidden="true" />
-        </ChromeButton>
-      }
+      // NO ACTIONS SLOT. It held one control — a gear that opened the settings
+      // window — and Settings is a rail row and a route now, named like every
+      // other screen instead of hidden behind an icon you had to hover to read.
+      // The slot is left empty rather than filled with something else: a strip
+      // that says something only when there is something to say is the rule the
+      // ticker and the command cap are already following.
     />
   );
 }

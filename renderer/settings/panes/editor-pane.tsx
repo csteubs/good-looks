@@ -14,7 +14,17 @@
 import { Switch } from "@ui";
 import { Segmented } from "../../theme";
 
-import { EDITOR_KEYMAP_LABELS, prettyKey, rowsFor } from "../../main/editor-keymaps";
+// The TABLE, not `main/editor-keymaps` — that module binds every command to a
+// CodeMirror handler and imports the editor to do it, and this pane renders a
+// static list of labels and key caps. See the table's header: while Settings
+// was its own entry chunk the difference was invisible, and the moment it
+// became a route in the main window it put CodeMirror in the app's startup
+// bundle.
+import {
+  EDITOR_KEYMAP_LABELS,
+  prettyKey,
+  rowsFor,
+} from "../../lib/editor-keymap-table";
 import {
   EDITOR_FONT_SIZE_DEFAULT,
   EDITOR_KEYMAPS,

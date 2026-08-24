@@ -21,6 +21,15 @@ import type { SavingsSummary } from "../lib/ai-debug-stats";
 import { TONE } from "../theme";
 import { CostPanel, DEBUG_TILE_COPY, REVIEW_COPY } from "./cost-panel";
 
+// The router, mocked at `useNavigate` — the pattern `library-sidebar.test.tsx`
+// and `stats-category-view.test.tsx` already use. The panel gained a navigation
+// when Settings stopped being a window: "Edit in Settings" was an IPC call that
+// opened a second one, and is now a drill into `/settings/cost` like any other.
+const navigate = vi.fn();
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => navigate,
+}));
+
 const MIN = 60_000;
 
 function run(over: Partial<RunRecord> & { id: string; startedAt: number }): RunRecord {
@@ -88,15 +97,8 @@ function figure(label: RegExp): string {
   return (el.querySelector(".gl-cost-figure-value") as HTMLElement).textContent ?? "";
 }
 
-/** The IPC bridge, stubbed. The panel's only side effect is opening Settings. */
-function stubIpc(): ReturnType<typeof vi.fn> {
-  const invoke = vi.fn(async () => undefined);
-  (window as unknown as { glazeAPI: unknown }).glazeAPI = { glaze: { ipc: { invoke } } };
-  return invoke;
-}
-
 afterEach(() => {
-  delete (window as unknown as { glazeAPI?: unknown }).glazeAPI;
+  navigate.mockClear();
 });
 
 describe("the assumptions are the feature", () => {
@@ -143,12 +145,11 @@ describe("the assumptions are the feature", () => {
 
   it("offers a way to the pane that sets them, and lands on that pane", () => {
     // Not a bare "open Settings": the button's job is to answer "where do these
-    // numbers come from", and dropping the reader on Appearance to go looking
-    // is the scavenger hunt this panel's first design argued against.
-    const invoke = stubIpc();
+    // numbers come from", and dropping the reader on the board to go looking is
+    // the scavenger hunt this panel's first design argued against.
     render(<CostPanel runs={[run({ id: "r1", startedAt: 1 })]} />);
     fireEvent.click(screen.getByRole("button", { name: /edit in settings/i }));
-    expect(invoke).toHaveBeenCalledWith("window:openSettings", "cost");
+    expect(navigate).toHaveBeenCalledWith({ to: "/settings/$pane", params: { pane: "cost" } });
   });
 });
 

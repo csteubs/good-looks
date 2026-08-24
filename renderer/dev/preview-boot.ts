@@ -57,7 +57,7 @@ function mountPreviewBanner(): void {
  *
  *      /?view=stats            /?view=visual      /?view=batch
  *      /?view=a11y             /?view=heals       /?view=insights
- *      /?view=branches
+ *      /?view=branches         /?view=settings    /?view=settings&pane=cost
  *      /?test=t-checkout
  *
  *  `branches` is reachable here even though the branch switcher cannot work in
@@ -71,9 +71,18 @@ async function openRequestedView(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
   const view = params.get("view");
   const testId = params.get("test");
+  const pane = params.get("pane");
   if (!view && !testId) return;
 
   const { router } = await import("../main/router");
+  // `?view=settings&pane=cost` — one settings section directly. Settings used
+  // to be mounted here INSTEAD of the app, because it was a separate window
+  // that `window:openSettings` could not open in a browser tab; it is a route
+  // now, so it needs nothing this file does not already do for Stats.
+  if (view === "settings" && pane) {
+    await router.navigate({ to: "/settings/$pane", params: { pane } });
+    return;
+  }
   await router.navigate(
     testId
       ? { to: "/test/$id", params: { id: testId } }
@@ -85,7 +94,8 @@ async function openRequestedView(): Promise<void> {
             | "/batch"
             | "/heals"
             | "/insights"
-            | "/branches",
+            | "/branches"
+            | "/settings",
         },
   );
 }
@@ -110,53 +120,6 @@ async function mountSpecimen(): Promise<void> {
   ReactDOM.createRoot(root).render(React.createElement(Specimen));
 }
 
-/** The Settings window — `/?view=settings`.
- *
- *  Mounted INSTEAD OF the app, for the same reason the specimen is: Settings is
- *  a SEPARATE BrowserWindow in the real app, reachable only through
- *  `window:openSettings`, which does nothing here. Without this there is no way
- *  to look at it outside a packaged build on a Mac — and B4 is a settings-only
- *  change, so "run it and look at it" had no browser answer at all.
- *
- *  It is the real `SettingsView` against the fake backend, not a mock of it:
- *  every pane, the search, and the modified-count badges all work, because they
- *  are driven by `recorder:getSettings`/`setSettings`, which the bridge
- *  implements against fixture state. What does NOT work is anything native —
- *  Escape-to-close invokes `window:closeSettings` and the native-menu-backed
- *  `Select`s have no options. */
-async function mountSettings(): Promise<void> {
-  // The providers are copied from `renderer/settings/index.tsx` rather than
-  // reused, because that module is an ENTRY POINT — importing it would run its
-  // own `createRoot` against `#root` and mount a second copy. Everything it
-  // wraps is load-bearing: the controller reads through react-query, and the
-  // stylesheet is what the whole theme layer arrives in. Without it the window
-  // renders as an unstyled column of buttons, which is exactly how this looked
-  // the first time.
-  const [React, ReactDOM, rq, ui, { SettingsView }] = await Promise.all([
-    import("react"),
-    import("react-dom/client"),
-    import("@tanstack/react-query"),
-    import("@ui"),
-    import("../settings/settings-view"),
-    import("../styles.css"),
-  ]);
-  const root = document.getElementById("root");
-  if (!root) throw new Error("Root element not found");
-  // The settings window's body is translucent over the native material; a tab
-  // has nothing behind it, so paint the same near-black the rail uses.
-  document.body.style.background = "var(--gl-ink)";
-  const client = new rq.QueryClient({
-    defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
-  });
-  ReactDOM.createRoot(root).render(
-    React.createElement(
-      rq.QueryClientProvider,
-      { client },
-      React.createElement(ui.TooltipProvider, null, React.createElement(SettingsView)),
-    ),
-  );
-}
-
 /** The docked trainer panel — `/?view=trainer-panel`.
  *
  *  Mounted INSTEAD OF the app, for exactly the reason Settings is: the panel is
@@ -167,8 +130,8 @@ async function mountSettings(): Promise<void> {
  *  app still wearing the component library's stock classes.
  *
  *  The providers are copied from `renderer/trainer/index.tsx` rather than
- *  imported, same as `mountSettings`: that module is an ENTRY POINT and would
- *  mount a second root over this one.
+ *  imported: that module is an ENTRY POINT and would run its own `createRoot`
+ *  against `#root` and mount a second copy over this one.
  *
  *  The bridge reports a live session for this view (see `recorderPreview`), so
  *  the step list, the insert cursor and the tool row are all real. What is not
@@ -247,11 +210,6 @@ async function boot(): Promise<void> {
   const view = new URLSearchParams(window.location.search).get("view");
   if (view === "specimen") {
     await mountSpecimen();
-    mountPreviewBanner();
-    return;
-  }
-  if (view === "settings") {
-    await mountSettings();
     mountPreviewBanner();
     return;
   }

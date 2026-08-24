@@ -13,6 +13,7 @@ import { HealsView } from "./heals-view";
 import { InsightsView } from "./insights-view";
 import { StatsView } from "./stats-view";
 import { StatsCategoryView } from "./stats/stats-category-view";
+import { SettingsPaneView, SettingsView } from "../settings/settings-view";
 import { TestDetailView } from "./test-detail-view";
 import { VisualView } from "./visual-view";
 import { QueryClient } from "@tanstack/react-query";
@@ -151,6 +152,45 @@ const branchesRoute = createRoute({
   },
 });
 
+/** Settings, on the same shape as the Stats drill above and for the same
+ *  reasons — see docs/plans/settings-view.md.
+ *
+ *  `/settings` is the board (every section, with what is in it) and
+ *  `/settings/$pane` is one section. The third level exists for ONE PANE: the
+ *  Documentation pane reads a topic, which the Help menu deep-links, and it was
+ *  the second segment of a URL fragment (`#documentation/setup`) when Settings
+ *  was a window. A param is the same fact with an address.
+ *
+ *  `$pane` and `$topic` are strings out of history and are NOT trusted: the
+ *  view checks them against the pane registry and the shipped documents, and
+ *  renders an explained empty state for anything else. */
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings",
+  component: SettingsView,
+  staticData: {
+    title: "Settings",
+  },
+});
+
+const settingsPaneRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings/$pane",
+  component: SettingsPaneView,
+  staticData: {
+    title: "Settings",
+  },
+});
+
+const settingsTopicRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings/$pane/$topic",
+  component: SettingsPaneView,
+  staticData: {
+    title: "Settings",
+  },
+});
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
   testRoute,
@@ -163,6 +203,9 @@ const routeTree = rootRoute.addChildren([
   healsRoute,
   insightsRoute,
   branchesRoute,
+  settingsRoute,
+  settingsPaneRoute,
+  settingsTopicRoute,
 ]);
 
 const queryClient = new QueryClient();

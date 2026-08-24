@@ -109,7 +109,9 @@ try {
     .filter((c) => /cm-content|cm-scroller/.test(c.src));
   assert(chunks.length >= 1, `a built chunk contains CodeMirror (found ${chunks.length})`);
   // The entry chunks (one per window) must NOT be where CodeMirror lives.
-  const entries = js.filter((f) => /^(main-window|settings-window|trainer-window|recorder-chrome)-/.test(f));
+  // Settings is no longer an entry: it became a route inside the main window
+  // (docs/plans/settings-view.md), so its chunk is the main window's.
+  const entries = js.filter((f) => /^(main-window|trainer-window|recorder-chrome)-/.test(f));
   for (const e of entries) {
     const src = readFileSync(join(assets, e), "utf8");
     assert(!/cm-scroller/.test(src), `${e} does not carry CodeMirror (it is loaded on demand)`);

@@ -42,4 +42,21 @@ export function docSlugFromRowId(id: string): string {
   return id.startsWith("doc-") ? id.slice(4) : id;
 }
 
+/**
+ * A topic's heading, from its slug — or null when no shipped document has one.
+ *
+ * The null is the point. `/settings/documentation/$topic` puts a slug in the
+ * address, so a breadcrumb built from it would otherwise title-case whatever
+ * arrived and confidently name a section that does not exist. Same rule as
+ * `categoryMeta` in stats-categories.ts: an unknown segment gets no crumb of
+ * its own, and the screen below says what happened.
+ */
+export function topicTitle(slug: string): string | null {
+  for (const doc of APP_DOCS) {
+    const topic = doc.page.topics.find((t) => t.slug === slug);
+    if (topic) return topic.title;
+  }
+  return null;
+}
+
 export { slugify };

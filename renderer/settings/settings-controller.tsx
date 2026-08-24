@@ -165,9 +165,36 @@ const Ctx = createContext<SettingsController | null>(null);
  *  a pane rendered outside the provider would otherwise show every control at
  *  its fallback value and silently save nothing. */
 export function useSettingsController(): SettingsController {
-  const ctx = useContext(Ctx);
+  const ctx = useSettingsControllerOptional();
   if (!ctx) throw new Error("useSettingsController must be used inside <SettingsProvider>");
   return ctx;
+}
+
+/**
+ * Non-throwing read, for the three components that CAN be rendered without the
+ * provider — and it is not defensive coding, it is a real frame.
+ *
+ * `SettingsScope` is mounted by `RootShell` on `isSettingsPath(pathname)`, and
+ * the settings screens and the settings rail rows are rendered by `Outlet` and
+ * by `LibrarySidebar`. Those are three separate subscriptions to one router
+ * store, and React does not promise they all re-render in the same commit: on
+ * the way OUT of Settings, `RootShell` can drop the scope while the outlet is
+ * still showing the screen it was mounted for. Measured, not theorised — before
+ * this existed, clicking Back out of Settings threw
+ * "useSettingsController must be used inside <SettingsProvider>" into the
+ * console every time. It recovered, because a navigation lands a beat later and
+ * re-renders everything consistently, which is exactly what makes it the kind
+ * of error nobody notices: the screen looks right and the log does not.
+ *
+ * `useSplitViewOptional` in `renderer/ui/layout.tsx` exists for the same reason
+ * and says so: the throwing read is right for a control, and chrome that may
+ * legitimately render outside the provider needs the other one.
+ *
+ * A caller that gets null is on its way off screen and should render nothing.
+ * It must never fall back to defaults — that is what the throw above is for.
+ */
+export function useSettingsControllerOptional(): SettingsController | null {
+  return useContext(Ctx);
 }
 
 function defaultUrlFor(p: LlmProvider): string {
