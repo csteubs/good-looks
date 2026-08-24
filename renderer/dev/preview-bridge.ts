@@ -49,6 +49,7 @@ import {
   RUNS,
   RUN_LOG,
   VISUAL_FRAMES,
+  visualFrame,
   SETTINGS,
   TESTS,
 } from "./preview-fixtures";
@@ -1323,11 +1324,18 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     /** The frames. `readShot` is asked for the CURRENT or the DIFF image and
      *  told which by filename, so the two are told apart on `.diff.` rather
      *  than by guessing from the step — a viewer showing the current frame in
-     *  diff mode is exactly the bug a preview should make visible. */
+     *  diff mode is exactly the bug a preview should make visible.
+     *
+     *  A current frame is STAMPED WITH ITS FILENAME. Every run frame used to
+     *  render the same placeholder, which made a whole class of bug invisible
+     *  here: a step showing another step's picture looks identical to one
+     *  showing its own. That is precisely what a carried frame does on purpose,
+     *  and the only way to see it is doing it correctly is to read the file
+     *  name off the picture. */
     "artifacts:readShot": (p): string =>
       typeof p?.file === "string" && p.file.includes(".diff.")
         ? VISUAL_FRAMES.diff
-        : VISUAL_FRAMES.current,
+        : visualFrame(typeof p?.file === "string" ? p.file : "?"),
     /** Accepting, as opposed to dismissing. Patching the replay the way the
      *  backend does is what makes the two visibly different in the preview: an
      *  accept clears the FINDINGS (the diffs become matches, the violations

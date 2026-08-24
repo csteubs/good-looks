@@ -444,9 +444,15 @@ export const RUNS: RunRecord[] = [
  *
  * ONE STEP OF EACH DIFF STATE, because the states are what the screen is for:
  * a match, a `changed` with a ratio over threshold, a `new-baseline` (nothing to
- * compare against yet), an `unable` (the comparison could not run), and one
- * uncaptured step with no screenshot at all. A fixture where everything matches
+ * compare against yet), an `unable` (the comparison could not run), and
+ * uncaptured steps with no screenshot at all. A fixture where everything matches
  * exercises exactly one branch of the viewer.
+ *
+ * AND A GAP IN THE MIDDLE OF IT — two consecutive steps that capture nothing,
+ * bracketed by steps that do. That is the ordinary shape of a recorded test
+ * (only page actions produce a frame) and it is the only way to see a carried
+ * frame in the preview; without it the screen renders as if every step had a
+ * picture, which is the world this fixture used to describe.
  */
 export const REPLAY: RunReplay = {
   testId: "t-checkout",
@@ -527,8 +533,45 @@ export const REPLAY: RunReplay = {
       screenshot: "3.png",
       diff: { state: "unable", reason: "The frames are different sizes — the viewport changed." },
     },
+    // THE GAP, and it is two steps long on purpose. Only page actions capture a
+    // frame, so a scroll and an assertion sitting between two clicks is the
+    // ordinary shape of a recorded test — and it is what the replay viewer used
+    // to answer with two consecutive empty boxes. A one-step gap would exercise
+    // the fallback; a run of two is what proves it reaches back PAST the
+    // nearest neighbour to the last frame that actually exists.
     {
       index: 4,
+      stepId: "s6",
+      label: "scroll to (0, 670)",
+      type: "scroll",
+      status: "passed",
+      screenshot: null,
+    },
+    {
+      index: 5,
+      stepId: "s7",
+      label: 'expect "Order total" to be visible',
+      type: "assert",
+      status: "passed",
+      screenshot: null,
+    },
+    // Closes the gap, so the preview shows the reported shape: a frame, two
+    // steps without one, then a frame again.
+    {
+      index: 6,
+      stepId: "s8",
+      label: "click Continue",
+      type: "click",
+      status: "passed",
+      screenshot: "4.png",
+      diff: { state: "match", ratio: 0.0011, threshold: 0.2 },
+    },
+    // And one uncaptured step at the END, where there is no later frame to
+    // bracket it. It carries the previous frame too — a step that captures
+    // nothing is a step that captures nothing, whether or not the run went on
+    // afterwards — and the marker under it says which step the picture is from.
+    {
+      index: 7,
       stepId: "s5",
       label: "click Place order",
       type: "click",
@@ -908,6 +951,21 @@ export const VISUAL_FRAMES = {
   baseline: frame("BASELINE", "#0f1113", "#6bff9e"),
   diff: frame("DIFF", "#140f11", "#ff4d61"),
 };
+
+/**
+ * A current frame that says WHICH FILE it is, for the same reason the three
+ * above say which mode they are: a picture that cannot be told from its
+ * neighbours cannot show that the viewer picked the wrong one.
+ *
+ * It exists for carried frames specifically. A step that captures nothing shows
+ * the nearest earlier step's frame, and with every file rendering the identical
+ * placeholder the preview would look exactly the same whether the fallback
+ * worked, showed the wrong step, or quietly showed a blank — the one thing a
+ * preview is for is being unable to look like that.
+ */
+export function visualFrame(file: string): string {
+  return frame(`CURRENT · ${file}`, "#0f1113", "#35e0ff");
+}
 
 export const SETTINGS: RecorderSettings = {
   showUrlBar: true,

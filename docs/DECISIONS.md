@@ -10,6 +10,90 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-24 — A gap in the filmstrip shows the last frame, and says whose it is
+
+Scrubbing the Visual replay through a recorded run blanks the screen. Step 4 has
+a screenshot, 5 and 6 do not, 7 does again — and the two in between rendered a
+centred "No screenshot for this step" box. The picture is the entire point of
+that screen, and losing it mid-scrub between two frames that differ by almost
+nothing is the worst moment to lose it.
+
+**The gap is not a bug, which is why the fix is in the viewer.** Only page
+actions capture a frame — `replay-builder.ts`'s `captureMethod` is the authority
+and returns null for scrolls, assertions, waits, `page.keyboard.press` and
+`if`/`endif`. The reported step 6 was a `scroll to (0, 670)`: it never had a
+screenshot and never will. Nothing on disk is missing, so nothing in the
+pipeline needed changing; what was wrong was the app answering "what did the
+page look like here?" with nothing when it knew perfectly well.
+
+**It carries into the tail too, not only into interior gaps.** The literal ask
+was "a step with no screenshot, but subsequent steps do", which would have left
+the failing step and everything skipped after it on the empty box. That is the
+single most valuable case on this screen: "what did the page look like right
+before this broke" is the question a failed run is opened to answer, and the
+frame immediately before the failure is the best available answer to it. A gap
+with nothing BEHIND it still shows the empty state — there is no last known
+state to fall back on, and taking one from a later step would show the user the
+future.
+
+**The label is the load-bearing half.** Everything in a `CRT` on this screen is
+evidence, and the question being asked of it is "does this look right?" — so a
+frame from a different step shown without qualification is the app answering
+that question with the wrong picture, which is worse than the empty box it
+replaced. Hence `renderer/lib/carried-frame.ts` rather than four lines inline:
+the four reasons a step has no frame are not interchangeable, and each supports
+a different reading of the same image.
+
+Two of those four cannot be read off the obvious field, and both would be wrong
+silently:
+
+- **The failing step has no `actionIndex`.** Capture happens only AFTER an
+  action resolves, so a click that threw wrote no manifest entry — it is
+  identical, field for field, to a scroll. Falling through to "this step
+  captures no frame of its own" would tell someone their failing click is
+  behaving as designed, on the one step of a failed run anybody is looking at.
+  So status is asked before `actionIndex`.
+- **`if`/`endif` are recorded as "skipped".** Control flow is not a step that
+  runs, so testing status first reports "this step didn't run" about a branch
+  that ran perfectly well. Type is asked before both.
+
+`actionIndex` is otherwise exactly the tell for a capture that was ATTEMPTED and
+failed, which is why it was added to the renderer's `ReplayStep` mirror — the
+main process has persisted it since 2026-08-07 and the renderer's copy of the
+type had simply never carried it. That tell is only sound because a carried
+frame requires an earlier capture to exist: on an a11y-only run every entry has
+`ok: false` because no screenshot was ever attempted, and there this would call
+each one a failure — but there is nothing to carry there, so it never runs.
+
+**Every note ends by saying the step's own effect is not in the picture.**
+Screenshots are viewport-only — nothing in this app passes `fullPage` — so the
+frame carried into a `scroll to (0, 670)` step is the PRE-scroll viewport. That
+is the reading a user is most likely to get wrong, and getting it wrong is
+strictly worse than the blank they had before.
+
+**The marker is neutral chrome under the bezel.** On the frame is not available
+and should not be: `check:crt-untreated` forbids marking the inside of a `CRT`
+because a treatment laid over evidence cannot be told from the same treatment in
+the page under test. Neutral rather than amber because colour on this screen
+means OUTCOME — the frame rail leaves an unrun step grey for the same reason —
+and amber would read as the visual-change warning it means everywhere else here.
+
+**A carried frame carries no overlays.** The ignore masks, the element-scope box
+and the measured diff regions are all normalized against THIS step's capture;
+laid over an earlier step's picture they land wherever the two happen to line
+up, which is a measurement the app never made. Same reasoning keeps the fallback
+to `current` mode: baseline and diff are comparisons pinned to a step, and an
+earlier step's frame is not a comparison of anything. Both are already
+unreachable — `hasBaselineView` and `canDiff` require `step.screenshot` — and
+the guards stay because that is a fact about the caller, not about the frame.
+
+**The preview could not have shown this working.** `artifacts:readShot` returned
+the same placeholder for every run frame, so a step showing another step's
+picture rendered identically to one showing its own — the exact class of bug a
+preview exists to make visible. Frames are stamped with their FILENAME now, and
+`REPLAY` grew a two-step gap bracketed by captures, so `?view=visual` shows the
+reported shape rather than a fixture where every step happens to have a picture.
+
 ### 2026-08-23 — Basic auth: the password is a secret variable, and the trainer answers the same prompt the run does
 
 A site behind an HTTP basic-auth wall was untestable end to end: the trainer

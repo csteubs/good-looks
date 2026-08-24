@@ -28,7 +28,16 @@ let replayDetail: unknown = null;
  *  and a mock that hands back the same replay for every id makes one. */
 let replayById: Record<string, unknown> | null = null;
 let shot: string | null = null;
+/** Every file `readShot` was asked for. The carried-frame tests assert WHICH
+ *  frame the viewer fetched, which is the whole question and is unanswerable
+ *  from the DOM: jsdom decodes no images, so every frame in this suite renders
+ *  as the same `src` string and a viewer showing the wrong picture looks
+ *  exactly like one showing the right picture. */
+let shotRequests: string[] = [];
 let baselineShot: string | null = null;
+/** Mutable so one test can prove a mask is NOT drawn on a carried frame. Every
+ *  other test leaves it empty. */
+let masks: unknown[] = [];
 let baselines: unknown[] = [];
 
 // The run-wide visual accept. Returns the replay the way the real handler
@@ -45,13 +54,16 @@ vi.mock("../lib/api", () => ({
       list: async () => replays,
       getReplay: async (_testId: string, runId: string) =>
         replayById ? (replayById[runId] ?? null) : replayDetail,
-      readShot: async () => shot,
+      readShot: async (_testId: string, _runId: string, file: string) => {
+        shotRequests.push(file);
+        return shot;
+      },
     },
     runs: { list: async () => [] },
     visual: {
       getThreshold: async () => 0.1,
       setThreshold: async () => 0.1,
-      getMasks: async () => [],
+      getMasks: async () => masks,
       setMasks: async () => [],
       listBaselines: async () => baselines,
       baselineShot: async () => baselineShot,
@@ -96,6 +108,8 @@ function renderBadge(diff: VisualDiff) {
 
 beforeEach(() => {
   replays = [];
+  shotRequests = [];
+  masks = [];
 });
 
 describe("DiffBadge wording", () => {
@@ -1081,5 +1095,220 @@ describe("region breakdown (C §6.6)", () => {
       if (!document.querySelector('[data-gl="crt"]')) throw new Error("waiting");
     });
     expect(document.querySelector(".gl-regions")).toBeNull();
+  });
+});
+
+// ── A gap in the filmstrip ──────────────────────────────────────────────
+//
+// Only page actions capture a frame — `replay-builder.ts`'s `captureMethod` is
+// the authority — so a recorded test routinely has runs of steps with no
+// picture at all: a scroll, an assertion, a wait. The viewer used to answer
+// every one of them with an empty box, which meant scrubbing 4 → 5 → 6 → 7
+// blanked the screen twice between two frames that differ by almost nothing.
+//
+// WHAT JSDOM CAN ACTUALLY CHECK HERE IS NOT THE PICTURE. It decodes no images,
+// and this suite hands every frame back as the same `src` string, so "is the
+// right screenshot on screen" is not a question it can ask — a viewer showing
+// step 2's frame under step 6 renders identically to one showing step 6's. So
+// these assert the two things that ARE real: which file the viewer asked the
+// backend for, and what the marker claims about the frame it got. The second
+// matters as much as the first: an unlabelled carried frame is the app
+// answering "does this look right?" with a picture of a different step.
+describe("a step that captured no frame of its own", () => {
+  function step(over: Record<string, unknown> = {}) {
+    return {
+      index: 0,
+      stepId: "s1",
+      label: "goto example.com",
+      type: "goto",
+      status: "passed",
+      screenshot: null,
+      ...over,
+    };
+  }
+
+  function seed(steps: unknown[], over: Record<string, unknown> = {}) {
+    replays = [summary({ runId: "r1", stepCount: steps.length })];
+    replayDetail = {
+      testId: "t1",
+      runId: "r1",
+      testName: "Checkout",
+      status: "passed",
+      startedAt: 1_700_000_000_000,
+      finishedAt: 1_700_000_001_000,
+      failedIndex: null,
+      steps,
+      ...over,
+    } as never;
+  }
+
+  /** The reported shape: a captured step, then two that capture nothing. */
+  function gapRun() {
+    return [
+      step({ index: 0, screenshot: "0.png" }),
+      step({ index: 1, stepId: "s2", type: "scroll", label: "scroll to (0, 670)" }),
+      step({ index: 2, stepId: "s3", type: "assert", label: 'expect "Total" to be visible' }),
+    ];
+  }
+
+  beforeEach(() => {
+    shot = "data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E";
+  });
+
+  afterEach(() => {
+    replayDetail = null;
+    shot = null;
+  });
+
+  /** Render, then walk forward `n` steps with the stepper. */
+  async function at(n: number) {
+    renderVisual();
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="crt"]')) throw new Error("waiting");
+    });
+    for (let i = 0; i < n; i++) {
+      fireEvent.click(screen.getByRole("button", { name: /next step/i }));
+    }
+    await waitFor(() => {
+      if (!screen.getByText(new RegExp(`${n + 1} / `))) throw new Error("waiting");
+    });
+  }
+
+  it("shows a frame rather than an empty box", async () => {
+    seed(gapRun());
+    await at(1);
+    await waitFor(() => {
+      if (!document.querySelector(".gl-visual-carried")) throw new Error("waiting");
+    });
+    expect(document.querySelector(".gl-visual-missing")).toBeNull();
+    expect(document.querySelector('[data-gl="crt"]')).toBeTruthy();
+  });
+
+  it("reaches back past the whole gap to the last frame that exists", async () => {
+    // Two steps deep. Asking for the NEAREST step's frame would ask for
+    // nothing at all, and there is no request this suite could tell that from
+    // except by naming the file.
+    seed(gapRun());
+    await at(2);
+    await waitFor(() => {
+      if (!document.querySelector(".gl-visual-carried")) throw new Error("waiting");
+    });
+    expect(shotRequests).toContain("0.png");
+  });
+
+  it("names the step the frame belongs to", async () => {
+    seed(gapRun());
+    await at(1);
+    await waitFor(() => {
+      if (!screen.queryByText("Carried from step 1")) throw new Error("waiting");
+    });
+  });
+
+  it("says the step's own effect is not in the picture", async () => {
+    // The load-bearing caveat, and a scroll step is where it is most easily
+    // misread: screenshots are viewport-only, so this frame is the page BEFORE
+    // the scroll. A carried frame that let someone believe otherwise would be
+    // worse than the empty box it replaced.
+    seed(gapRun());
+    await at(1);
+    await waitFor(() => {
+      if (!screen.queryByText(/captures no frame of its own/)) throw new Error("waiting");
+    });
+    expect(screen.getByText(/isn.t shown/)).toBeTruthy();
+  });
+
+  it("tells a screen reader the frame is another step's", async () => {
+    // The bar is the sighted reader's marker. Without this, the alt text says
+    // "Screenshot for step 2" about step 1's picture — the exact misreading
+    // this feature exists to prevent, with no way at all to notice it.
+    seed(gapRun());
+    await at(1);
+    const img = await waitFor(() => {
+      const el = document.querySelector(".gl-crt-img") as HTMLImageElement | null;
+      if (!el || !/Last captured frame/.test(el.alt)) throw new Error("waiting");
+      return el;
+    });
+    expect(img.alt).toContain("from step 1");
+  });
+
+  it("keeps the empty box when there is nothing behind the gap", async () => {
+    // A gap before the first capture has no last known state, and taking one
+    // from a LATER step would show the user the future.
+    seed([step({ type: "assert" }), step({ index: 1, stepId: "s2", screenshot: "0.png" })]);
+    renderVisual();
+    await waitFor(() => {
+      if (!document.querySelector(".gl-visual-missing")) throw new Error("waiting");
+    });
+    expect(screen.getByText("No screenshot for this step")).toBeTruthy();
+    expect(document.querySelector(".gl-visual-carried")).toBeNull();
+  });
+
+  it("carries a frame under the failing step, and says it failed", async () => {
+    // The single most useful case: "what did the page look like right before
+    // this broke" was an empty box. And the wording has to be its own — a
+    // failing click has no manifest entry, so it is indistinguishable from a
+    // scroll by every field except its status.
+    seed(
+      [
+        step({ index: 0, screenshot: "0.png" }),
+        step({ index: 1, stepId: "s2", type: "click", label: "click Pay", status: "failed" }),
+      ],
+      { status: "failed", failedIndex: 1 },
+    );
+    renderVisual();
+    await waitFor(() => {
+      if (!screen.queryByText(/This step failed, so nothing was captured/)) {
+        throw new Error("waiting");
+      }
+    });
+    expect(shotRequests).toContain("0.png");
+  });
+
+  it("carries a frame under a step the run never reached", async () => {
+    seed(
+      [
+        step({ index: 0, screenshot: "0.png" }),
+        step({ index: 1, stepId: "s2", type: "click", status: "failed" }),
+        step({ index: 2, stepId: "s3", type: "click", status: "skipped" }),
+      ],
+      { status: "failed", failedIndex: 1 },
+    );
+    renderVisual();
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="crt"]')) throw new Error("waiting");
+    });
+    fireEvent.click(screen.getByRole("button", { name: /next step/i }));
+    await waitFor(() => {
+      if (!screen.queryByText(/This step didn.t run/)) throw new Error("waiting");
+    });
+  });
+
+  it("draws none of this step's overlays on another step's frame", async () => {
+    // Every overlay on a frame — the ignore masks, the element-scope box, the
+    // measured diff regions — is normalized against THIS step's capture. Laid
+    // over an earlier step's picture they land wherever the two happen to line
+    // up, which is a measurement the app never made.
+    masks = [{ id: "m1", stepId: null, x: 0.1, y: 0.1, w: 0.2, h: 0.2 }];
+    seed(gapRun());
+    renderVisual();
+    await waitFor(() => {
+      if (!document.querySelector(".gl-mask-box")) throw new Error("waiting");
+    });
+    fireEvent.click(screen.getByRole("button", { name: /next step/i }));
+    await waitFor(() => {
+      if (!document.querySelector(".gl-visual-carried")) throw new Error("waiting");
+    });
+    expect(document.querySelectorAll(".gl-mask-box")).toHaveLength(0);
+  });
+
+  it("offers no ignore-region editor on a frame that isn't this step's", async () => {
+    // It writes masks pinned to the SELECTED step, measured against whatever
+    // is on screen. On a carried frame that is a region of a different picture.
+    seed(gapRun());
+    await at(1);
+    await waitFor(() => {
+      if (!document.querySelector(".gl-visual-carried")) throw new Error("waiting");
+    });
+    expect(screen.queryByRole("button", { name: /ignore regions/i })).toBeNull();
   });
 });

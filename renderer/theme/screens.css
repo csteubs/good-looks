@@ -4804,6 +4804,64 @@
   color: var(--gl-tx-2);
 }
 
+/* A CARRIED FRAME'S MARKER — the picture belongs to an earlier step.
+
+   UNDER THE FRAME, OUTSIDE THE BEZEL, for the reason `check:crt-untreated`
+   exists: nothing may mark the inside of a CRT, because a treatment laid over
+   evidence cannot be told apart from the same treatment in the page under test.
+   So the qualification a carried frame needs has to live here, in chrome.
+
+   NEUTRAL. Colour on this screen means OUTCOME — the frame rail leaves an unrun
+   step grey rather than borrowing a hue, and this is the same claim: a frame
+   from step 4 shown under step 6 is not a finding about the page. Amber would
+   read as the visual-change warning it means in every other place on this
+   screen, and red would read as a failure. The full-width surface and the rule
+   above it are what make it unmissable instead.
+
+   `flex: 0 0 auto` so the frame gives, not the marker: on a tall screenshot the
+   bezel is already a scroll viewport, and a label that can be pushed out of the
+   stage is a label the person who most needs it never sees. */
+.gl-visual-carried {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 0 0 auto;
+  align-self: stretch;
+  padding: 6px 10px;
+  border-top: 1px solid var(--gl-line);
+  background: var(--gl-rail);
+}
+
+.gl-visual-carried svg {
+  width: 12px;
+  height: 12px;
+  /* Baseline-aligned with the label beside it rather than centred on the row:
+     the note wraps at a narrow window, and an icon centred on a two-line row
+     drifts away from the words it belongs to. */
+  align-self: baseline;
+  color: var(--gl-tx-3);
+}
+
+.gl-visual-carried-tag {
+  flex: 0 0 auto;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+}
+
+/* The caveat, and it is the load-bearing half: screenshots are viewport-only,
+   so a carried frame is the page BEFORE this step ran. It reads at ordinary
+   weight because it is a sentence to be read, not a badge to be glanced at. */
+.gl-visual-carried-note {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--gl-tx-2);
+}
+
 /* Baseline provenance (§6.6), in the CRT's caption. The caption's own type is
    set in primitives.css; this is only the stale marker.
 
