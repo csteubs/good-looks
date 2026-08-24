@@ -23,7 +23,7 @@ import { registerDeepLinks, takePendingDeepLink } from "./shell/deep-link.js";
 import { forwardRendererConsole, registerHostHandlers } from "./shell/host-handlers.js";
 import { registerHandlers } from "./handlers/index.js";
 import { getPreloadPath, getWindowUrl } from "./windows/window-paths.js";
-import { openSettingsWindow } from "./windows/settings-window.js";
+import { settingsTarget, type SettingsTarget } from "./services/settings-target.js";
 import { sendToMain, setMainWindow } from "./services/app-window.js";
 import { tsService } from "./services/ts-service/client.js";
 import { attachUiScale, scaled } from "./services/ui-scale.js";
@@ -294,6 +294,12 @@ async function createMainWindow() {
     const pending = takePendingDeepLink();
     if (pending) mainWindow?.webContents.send("deepLink:open", pending);
 
+    // And the same for a Settings menu item clicked while no window was open —
+    // see `openSettingsPane`. Sent on the same channel `sendToMain` uses, so
+    // the renderer has exactly one listener for both arrival orders.
+    const settings = takePendingSettings();
+    if (settings) mainWindow?.webContents.send("settings:open", settings.target);
+
     const showEndTime = Date.now();
     logger.info("main", "⏱️ [COLD_START] Window shown", {
       timestamp: new Date().toISOString(),
@@ -321,6 +327,54 @@ async function createMainWindow() {
   });
 }
 
+// ── Settings ──────────────────────────────────────────────────────────
+//
+// Settings is a ROUTE in the main window (docs/plans/settings-view.md), not a
+// window of its own, so a menu item cannot open it by creating something — it
+// has to ask the renderer to navigate.
+//
+// THE HELD TARGET IS NOT DEFENSIVE CODE. On macOS the application menu outlives
+// every window (`window-all-closed` deliberately does not quit), and it is
+// built BEFORE the first window exists. So ⌘, with the main window closed has
+// to create the window and then navigate — and a push sent at that moment
+// reaches a renderer that is not listening yet. Held here and replayed from
+// `ready-to-show`, exactly as a deep link that launched the app is
+// (`takePendingDeepLink`).
+//
+// Wrapped rather than a bare target, so "open the board" (a null target) is
+// distinguishable from "nothing is pending".
+let pendingSettings: { target: SettingsTarget | null } | null = null;
+
+/** The pending settings target, if a menu click arrived before the window did.
+ *  Consumed once — a second window opening later must not re-navigate
+ *  somewhere the user has since left. */
+function takePendingSettings(): { target: SettingsTarget | null } | null {
+  const held = pendingSettings;
+  pendingSettings = null;
+  return held;
+}
+
+/**
+ * Open Settings in the main window, optionally on a pane (`"cost"`) or on a
+ * pane and a topic (`"documentation/setup"`).
+ *
+ * The argument is validated before it is sent because what it selects on the
+ * far end is a route param; see `services/settings-target.ts` for why that is
+ * only half the guard. An unusable one opens the board rather than nothing,
+ * which is the direction a menu item should fail in.
+ */
+async function openSettingsPane(pane?: string): Promise<void> {
+  const target = pane === undefined ? null : settingsTarget(pane);
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    pendingSettings = { target };
+    await createMainWindow();
+    return;
+  }
+  mainWindow.show();
+  mainWindow.focus();
+  sendToMain("settings:open", target);
+}
+
 // ── Application menu ──────────────────────────────────────────────────
 async function setupApplicationMenu() {
   await initDevToolsButtonState();
@@ -333,7 +387,7 @@ async function setupApplicationMenu() {
         {
           label: "Settings…",
           accelerator: "Command+,",
-          click: async () => await openSettingsWindow(),
+          click: async () => await openSettingsPane(),
         },
         { type: "separator" },
         { role: "services" },
@@ -364,29 +418,29 @@ async function setupApplicationMenu() {
       submenu: [
         {
           label: "Good Looks! Help",
-          click: async () => await openSettingsWindow("documentation"),
+          click: async () => await openSettingsPane("documentation"),
         },
         { type: "separator" },
         {
           label: "Using Good Looks! from an AI assistant",
-          click: async () => await openSettingsWindow("documentation/what-it-is"),
+          click: async () => await openSettingsPane("documentation/what-it-is"),
         },
         {
           label: "Set up the MCP server",
-          click: async () => await openSettingsWindow("documentation/setup"),
+          click: async () => await openSettingsPane("documentation/setup"),
         },
         {
           label: "What you can ask for",
-          click: async () => await openSettingsWindow("documentation/what-you-can-ask-for"),
+          click: async () => await openSettingsPane("documentation/what-you-can-ask-for"),
         },
         {
           label: "Linear, GitHub and Slack",
-          click: async () => await openSettingsWindow("documentation/linear-github-and-slack"),
+          click: async () => await openSettingsPane("documentation/linear-github-and-slack"),
         },
         { type: "separator" },
         {
           label: "Troubleshooting",
-          click: async () => await openSettingsWindow("documentation/troubleshooting"),
+          click: async () => await openSettingsPane("documentation/troubleshooting"),
         },
       ],
     },

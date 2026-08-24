@@ -3,21 +3,40 @@
 // The accessory does double duty — match count while searching, modified count
 // otherwise — so most of the risk is in showing the wrong one, or showing a
 // modified count before the settings have loaded (which flashes a badge on
-// every pane each time the window opens).
+// every pane each time Settings is opened).
 //
 // The other half is the search behaviour that makes the redesign worth having:
 // a pane with no match must LEAVE the list, not sit there greyed. Greying keeps
 // the list the same length, which hides the fact that search narrowed anything.
+//
+// THE ROWS AND THE FIELD ARE RENDERED TOGETHER HERE and are two components in
+// the app, because `Rail` pins the search field ABOVE its scrolling body — see
+// `settings-nav.tsx`. What is asserted is what the user sees in one rail, so
+// the harness assembles both rather than testing half a sidebar.
 
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 
 import { PANES, SETTINGS_DEFAULTS, matchCountByPane, searchSettings } from "../lib/settings-schema";
-import { SettingsNav } from "./settings-nav";
+import { SettingsNav, SettingsSearchField } from "./settings-nav";
 import type { SettingsNavProps } from "./settings-nav";
 
-function renderNav(overrides: Partial<SettingsNavProps> = {}) {
-  const props: SettingsNavProps = {
+interface NavHarnessProps extends SettingsNavProps {
+  search: string;
+  onSearchChange: (value: string) => void;
+}
+
+function Nav({ search, onSearchChange, ...nav }: NavHarnessProps) {
+  return (
+    <>
+      <SettingsSearchField value={search} onChange={onSearchChange} />
+      <SettingsNav {...nav} />
+    </>
+  );
+}
+
+function renderNav(overrides: Partial<NavHarnessProps> = {}) {
+  const props: NavHarnessProps = {
     selected: "appearance",
     onSelect: vi.fn(),
     search: "",
@@ -27,7 +46,7 @@ function renderNav(overrides: Partial<SettingsNavProps> = {}) {
     loaded: true,
     ...overrides,
   };
-  return { ...render(<SettingsNav {...props} />), props };
+  return { ...render(<Nav {...props} />), props };
 }
 
 /** The sidebar row for a pane, by its visible title. */
@@ -79,10 +98,9 @@ describe("the pane list", () => {
   });
 
   it("marks the selected pane for assistive tech", () => {
-    // Without this the window announces nothing about which pane is showing.
+    // Without this the rail announces nothing about which pane is showing.
     // `"true"` rather than `"page"` since B4: `RailRow` says it, and it says
-    // the same thing about the library rows in the main window — these switch
-    // panes within one window rather than navigating between pages.
+    // the same thing about the library rows this list replaces.
     renderNav({ selected: "storage" });
     expect(row("Storage").getAttribute("aria-current")).toBe("true");
   });
@@ -90,6 +108,18 @@ describe("the pane list", () => {
   it("marks only the selected pane", () => {
     renderNav({ selected: "storage" });
     expect(row("Appearance").getAttribute("aria-current")).toBeNull();
+  });
+
+  it("marks nothing on the board", () => {
+    // `/settings` is a screen of its own and is not one of these rows, so no
+    // row may claim to be what is showing. `selected` is undefined there — and
+    // a nav that defaulted to Appearance would put a current row beside a
+    // screen that is not it.
+    const { container } = renderNav({ selected: undefined });
+    // Counted off the attribute rather than row by row: `row()` matches on a
+    // substring, and "AI" is inside "Failure reasons".
+    expect(container.querySelectorAll("[aria-current]")).toHaveLength(0);
+    expect(container.querySelectorAll("[data-selected]")).toHaveLength(0);
   });
 
   it("styles the selected row", () => {
@@ -191,7 +221,7 @@ describe("search", () => {
   });
 
   it("does not put the manual first when a search misses the open pane", () => {
-    // `settings-view` moves to the FIRST pane with a hit. Docs match on full
+    // `settings-scope` moves to the FIRST pane with a hit. Docs match on full
     // text, so if they were indexed ahead of the settings almost every search
     // would jump out of the controls and into the prose about them.
     const first = Object.keys(matchCountByPane(searchSettings("webhook")))[0];
@@ -211,7 +241,7 @@ describe("search", () => {
     const { rerender } = renderNav({ search: "slack", matchCounts: matchCountByPane(searchSettings("slack")) });
     expect(screen.queryByText("Storage")).toBeNull();
     rerender(
-      <SettingsNav
+      <Nav
         selected="appearance"
         onSelect={vi.fn()}
         search=""

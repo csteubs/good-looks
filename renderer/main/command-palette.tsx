@@ -58,6 +58,15 @@ const VIEWS: { path: string; label: string; keywords: string }[] = [
   { path: "/heals", label: "Heals", keywords: "auto-heal locators review" },
   { path: "/insights", label: "Insights", keywords: "ai report digest trends recommendations" },
   { path: "/branches", label: "Branches", keywords: "git worktree build switch" },
+  // Settings became a view rather than a window (docs/plans/settings-view.md),
+  // and this is the first time ⌘K could offer it at all. It lands on the board:
+  // the palette selects a SCREEN, and which of the eighteen sections you want
+  // is what the board and the rail are for.
+  {
+    path: "/settings",
+    label: "Settings",
+    keywords: "preferences options configure appearance ai storage proxy alerts cost",
+  },
 ];
 
 /** Is this platform's palette key held? ⌘ on a Mac, Ctrl elsewhere — and both

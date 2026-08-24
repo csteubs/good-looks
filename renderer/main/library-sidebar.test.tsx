@@ -31,6 +31,7 @@ import type {
   TestRecord,
 } from "../lib/recorder-types";
 import { LibrarySidebar } from "./library-sidebar";
+import { SettingsScope } from "../settings/settings-scope";
 import { withAiDebug } from "../__tests__/ai-debug-harness";
 
 let tests: TestRecord[] = [];
@@ -42,6 +43,9 @@ let secretStatus: SecretStatus[] = [];
 let runRecords: RunRecord[] = [];
 
 const navigate = vi.fn();
+/** The route, as the rail reads it. Mutable so a test can put the app on a
+ *  settings screen — the rail lists SECTIONS there instead of tests. */
+let pathname = "/";
 /** The open test, as the router reports it. Mutable so a test can put one in
  *  the address bar — selection is derived from it. */
 let routeParams: { id?: string } = {};
@@ -67,14 +71,17 @@ const duplicate = vi.fn(
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigate,
   useParams: () => routeParams,
-  useRouterState: () => "/",
+  // The real hook takes a `select` and is given the router state; the rail only
+  // ever selects the pathname, so answering with it directly is the whole of
+  // what it reads.
+  useRouterState: () => pathname,
 }));
 
 // The rail lists saved Routines while the Routines screen is open (REDESIGN
 // §7.1), and the selection lives in the recorder store. Stubbed for the same
 // reason the dialogs below are: the real provider owns the whole recording
-// session, and `useRouterState` above answers "/" here, so this file only ever
-// renders the library half.
+// session, and `pathname` above is "/" for every test but the settings ones at
+// the end of this file.
 vi.mock("./recorder-store", () => ({
   useRecorder: () => ({ openRoutineId: null, setOpenRoutineId: () => {} }),
 }));
@@ -162,6 +169,20 @@ function renderSidebar() {
   );
 }
 
+/** The rail as `RootShell` mounts it on a settings screen: inside
+ *  `SettingsScope`, which is what holds the controller the pane rows read. The
+ *  scope's loads are individually optional (see settings-controller.tsx), so
+ *  the api mock in this file is enough for it. */
+function renderSettingsRail(at: string) {
+  pathname = at;
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <SettingsScope>{withAiDebug(<LibrarySidebar />)}</SettingsScope>
+    </QueryClientProvider>,
+  );
+}
+
 /** Right-click the first test row and pick "Duplicate Test". */
 async function chooseDuplicate() {
   const row = await screen.findByText("Login");
@@ -173,6 +194,7 @@ async function chooseDuplicate() {
 beforeEach(() => {
   tests = [record()];
   settings = {};
+  pathname = "/";
   routeParams = {};
   secretStatus = [];
   runRecords = [];
@@ -828,5 +850,98 @@ describe("LibrarySidebar — the reusable-flow glyph", () => {
     renderSidebar();
     await screen.findByText("Login");
     expect(screen.queryByRole("img", { name: "Reusable flow" })).toBeNull();
+  });
+});
+
+// ── The rail on a settings screen ────────────────────────────────────
+//
+// REDESIGN §B4's sentence, finally literal: "the rail becomes the settings nav
+// while in settings (the panes *are* the navigation), and the library list
+// hides. Same surface, two jobs." It shipped with the caveat that Settings was
+// its own `BrowserWindow`, so there was no library list to hide; it is a route
+// now (docs/plans/settings-view.md) and this is what proves the swap.
+//
+// Both directions matter. A rail that keeps the library on a settings screen
+// leaves the sections unreachable, and a rail that swaps on a path that is NOT
+// settings would throw out of `useSettingsController` — a blank window and a
+// clean log, which is this repo's quietest failure.
+
+describe("LibrarySidebar — the settings swap", () => {
+  it("lists the sections instead of the library", async () => {
+    tests = [record({ name: "Login" })];
+    renderSettingsRail("/settings");
+    expect(await screen.findByText("Storage")).toBeTruthy();
+    expect(await screen.findByText("Auto-Heal")).toBeTruthy();
+    expect(screen.queryByText("Login")).toBeNull();
+  });
+
+  it("renames the rail and drops the + action", async () => {
+    // "Add test" cannot mean anything here: the list holds the app's own
+    // sections and there is no nineteenth to make.
+    const { container } = renderSettingsRail("/settings");
+    await screen.findByText("Storage");
+    expect(container.querySelector(".gl-rail-head-title")?.textContent).toBe("Settings");
+    expect(screen.queryByRole("button", { name: "Add test" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New routine" })).toBeNull();
+  });
+
+  it("offers the settings search", async () => {
+    renderSettingsRail("/settings");
+    expect(await screen.findByPlaceholderText(/search settings/i)).toBeTruthy();
+  });
+
+  it("swaps on a pane below the board too", async () => {
+    // The exact-equality the other rows use (`pathname === "/stats"`) is wrong
+    // for a drill — `/settings/storage` has to count as being in Settings.
+    tests = [record({ name: "Login" })];
+    renderSettingsRail("/settings/storage");
+    expect(await screen.findByText("Auto-Heal")).toBeTruthy();
+    expect(screen.queryByText("Login")).toBeNull();
+  });
+
+  it("keeps the way out", async () => {
+    // The Views nav and the connection footer live outside the rail's
+    // scrolling body, so the swap must not take them with it — otherwise
+    // Settings is a screen you cannot leave from the rail you entered it by.
+    //
+    // Scoped to the nav group: "Stats" is also a settings section, so a bare
+    // getByText finds two and reports as ambiguous rather than as missing.
+    renderSettingsRail("/settings");
+    const nav = await screen.findByRole("group", { name: "Views" });
+    expect(within(nav).getByText("Stats")).toBeTruthy();
+    expect(within(nav).getByText("Heals")).toBeTruthy();
+  });
+
+  it("keeps the library on every other screen", async () => {
+    tests = [record({ name: "Login" })];
+    renderSidebar();
+    expect(await screen.findByText("Login")).toBeTruthy();
+    expect(screen.queryByPlaceholderText(/search settings/i)).toBeNull();
+  });
+});
+
+describe("LibrarySidebar — the Settings row", () => {
+  it("is a labelled destination in the Views nav", async () => {
+    // It replaced a gear in the top strip's corner — the app's only icon-only
+    // entry point to a whole screen, and so the one destination whose name you
+    // had to hover to read.
+    renderSidebar();
+    const row = await screen.findByRole("button", { name: /^Settings/ });
+    fireEvent.click(row);
+    expect(navigate).toHaveBeenCalledWith({ to: "/settings" });
+  });
+
+  it("is marked current for every screen under it", async () => {
+    renderSettingsRail("/settings/storage");
+    const rows = await screen.findAllByRole("button", { name: /^Settings/ });
+    // The Views row, not a section row — the rail's own title is not a button.
+    const nav = rows.find((r) => r.textContent?.includes("Preferences"));
+    expect(nav?.getAttribute("aria-current")).toBe("true");
+  });
+
+  it("is not marked current anywhere else", async () => {
+    renderSidebar();
+    const row = await screen.findByRole("button", { name: /^Settings/ });
+    expect(row.getAttribute("aria-current")).toBeNull();
   });
 });

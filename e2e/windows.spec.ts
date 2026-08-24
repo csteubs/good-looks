@@ -1,91 +1,61 @@
-// Real windows, opened by the real main process.
+// Real windows, and the one the app deliberately no longer opens.
 //
-// This is the clearest example of what only an end-to-end run can check. The
-// settings window is created by main/windows/settings-window.ts in response to
-// an IPC call; jsdom has no concept of a second window, so the unit suite
-// covers the settings VIEW while nobody covers the thing that puts it on
-// screen.
+// This file used to prove that `window:openSettings` created a SECOND real
+// window and did not duplicate it — the clearest example of something jsdom
+// cannot host. Settings is a route in the main window now
+// (docs/plans/settings-view.md), so the fact worth guarding inverted: opening
+// it must create no window at all, and the application menu — which is built
+// in the main process before any window exists — must still be able to land
+// somebody on a section.
 //
-// The window is opened by invoking the channel directly rather than by clicking
-// the settings gear. That was once forced — the entry point went through
-// `Menu.popup`, a real macOS menu whose items never enter the DOM — and since
-// A4 the gear is an ordinary button in the top strip, so the click IS
-// available. Driving the channel is still what this test wants: it isolates the
-// half only an end-to-end run can check (a second real window being created and
-// not duplicated) from the half that is just a click. That the gear is
-// reachable at all, under two full-viewport overlays, is asserted in
-// `chrome-clickable.spec.ts`.
+// Both go through real UI rather than an IPC channel, because there is no
+// longer a channel to drive.
 
 import { test, expect } from "./fixtures.js";
 
-test("opening settings creates a second window", async ({ app, window }) => {
+test("opening Settings opens NO second window", async ({ app, window }) => {
+  // THE INVERSE OF WHAT THIS FILE USED TO ASSERT, and the change it guards.
+  // Settings was a `BrowserWindow` created by main/windows/settings-window.ts
+  // in response to `window:openSettings`; it is a route in this window now
+  // (docs/plans/settings-view.md). What only an end-to-end run can check is
+  // that nothing still creates one — a second window would be invisible in a
+  // screenshot of the first, and the two would then write the same settings
+  // file from two renderers.
+  await expect(window.getByRole("heading", { name: "GOOD LOOKS!" })).toBeVisible();
   expect(app.windows()).toHaveLength(1);
 
-  const opened = app.waitForEvent("window");
-  await window.evaluate(() =>
-    (window as unknown as { glazeAPI: { glaze: { ipc: { invoke(c: string): Promise<unknown> } } } }).glazeAPI.glaze.ipc.invoke(
-      "window:openSettings",
-    ),
-  );
+  // Through the rail, which is the app's own way in. Driving an IPC channel
+  // would prove nothing here: there is no longer a channel to drive.
+  await window.getByRole("button", { name: /^Settings/ }).click();
+  await expect(window.getByText("How the app looks")).toBeVisible();
 
-  const settings = await opened;
-  await settings.waitForLoadState("domcontentloaded");
-
-  expect(new URL(settings.url()).pathname).toContain("settings-window");
-  expect(app.windows().length).toBeGreaterThanOrEqual(2);
-
-  // Asking twice must focus the existing window, not stack a second copy.
-  // A duplicate is invisible in a screenshot — the top one looks right — and
-  // the two then write the same settings file from two renderers.
-  const before = app.windows().length;
-  await window.evaluate(() =>
-    (window as unknown as { glazeAPI: { glaze: { ipc: { invoke(c: string): Promise<unknown> } } } }).glazeAPI.glaze.ipc.invoke(
-      "window:openSettings",
-    ),
-  );
-  await expect.poll(() => app.windows().length, { timeout: 5_000 }).toBe(before);
+  expect(app.windows()).toHaveLength(1);
+  const count = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+  expect(count).toBe(1);
 });
 
-test("settings can be deep-linked onto a pane", async ({ app, window }) => {
-  // Stats → Cost's "Edit in Settings" sends a pane id, because a button whose
-  // job is "where do these numbers come from" that lands on Appearance is the
-  // scavenger hunt the panel's own design argued against.
+test("the application menu lands on a settings section", async ({ app, window }) => {
+  // ⌘, and the six Help items are built in the MAIN PROCESS, before any window
+  // exists, and they now have to reach a route in the renderer. Nothing short
+  // of a real run covers that path: the push, the renderer's re-check against
+  // the pane registry, and the navigation.
   //
-  // ONLY AN END-TO-END RUN CAN CHECK THIS. The id travels as a URL FRAGMENT on
-  // a real `loadURL`, and both halves of that are absent from jsdom: the
-  // settings view's test can set `location.hash` by hand and prove it reads it,
-  // but not that the main process puts it there, that `getWindowUrl` tolerates
-  // it in dev AND under `app://`, or that the fragment survives the load.
-  const opened = app.waitForEvent("window");
-  await window.evaluate(() =>
-    (
-      window as unknown as {
-        glazeAPI: { glaze: { ipc: { invoke(c: string, p: string): Promise<unknown> } } };
-      }
-    ).glazeAPI.glaze.ipc.invoke("window:openSettings", "cost"),
-  );
+  // The menu item is invoked through its own click handler rather than by
+  // driving the native menu — a macOS menu's items never enter the DOM, and on
+  // the Linux runner CI uses there is no menu bar to open at all.
+  await expect(window.getByRole("heading", { name: "GOOD LOOKS!" })).toBeVisible();
 
-  const settings = await opened;
-  await settings.waitForLoadState("domcontentloaded");
-  expect(new URL(settings.url()).hash).toBe("#cost");
-  await expect(settings.getByText("Price per CI minute")).toBeVisible();
+  await app.evaluate(({ Menu }) => {
+    const help = Menu.getApplicationMenu()?.items.find((i) => i.role === "help");
+    const item = help?.submenu?.items.find((i) => i.label === "Set up the MCP server");
+    if (!item) throw new Error("the Help menu has no 'Set up the MCP server' item");
+    item.click();
+  });
 
-  // A pane id is a string from a renderer that is concatenated into a URL, so
-  // the main process refuses anything that is not one. The window still opens —
-  // on its default pane — rather than failing to open at all.
-  await settings.close();
-  const second = app.waitForEvent("window");
-  await window.evaluate(() =>
-    (
-      window as unknown as {
-        glazeAPI: { glaze: { ipc: { invoke(c: string, p: string): Promise<unknown> } } };
-      }
-    ).glazeAPI.glaze.ipc.invoke("window:openSettings", "../../etc/passwd"),
-  );
-  const fallback = await second;
-  await fallback.waitForLoadState("domcontentloaded");
-  expect(new URL(fallback.url()).hash).toBe("");
-  await fallback.close();
+  // The pane AND the topic below it — the deep link's whole promise is that
+  // every Help item opens a different passage.
+  await expect(window.getByRole("heading", { level: 2, name: /setup/i })).toBeVisible();
+  expect(app.windows()).toHaveLength(1);
 });
 
 test("the main process exposes exactly one main window at startup", async ({ app, window }) => {

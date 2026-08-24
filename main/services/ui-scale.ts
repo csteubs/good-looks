@@ -42,7 +42,6 @@ import { logger } from "@shell/backend";
 
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { getAuxWindows, getMainWindow } from "./app-window.js";
-import { getSettingsWindow } from "../windows/settings-window.js";
 
 /**
  * The bit of a BrowserWindow this module needs.
@@ -167,13 +166,15 @@ export function attachUiScale(win: ZoomableWindow, minSize?: MinSize): void {
  * Re-draw every app window at the stored scale.
  *
  * Called from the `recorder:setSettings` handler so the change lands while the
- * user is looking at it. The settings window is included explicitly: it is not
- * registered as an aux window (only the trainer panel is), and the one window
- * that must respond to this setting is the one it is changed in.
+ * user is looking at it. The settings WINDOW used to be named here as a third
+ * entry: it was not registered as an aux window, and the one window that must
+ * respond to this setting is the one it is changed in. Settings is a route in
+ * the main window now, so that entry is the main window and the special case
+ * is gone (docs/plans/settings-view.md).
  */
 export function applyUiScaleToAllWindows(): void {
   const scale = uiScale();
-  for (const win of [getMainWindow(), getSettingsWindow(), ...getAuxWindows()]) {
+  for (const win of [getMainWindow(), ...getAuxWindows()]) {
     setZoom(win, scale);
     // And the floor moves with it. Electron grows a window that is smaller than
     // its new minimum, which is the behaviour wanted here: turning the size up

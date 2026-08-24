@@ -243,12 +243,15 @@ describe("typeface", () => {
     await waitFor(() => expect(savedPatch(controller)).toEqual({ uiTypeface: "classic" }));
   });
 
-  it("applies the choice to THIS window, not only to the store", async () => {
+  it("applies the choice to THIS document, not only to the store", async () => {
     // The line this covers is the one that stops the setting looking broken.
     // `sendToMain` fans out to the main window and registered aux windows, and
-    // the Settings window is neither — so without the local `applyTypeface`,
-    // the single window the user is looking at while they change the typeface
-    // is the only window in the app that does not change.
+    // the Settings WINDOW was neither — so without the local `applyTypeface`,
+    // the single window the user was looking at while they changed the typeface
+    // was the only one in the app that did not change. Settings is a route in
+    // the main window now and does receive the push, so the local call is what
+    // makes the change land in the same frame as the click instead of after an
+    // IPC round trip.
     renderPane(<AppearancePane />);
     chooseFromNativeMenu("ui-typeface", "Menlo / Helvetica");
     await waitFor(() =>

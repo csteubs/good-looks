@@ -1,34 +1,39 @@
-// The Settings sidebar: pane list, search, and per-pane modified counts.
+// The settings nav: the pane list and the search field, drawn INTO THE APP'S
+// OWN RAIL.
 //
-// Search is the highest-value part of the redesign. At ~30 settings the actual
-// daily problem is "where is the headless toggle", and no amount of grouping
-// answers that as directly as typing "headless" — which is why it filters BOTH
-// the pane list here and the rows inside the selected pane, rather than just
-// jumping to a pane and leaving the user to scan it again.
+// Search is the highest-value part of the settings redesign. At ~30 settings
+// the actual daily problem is "where is the headless toggle", and no amount of
+// grouping answers that as directly as typing "headless" — which is why it
+// filters BOTH the pane list here and the rows inside the selected pane, rather
+// than just jumping to a pane and leaving the user to scan it again.
 //
 // The accessory on each row does double duty by design: a search shows the
 // number of MATCHES in that pane; with no search it shows how many of that
 // pane's settings differ from their default. Both answer "is what I'm looking
 // for in here", which is the only question a settings sidebar is asked.
 //
-// DRAWN AS THE RAIL SINCE B4. The redesign's line is "the rail becomes the
-// settings nav while in settings — same surface, two jobs" (REDESIGN §B4).
-// Settings is its own WINDOW here, so there is no library list to hide and no
-// single element to repurpose; what the sentence actually asks for is that a
-// user who opens Settings recognises the strip down the left as the same
-// object. So this is `Rail`/`RailGroup`/`RailRow`, the same components the main
-// window's library is built from, and the search field goes in the rail's
-// pinned `search` slot rather than into the scroller.
+// REDESIGN §B4 ASKED FOR THIS AND SHIPPED HALF OF IT. Its line was "the rail
+// becomes the settings nav while in settings (the panes *are* the navigation),
+// and the library list hides. Same surface, two jobs" — and the caveat it
+// shipped under was that Settings was its own `BrowserWindow`, so there was no
+// library list to hide and no single element to repurpose. What B4 could buy
+// was recognition, so this file was built from `Rail`/`RailGroup`/`RailRow`,
+// the components the main window's library uses.
 //
-// TWO BEHAVIOUR CHANGES COME WITH THAT, both improvements and both worth
-// knowing about:
+// It is now literally the sentence. These rows render in the main window's own
+// rail (`library-sidebar.tsx`), the library list is what they replace, and this
+// file no longer draws a `Rail` of its own — the app has exactly one, and
+// putting a second inside it would nest two `SplitView` sidebars.
+//
+// TWO BEHAVIOURS TO KNOW ABOUT, both inherited from `RailRow` and both
+// improvements over what preceded them:
 //   • Rows activate on CLICK. `SidebarListItem` fired on `mouseDown` (the
-//     AppKit idiom, and a documented trap in this repo — `fireEvent.click` does
-//     nothing to it and the assertion reports "0 calls").
-//   • Selection is announced via `RailRow`'s own `aria-current`, so the
-//     explicit `aria-current="page"` this file used to pass by hand is gone.
-//     `RailRow` says `"true"` rather than `"page"`: these rows switch panes
-//     inside one window, and the rail says the same thing about the library.
+//     AppKit idiom, and a documented trap in this repo — `fireEvent.click`
+//     does nothing to it and the assertion reports "0 calls").
+//   • Selection is announced via `RailRow`'s own `aria-current`, which says
+//     `"true"` rather than `"page"`: the rail says the same thing about the
+//     library, and consistency inside one surface beats a distinction a screen
+//     reader user cannot act on.
 
 import { Input } from "@ui";
 import {
@@ -54,12 +59,12 @@ import {
 import { Fragment } from "react";
 import type { ComponentType } from "react";
 
-import { Rail, RailGroup, RailRow } from "../theme";
+import { RailGroup, RailRow } from "../theme";
 import type { PaneDef, PaneId } from "../lib/settings-schema";
 import { modifiedKeys, paneSegments } from "../lib/settings-schema";
 import type { RecorderSettings } from "../lib/recorder-types";
 
-const PANE_ICONS: Record<PaneId, ComponentType<{ className?: string }>> = {
+export const PANE_ICONS: Record<PaneId, ComponentType<{ className?: string }>> = {
   appearance: Palette,
   editor: Code2,
   inspections: SearchCheck,
@@ -80,11 +85,34 @@ const PANE_ICONS: Record<PaneId, ComponentType<{ className?: string }>> = {
   experiments: FlaskConical,
 };
 
+export interface SettingsSearchFieldProps {
+  value: string;
+  onChange: (value: string) => void;
+}
+
+/** The search field, for the rail's pinned `search` slot.
+ *
+ *  PINNED, NOT THE FIRST ROW OF THE LIST — that is the slot's whole purpose
+ *  (see `rail.tsx`). A search box that scrolls away with the list it filters is
+ *  reachable only while the list is short. */
+export function SettingsSearchField({ value, onChange }: SettingsSearchFieldProps) {
+  return (
+    <Input
+      className="gl-input w-full"
+      type="search"
+      aria-label="Search settings"
+      placeholder="Search settings"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
+
 export interface SettingsNavProps {
-  selected: PaneId;
+  /** The pane on screen, or undefined on the board — where no row is current,
+   *  because the board is not one of them. */
+  selected?: PaneId;
   onSelect: (pane: PaneId) => void;
-  search: string;
-  onSearchChange: (value: string) => void;
   /** Matches per pane while a search is running; `null` when none is. */
   matchCounts: Record<string, number> | null;
   settings: Partial<RecorderSettings>;
@@ -96,8 +124,6 @@ export interface SettingsNavProps {
 export function SettingsNav({
   selected,
   onSelect,
-  search,
-  onSearchChange,
   matchCounts,
   settings,
   loaded,
@@ -145,19 +171,7 @@ export function SettingsNav({
   };
 
   return (
-    <Rail
-      title="Settings"
-      search={
-        <Input
-          className="gl-input w-full"
-          type="search"
-          aria-label="Search settings"
-          placeholder="Search settings"
-          value={search}
-          onChange={(e) => onSearchChange(e.target.value)}
-        />
-      }
-    >
+    <>
       {paneSegments().map((segment, index) => {
         const rows = segment.panes.map(renderItem).filter(Boolean);
         if (rows.length === 0) return null;
@@ -171,6 +185,6 @@ export function SettingsNav({
           </RailGroup>
         );
       })}
-    </Rail>
+    </>
   );
 }

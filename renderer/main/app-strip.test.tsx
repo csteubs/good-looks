@@ -182,20 +182,23 @@ describe("rail handle", () => {
   });
 });
 
-describe("settings", () => {
-  it("opens the settings window", () => {
+describe("the strip's own controls", () => {
+  it("carries no settings gear", () => {
+    // IT HAD ONE, and removing it is the point of the change that made Settings
+    // a view: the gear was the app's only icon-only entry point to a whole
+    // screen, so the one destination you could not read the name of was the one
+    // holding every preference. It is a labelled row in the rail now.
     renderStrip();
-    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    expect(invoke).toHaveBeenCalledWith("window:openSettings");
+    expect(screen.queryByRole("button", { name: "Settings" })).toBeNull();
   });
-});
 
-describe("the two Phase C slots", () => {
   it("renders no ⌘K affordance and no ticker", () => {
-    // Neither feature exists (REDESIGN §6.7, §6.8). A hint for a palette that
-    // does not open teaches a shortcut that answers with silence — so the slot
-    // stays empty until there is something to put in it, and this is the test
-    // that would notice a placeholder creeping in.
+    // Neither feature exists here (REDESIGN §6.7, §6.8) — the palette's own
+    // context is absent in this harness, and `CommandKey` renders nothing
+    // without it. A hint for a palette that does not open teaches a shortcut
+    // that answers with silence, so the slot stays empty until there is
+    // something to put in it, and this is the test that would notice a
+    // placeholder creeping in.
     renderStrip();
     expect(screen.queryByText(/⌘K/)).toBeNull();
     const buttons = screen.getAllByRole("button").map((b) => b.getAttribute("aria-label"));
@@ -204,7 +207,7 @@ describe("the two Phase C slots", () => {
     // Back/Forward joined the strip with the Stats drill: they are real
     // controls over the router's own history, not slots for a future feature,
     // and both are disabled here because there is nowhere to go.
-    expect(buttons).toEqual(["Hide library", "Back", "Forward", "Settings"]);
+    expect(buttons).toEqual(["Hide library", "Back", "Forward"]);
   });
 });
 
@@ -247,6 +250,61 @@ describe("the Stats drill", () => {
     pathname = "/stats/nonsense";
     renderStrip();
     await waitFor(() => expect(screen.getByText("Stats")).toBeTruthy());
+    expect(screen.queryByText(/nonsense/i)).toBeNull();
+  });
+});
+
+// ── The Settings drill's trail ────────────────────────────────────────
+//
+// Same shape as the Stats one above, same reason, and one more level: the
+// Documentation pane's topic. The rule that matters at every level is that a
+// segment is looked up rather than believed — `/settings/nonsense` must not
+// produce a crumb reading "Nonsense" over a screen that says no such section
+// exists.
+
+describe("the Settings drill", () => {
+  it("names the board", async () => {
+    pathname = "/settings";
+    renderStrip();
+    await waitFor(() => expect(screen.getByText("Settings")).toBeTruthy());
+  });
+
+  it("names the section at depth two, with Settings a link back up", async () => {
+    pathname = "/settings/storage";
+    renderStrip();
+    await waitFor(() => expect(screen.getByText("Storage")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(navigate).toHaveBeenCalledWith({ to: "/settings" });
+  });
+
+  it("names the topic at depth three, with the section still a link", async () => {
+    pathname = "/settings/documentation/setup";
+    renderStrip();
+    // The topic's own HEADING, from the parsed document — not a string this
+    // file assembled from the slug. The two coincide for this topic ("Setup"),
+    // which is why the assertion that carries the weight is the NEGATIVE one
+    // below and the two unknown-segment cases after it.
+    await waitFor(() => expect(screen.getByText(/^setup$/i)).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Documentation" }));
+    expect(navigate).toHaveBeenCalledWith({
+      to: "/settings/$pane",
+      params: { pane: "documentation" },
+    });
+  });
+
+  it("does not invent a name for a section that does not exist", async () => {
+    pathname = "/settings/nonsense";
+    renderStrip();
+    await waitFor(() => expect(screen.getByText("Settings")).toBeTruthy());
+    expect(screen.queryByText(/nonsense/i)).toBeNull();
+  });
+
+  it("does not invent a name for a topic that does not exist", async () => {
+    // The section is real, the topic is not — so the trail stops at the
+    // section rather than naming a passage nobody can be reading.
+    pathname = "/settings/documentation/nonsense";
+    renderStrip();
+    await waitFor(() => expect(screen.getByText("Documentation")).toBeTruthy());
     expect(screen.queryByText(/nonsense/i)).toBeNull();
   });
 });

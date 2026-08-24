@@ -353,7 +353,7 @@ export function InsightsView() {
           void navigate({ to: "/visual" });
           return;
         case "open-settings-integrations":
-          void window.glazeAPI.glaze.ipc.invoke("window:openSettings", "integrations");
+          void navigate({ to: "/settings/$pane", params: { pane: "integrations" } });
           return;
       }
     },
@@ -395,7 +395,7 @@ export function InsightsView() {
           ) : (
             <Btn
               tone="ghost"
-              onClick={() => void window.glazeAPI.glaze.ipc.invoke("window:openSettings", "alerts")}
+              onClick={() => void navigate({ to: "/settings/$pane", params: { pane: "alerts" } })}
             >
               Open Alerts settings
             </Btn>

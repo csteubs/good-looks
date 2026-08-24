@@ -109,10 +109,14 @@ export function AppearancePane() {
             value={asTypeface(settings.uiTypeface)}
             onValueChange={(v) => {
               const next = asTypeface(v);
-              // Applied here as well as saved. This window does not receive the
+              // Applied here as well as saved. This was the only thing that
+              // worked while Settings was its own window: it did not receive the
               // backend's appearance push — only the main window and the
               // trainer panel do — so without this line the one window the user
-              // is looking at is the one that would not change.
+              // was looking at was the one that would not change. Settings is a
+              // route in the main window now and does get the push; the direct
+              // call stays because it lands the change in the same frame as the
+              // click rather than after an IPC round trip.
               applyTypeface(next);
               void save({ uiTypeface: next });
             }}

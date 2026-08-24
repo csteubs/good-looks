@@ -1,7 +1,10 @@
-// Renderer build: four HTML entries, one shared bundle set. Three are windows
-// (main, settings, trainer panel); the fourth is the training browser's chrome
-// strip, which renders into a view inside the recorder window rather than into
-// a window of its own.
+// Renderer build: three HTML entries, one shared bundle set. Two are windows
+// (main, trainer panel); the third is the training browser's chrome strip,
+// which renders into a view inside the recorder window rather than into a
+// window of its own.
+//
+// SETTINGS IS NOT AN ENTRY. It was `settings-window.html` until it became a
+// route inside the main window — see docs/plans/settings-view.md.
 // The main-process and preload bundles are esbuild's job (scripts/build-main.mjs);
 // this config only ever sees browser code.
 
@@ -118,7 +121,6 @@ export default defineConfig(({ mode }) => ({
           rollupOptions: {
             input: {
               "main-window": path.resolve(here, "main-window.html"),
-              "settings-window": path.resolve(here, "settings-window.html"),
               "trainer-window": path.resolve(here, "trainer-window.html"),
               // Not `*-window.html`: this one is not a window. It renders into a
               // WebContentsView docked inside the TRAINING BROWSER's window,

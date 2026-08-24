@@ -20,6 +20,7 @@
 
 import { SlidersHorizontal } from "lucide-react";
 import * as React from "react";
+import { useNavigate } from "@tanstack/react-router";
 
 import { Panel, StatusChip, TONE } from "../theme";
 import type { CostCurrency, RunRecord } from "../lib/recorder-types";
@@ -162,14 +163,23 @@ export function debugTileFrom(
   };
 }
 
-/** Opens the Settings window on the Cost pane.
+/** Opens Settings on the Cost pane.
  *
  *  Deep-linked, not just "open Settings": the button's whole job is to answer
- *  "where do these numbers come from", and landing the reader on Appearance to
+ *  "where do these numbers come from", and landing the reader on the board to
  *  find out is the scavenger hunt this panel spent its first design arguing
- *  against. */
-function openCostSettings(): void {
-  void window.glazeAPI.glaze.ipc.invoke("window:openSettings", "cost");
+ *  against.
+ *
+ *  A NAVIGATION SINCE SETTINGS BECAME A VIEW. It was
+ *  `window:openSettings("cost")`, which opened a second window and left this
+ *  one behind; now the trail says Home › Settings › Cost and Back returns to
+ *  the figures that sent you. */
+function useOpenCostSettings(): () => void {
+  const navigate = useNavigate();
+  return React.useCallback(
+    () => void navigate({ to: "/settings/$pane", params: { pane: "cost" } }),
+    [navigate],
+  );
 }
 
 /** The assumptions, stated in prose under the figures they produce. The hourly
@@ -185,6 +195,7 @@ export function Assumptions({
   debugAssumptions: SavingsAssumptions;
   currency: CostCurrency;
 }) {
+  const openCostSettings = useOpenCostSettings();
   // The blanket claim drops the moment ANY number here is the user's own —
   // including the hourly rate, which is never a guess: zero is "unset" and
   // anything else was typed. "All are this app's guesses" over a wage the user

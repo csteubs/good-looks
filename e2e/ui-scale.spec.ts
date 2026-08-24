@@ -4,9 +4,9 @@
 // allowlist in `handlers.test.ts`, the service's own logic in
 // `ui-scale.test.ts` against a fake window. What neither can see is the thing
 // that actually matters: whether a real `webContents` ends up at the chosen
-// factor, whether a window opened AFTER the change inherits it, and — the one
-// that would be a bug in the product rather than in the code — whether the
-// training browser was scaled along with the app.
+// factor, whether a real layout survives the zoom, and — the one that would be
+// a bug in the product rather than in the code — whether the training browser
+// was scaled along with the app.
 //
 // That last one is why this file exists. A zoomed training browser is not a
 // cosmetic slip: the viewport width decides what a responsive site renders, so
@@ -67,11 +67,9 @@ async function zoomByUrl(app: AppFixtures["app"]): Promise<Record<string, number
         ? "training-page"
         : url.includes("recorder-chrome")
           ? "training-url-strip"
-          : url.includes("settings-window")
-            ? "settings"
-            : url.includes("trainer-window")
-              ? "trainer-panel"
-              : "main";
+          : url.includes("trainer-window")
+            ? "trainer-panel"
+            : "main";
       out[key] = wc.getZoomFactor();
     }
     return out;
@@ -91,80 +89,44 @@ test("changing the scale re-draws the open window immediately", async ({ app, wi
   await expect.poll(async () => (await zoomByUrl(app)).main).toBeCloseTo(1.25, 5);
 });
 
-test("a window opened afterwards inherits the scale", async ({ app, window }) => {
-  await setSettings(window, { uiScale: 0.9 });
-
-  const opened = app.waitForEvent("window");
-  await window.evaluate(() =>
-    (window as unknown as { glazeAPI: Invoke }).glazeAPI.glaze.ipc.invoke("window:openSettings"),
-  );
-  const settings = await opened;
-  await settings.waitForLoadState("domcontentloaded");
-
-  // The settings window is NOT an aux window, so it never receives the
-  // appearance push — it has to be scaled by the creation-site call. This is
-  // the window the setting is changed in, so it is the one where getting this
-  // wrong is most visible.
-  await expect.poll(async () => (await zoomByUrl(app)).settings).toBeCloseTo(0.9, 5);
-});
-
-test("the settings window opens wide enough to lay itself out", async ({ app, window }) => {
-  // The failure this catches, and it shipped in the first draft of this
-  // feature: the settings window is created at a fixed 760 points, which is 608
-  // CSS pixels at 125% — under the 620 its own layout declares — so it opened
-  // with the size control that caused it already cut off the right-hand edge.
-  // A minimum expressed in points is not a minimum for the VIEW.
+test("the Settings screen lays itself out at 125%", async ({ window }) => {
+  // WHAT THIS REPLACED, and why it is one test rather than three. Settings was
+  // its own `BrowserWindow`, created at a fixed 760 points — 608 CSS pixels at
+  // 125%, under the 620 its own layout declared — so it opened with the size
+  // control that caused it already cut off the right-hand edge, and a window
+  // already open when the scale went up was left clipped by the same
+  // arithmetic. Both were bugs about a window's minimum size expressed in
+  // points, and the window is gone: Settings is a pane inside the main one,
+  // whose floor is 960 CSS pixels and is scaled with everything else.
+  //
+  // The layout question survives the window and is still worth asking here,
+  // because jsdom has no layout engine and cannot answer it: at 125%, with the
+  // rail beside it, does the settings screen overflow sideways?
+  await expect(window.getByRole("heading", { name: "GOOD LOOKS!" })).toBeVisible();
   await setSettings(window, { uiScale: 1.25 });
 
-  const opened = app.waitForEvent("window");
-  await window.evaluate(() =>
-    (window as unknown as { glazeAPI: Invoke }).glazeAPI.glaze.ipc.invoke("window:openSettings"),
-  );
-  const settings = await opened;
-  await settings.waitForLoadState("domcontentloaded");
+  await window.getByRole("button", { name: /^Settings/ }).click();
+  await expect(window.getByText("How the app looks")).toBeVisible();
 
-  // What the RENDERER sees, which is the number the layout was measured in.
-  const viewport = await settings.evaluate(() => ({
-    width: document.documentElement.clientWidth,
-    scrollWidth: document.documentElement.scrollWidth,
-  }));
-  expect(viewport.width, "the settings pane's viewport in CSS pixels").toBeGreaterThanOrEqual(620);
-  expect(viewport.scrollWidth, "nothing overflows it sideways").toBeLessThanOrEqual(
-    viewport.width + 1,
-  );
-});
-
-test("a settings window ALREADY OPEN when the scale goes up is not left clipped", async ({
-  app,
-  window,
-}) => {
-  // The case the test above does not cover, and it is the one a real user hits
-  // — nobody changes the interface scale and then opens Settings, they change
-  // it IN Settings. `setMinimumSize` constrains dragging; on macOS it does not
-  // resize a window already smaller than the new minimum, so this window sat at
-  // 608 CSS pixels — under the 620 its own layout declares. It passed the
-  // newly-opened case above throughout, and was found by measuring the running
-  // app.
-  //
   // Assert on what the RENDERER reports, not on a screenshot: Playwright
   // captures a zoomed Electron window as a crop at the pre-zoom device scale,
   // so a correct window looks clipped in the image. That cost an hour.
-  const opened = app.waitForEvent("window");
-  await window.evaluate(() =>
-    (window as unknown as { glazeAPI: Invoke }).glazeAPI.glaze.ipc.invoke("window:openSettings"),
-  );
-  const settings = await opened;
-  await settings.waitForLoadState("domcontentloaded");
-
-  await setSettings(settings, { uiScale: 1.25 });
-
   await expect
-    .poll(() => settings.evaluate(() => document.documentElement.clientWidth))
-    .toBeGreaterThanOrEqual(620);
-  const overflow = await settings.evaluate(
+    .poll(async () =>
+      window.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      ),
+    )
+    .toBeLessThanOrEqual(1);
+
+  // And one section below the board, which is where the rows with a control on
+  // the right-hand edge actually are.
+  await window.getByRole("button", { name: /^Storage/ }).first().click();
+  await expect(window.getByText(/How long captured screenshots stay on disk/i)).toBeVisible();
+  const overflow = await window.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
-  expect(overflow, "nothing overflows it sideways").toBeLessThanOrEqual(1);
+  expect(overflow, "nothing overflows the settings pane sideways").toBeLessThanOrEqual(1);
 });
 
 test("the main window's floor stays the width its toolbar was measured at", async ({

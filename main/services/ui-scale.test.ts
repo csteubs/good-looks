@@ -7,9 +7,10 @@
 // return to 100%.
 //
 // The training browser is not visible from the service, which is the design:
-// `applyUiScaleToAllWindows` names the three app windows rather than asking
-// Electron for all of them, so there is no path by which the recording window
-// could be picked up. The last describe below pins that as a structural fact.
+// `applyUiScaleToAllWindows` names the app's own windows (the main window and
+// whatever registered as an aux window) rather than asking Electron for all of
+// them, so there is no path by which the recording window could be picked up.
+// The last describe below pins that as a structural fact.
 
 import * as fs from "node:fs";
 import * as os from "node:os";

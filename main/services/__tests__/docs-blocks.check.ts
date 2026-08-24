@@ -101,7 +101,7 @@ for (const rel of SHIPPED_DOCS) {
   // uses, and the two drifting apart is how a menu item silently opens the top
   // of the document instead of the section it names.
   const menu = readFileSync(join(root, "main/index.ts"), "utf-8");
-  const linked = [...menu.matchAll(/openSettingsWindow\("documentation\/([a-z0-9-]+)"\)/g)].map(
+  const linked = [...menu.matchAll(/openSettingsPane\("documentation\/([a-z0-9-]+)"\)/g)].map(
     (m) => m[1],
   );
   assert(linked.length > 0, `the Help menu deep-links topics (${linked.length})`);

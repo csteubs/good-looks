@@ -10,6 +10,108 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-24 — Settings stops being a window and becomes two views
+
+Settings had been its own `BrowserWindow` since before the redesign, and it was
+the last screen in the app with no address. `/stats`, `/visual`, `/a11y`,
+`/batch`, `/heals`, `/insights` and `/branches` are routes; Settings was an IPC
+call. Everything that follows from a route it therefore did not have: no
+breadcrumb, no back and forward, no rail selection, no ⌘K entry, and no way for
+the browser preview to reach it without mounting a second application root.
+
+The bill for the window was paid in four other places, and reading them together
+is what made this worth doing rather than tolerating:
+
+- **`settings:changed` exists because two windows could not see each other's
+  writes.** React Query's focus refetch is driven by `visibilitychange`, which
+  never fires when focus moves between two BrowserWindows of one app — a
+  background window's `visibilityState` stays `"visible"`. The channel stays
+  (the controller holds its own copy in `useState` while every other view reads
+  `["recorder-settings"]`), but it is now one window telling itself, not a
+  workaround for a boundary.
+- **Deep-linking a pane took four moving parts.** `window:openSettings("cost")`
+  was validated in the main process, concatenated into a `loadURL`, read back
+  out of `window.location.hash` by a lazy initialiser, and re-validated in the
+  renderer. A route param says it once.
+- **`applyUiScaleToAllWindows` named the settings window explicitly**, because
+  it was not registered as an aux window and was the one window the setting is
+  changed in. That entry is gone; the window the scale is changed in is now the
+  window it is displayed in, by definition.
+- **REDESIGN §B4 asked for exactly this and could not have it.** Its line —
+  *"the rail becomes the settings nav while in settings (the panes are the
+  navigation), and the library list hides. Same surface, two jobs"* — shipped
+  with the caveat that there was no library list to hide. This is what
+  discharges it: `library-sidebar.tsx` renders the pane list where the library
+  would be, the way it already renders `RoutinesRail` on `/batch`.
+
+**Two routes, on the Stats drill's shape.** `/settings` is the board and
+`/settings/$pane` is one section, with `/settings/$pane/$topic` for the
+Documentation pane's topic — which was the second segment of the URL fragment
+before and had nowhere else to go.
+
+**The board is a screen, not a redirect to the first pane.** The redirect is one
+line and it is what the window did, so it was the obvious choice; it was
+rejected for two reasons. An address that renders nothing of its own puts a
+"Settings" crumb above a pane pointing at the pane you are already standing on.
+And a card can carry `PaneDef.subtitle` — the line saying what is inside a
+section, "How long captured screenshots stay on disk", "What happens when a
+step's locator stops matching" — which a 190px rail row has never had room for.
+The rail is a list of names for someone who knows them; the board is what
+answers "what is in Settings". Both are built from `PANES` and `modifiedKeys`,
+so neither introduces state or a concept.
+
+**The scope is above the SplitView, and that is forced.** On this screen the
+rail lists the panes and the content renders one, and they are the SplitView's
+`sidebar` and its `children` — siblings. Both need the controller (the rail
+draws each pane's modified count) and both need the search query (it filters the
+rail's rows and the rows inside a pane together, which is the whole design of
+the settings search). So `RootShell` wraps the entire shell in `SettingsScope`
+while a settings route is open, and in nothing at all otherwise — the fourteen
+loads the controller fires are the same ones the window used to fire on open,
+and no other screen pays for them.
+
+**The search query is not a route search param.** It was considered: a filter
+someone types and clears is not a place, and making it addressable costs either
+a history entry per keystroke or `replace: true` on every one of them. What DOES
+navigate is the consequence — a search that empties the pane you are on moves
+you to one with hits, because otherwise the rail advertises matches beside a
+blank pane, which reads as broken search. That move is `replace: true` for the
+same reason the query is not in the address: Back must return you to wherever
+you entered Settings from, not walk back through a query letter by letter.
+
+**Escape no longer does anything.** It closed the window. There is no window, and
+the main window's command palette, AI debug panel and every dialog already own
+that key — a fourth claimant would be competing to do what Back does.
+
+**The application menu needed a push, and a held one.** ⌘, and the six Help
+items are built in the main process, before the first window exists, and macOS
+keeps the app alive with no windows at all. So a menu click with no window
+creates one and holds the target, replayed from `ready-to-show` — the same
+pattern `takePendingDeepLink` already implements, for the same reason. The
+target is validated twice and the two checks are deliberately not one shared
+rule: `settingsTarget` in the main process asks "is this a legal segment",
+because the value is about to become a path segment, and `paneById` in the
+renderer asks "is this a pane that exists". Different questions.
+
+**One unrelated thing had to move, and the check found it.** Settings → Editor
+lists every keymap binding, and it got that list from `main/editor-keymaps.ts`,
+which imports `@codemirror/commands`, `/language`, `/search` and `/view` at
+module scope. Invisible while Settings was its own entry chunk. The moment it
+was in the main window's graph, CodeMirror was in the app's startup bundle —
+`check:script-ide-layout` went red on both its assertions, which is exactly what
+it exists for, because the editor is behind `React.lazy` so that opening the app
+does not pay for it. The table and the labels are now `renderer/lib/
+editor-keymap-table.ts` with no CodeMirror import, and `editor-keymaps.ts` is
+the handler map over it. That split is worth having on its own: a settings table
+of labels and key caps never needed an editor.
+
+**One behaviour genuinely changed and is worth knowing about.** The settings
+window ran its own `QueryClient` with `retry: false, refetchOnWindowFocus: false`;
+the main window's is a bare `new QueryClient()`. Any pane query — in practice
+the Alerts pane's insights status — now retries and refetches on focus like the
+rest of the app. That is the app's own default rather than a regression, and it
+is stated here because it was not a decision anyone made twice.
+
 ### 2026-08-24 — Three source-level assertions that could be defeated, and the shape they share
 
 A self-review of the trainer signature work (#246) found five things; three of

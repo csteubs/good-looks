@@ -15,7 +15,7 @@ import {
   Text,
   toast,
 } from "@ui";
-import { Accessibility, Plus, ChevronDown, ChevronRight, Folder, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy, Workflow } from "lucide-react";
+import { Accessibility, Plus, ChevronDown, ChevronRight, Folder, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Settings, Sparkles, Tag, Wand2, Copy, Workflow } from "lucide-react";
 
 import { ChromeButton, Rail, RailEmpty, RailGroup, RailRow, SiteIcon } from "../theme";
 import { RoutinesRail, useCreateRoutine } from "./routines-rail";
@@ -35,6 +35,8 @@ import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { describeDuplicationWarnings, type DuplicationWarning } from "../lib/duplicate-warnings";
 import { importFromFiles as runFolderImport } from "../lib/import-from-files";
 import { nativeShell } from "../lib/native-shell";
+import { SettingsRailRows, SettingsRailSearch } from "../settings/settings-rail";
+import { isSettingsPath } from "../lib/settings-route";
 import { BranchesRailRow } from "./branches-rail-row";
 import { InsightsRailRow } from "./insights-rail-row";
 import { useAiDebug } from "./ai-debug-store";
@@ -168,12 +170,6 @@ function nativeMenu(): NativeMenu {
   return (window as unknown as { glazeAPI: { Menu: NativeMenu } }).glazeAPI.Menu;
 }
 
-function openSettingsWindow(): void {
-  (window as unknown as { glazeAPI: { glaze: { ipc: { invoke: (c: string) => Promise<void> } } } })
-    .glazeAPI.glaze.ipc.invoke("window:openSettings")
-    .catch(() => {});
-}
-
 const PROVIDER_LABEL: Record<LlmProvider, string> = {
   ollama: "Ollama",
   lmstudio: "LM Studio",
@@ -185,9 +181,10 @@ type ConnState = "checking" | "connected" | "disconnected";
 /** Sidebar footer indicator for the configured AI provider. Always visible
  * (for local and cloud providers), showing a green dot when connected, a red
  * dot when not, or a loading dot while probing. Clicking opens Settings on the
- * AI provider section. Re-checks on window focus so a connection just made in
- * Settings is reflected here. */
-function AiConnectionFooter() {
+ * AI provider section — a navigation now that Settings is a view, where it used
+ * to be an `window:openSettings` IPC call. Re-checks on window focus so a
+ * connection just made is reflected here. */
+function AiConnectionFooter({ onOpen }: { onOpen: () => void }) {
   const [state, setState] = React.useState<ConnState>("checking");
   const [label, setLabel] = React.useState<string>("");
 
@@ -237,7 +234,7 @@ function AiConnectionFooter() {
     <RailRow
       icon={<Status variant={variant} aria-label={ariaLabel} />}
       title={state === "connected" ? label : label.split(" — ")[0]}
-      onClick={openSettingsWindow}
+      onClick={onOpen}
       // `hint` (the native title): the error detail has to be reachable
       // without hover-openable chrome (jsdom cannot open a Radix tooltip).
       hint={state === "disconnected" ? label : undefined}
@@ -392,6 +389,11 @@ export function LibrarySidebar() {
   const selectedId = params.id;
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const onRoutines = pathname === "/batch";
+  // The rail's third and now fourth job. `isSettingsPath` is the ONE spelling
+  // of this question — `RootShell` asks it too, to mount the controller these
+  // rows read, and a rail that swapped a beat earlier or later than the scope
+  // would throw out of `useSettingsController`.
+  const onSettings = isSettingsPath(pathname);
   // Declared unconditionally — it is a hook, and the rail renders on every
   // screen. Its queries are ones the app already holds.
   const newRoutine = useCreateRoutine();
@@ -688,15 +690,35 @@ export function LibrarySidebar() {
 
   return (
     <Rail
-      // ONE RAIL, THREE JOBS. REDESIGN §7.1 gives it a third: on the Routines
-      // screen it lists saved jobs instead of the library, the way Settings'
-      // rail lists panes. It swaps rather than stacking — two lists in one rail
-      // makes the rail a screen of its own, and what is navigated here is jobs.
-      // Nothing is lost: the checklist's own rows still open a test.
-      title={onRoutines ? "Routines" : "Library"}
-      footer={<AiConnectionFooter />}
+      // ONE RAIL, THREE JOBS — and REDESIGN §B4's is the third of them, at last.
+      // §7.1 gave it Routines ("on the Routines screen it lists saved jobs
+      // instead of the library, the way Settings' rail lists panes"), which was
+      // written against a Settings that had a rail of its own inside its own
+      // window. §B4's actual sentence — "the rail becomes the settings nav while
+      // in settings (the panes *are* the navigation), and the library list
+      // hides. Same surface, two jobs" — could not be had until Settings became
+      // a route. It is this.
+      //
+      // Each swaps rather than stacking: two lists in one rail makes the rail a
+      // screen of its own, and what is navigated on each of those screens is
+      // jobs, or sections — not tests. Nothing is lost either time, because the
+      // Views nav below and the footer are outside the body and stay put.
+      title={onSettings ? "Settings" : onRoutines ? "Routines" : "Library"}
+      footer={
+        <AiConnectionFooter
+          onOpen={() => navigate({ to: "/settings/$pane", params: { pane: "ai" } })}
+        />
+      }
+      // The settings search, in the slot `Rail` pins above the scroller. The
+      // main window passes nothing on every other screen, so the rail is
+      // byte-identical there.
+      search={onSettings ? <SettingsRailSearch /> : undefined}
       actions={
-        onRoutines ? (
+        // NO `+` IN SETTINGS. The header action is "add one of what this list
+        // holds", and the list holds the app's own sections — there is no
+        // nineteenth to make. An action that cannot mean anything is worse than
+        // an empty corner.
+        onSettings ? undefined : onRoutines ? (
           <ChromeButton label="New routine" onClick={newRoutine}>
             <Plus aria-hidden="true" />
           </ChromeButton>
@@ -763,10 +785,25 @@ export function LibrarySidebar() {
               onOpenBranches={() => navigate({ to: "/branches" })}
             />
           ) : null}
+          {/* LAST, and a row rather than a gear in the corner of the top strip.
+              Settings is a labelled destination like every other screen the app
+              has, so it belongs in the list of them — and an icon-only button
+              in the chrome was the one entry point whose name you had to hover
+              to read. Selected for the board AND for every pane below it: the
+              rail says which SCREEN you are on, and all of them are this one. */}
+          <RailRow
+            icon={<Settings aria-hidden="true" />}
+            title="Settings"
+            subtitle="Preferences & connections"
+            selected={onSettings}
+            onClick={() => navigate({ to: "/settings" })}
+          />
         </RailGroup>
       }
     >
-      {onRoutines ? (
+      {onSettings ? (
+        <SettingsRailRows />
+      ) : onRoutines ? (
         <RoutinesRail />
       ) : tests.length === 0 ? (
         <RailEmpty>

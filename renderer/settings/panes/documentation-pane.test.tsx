@@ -5,7 +5,11 @@
 // — each of which leaves a pane that renders fine and tells the user nothing:
 //
 //   • A deep link lands on the wrong topic (or on the first one), so every Help
-//     menu item appears to do the same thing.
+//     menu item appears to do the same thing. The link is a route param now
+//     (`/settings/documentation/setup`) rather than the second segment of a URL
+//     fragment, and it reaches the pane as the `topic` prop — the pane itself
+//     still knows nothing about the router, which is what keeps these tests
+//     able to render it against a hand-built controller and no router at all.
 //   • A block kind stops rendering. A table or a code fence that draws nothing
 //     leaves the surrounding prose intact and looks deliberate.
 //   • The copy button copies the wrong thing, or offers a command for a server
@@ -16,7 +20,7 @@
 //     that fix, `user-select: text`, cannot be asserted here at all (the dom
 //     project runs with `css: false`); `check:docs-copyable` holds that end.
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 import { renderPane } from "../__tests__/harness";
@@ -37,12 +41,7 @@ vi.mock("../../lib/api", () => ({
 const writeText = vi.fn();
 const openExternal = vi.fn();
 
-function setHash(hash: string) {
-  window.location.hash = hash;
-}
-
 beforeEach(() => {
-  setHash("");
   mcpServer.mockClear();
   writeText.mockClear();
   openExternal.mockClear();
@@ -50,10 +49,6 @@ beforeEach(() => {
     clipboard: { writeText },
     shell: { openExternal },
   };
-});
-
-afterEach(() => {
-  setHash("");
 });
 
 /**
@@ -93,30 +88,43 @@ describe("topics", () => {
   it("opens on the topic a deep link names", () => {
     // The whole point of the Help menu. Landing on the first topic instead
     // would make every menu item look identical.
-    setHash("#documentation/troubleshooting");
-    renderPane(<DocumentationPane />);
+    renderPane(<DocumentationPane topic="troubleshooting" />);
     expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
       titleOf("troubleshooting"),
     );
   });
 
   it("falls back to the first topic when the slug is unknown", () => {
-    setHash("#documentation/no-such-section");
-    renderPane(<DocumentationPane />);
+    renderPane(<DocumentationPane topic="no-such-section" />);
     expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
       MCP_GUIDE.topics[0].title,
     );
   });
 
   it("switches topic on click", () => {
+    // The UNCONTROLLED path — no `onSelectTopic`, so selection is the pane's
+    // own state. This is what it does anywhere outside the router.
     renderPane(<DocumentationPane />);
     fireEvent.click(screen.getByRole("button", { name: titleOf("setup") }));
     expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(titleOf("setup"));
   });
 
+  it("hands the pick to its owner rather than switching itself", () => {
+    // The CONTROLLED path, which is the one the app uses: the topic is in the
+    // address, so picking one has to be a navigation. A pane that also moved
+    // its own state would be a second answer to "which topic", and the trail
+    // above it would go on naming the first.
+    const onSelectTopic = vi.fn();
+    renderPane(<DocumentationPane topic="troubleshooting" onSelectTopic={onSelectTopic} />);
+    fireEvent.click(screen.getByRole("button", { name: titleOf("setup") }));
+    expect(onSelectTopic).toHaveBeenCalledWith("setup");
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
+      titleOf("troubleshooting"),
+    );
+  });
+
   it("marks the open topic as current", () => {
-    setHash("#documentation/setup");
-    renderPane(<DocumentationPane />);
+    renderPane(<DocumentationPane topic="setup" />);
     expect(
       screen.getByRole("button", { name: titleOf("setup") }).getAttribute("aria-current"),
     ).toBe("true");
@@ -144,8 +152,9 @@ describe("search", () => {
   it("opens a matched topic when the search filtered the open one away", () => {
     // Otherwise the rail advertises one topic while the body still shows
     // another — which reads as broken search rather than a narrowed list.
-    setHash("#documentation/setup");
-    renderPane(<DocumentationPane />, { matchedIds: [docRowId("troubleshooting")] });
+    renderPane(<DocumentationPane topic="setup" />, {
+      matchedIds: [docRowId("troubleshooting")],
+    });
     expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
       titleOf("troubleshooting"),
     );
@@ -156,15 +165,13 @@ describe("rendering the document", () => {
   it("draws a table with its rows, not just its header", () => {
     // Wait for content, not the container: a table element renders whether or
     // not any cell did.
-    setHash("#documentation/troubleshooting");
-    renderPane(<DocumentationPane />);
+    renderPane(<DocumentationPane topic="troubleshooting" />);
     const table = screen.getAllByRole("table")[0];
     expect(within(table).getAllByRole("row").length).toBeGreaterThan(2);
   });
 
   it("draws code blocks", () => {
-    setHash("#documentation/setup");
-    const { container } = renderPane(<DocumentationPane />);
+    const { container } = renderPane(<DocumentationPane topic="setup" />);
     const blocks = [...container.querySelectorAll("pre.gl-doc-pre")];
     expect(blocks.length).toBeGreaterThan(0);
     // ANY block, not `blocks[0]`. The subject here is that fenced code renders
@@ -185,8 +192,7 @@ describe("rendering the document", () => {
     // The guide links relative repo paths. `shell.openExternal` accepts https
     // on github.com and nothing else, so an underlined relative link would be a
     // control that does nothing — worse than plain text.
-    setHash("#documentation/see-also");
-    const { container } = renderPane(<DocumentationPane />);
+    const { container } = renderPane(<DocumentationPane topic="see-also" />);
     expect(container.querySelector(".gl-doc-link")).toBeNull();
     expect(container.textContent).toContain("mcp/README.md");
   });
@@ -194,8 +200,7 @@ describe("rendering the document", () => {
 
 describe("the MCP server on this machine", () => {
   it("offers the resolved command, and copies exactly that", async () => {
-    setHash("#documentation/setup");
-    renderPane(<DocumentationPane />);
+    renderPane(<DocumentationPane topic="setup" />);
     const button = await screen.findByRole("button", { name: /copy command/i });
     fireEvent.click(button);
     expect(writeText).toHaveBeenCalledWith(
@@ -210,8 +215,7 @@ describe("the MCP server on this machine", () => {
     // reason — it is what turns a packaging mistake into a message instead of a
     // command that names nothing.
     mcpServer.mockResolvedValueOnce({ path: "/app/mcp/server.mjs", exists: false, command: "" });
-    setHash("#documentation/setup");
-    renderPane(<DocumentationPane />);
+    renderPane(<DocumentationPane topic="setup" />);
     await waitFor(() => {
       expect(screen.getByText(/not where this copy of the app expects it/i)).toBeTruthy();
     });
@@ -222,8 +226,7 @@ describe("the MCP server on this machine", () => {
   });
 
   it("shows nothing extra on other topics", () => {
-    setHash("#documentation/troubleshooting");
-    renderPane(<DocumentationPane />);
+    renderPane(<DocumentationPane topic="troubleshooting" />);
     expect(screen.queryByRole("button", { name: /copy command/i })).toBeNull();
   });
 });
@@ -242,8 +245,7 @@ describe("copying a command", () => {
     // shipped with one — on the machine-specific card — which is exactly the
     // state this test describes as broken: the reader learns that a block
     // without a button is one to retype.
-    setHash("#documentation/setup");
-    const { container } = renderPane(<DocumentationPane />);
+    const { container } = renderPane(<DocumentationPane topic="setup" />);
     const found = blocks(container);
     expect(found.length).toBeGreaterThan(0);
     expect(container.querySelectorAll("pre.gl-doc-pre").length).toBe(found.length);
@@ -253,8 +255,7 @@ describe("copying a command", () => {
   it("copies the block it sits on, exactly", () => {
     // The failure this rules out is the one a screenshot cannot: a button that
     // copies the first block on the page whichever one you pressed.
-    setHash("#documentation/setup");
-    const { container } = renderPane(<DocumentationPane />);
+    const { container } = renderPane(<DocumentationPane topic="setup" />);
     const found = blocks(container);
     const last = found[found.length - 1];
     fireEvent.click(last.button as HTMLElement);
@@ -265,8 +266,7 @@ describe("copying a command", () => {
   it("acknowledges the copy", () => {
     // Writing to the clipboard is invisible. Without the tick the only way to
     // know the press landed is to paste somewhere and look.
-    setHash("#documentation/setup");
-    const { container } = renderPane(<DocumentationPane />);
+    const { container } = renderPane(<DocumentationPane topic="setup" />);
     const button = blocks(container)[0].button as HTMLElement;
     expect(iconOf(button)).toBe("copy");
     fireEvent.click(button);
@@ -276,8 +276,7 @@ describe("copying a command", () => {
   it("copies the resolved command from the card's own block", async () => {
     // Same control as every other block — only the name differs, because this
     // is the one command that is about the reader's machine.
-    setHash("#documentation/setup");
-    const { container } = renderPane(<DocumentationPane />);
+    const { container } = renderPane(<DocumentationPane topic="setup" />);
     const button = await screen.findByRole("button", { name: /copy command/i });
     expect(button.closest(".gl-doc-codeblock")).toBeTruthy();
     fireEvent.click(button);

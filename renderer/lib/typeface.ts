@@ -49,10 +49,14 @@ export function asTypeface(v: unknown): UiTypeface {
 
 /** Write the typeface to the document element.
  *
- *  Exported because the Settings window has to call it directly on save: it is
- *  not registered as an aux window, so it does not receive the backend push
- *  that updates every other window — and the one window that must obey this
- *  setting immediately is the one it is changed in. */
+ *  Exported because the Appearance pane calls it directly on save. That used to
+ *  be the only thing that worked: Settings was its own window, was not
+ *  registered as an aux window, and so never received the backend push that
+ *  updates every other window — leaving the one window the user was looking at
+ *  while changing the setting as the one that did not change. Settings is a
+ *  route in the main window now and DOES get the push; the direct call stays
+ *  because it lands the change in the same frame as the click rather than
+ *  after an IPC round trip. */
 export function applyTypeface(typeface: UiTypeface): void {
   const root = document.documentElement;
   if (typeface === "space") root.removeAttribute("data-gl-typeface");

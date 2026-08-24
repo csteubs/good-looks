@@ -8,7 +8,6 @@ import * as path from "path";
 import { fileURLToPath } from "url";
 
 import { appHandlers } from "./app.js";
-import { getSettingsWindow, openSettingsWindow } from "../windows/settings-window.js";
 import {
   dock as dockTrainerPanel,
   getTrainerPanelDockState,
@@ -190,16 +189,11 @@ export function registerHandlers(): void {
     return path.join(__dirname, "..", "..");
   });
 
-  // Settings window handlers
-  // `pane` is optional and deep-links a FRESH window onto one pane — see
-  // `openSettingsWindow`, which validates it before it reaches a URL.
-  ipcMain.handle("window:openSettings", async (_event, pane?: string) => {
-    await openSettingsWindow(pane);
-  });
-
-  ipcMain.handle("window:closeSettings", async (_event) => {
-    getSettingsWindow()?.close();
-  });
+  // NO `window:openSettings` / `window:closeSettings`. Settings is a route in
+  // the main window now (docs/plans/settings-view.md), so opening it is
+  // `navigate({ to: "/settings" })` in the renderer and needs no backend at
+  // all. The one caller that still lives in the main process is the
+  // application menu, which pushes `settings:open` — see main/index.ts.
 
   // Where this install's MCP server is. Read-only, and it answers "not here"
   // rather than throwing — the pane renders both outcomes.

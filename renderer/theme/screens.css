@@ -1207,6 +1207,104 @@
   white-space: nowrap;
 }
 
+/* ── Settings, the screen (settings-view.tsx) ─────────────────────────
+   Settings became two ROUTED views in the main window rather than a window of
+   its own — docs/plans/settings-view.md. What that costs in CSS is a screen
+   shell it never needed before: it used to be a `SplitView` filling its own
+   document, and it is now one pane inside the app's, beside a rail it does not
+   own.
+
+   The row treatment below is untouched by any of it. */
+.gl-settings {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* The board — `/settings`. One `Panel` per sidebar group, cards inside. */
+.gl-settings-board {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+}
+
+/* A fluid column count rather than a fixed one: this pane is between ~600px and
+   the width of a display, and eighteen sections in one column is the flat
+   scroll the whole redesign exists to end.
+
+   `auto-fill`, NOT `auto-fit`, and the difference is visible on this screen:
+   auto-fit collapses the empty tracks, so the ungrouped segment holding only
+   Appearance drew one card the full width of the pane while the ten cards under
+   Testing were a quarter of it. Keeping the empty tracks keeps every card the
+   same width whatever its segment holds. */
+.gl-settings-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 6px;
+}
+
+.gl-settings-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid var(--gl-line);
+  background: transparent;
+  text-align: start;
+}
+
+.gl-settings-card:hover {
+  background: var(--gl-sel-bg);
+}
+
+.gl-settings-card:focus-visible {
+  outline: 1px solid var(--gl-sel-ring);
+  outline-offset: -1px;
+}
+
+.gl-settings-card-icon {
+  display: flex;
+  flex: 0 0 auto;
+  padding-block-start: 1px;
+  color: var(--gl-tx-3);
+}
+
+.gl-settings-card-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gl-settings-card-title {
+  color: var(--gl-tx-1);
+  font-size: 12px;
+}
+
+/* THE LINE THE RAIL HAS NO ROOM FOR, which is the whole reason the board
+   exists beside a sidebar listing the same names. Wrapped, not truncated —
+   a subtitle cut at 240px says less than no subtitle. */
+.gl-settings-card-sub {
+  color: var(--gl-tx-3);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+/* One section — `/settings/$pane`. The margin at the end is what keeps the
+   reset footer clear of the scroller's edge. */
+.gl-settings-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin-block-end: 32px;
+  padding-inline: 16px;
+  padding-block-start: 10px;
+}
+
 /* ── Settings (B4) ────────────────────────────────────────────────────── */
 
 /*
