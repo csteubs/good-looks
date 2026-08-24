@@ -23,6 +23,9 @@
 //      section: it asks a real server whether the header arrived, which is the
 //      one question source-level assertions cannot answer.
 //
+//   3b. THE LIVE PAGE PRESENTS IT TOO. The app's third surface that loads a
+//      customer's site, and the one that had neither credential.
+//
 //   4. A SIGNING-ONLY RUN WRITES NOTHING. Source-level again. Settling shipped
 //      this bug once: a redirect reason that produces no artifact still pruned
 //      the artifact history and created an empty run dir.
@@ -177,16 +180,37 @@ const SIGNATURE_INPUT =
     "the header handler counts what it signed — the run fixture's per-host tally, on the " +
       "trainer side, where the only other evidence is a page that quietly serves a password form",
   );
-  const stop = src.slice(src.indexOf("function stopPolling("));
+  // Bounded to the function, not "from here to the end of the file". The first
+  // version of this sliced from `indexOf` to EOF, which is most of the module —
+  // so it asserted only that those strings exist SOMEWHERE below, and would
+  // have stayed green with the resets moved anywhere at all. Which is exactly
+  // what happened next: they belonged in `destroyViews`, not here.
+  const fnBody = (name: string): string => {
+    const at = src.indexOf(`function ${name}(`);
+    if (at < 0) return "";
+    const end = src.indexOf("\n}", at);
+    return end < 0 ? "" : src.slice(at, end);
+  };
+  const report = fnBody("reportSignatures");
   assert(
-    /signatureArmed = \[\];/.test(stop) && /signedRequests = new Map\(\);/.test(stop),
-    "…and stopPolling resets BOTH halves — a tally carried into the next session reports the " +
+    /signatureArmed = \[\];/.test(report) && /signedRequests = new Map\(\);/.test(report),
+    "reportSignatures resets BOTH halves — a tally carried into the next session reports the " +
       "previous one's requests against the new one's hosts",
   );
   assert(
-    /signed: Object\.fromEntries\(signedRequests\)/.test(stop) &&
-      /armed: signatureArmed/.test(stop),
-    "…and logs the PAIR at session end, since armed-with-nothing-signed is the case worth seeing",
+    /signed: Object\.fromEntries\(signedRequests\)/.test(report) &&
+      /armed: signatureArmed/.test(report),
+    "…and logs the PAIR, since armed-with-nothing-signed is the case worth seeing",
+  );
+  // WHERE it is called from is the load-bearing part. Every teardown path runs
+  // `stopPolling` BEFORE the page is gone, so reporting there logs and resets
+  // while the listener is still installed — a request landing in that window is
+  // counted into the next session and reported against the next session's
+  // hosts. `destroyViews` is where the page actually goes away.
+  assert(
+    fnBody("destroyViews").includes("reportSignatures()"),
+    "…and is called from destroyViews, not stopPolling — the page (and the listener) is still " +
+      "alive when stopPolling runs",
   );
 
   // The trainer's start-of-session announcement. The run has named the
@@ -198,15 +222,85 @@ const SIGNATURE_INPUT =
     "the trainer announces a signature registered for a DIFFERENT host — a signature is bound " +
       "to one authority, and that is the commonest reason a trainer sits on the bot wall",
   );
-  // The guard has to be the branch that RAISES it, not merely present somewhere
-  // in the file — an announcement moved out from behind that condition is a
-  // toast on every recording for every user who has never heard of this
-  // feature, and it would still pass a bare `includes`.
-  const guardAt = src.indexOf("registered.length > 0");
+  // What this proves, precisely: the announcement is preceded by a guard on
+  // USABLE entries rather than on the plaintext register. It is an ORDERING
+  // assertion, not a structural one — it cannot prove the guard encloses the
+  // call, and saying otherwise would be the kind of overclaim that makes a
+  // green check worthless. It is still worth having, because the mistake it
+  // catches is the one that was actually made: reading
+  // `shopifySignatureStore.list()` (which carries expired and unreadable rows)
+  // where the run reads `entries()`, so the trainer named a signature that
+  // could not have worked and fired for a machine whose only signature was
+  // expired.
+  const guardAt = src.indexOf("signatureEntries.length > 0");
+  const announceAt = src.indexOf('reason: "other-host"');
   assert(
-    guardAt > 0 && guardAt < src.indexOf('reason: "other-host"'),
-    "…and only when something IS registered — a machine with no signatures has not asked for " +
-      "this feature and must not be told about it on every recording",
+    guardAt > 0 && announceAt > 0 && guardAt < announceAt,
+    "the other-host announcement is gated on USABLE entries, as announceSignatureState is — " +
+      "not on the register, which carries expired and unreadable rows",
+  );
+  assert(
+    !/registered\.map\(\(entry\) => entry\.host\)/.test(src),
+    "…and names usable hosts, never the register's — 'one is registered for X' is only " +
+      "actionable if X could actually be presented",
+  );
+}
+
+/**
+ * Source with its COMMENTS removed.
+ *
+ * Written the first time an assertion below went red against the very comment
+ * explaining why the thing it forbids is forbidden — `extraHTTPHeaders`
+ * appears in `live-page-service.ts` only inside "never
+ * `newContext({ extraHTTPHeaders })`". A source-level check that cannot tell
+ * code from prose fails on the correct fix and passes on a comment, which is
+ * both directions of wrong.
+ *
+ * Block comments, and line comments only where the line is nothing else —
+ * which is this repo's style, and which leaves a `"https://…"` inside real
+ * code alone. A trailing `//` after code would survive; nothing here needs it
+ * to be stripped, and a regex that tried would eat those URLs.
+ */
+function codeOnly(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("//"))
+    .join("\n");
+}
+
+// ── 3b. The live page presents it too ────────────────────────────────
+{
+  // The THIRD surface that loads a customer's site. It arrived after this
+  // feature and presented neither credential, so a protected storefront served
+  // the Script IDE's live page the password page while the same test's runs
+  // sailed through. Source-level here for the two properties that are silent
+  // when they break; `check:live-page` proves the header actually arrives, and
+  // `live-page-service.test.ts` proves the arm rule.
+  const src = codeOnly(readFileSync(join(root, "main/services/live-page-service.ts"), "utf-8"));
+
+  assert(
+    !src.includes("extraHTTPHeaders"),
+    "the live page never sets context-wide headers — that would hand the credential to the " +
+      "storefront's CDN, its analytics and every app the merchant installed",
+  );
+  assert(
+    src.includes("signatureForUrl("),
+    "…it decides per request through the shared signatureForUrl, not a host rule of its own",
+  );
+  // Every path out of the route handler must continue the request. An
+  // un-continued route hangs it until the page's own timeout, which presents as
+  // a live page that never finishes loading — the same property the trainer's
+  // callback has, and just as invisible.
+  const at = src.indexOf("async function installSignatureRoute(");
+  const body = src.slice(at, src.indexOf("\n}", at));
+  assert(at > 0 && /catch[\s\S]*route\.continue\(/.test(body),
+    "…and its route handler continues the request from the catch, so a throw cannot hang it",
+  );
+  assert(
+    src.includes("credentialOrigin("),
+    "the live page scopes basic auth through the SHARED credentialOrigin — an unscoped " +
+      "httpCredentials answers any server's 401, so a third-party subresource gets the password",
   );
 }
 

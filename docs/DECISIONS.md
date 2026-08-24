@@ -10,6 +10,113 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-24 — The Script IDE's live page gets both credentials
+
+The entry below closed the trainer question and named a third surface in
+passing: `live-page-service.ts` launches Playwright from the main process and
+`goto`s the test's address with no Shopify signature and no basic-auth answer.
+So the Script IDE's live page sat on the "Enter password" page of a protected
+storefront while the same test's runs sailed through, and stopped dead at a 401
+wall the trainer and the run both walk past. Chris asked for it in this PR.
+
+- **Three surfaces now, one rule each, and the rules are borrowed rather than
+  invented.** Basic auth scopes through the SAME `credentialOrigin` the
+  generated `test.use({ httpCredentials, origin })` and the trainer's `login`
+  handler use — `shared/basic-auth.mjs` exists precisely so a third consumer
+  cannot quietly disagree about where a password may go. The signature resolves
+  through the SAME `signatureForUrl`. Nothing here is a new dialect; the only
+  new code is the plumbing.
+
+- **A route, not `extraHTTPHeaders`, for the reason the run fixture already
+  argues.** Context-wide headers would hand the credential to `cdn.shopify.com`,
+  `monorail-edge.shopifysvc.com` and whatever the merchant installed. The
+  signature covers `@authority`, so presenting it at a host it was not issued
+  for is an INVALID signature offered to a verifier whose job is spotting bot
+  spoofing — worse than sending none. `check:shopify-signature` now pins the
+  absence of `extraHTTPHeaders` here as well.
+
+- **The run's TWO arm/install rules, copied deliberately.** ARM only when the
+  address being opened at is itself registered, because enabling routing
+  disables that context's HTTP cache and a machine with any signature registered
+  must not pay that on every unrelated live page. INSTALL for every registered
+  host once armed, so a second registered store typed into the address bar signs
+  too. What is NOT copied is the imported-test gate: that limit exists because
+  the run's headers travel on a fixture reached by rewriting a spec's
+  `@playwright/test` import, and the live page is a browser the editor drives,
+  not a spec the app rewrote.
+
+- **`httpCredentials` is a context-level option, and the seam grew a context —
+  though not because nothing else could carry it.** `Browser.newPage(options)`
+  accepts it too (it makes an implicit context), so `newPage` could have stayed.
+  The context is explicit because ROUTING belongs there: `page.route` covers one
+  page, and a popup the user opens from the live page is a window they are
+  looking at with the same credential expectations. One object owning both
+  halves also keeps them from drifting apart later. What is genuinely ruled out
+  is `browserType.launch` (no such option) and the deprecated
+  `context.setHTTPCredentials`, whose parameter has no `origin` field at all and
+  so can only install the unscoped credential this app exists to avoid.
+
+  So `LiveBrowserLike.newPage()` became `newContext()`, and
+  `LiveContextLike`/`LiveRouteLike` joined `LivePageLike` as the slice of
+  Playwright this service names. The seam exists so the service can be driven
+  without a browser, and it earned its keep immediately: the arm rule and the
+  credential scope are unit-testable against a fake that records what it was
+  opened with and what was routed on it.
+
+- **A limit found while doing this, in Playwright and therefore in the RUN too,
+  reported rather than fixed here.** Playwright consults a route's predicate
+  only for the ORIGINAL request: a redirect hop is never re-routed. Measured on
+  1.62.1 with a real Chromium — a same-authority `302` produced exactly one
+  predicate call and one handler call. That has a consequence the run fixture
+  has always had and this file inherits by copying it: `continue({ headers })`
+  applies its headers "to both the routed request and any redirects it
+  initiates" (Playwright's own words), so a registered storefront that redirects
+  to an authority NOT registered hands the signature to that authority. Verified
+  end to end: the unregistered host received the header.
+
+  The obvious fix is worse than the bug. Replacing `continue({headers})` with
+  `fetch({ headers, maxRedirects: 0 })` + `fulfill({ response })` does stop the
+  leak — measured, the third-party host then receives nothing — but because the
+  hop is still not re-routed it also stops signing LEGITIMATE hops, including a
+  same-authority `/` → `/password`, which is exactly the Shopify case the
+  feature exists for. Signing a redirect chain at all, in Playwright, currently
+  depends on the same header inheritance that leaks it.
+
+  So the live page uses the same `continue({ headers })` the run does — a third
+  surface with a quietly different network mechanism would be worse than a known
+  shared limit — and the limit is written down here instead of being discovered
+  again. The trainer does NOT have it: Electron's `onBeforeSendHeaders` fires per
+  hop and re-checks the host, which `e2e/shopify-signature.spec.ts` proves.
+
+- **`livePage:open` gained a `testId`, and it is optional on purpose.**
+  `check:live-page` opens a page with no test behind it, and a live page without
+  credentials is still a live page. Narrowed to a string in the handler and
+  looked up in the store there, so an id naming no test yields no credentials
+  rather than an error — opening a live page is not the moment to fail over a
+  stale id.
+
+- **The proof is at the far end of a socket, again.** `check:live-page` already
+  launched real Chromium against a local server, so the signature row went
+  there: a wall that serves the store to a signed request and the password page
+  to an unsigned one. The CONTROL runs first, before anything is registered —
+  without it a green signed row is equally consistent with a server that always
+  says yes. Verified to fail: disabling the route install turns the signed row
+  red and leaves the control green.
+
+- **A note on how it was verified here.** The sandbox this was written in cannot
+  download a Chrome for Testing build (the CDN is refused by egress policy), so
+  the check was run locally against the image's own older Chromium via
+  `executablePath`, which is not how it runs anywhere else — the committed
+  launcher is unchanged and CI installs the matching browser. Stated because
+  "ran it locally" and "ran it as it ships" are different claims.
+
+- **No new UI.** The test-detail toolbar already carries the signature chip, on
+  the same toolbar the live page is opened from, and its expired/unreadable
+  cases now stop the live page exactly as they stop a run — so the wording says
+  "runs of this test — and its live page" rather than growing a second surface
+  for the same fact. The imported case is deliberately NOT widened, because the
+  live page is not subject to it.
+
 ### 2026-08-24 — Proving the trainer signs, and giving it the two things that could say so
 
 Reported as "the crawler signature isn't being extended to the browser training
@@ -66,9 +173,16 @@ anything.** Two halves, both silent:
   the reading that arrived in the report. A third `recorder:signatureNotSent`
   reason, `other-host`, now names what is registered.
 
-  Raised only when something IS registered, matching the run's guard: a machine
-  with no signature has not asked for this feature, and a toast about it on every
-  recording is how a warning stops being read.
+  Raised only when a USABLE signature is registered — `entries()`, the decrypted
+  and unexpired set, which is what `announceSignatureState` gates on — and it
+  names only those hosts. The first version of this read the plaintext register
+  instead, which carries expired and unreadable rows, so it could fire for a
+  machine whose only signature was expired and send the user to fix a signature
+  that would not have worked at this host either. This paragraph originally
+  claimed the two guards matched; they did not, and the claim was written from
+  the intent rather than from the code. A machine with no usable signature has
+  not asked for this feature, and a toast about it on every recording is how a
+  warning stops being read.
 
 **Left alone deliberately: no toast for the working case.** The 2026-08-18 entry
 rejected a chip announcing a healthy signature — it would be on screen for every
@@ -76,15 +190,10 @@ recording against a registered store and would stop being read. That argument
 does not change because a counter now exists; the counter is for the log, which
 is where someone looks *after* something is wrong.
 
-**Found while reading, not fixed here: `live-page-service.ts` signs nothing.**
-The Script IDE's live page (2026-08-23, after this feature) launches Playwright
-from the main process and `page.goto`s the test's site with no signature and no
-basic-auth answer either. It is the app's third live page and neither credential
-path knows about it, so against a protected storefront it lands on the password
-page exactly as reported. Not folded in because it is a different feature's
-surface with its own trade to argue — the fixture's "never context-wide" rule
-applies there too, and routing disables that context's HTTP cache — and
-widening this change to cover it would land it unreviewed.
+**Found while reading, and then folded in on Chris's instruction:
+`live-page-service.ts` signed nothing.** See the entry above — the live page is
+the app's third surface that loads a customer's site, and it had neither
+credential.
 
 ### 2026-08-24 — A command in the manual can leave the app
 

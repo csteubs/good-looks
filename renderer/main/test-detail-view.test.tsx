@@ -1881,7 +1881,14 @@ describe("the Script tab's live page", () => {
   it("opens the live page at the test's address with its variables resolved, and shows the host", async () => {
     await openScriptTab();
     fireEvent.click(screen.getByRole("button", { name: "Live page" }));
-    await waitFor(() => expect(livePageOpen).toHaveBeenCalledWith("https://shop.example.com/cart", "chromium"));
+    // The TEST ID is the third argument and it is not bookkeeping: it is what
+    // lets the live page answer this test's basic-auth wall and present its
+    // Shopify crawler signature. Opened without it, the page is
+    // credential-blind and a protected storefront serves it the password page
+    // while the same test's runs sail through.
+    await waitFor(() =>
+      expect(livePageOpen).toHaveBeenCalledWith("https://shop.example.com/cart", "chromium", "t1"),
+    );
     await screen.findByText("shop.example.com");
     expect(screen.getByRole("button", { name: "Live page ●" }).getAttribute("aria-pressed")).toBe("true");
   });

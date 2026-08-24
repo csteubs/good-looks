@@ -46,6 +46,9 @@ import { expect, test, type AppFixtures } from "./fixtures.js";
 const SIGNATURE = "sig1=:dGhpcy1pcy10aGUtc2lnbmF0dXJl:";
 const SIGNATURE_INPUT =
   'sig1=("@authority");created=1735689600;expires=4102444799;keyid="kkk";alg="ed25519"';
+/** What the store fills in when the paste leaves Signature-Agent empty — the
+ *  quotes included, since the header is a structured-field String. */
+const SIGNATURE_AGENT = '"https://shopify.com"';
 
 interface Store {
   url: string;
@@ -74,7 +77,14 @@ async function startStore(thirdPartyUrl?: string): Promise<Store> {
   let signed = 0;
   let unsigned = 0;
   const server = http.createServer((req, res) => {
-    const isSigned = !!(req.headers["signature-input"] && req.headers["signature"]);
+    // The VALUES, not merely the presence of the header names. Presence alone
+    // would call a request signed when the app sent an empty, truncated or
+    // wrong-entry credential — which is a way this feature could break that
+    // looks identical from the outside.
+    const isSigned =
+      req.headers["signature-input"] === SIGNATURE_INPUT &&
+      req.headers["signature"] === SIGNATURE &&
+      req.headers["signature-agent"] === SIGNATURE_AGENT;
     seen.push(`${req.url} ${isSigned ? "signed" : "unsigned"}`);
     if (isSigned) signed++;
     else unsigned++;
@@ -169,6 +179,10 @@ test("the trainer signs every hop of a training session", async ({ app, window }
     // dropped and is not covered by the first navigation.
     await browser.click("#go");
     await browser.waitForLoadState("domcontentloaded");
+    // The URL as well as the heading: both pages say "Store home", so the
+    // heading alone cannot tell the post-click page from the pre-click one and
+    // would pass against a click that navigated nowhere.
+    await expect.poll(() => new URL(browser.url()).pathname).toBe("/collections");
     await expect(browser.locator("h1")).toHaveText("Store home");
 
     await stopRecording(window);
@@ -273,8 +287,19 @@ test("reopening an existing test for training signs it too", async ({ app, windo
 
     // The whole-list replay the trainer's ▶ runs, since that is what the user
     // watches succeed while the page sits somewhere they did not expect.
+    //
+    // NOTE WHAT THIS DOES AND DOES NOT SHOW, because the honest version is the
+    // useful one: the trainer's replayer SKIPS `goto` steps ("goto runs at test
+    // start; skipped in preview"), so a list whose only step is the initial
+    // navigation issues no request at all and reports ok. That is precisely the
+    // shape of the reported bug — a green step list over a page that never
+    // moved — so the row asserts the replay changed nothing rather than
+    // pretending it proved a navigation, and the signing claim rests on the
+    // request log below.
+    const beforeReplay = store.seen().length;
     const replay = await invoke<{ ok: boolean }>(window, "recorder:replayAll");
     expect(replay.ok).toBe(true);
+    expect(store.seen().length, "a goto-only replay issues no request").toBe(beforeReplay);
     await expect(browser.locator("h1")).toHaveText("Store home");
     await stopRecording(window);
 

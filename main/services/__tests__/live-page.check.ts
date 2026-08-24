@@ -11,11 +11,26 @@
 //
 // `pickLocator` is not driven: it waits for a human click and needs a headed
 // browser. Its parse path is covered by the unit test.
+//
+// SINCE 2026-08-24 it also proves the SHOPIFY CRAWLER SIGNATURE reaches the
+// wire. `live-page-service.test.ts` proves the route is installed and merges
+// the right headers onto a fake route; what it cannot prove is that real
+// Playwright applies that route to a real navigation and that the header
+// arrives — the same gap `e2e/shopify-signature.spec.ts` closes for the
+// trainer. The failure is silent in both directions: an unsigned request to a
+// protected storefront is answered with a perfectly good 200 serving the
+// password page, so the only place the truth exists is at the far end of the
+// socket. This check already has a socket.
 
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 
 import { livePageService, type LiveBrowserLike } from "../live-page-service.js";
+import { shopifySignatureStore } from "../shopify-signature-store.js";
+// Imported from the stub BY PATH, not through the `@shell/backend` alias: the
+// alias resolves to the real shim at type-check time, which has no such export.
+// Same idiom as variables.check.ts and alerts.check.ts.
+import { setEncryptionAvailable } from "./shell-backend-stub.js";
 
 let failures = 0;
 function assert(ok: boolean, label: string): void {
@@ -81,6 +96,101 @@ const PAGE = `<!doctype html><html><head><title>Live</title></head><body>
     assert(!livePageService.status().open, "closed");
     const after = await livePageService.countMany([{ k: "testid", v: "go" }]);
     assert(after[0].count === null, "a count with no live page is null, not a throw");
+
+    // ── The crawler signature, on a real navigation ──────────────────
+    //
+    // A second server standing in for a password-protected storefront: it
+    // serves the store to a signed request and the password page to an
+    // unsigned one, which is what Shopify's bot wall actually does. The store
+    // is registered for THIS server's authority (host:port — two ports are two
+    // authorities, and the signature covers `@authority`), then the live page
+    // is opened at it and asked what it is looking at.
+    let sawSigned = 0;
+    let sawUnsigned = 0;
+    // A THIRD-PARTY authority the storefront loads from — a stand-in for
+    // cdn.shopify.com or a merchant's analytics vendor. Two ports are two
+    // authorities, which is the relationship that matters: the signature covers
+    // `@authority`, so this one must never see it even while the page is armed.
+    let thirdPartySigned = 0;
+    let thirdPartyHits = 0;
+    const thirdParty = http.createServer((req, res) => {
+      thirdPartyHits++;
+      if (req.headers["signature-input"] || req.headers["signature"]) thirdPartySigned++;
+      res.setHeader("content-type", "image/gif");
+      res.end();
+    });
+    await new Promise<void>((r) => thirdParty.listen(0, "127.0.0.1", r));
+    const thirdPartyPort = (thirdParty.address() as AddressInfo).port;
+
+    const wall = http.createServer((req, res) => {
+      const isSigned = !!(req.headers["signature-input"] && req.headers["signature"]);
+      if (isSigned) sawSigned++;
+      else sawUnsigned++;
+      res.setHeader("content-type", "text/html");
+      res.end(
+        `<!doctype html><html><head><title>${isSigned ? "Store" : "Locked"}</title></head>` +
+          `<body><h1>${isSigned ? "Store home" : "Enter password"}</h1>` +
+          `<img src="http://127.0.0.1:${thirdPartyPort}/pixel.gif"></body></html>`,
+      );
+    });
+    await new Promise<void>((r) => wall.listen(0, "127.0.0.1", r));
+    const wallPort = (wall.address() as AddressInfo).port;
+    const wallUrl = `http://127.0.0.1:${wallPort}/`;
+    try {
+      // The control FIRST, before anything is registered: without it a green
+      // signed case is equally consistent with a server that always says yes.
+      const unsigned = await livePageService.open(wallUrl);
+      assert(unsigned.title === "Locked", `unregistered: the wall holds (title ${JSON.stringify(unsigned.title)})`);
+      await livePageService.close();
+
+      // The signature store encrypts, and the stub defaults availability to
+      // false so nothing exercises a persistence path by accident.
+      setEncryptionAvailable(true);
+      await shopifySignatureStore.upsert({
+        host: `127.0.0.1:${wallPort}`,
+        signatureInput:
+          'sig1=("@authority");created=1735689600;expires=4102444799;keyid="kkk";alg="ed25519"',
+        signature: "sig1=:dGhpcy1pcy10aGUtc2lnbmF0dXJl:",
+      });
+      const signed = await livePageService.open(wallUrl);
+      assert(signed.title === "Store", `registered: the live page is signed in (title ${JSON.stringify(signed.title)})`);
+      assert(sawSigned > 0, `the server really saw the signature headers (signed=${sawSigned})`);
+      await livePageService.close();
+
+      // THE PROPERTY THE EXACT-HOST RULE EXISTS FOR, on a real browser: while
+      // the page is ARMED and signing the storefront, the third-party image it
+      // pulls must go out unsigned. A row that merely opened at an unregistered
+      // address would not test this — nothing is routed there at all, so it
+      // reduces to "a plain page loads".
+      assert(thirdPartyHits > 0, `the storefront really pulled from the third party (hits=${thirdPartyHits})`);
+      assert(
+        thirdPartySigned === 0,
+        `a third-party authority is never offered the signature (signed=${thirdPartySigned})`,
+      );
+
+      const other = await livePageService.open(url);
+      assert(other.title === "Live", "an unregistered address still loads");
+      await livePageService.close();
+      assert(sawUnsigned >= 1, `the control ran unsigned (unsigned=${sawUnsigned})`);
+    } finally {
+      wall.close();
+      thirdParty.close();
+      // Removal WRITES the encrypted blob too, so availability stays on until
+      // this row's entry is gone — turning it off first strands the credential
+      // on disk and throws out of the cleanup. Scoped to the host THIS row
+      // registered rather than emptying the store: the stub's userData dir is
+      // shared with other checks, and a cleanup that removes everything would
+      // be a surprising thing for one row to do.
+      await shopifySignatureStore.list().then(
+        async (rows) => {
+          for (const row of rows) {
+            if (row.host === `127.0.0.1:${wallPort}`) await shopifySignatureStore.remove(row.id);
+          }
+        },
+        () => {},
+      );
+      setEncryptionAvailable(false);
+    }
   } finally {
     server.close();
     await livePageService.close().catch(() => {});

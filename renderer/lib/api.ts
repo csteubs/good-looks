@@ -288,8 +288,11 @@ export const api = {
   },
   livePage: {
     status: () => ipc().invoke<LivePageStatus>("livePage:status"),
-    open: (url: string, browser?: RunBrowser) =>
-      ipc().invoke<LivePageStatus>("livePage:open", { url, browser }),
+    /** `testId` is what lets the page answer the test's basic-auth wall and
+     *  present its Shopify crawler signature. Omit it and the page opens with
+     *  neither. */
+    open: (url: string, browser?: RunBrowser, testId?: string) =>
+      ipc().invoke<LivePageStatus>("livePage:open", { url, browser, testId }),
     close: () => ipc().invoke<void>("livePage:close"),
     /** Match counts, one per locator model, from Playwright's own resolution. */
     countMany: (locators: Locator[]) =>
