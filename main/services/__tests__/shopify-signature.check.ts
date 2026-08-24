@@ -153,12 +153,35 @@ const SIGNATURE_INPUT =
       "Electron keeps one slot per session and a second registration silently replaces the first",
   );
 
+  /**
+   * The text between two markers — or "" when either is missing.
+   *
+   * FAILS CLOSED, and that is the whole reason it exists. Every slice here used
+   * a bare `src.indexOf(end, at)` for its end marker, and `indexOf` answers -1
+   * rather than throwing: `slice(at, -1)` is then "everything from here to the
+   * last character of the file". So a marker broken by an innocent reindent did
+   * not fail the check — it silently widened the window to the rest of the
+   * module, and every assertion below went on passing against text that has
+   * nothing to do with the code it names. An empty slice fails them all
+   * instead, which is the direction a guard should break in.
+   */
+  const between = (start: string, end: string, from = 0): string => {
+    const a = src.indexOf(start, from);
+    if (a < 0) return "";
+    const b = src.indexOf(end, a + start.length);
+    return b < 0 ? "" : src.slice(a, b);
+  };
+
   // The handler body, from its registration to the end of that statement. The
   // callback must be reachable on the throwing path too: Electron holds the
   // request until it is called, so a missed call hangs it forever and presents
   // as a page that never finishes loading, with a clean log.
-  const at = src.indexOf("onBeforeSendHeaders(");
-  const body = src.slice(at, src.indexOf("\n      }\n\n      logger.info", at));
+  const body = between("onBeforeSendHeaders(", "\n      }\n\n      logger.info");
+  assert(
+    body !== "",
+    "the header handler's end marker still resolves — a slice that fails open would make every " +
+      "assertion below pass against the rest of the file",
+  );
   assert(body.includes("try {"), "the header handler wraps its work in a try");
   const afterCatch = body.slice(body.indexOf("} catch"));
   assert(
@@ -180,16 +203,33 @@ const SIGNATURE_INPUT =
     "the header handler counts what it signed — the run fixture's per-host tally, on the " +
       "trainer side, where the only other evidence is a page that quietly serves a password form",
   );
+  // THE ARMING HALF, which nothing pinned until it was pointed out. The tally's
+  // log line is gated on `signatureArmed.length > 0`, and `signatureArmed` has
+  // exactly one writer: the line beside the listener registration. Delete that
+  // one line — during any later tidy of the containment block, where it reads
+  // as redundant with the `signedHosts` field already in the "armed" log — and
+  // the value stays `[]` for every session, the end-of-session line never
+  // prints, and the whole "armed but signed zero" report is dead. It still
+  // compiles, lints, type-checks, and the e2e spec still passes because that
+  // reads the wire rather than the log. Which is the same silent-failure shape
+  // the tally was added to expose, one level up.
+  const armBlock = between("if (signatureEntries.length > 0) {", "\n      }");
+  assert(
+    /signatureArmed = signatureEntries\.map\(/.test(armBlock),
+    "the session records WHAT IT WAS ARMED FOR beside the listener registration — the tally's " +
+      "log is gated on it, so without this writer the whole diagnostic is silently dead",
+  );
+
   // Bounded to the function, not "from here to the end of the file". The first
   // version of this sliced from `indexOf` to EOF, which is most of the module —
   // so it asserted only that those strings exist SOMEWHERE below, and would
   // have stayed green with the resets moved anywhere at all. Which is exactly
   // what happened next: they belonged in `destroyViews`, not here.
   const fnBody = (name: string): string => {
-    const at = src.indexOf(`function ${name}(`);
-    if (at < 0) return "";
-    const end = src.indexOf("\n}", at);
-    return end < 0 ? "" : src.slice(at, end);
+    const a = src.indexOf(`function ${name}(`);
+    if (a < 0) return "";
+    const end = src.indexOf("\n}", a);
+    return end < 0 ? "" : src.slice(a, end);
   };
   const report = fnBody("reportSignatures");
   assert(
@@ -222,22 +262,30 @@ const SIGNATURE_INPUT =
     "the trainer announces a signature registered for a DIFFERENT host — a signature is bound " +
       "to one authority, and that is the commonest reason a trainer sits on the bot wall",
   );
-  // What this proves, precisely: the announcement is preceded by a guard on
-  // USABLE entries rather than on the plaintext register. It is an ORDERING
-  // assertion, not a structural one — it cannot prove the guard encloses the
-  // call, and saying otherwise would be the kind of overclaim that makes a
-  // green check worthless. It is still worth having, because the mistake it
-  // catches is the one that was actually made: reading
-  // `shopifySignatureStore.list()` (which carries expired and unreadable rows)
-  // where the run reads `entries()`, so the trainer named a signature that
-  // could not have worked and fired for a machine whose only signature was
-  // expired.
-  const guardAt = src.indexOf("signatureEntries.length > 0");
+  // STRUCTURAL, not ordering. The first version compared two `indexOf` results
+  // and claimed that proved the guard enclosed the announcement; it proved only
+  // that the two strings appear in that order somewhere in a four-thousand-line
+  // file. The refactor that defeats it is an ordinary readability edit — hoist
+  // the predicate into a `const` above the branch — after which the
+  // announcement is unconditional and every user who has ever registered a
+  // signature gets a toast on every recording of every unrelated host, with the
+  // check still green.
+  //
+  // So: find the announcement, walk BACK to the branch that opens it, and read
+  // that branch's own condition. Now the assertion is about the code that
+  // actually guards the call.
   const announceAt = src.indexOf('reason: "other-host"');
+  const branchAt = src.lastIndexOf("} else if (", announceAt);
+  const condition = between("} else if (", ") {", branchAt > 0 ? branchAt : 0);
   assert(
-    guardAt > 0 && announceAt > 0 && guardAt < announceAt,
-    "the other-host announcement is gated on USABLE entries, as announceSignatureState is — " +
-      "not on the register, which carries expired and unreadable rows",
+    announceAt > 0 && branchAt > 0 && condition.includes("signatureEntries.length > 0"),
+    "the other-host announcement sits INSIDE a branch guarded on USABLE entries, as " +
+      "announceSignatureState is — not on the register, which carries expired and unreadable rows",
+  );
+  assert(
+    condition.includes("!status") && condition.includes("startHost"),
+    "…and that same branch requires no entry for this host and a host it could parse — a machine " +
+      "with no signatures must not be told about a feature it is not using, on every recording",
   );
   assert(
     !/registered\.map\(\(entry\) => entry\.host\)/.test(src),

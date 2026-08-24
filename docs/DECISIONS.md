@@ -10,6 +10,55 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-24 — Three source-level assertions that could be defeated, and the shape they share
+
+A self-review of the trainer signature work (#246) found five things; three of
+them were in `check:shopify-signature` itself, and all three failed the same
+way. A source-level check reads text, and text-reading has two failure
+directions — it can pass while the property is false, and it can break while
+the property is true. This repo accepts the technique deliberately (six checks
+are source-level because jsdom cannot observe what they guard), so the interest
+is entirely in which direction each one breaks.
+
+- **A slice whose end marker is missing FAILS OPEN, and `indexOf` is why.** It
+  answers -1 rather than throwing, so `src.slice(at, -1)` is "from here to the
+  last character of the file". A marker broken by an innocent reindent
+  therefore did not fail the check — it widened the window to the rest of the
+  module and every assertion below went on passing against unrelated text. One
+  slice ran from `function stopPolling(` to EOF: 59% of the file, asserting only
+  that some strings exist *somewhere* below. Both are now taken through a
+  `between()` helper that returns `""` when either marker is missing, plus an
+  explicit assertion that the marker resolved — an empty slice fails everything,
+  which is the direction a guard should break in. Confirmed by breaking the
+  marker: three assertions go red where all three used to pass.
+
+- **Comparing two `indexOf` results proves ORDER, not STRUCTURE.** The guard on
+  the new `other-host` announcement was pinned by asserting the guard string
+  appears before the announcement string. The refactor that defeats it is an
+  ordinary readability edit — hoist the predicate into a `const` above the
+  branch — after which the announcement is unconditional, every user who has
+  ever registered a signature gets a toast on every recording of every unrelated
+  host, and the check is still green. It now finds the announcement, walks
+  **back** to the `} else if (` that opens its branch, and reads that branch's
+  own condition. Verified against exactly that hoist.
+
+- **A diagnostic's WRITER needs pinning, not only its reader.** The
+  session tally's log line is gated on `signatureArmed.length > 0`, and that
+  variable has one writer, beside the listener registration. The check asserted
+  the reset and the log; deleting the writer left the value `[]` forever, so the
+  line never printed, and the "armed but signed zero" report — the entire point
+  of the tally — was silently dead while compiling, linting, type-checking and
+  passing every assertion, including the e2e spec, which reads the wire rather
+  than the log. That is the same silent-failure shape the tally exists to
+  expose, one level up.
+
+**What the review got wrong is worth recording too.** Its verifiers read the
+working tree while it was being edited, so several findings came back "refuted"
+only because they had already been fixed underneath them. An adversarial pass
+over a moving tree cannot be trusted on the verdicts alone; each of these was
+re-confirmed by hand against the source, and each fix is accompanied by the
+mutation that turns it red.
+
 ### 2026-08-24 — The Script IDE's live page gets both credentials
 
 The entry below closed the trainer question and named a third surface in
