@@ -831,6 +831,31 @@ let downloadUnhook: (() => void) | null = null;
  *  like a channel that was never needed. */
 let captureStats = { console: 0, drain: 0, late: 0 };
 
+/**
+ * The Shopify crawler signature, this session: which hosts the trainer was
+ * ARMED for, and how many requests it actually SIGNED for each.
+ *
+ * Both halves, because only the pair is diagnostic. `armed` alone is what the
+ * "containment armed" line already reported, and it says what is REGISTERED —
+ * it reads exactly the same whether every request was signed or none was. The
+ * failure this feature has is silent by construction: a trainer that presents
+ * no signature is not an error, it is a storefront that quietly serves the
+ * password page, and from inside the app that is indistinguishable from a
+ * store that has none.
+ *
+ * The run fixture counts the same thing for the same reason
+ * (`signature-fixture-source.ts`: "a run that arms a signature and signs ZERO
+ * requests is this feature's most likely silent failure"). The trainer had no
+ * counterpart, so the one place a person actually watches the page load was
+ * the one place the app could say nothing about it.
+ *
+ * Module-level and reset by `stopPolling`, like `captureStats` above: the
+ * listener outlives any single navigation and the tally has to survive to the
+ * end of the session to be worth reading.
+ */
+let signatureArmed: string[] = [];
+let signedRequests = new Map<string, number>();
+
 /** The training PAGE's webContents, or null if the session is gone. Every
  *  page-directed call in this file goes through here — see `pageView`. */
 function pageWc() {
@@ -1799,8 +1824,21 @@ function stopPolling(): void {
   if (captureStats.console || captureStats.drain || captureStats.late || stranded) {
     logger.info("recorder", "Capture channels for this session", { ...captureStats, stranded });
   }
+  // The signature's own end-of-session line, and it is the PAIR that is worth
+  // reading: armed with nothing signed is the silent failure (a registered
+  // signature for a host this session never visited), and it looks identical
+  // from inside the app to a session that signed every request.
+  if (signatureArmed.length > 0) {
+    logger.info("recorder", "Shopify crawler signature for this session", {
+      armed: signatureArmed,
+      signed: Object.fromEntries(signedRequests),
+      signedTotal: [...signedRequests.values()].reduce((a, b) => a + b, 0),
+    });
+  }
   captureLedger.reset();
   captureStats = { console: 0, drain: 0, late: 0 };
+  signatureArmed = [];
+  signedRequests = new Map();
 }
 
 export const recorderService = {
@@ -2118,9 +2156,8 @@ export const recorderService = {
     const signatureEntries = await shopifySignatureStore.entries();
     {
       const startHost = normalizeSignatureHost(url);
-      const status = (await shopifySignatureStore.list()).find(
-        (entry) => entry.host === startHost,
-      );
+      const registered = await shopifySignatureStore.list();
+      const status = registered.find((entry) => entry.host === startHost);
       if (status && (status.state === "expired" || status.state === "unreadable")) {
         // Surfaced rather than logged. This recording will be throttled or
         // blocked, and knowing that now is the difference between abandoning it
@@ -2129,6 +2166,28 @@ export const recorderService = {
         logger.warn("recorder", "A Shopify signature for this host was not sent", {
           host: status.host,
           reason: status.state,
+        });
+      } else if (!status && startHost && registered.length > 0) {
+        // THE CASE THAT WAS SILENCE. A signature is bound to exactly one
+        // authority, so "I registered one and the trainer still shows the
+        // password page" is almost always "you registered it for the other
+        // domain" — the apex instead of the `www`, or the custom domain
+        // instead of its `*.myshopify.com` counterpart. The RUN has said this
+        // since the feature landed (`announceSignatureState`'s wrong-domain
+        // branch); the trainer said nothing at all, which left the only
+        // remaining reading "the trainer doesn't send it".
+        //
+        // Only when something IS registered. A machine with no signatures has
+        // not asked for one and must not be told about a feature it isn't
+        // using on every recording it starts.
+        sendToMain("recorder:signatureNotSent", {
+          host: startHost,
+          reason: "other-host",
+          registered: registered.map((entry) => entry.host),
+        });
+        logger.info("recorder", "No Shopify signature for the host being recorded", {
+          host: startHost,
+          registered: registered.map((entry) => entry.host),
         });
       }
     }
@@ -2218,6 +2277,7 @@ export const recorderService = {
       // first, so there must never be another one on this session —
       // check:shopify-signature pins that there is exactly one in this file.
       if (signatureEntries.length > 0) {
+        signatureArmed = signatureEntries.map((entry) => entry.host);
         recSession.webRequest.onBeforeSendHeaders({ urls: ["*://*/*"] }, (details, callback) => {
           // The callback must be invoked on EVERY path, including a throw:
           // Electron holds the request until it is called, so a missed call
@@ -2233,6 +2293,10 @@ export const recorderService = {
               callback({ requestHeaders: details.requestHeaders });
               return;
             }
+            // Counted, not just sent — see `signedRequests`. This is the only
+            // evidence anywhere that the header reached the wire, and it costs
+            // a Map write on a request that was already being rewritten.
+            signedRequests.set(entry.host, (signedRequests.get(entry.host) ?? 0) + 1);
             callback({
               requestHeaders: {
                 ...details.requestHeaders,

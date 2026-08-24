@@ -16,7 +16,12 @@
 //      because nothing else can reach it: Electron keeps ONE
 //      `onBeforeSendHeaders` slot per session and a second registration
 //      silently replaces the first, and a callback that is not invoked hangs
-//      its request forever.
+//      its request forever. Plus the two halves of "can anyone TELL?" — the
+//      per-host tally of what was actually signed, and the announcement when a
+//      signature is registered for a different host than the one being trained
+//      against. `e2e/shopify-signature.spec.ts` is the other half of this
+//      section: it asks a real server whether the header arrived, which is the
+//      one question source-level assertions cannot answer.
 //
 //   4. A SIGNING-ONLY RUN WRITES NOTHING. Source-level again. Settling shipped
 //      this bug once: a redirect reason that produces no artifact still pruned
@@ -160,6 +165,48 @@ const SIGNATURE_INPUT =
   assert(
     body.includes("signatureForUrl("),
     "…and re-checks the host itself rather than trusting the URL filter's glob semantics",
+  );
+
+  // WHAT IT SIGNED, not just what it was armed for. The run fixture counts this
+  // because "armed and signed zero requests" is the feature's likeliest silent
+  // failure; the trainer is the surface where a person is actually watching the
+  // page, and it had no counterpart at all. A tally that is armed but never
+  // incremented reads exactly like one that signed everything.
+  assert(
+    body.includes("signedRequests.set("),
+    "the header handler counts what it signed — the run fixture's per-host tally, on the " +
+      "trainer side, where the only other evidence is a page that quietly serves a password form",
+  );
+  const stop = src.slice(src.indexOf("function stopPolling("));
+  assert(
+    /signatureArmed = \[\];/.test(stop) && /signedRequests = new Map\(\);/.test(stop),
+    "…and stopPolling resets BOTH halves — a tally carried into the next session reports the " +
+      "previous one's requests against the new one's hosts",
+  );
+  assert(
+    /signed: Object\.fromEntries\(signedRequests\)/.test(stop) &&
+      /armed: signatureArmed/.test(stop),
+    "…and logs the PAIR at session end, since armed-with-nothing-signed is the case worth seeing",
+  );
+
+  // The trainer's start-of-session announcement. The run has named the
+  // wrong-domain case since the feature landed (`announceSignatureState`); the
+  // trainer named only expired and unreadable, so "I registered one and the
+  // trainer still shows the password page" had no answer in the app at all.
+  assert(
+    src.includes('reason: "other-host"'),
+    "the trainer announces a signature registered for a DIFFERENT host — a signature is bound " +
+      "to one authority, and that is the commonest reason a trainer sits on the bot wall",
+  );
+  // The guard has to be the branch that RAISES it, not merely present somewhere
+  // in the file — an announcement moved out from behind that condition is a
+  // toast on every recording for every user who has never heard of this
+  // feature, and it would still pass a bare `includes`.
+  const guardAt = src.indexOf("registered.length > 0");
+  assert(
+    guardAt > 0 && guardAt < src.indexOf('reason: "other-host"'),
+    "…and only when something IS registered — a machine with no signatures has not asked for " +
+      "this feature and must not be told about it on every recording",
   );
 }
 
