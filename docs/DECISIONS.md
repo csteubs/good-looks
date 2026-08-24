@@ -10,6 +10,57 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-24 — A command in the manual can leave the app
+
+Settings → Documentation renders `docs/MCP-GUIDE.md`, and most of what it
+renders is commands: the `claude mcp add` registration line, the
+`claude_desktop_config.json` block, the Codex CLI invocation. None of them could
+be got out of the app. Dragging a cursor across one selected nothing, and only
+one block on the whole page — the machine-specific card at the end of §Setup —
+had a button. The register command is ~130 characters of absolute path, so the
+practical answer was to retype it off the screen, or to screenshot the pane and
+retype it off that.
+
+**The selection half is not a bug in this pane.** `renderer/styles.css` sets
+`user-select: none` on `body`, deliberately: the app is a native-feeling shell,
+and a drag across a step list or a run history should be a gesture rather than a
+selection. Only `input`, `textarea` and `[contenteditable]` opt back in. That
+rule is right everywhere except here — the Documentation pane is the one screen
+whose entire purpose is text meant to be run somewhere else — so the fix is a
+local opt-in on the code surfaces (`.gl-doc-pre`, its `code`, and the inline
+`.gl-doc-code`) rather than a change to the app-wide default. `cursor: text`
+goes with it, because `body` also sets `cursor: default`: without the I-beam a
+selectable block looks exactly as inert as the one that shipped, and nobody
+tries a second time.
+
+**The button half is on every block, and only on one control per block.** The
+card's labelled "Copy command" button was removed in the same change rather than
+kept alongside the new icon. Two controls that copy the same string, stacked, is
+a page that looks broken in a screenshot; worse, keeping the labelled button
+only there is what taught the reader that a block *without* one is a block to
+retype. One affordance, in the same corner of every block, learned once. It sits
+in the corner opaquely and in `--gl-panel` because the `<pre>` scrolls sideways
+underneath it — `.gl-icon-btn`'s transparent resting and translucent hover
+backgrounds both let the command's own characters through, which reads as a
+rendering fault rather than as a button.
+
+**Why `check:docs-copyable` and not a test.** Both halves are invisible to the
+suites that would otherwise hold them. The dom project runs with `css: false`,
+so `getComputedStyle(pre).userSelect` reads `""` whether the rule is present or
+not — an assertion on it would pass against the exact bug it was written for —
+and jsdom cannot host a drag-selection at all. And deleting the rule breaks
+nothing anyone can see: the pane renders identically, the buttons still work,
+and the only symptom is a cursor that will not select, which nobody discovers
+until they try. So the check reads the stylesheet and asserts the property
+directly, plus the source-level shape the buttons depend on: every fenced block
+goes through `DocCodeBlock`, so a bare `<pre>` — a block with no way out of the
+app — cannot be added back. It asserts the *premise* too, that `body` still
+suppresses selection app-wide; if that ever changes, these rules are dead weight
+and this is the thing that should say so. Verified to fail against the code
+before the fix, both halves. The button behaviour is covered from the DOM in
+`documentation-pane.test.tsx`, including that a block's button copies *that*
+block — the failure a screenshot cannot show.
+
 ### 2026-08-24 — A gap in the filmstrip shows the last frame, and says whose it is
 
 Scrubbing the Visual replay through a recorded run blanks the screen. Step 4 has

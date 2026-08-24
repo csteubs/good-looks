@@ -23,8 +23,8 @@
 // as ordinary text. An underlined thing that does nothing when clicked is worse
 // than no underline.
 
-import { useEffect, useMemo, useState } from "react";
-import { Button, toast } from "@ui";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Check, Copy } from "lucide-react";
 
 import type { DocBlock, DocSpan, DocTopic } from "../../lib/doc-blocks";
 import { APP_DOCS, docRowId } from "../../lib/docs";
@@ -83,6 +83,58 @@ function Spans({ spans }: { spans: readonly DocSpan[] }) {
   );
 }
 
+/**
+ * A command block, and the two ways a reader takes one away.
+ *
+ * BOTH OF THEM HAD TO BE BUILT, and the reason is one line in
+ * `renderer/styles.css`: `body { user-select: none }`. The app is a native
+ * shell rather than a document, so nothing in it is selectable unless it says
+ * so — which is right for a step list and wrong for a manual. This pane is the
+ * one screen whose whole purpose is text the user is meant to run somewhere
+ * else, and the register command is ~130 characters of absolute path. A
+ * command you can neither drag a cursor across nor press a button for is one
+ * you retype by hand off a screenshot. `.gl-doc-pre` opts back into selection
+ * (screens.css); this adds the button.
+ *
+ * The icon is ALWAYS THERE rather than revealed on hover — same argument as the
+ * run panel's expander: a control that only appears once the pointer happens to
+ * be over it is one nobody learns is there. It swaps to a tick for a moment,
+ * which is the feedback every other copy control in this app gives.
+ */
+function DocCodeBlock({ text, label = "Copy code" }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (timer.current !== null) clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  return (
+    <div className="gl-doc-codeblock">
+      <pre className="gl-doc-pre">
+        <code>{text}</code>
+      </pre>
+      <button
+        type="button"
+        className="gl-icon-btn gl-doc-copy"
+        aria-label={label}
+        title={label}
+        onClick={() => {
+          void window.glazeAPI.clipboard.writeText(text);
+          setCopied(true);
+          if (timer.current !== null) clearTimeout(timer.current);
+          timer.current = setTimeout(() => setCopied(false), 1500);
+        }}
+      >
+        {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+      </button>
+    </div>
+  );
+}
+
 function Block({ block }: { block: DocBlock }) {
   switch (block.kind) {
     case "heading":
@@ -110,11 +162,7 @@ function Block({ block }: { block: DocBlock }) {
         </ul>
       );
     case "code":
-      return (
-        <pre className="gl-doc-pre">
-          <code>{block.text}</code>
-        </pre>
-      );
+      return <DocCodeBlock text={block.text} />;
     case "table":
       // Its own scroller. The settings content column is ~550px and the guide
       // has three-column tables; without this the window itself scrolls
@@ -196,18 +244,13 @@ function McpServerCard() {
             The server is at <code className="gl-doc-code">{state.path}</code>. This registers it
             with Claude Code for every project:
           </p>
-          <pre className="gl-doc-pre">
-            <code>{state.command}</code>
-          </pre>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              void window.glazeAPI.clipboard.writeText(state.command);
-              toast.success("Command copied.");
-            }}
-          >
-            Copy command
-          </Button>
+          {/* One copy affordance on this page, not two. This block used to
+              carry a labelled button of its own, which made the machine-specific
+              command the only one on the page you could take away — and taught
+              the reader that a command without a button underneath it is one to
+              retype. Same control as every other block; only the name differs,
+              because this is the command about their machine. */}
+          <DocCodeBlock text={state.command} label="Copy command" />
         </>
       ) : (
         <p className="gl-doc-p">
