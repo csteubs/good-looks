@@ -10,6 +10,82 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-24 — Proving the trainer signs, and giving it the two things that could say so
+
+Reported as "the crawler signature isn't being extended to the browser training
+session": a signed run reaching a protected Shopify storefront and showing the
+store in its visual output, while the training browser for the same test sat on
+the "Enter password" page.
+
+**It is extended, and now there is proof rather than an argument.** The trainer
+attaches the headers with one `onBeforeSendHeaders` on the recording's own
+`recorder-incognito-<uuid>` session, deciding per request through
+`signatureForUrl`. `e2e/shopify-signature.spec.ts` drives the real app against a
+server that serves the store to a signed request and the password page to an
+unsigned one, and finds every hop signed: the initial navigation, the redirect
+hop, a subresource, a click that navigates, and a REOPENED test (the
+`editing: true` branch, which is what "open the browser for training" actually
+runs). A third-party origin the same page loads from is never signed, and with
+nothing registered the wall holds — without those two the passing rows would be
+equally consistent with a server that always says yes and a trainer that signs
+everything it touches. Also checked by hand during the investigation, and worth
+recording because it was the plausible discriminator: HTTPS over HTTP/2 signs
+identically, so the scheme is not it either.
+
+DECISIONS 2026-08-18 argued this needed no e2e spec — "nothing here is about
+windows, layout or a real navigation" — and settled for source-level assertions
+plus a manual pass. That reasoning was about what `e2e/` is FOR, and it held
+until someone had to answer "did the header arrive?" from outside the room where
+the manual pass happened. The source assertions pin the hook's shape; the shape
+was right and the question was still open. **When the only place a property is
+observable is the far end of a socket, the spec goes where the socket can be
+opened**, whatever the directory is nominally for — `assert-parity.spec.ts`
+already made this argument for matcher semantics.
+
+**The real defect the report exposed is that the trainer could not say
+anything.** Two halves, both silent:
+
+- **It counted nothing.** `signature-fixture-source.ts` has tallied signed
+  requests per host since the feature landed, on the stated reasoning that "a
+  run that arms a signature and signs ZERO requests is this feature's most
+  likely silent failure and is otherwise indistinguishable from success". The
+  trainer — the surface where a person is *watching the page load* — had no
+  counterpart. Its one line logged `signedHosts`, which is what is REGISTERED,
+  and reads exactly the same whether every request was signed or none was. It
+  now logs the pair (`armed` against `signed`) at session end, beside
+  `captureStats`, which exists for the same reason and was the model for it.
+
+- **It never mentioned the commonest cause.** A signature covers `@authority`,
+  so "I registered one and it isn't working" is almost always "you registered it
+  for the other domain" — the apex instead of the `www`, or a custom domain
+  instead of its `*.myshopify.com` counterpart. The run has named that case from
+  the start (`announceSignatureState`'s wrong-domain branch, whose comment says
+  precisely this). The trainer surfaced only `expired` and `unreadable`, so the
+  case that is one settings edit from fixed was the one it said nothing about —
+  and silence there leaves exactly one reading available to the user, which is
+  the reading that arrived in the report. A third `recorder:signatureNotSent`
+  reason, `other-host`, now names what is registered.
+
+  Raised only when something IS registered, matching the run's guard: a machine
+  with no signature has not asked for this feature, and a toast about it on every
+  recording is how a warning stops being read.
+
+**Left alone deliberately: no toast for the working case.** The 2026-08-18 entry
+rejected a chip announcing a healthy signature — it would be on screen for every
+recording against a registered store and would stop being read. That argument
+does not change because a counter now exists; the counter is for the log, which
+is where someone looks *after* something is wrong.
+
+**Found while reading, not fixed here: `live-page-service.ts` signs nothing.**
+The Script IDE's live page (2026-08-23, after this feature) launches Playwright
+from the main process and `page.goto`s the test's site with no signature and no
+basic-auth answer either. It is the app's third live page and neither credential
+path knows about it, so against a protected storefront it lands on the password
+page exactly as reported. Not folded in because it is a different feature's
+surface with its own trade to argue — the fixture's "never context-wide" rule
+applies there too, and routing disables that context's HTTP cache — and
+widening this change to cover it would land it unreviewed.
+
 ### 2026-08-24 — A command in the manual can leave the app
 
 Settings → Documentation renders `docs/MCP-GUIDE.md`, and most of what it
