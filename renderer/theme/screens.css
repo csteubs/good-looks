@@ -1540,6 +1540,66 @@
   white-space: pre;
 }
 
+/* ── Taking a command away ────────────────────────────────────────────
+   THE DEFAULT IN THIS APP IS THAT TEXT CANNOT BE SELECTED. `renderer/styles.css`
+   sets `user-select: none` on `body` — the app is a native shell, not a
+   document — and only `input`, `textarea` and `[contenteditable]` opt back in.
+   That is right for a step list, where a drag is a gesture rather than a
+   selection, and wrong for the one screen made of text the reader is meant to
+   run somewhere else. Every command in this pane was un-draggable and had no
+   button: the only way to get one out of the app was to retype it.
+
+   So the code surfaces say so explicitly. `cursor: text` goes with it, because
+   an I-beam is the ONLY signal that a selection is possible before you try —
+   `body` sets `cursor: default` app-wide, so without this the block looks
+   exactly as inert as it used to be. */
+.gl-doc-pre,
+.gl-doc-pre code,
+.gl-doc-code {
+  user-select: text;
+  cursor: text;
+}
+
+/* The block plus its copy button. Relative so the button can sit in the
+   corner, and NOT the scroller itself: `.gl-doc-pre` scrolls sideways, and a
+   button positioned inside a scroller slides off the edge with the command. */
+.gl-doc-codeblock {
+  position: relative;
+  margin: 0 0 10px;
+}
+
+.gl-doc-codeblock > .gl-doc-pre {
+  margin: 0;
+  /* Room for the button, so the first line does not start underneath it. */
+  padding-right: 34px;
+}
+
+/* Opaque, and the same near-black as the block it sits on, because the command
+   scrolls UNDER it: `.gl-icon-btn`'s transparent resting background lets the
+   text through, which reads as a rendering fault rather than as a button.
+
+   FLUSH TO THE CORNER for the same reason. `overflow` clips the command at the
+   PADDING BOX, so any gap between this button and that edge is a strip the
+   command's own characters show through — a 5px inset left a sliver of the
+   register command visible past the icon. At `1px` the only thing beside it is
+   the block's own hairline.
+
+   The hover value is `.gl-icon-btn`'s own `rgba(255, 255, 255, 0.05)`, mixed
+   against the block instead of composited over it — the same colour, minus the
+   translucency that would put the command back through the button. */
+.gl-doc-copy {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  padding: 0 5px;
+  background: var(--gl-panel);
+}
+
+.gl-doc-copy:hover:not(:disabled) {
+  background: color-mix(in srgb, #ffffff 5%, var(--gl-panel));
+  color: var(--gl-tx-1);
+}
+
 .gl-doc-table-wrap {
   margin: 0 0 12px;
   overflow-x: auto;

@@ -1,8 +1,8 @@
 // Tests for the Documentation pane.
 //
 // The pane renders a document nobody edits here, so the interesting assertions
-// are not about copy. They are about the three ways this can fail SILENTLY —
-// each of which leaves a pane that renders fine and tells the user nothing:
+// are not about the words. They are about the four ways this can fail SILENTLY
+// — each of which leaves a pane that renders fine and tells the user nothing:
 //
 //   • A deep link lands on the wrong topic (or on the first one), so every Help
 //     menu item appears to do the same thing.
@@ -10,6 +10,11 @@
 //     leaves the surrounding prose intact and looks deliberate.
 //   • The copy button copies the wrong thing, or offers a command for a server
 //     that is not there — the one claim in this pane about the user's machine.
+//   • A command block loses its copy button. The block still renders, the words
+//     are still right, and the only way out of the app is retyping — which is
+//     what this pane looked like until the button existed. The OTHER half of
+//     that fix, `user-select: text`, cannot be asserted here at all (the dom
+//     project runs with `css: false`); `check:docs-copyable` holds that end.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { screen, fireEvent, waitFor, within } from "@testing-library/react";
@@ -50,6 +55,19 @@ beforeEach(() => {
 afterEach(() => {
   setHash("");
 });
+
+/**
+ * Which icon a button is showing. Every lucide icon ships a `lucide-<kebab>`
+ * class, which is the only thing in the DOM that distinguishes the tick from
+ * the clipboard — same reader as `recording-view.test.tsx`.
+ */
+function iconOf(button: HTMLElement): string {
+  const svg = button.querySelector("svg");
+  if (!svg) throw new Error("no icon in the button");
+  const cls = [...svg.classList].find((c) => c.startsWith("lucide-") && c !== "lucide-icon");
+  if (!cls) throw new Error(`no lucide class on ${svg.outerHTML.slice(0, 80)}`);
+  return cls.replace(/^lucide-/, "");
+}
 
 function titleOf(slug: string): string {
   const topic = MCP_GUIDE.topics.filter((t) => t.slug === slug)[0];
@@ -207,5 +225,65 @@ describe("the MCP server on this machine", () => {
     setHash("#documentation/troubleshooting");
     renderPane(<DocumentationPane />);
     expect(screen.queryByRole("button", { name: /copy command/i })).toBeNull();
+  });
+});
+
+describe("copying a command", () => {
+  /** The `<pre>`s of the open topic, each with the button that copies it. */
+  function blocks(container: HTMLElement) {
+    return [...container.querySelectorAll<HTMLElement>(".gl-doc-codeblock")].map((wrap) => ({
+      text: wrap.querySelector("pre")?.textContent ?? "",
+      button: wrap.querySelector("button"),
+    }));
+  }
+
+  it("gives every command block a copy button", () => {
+    // EVERY block, not "a copy button exists somewhere on the page". The pane
+    // shipped with one — on the machine-specific card — which is exactly the
+    // state this test describes as broken: the reader learns that a block
+    // without a button is one to retype.
+    setHash("#documentation/setup");
+    const { container } = renderPane(<DocumentationPane />);
+    const found = blocks(container);
+    expect(found.length).toBeGreaterThan(0);
+    expect(container.querySelectorAll("pre.gl-doc-pre").length).toBe(found.length);
+    for (const block of found) expect(block.button).toBeTruthy();
+  });
+
+  it("copies the block it sits on, exactly", () => {
+    // The failure this rules out is the one a screenshot cannot: a button that
+    // copies the first block on the page whichever one you pressed.
+    setHash("#documentation/setup");
+    const { container } = renderPane(<DocumentationPane />);
+    const found = blocks(container);
+    const last = found[found.length - 1];
+    fireEvent.click(last.button as HTMLElement);
+    expect(writeText).toHaveBeenCalledWith(last.text);
+    expect(last.text.length).toBeGreaterThan(0);
+  });
+
+  it("acknowledges the copy", () => {
+    // Writing to the clipboard is invisible. Without the tick the only way to
+    // know the press landed is to paste somewhere and look.
+    setHash("#documentation/setup");
+    const { container } = renderPane(<DocumentationPane />);
+    const button = blocks(container)[0].button as HTMLElement;
+    expect(iconOf(button)).toBe("copy");
+    fireEvent.click(button);
+    expect(iconOf(button)).toBe("check");
+  });
+
+  it("copies the resolved command from the card's own block", async () => {
+    // Same control as every other block — only the name differs, because this
+    // is the one command that is about the reader's machine.
+    setHash("#documentation/setup");
+    const { container } = renderPane(<DocumentationPane />);
+    const button = await screen.findByRole("button", { name: /copy command/i });
+    expect(button.closest(".gl-doc-codeblock")).toBeTruthy();
+    fireEvent.click(button);
+    expect(writeText).toHaveBeenCalledWith(
+      'claude mcp add --scope user good-looks -- node "/repo/mcp/server.mjs"',
+    );
+    expect(container.querySelectorAll(".gl-doc-card button").length).toBe(1);
   });
 });
