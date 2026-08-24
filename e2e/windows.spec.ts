@@ -34,30 +34,6 @@ test("opening Settings opens NO second window", async ({ app, window }) => {
   expect(count).toBe(1);
 });
 
-test("the application menu lands on a settings section", async ({ app, window }) => {
-  // ⌘, and the six Help items are built in the MAIN PROCESS, before any window
-  // exists, and they now have to reach a route in the renderer. Nothing short
-  // of a real run covers that path: the push, the renderer's re-check against
-  // the pane registry, and the navigation.
-  //
-  // The menu item is invoked through its own click handler rather than by
-  // driving the native menu — a macOS menu's items never enter the DOM, and on
-  // the Linux runner CI uses there is no menu bar to open at all.
-  await expect(window.getByRole("heading", { name: "GOOD LOOKS!" })).toBeVisible();
-
-  await app.evaluate(({ Menu }) => {
-    const help = Menu.getApplicationMenu()?.items.find((i) => i.role === "help");
-    const item = help?.submenu?.items.find((i) => i.label === "Set up the MCP server");
-    if (!item) throw new Error("the Help menu has no 'Set up the MCP server' item");
-    item.click();
-  });
-
-  // The pane AND the topic below it — the deep link's whole promise is that
-  // every Help item opens a different passage.
-  await expect(window.getByRole("heading", { level: 2, name: /setup/i })).toBeVisible();
-  expect(app.windows()).toHaveLength(1);
-});
-
 test("the main process exposes exactly one main window at startup", async ({ app, window }) => {
   // Guards a specific startup failure: main/index.ts creates the main window
   // in whenReady AND on the "activate" event. If activate fires during launch

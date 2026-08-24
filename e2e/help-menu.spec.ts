@@ -10,11 +10,19 @@
 // Two halves, and the second is the one that would ship broken:
 //
 //   • The menu is registered, with the items we wrote.
-//   • Clicking one really opens Settings on the topic it names. The topic
-//     travels as a URL FRAGMENT that the main process validates
-//     (`paneFragment`), so a tightening of that validator — or a renamed
-//     heading — turns a menu item into "opens the top of the manual", which
-//     looks deliberate.
+//   • Clicking one really opens Settings on the topic it names. The topic is
+//     validated in the main process (`settingsTarget`) and re-checked in the
+//     renderer, so a tightening of either — or a renamed heading — turns a menu
+//     item into "opens the top of the manual", which looks deliberate.
+//
+// THE SECOND HALF CHANGED SHAPE WHEN SETTINGS BECAME A VIEW, and it is worth
+// knowing which part of it was load-bearing. The topic used to travel as a URL
+// FRAGMENT on a `loadURL`, so the test waited for a second window and read its
+// address. There is no second window and no address now
+// (docs/plans/settings-view.md): the menu pushes `settings:open` at the window
+// that already exists and the renderer navigates. What only an end-to-end run
+// can still answer is the same question it always answered — whether a menu
+// item built before any window existed reaches the screen at all.
 
 import { test, expect } from "./fixtures.js";
 
@@ -45,8 +53,6 @@ test("the Help menu is registered with the documentation items", async ({ app, w
 test("a Help item opens Settings on the topic it names", async ({ app, window }) => {
   await window.waitForLoadState("domcontentloaded");
 
-  const opened = app.waitForEvent("window");
-
   await app.evaluate(async ({ Menu }) => {
     const menu = Menu.getApplicationMenu();
     const help = menu?.items.filter((i) => i.role === "help" || i.label === "Help")[0];
@@ -54,16 +60,21 @@ test("a Help item opens Settings on the topic it names", async ({ app, window })
     item?.click();
   });
 
-  const settings = await opened;
-  await settings.waitForLoadState("domcontentloaded");
+  // The claim the user cares about: the pane really lands on that topic.
+  // Scoped to the document's own title, because the whole window is on screen
+  // here and its rail group headings are `h2` as well.
+  await expect(window.locator("h2.gl-doc-title")).toHaveText("Setup");
 
-  // The fragment is what carries the topic. Asserting the URL rather than only
-  // the rendered pane keeps the half that exists only here separate from the
-  // pane's own reading of it, which `documentation-pane.test.tsx` covers.
-  expect(settings.url()).toContain("#documentation/setup");
+  // And the trail agrees, which is the half a route buys that a window never
+  // could: the topic is a place you can go back from, not a window you close.
+  // Case-insensitive: the crumbs are uppercased by CSS, and whether that
+  // reaches an assertion depends on whether it reads `textContent` or
+  // `innerText`. Matching either is the honest way to say "the trail names it".
+  await expect(window.locator('nav[aria-label="Breadcrumb"]')).toContainText(/documentation/i);
 
-  // …and then the pane really lands there, which is the claim the user cares
-  // about. Scoped to the document's own title: the whole window is on screen
-  // here, and its rail group headings and pane heading are `h2` as well.
-  await expect(settings.locator("h2.gl-doc-title")).toHaveText("Setup");
+  // IN THIS WINDOW. Asserted last so a failure above reports the missing topic
+  // rather than the window count, and asserted at all because "the menu item
+  // did something" and "the menu item did it here" are different facts — the
+  // first would still pass if this quietly went back to opening a window.
+  expect(app.windows()).toHaveLength(1);
 });
