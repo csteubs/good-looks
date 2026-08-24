@@ -23,6 +23,9 @@
 //      section: it asks a real server whether the header arrived, which is the
 //      one question source-level assertions cannot answer.
 //
+//   3b. THE LIVE PAGE PRESENTS IT TOO. The app's third surface that loads a
+//      customer's site, and the one that had neither credential.
+//
 //   4. A SIGNING-ONLY RUN WRITES NOTHING. Source-level again. Settling shipped
 //      this bug once: a redirect reason that produces no artifact still pruned
 //      the artifact history and created an empty run dir.
@@ -207,6 +210,64 @@ const SIGNATURE_INPUT =
     guardAt > 0 && guardAt < src.indexOf('reason: "other-host"'),
     "…and only when something IS registered — a machine with no signatures has not asked for " +
       "this feature and must not be told about it on every recording",
+  );
+}
+
+/**
+ * Source with its COMMENTS removed.
+ *
+ * Written the first time an assertion below went red against the very comment
+ * explaining why the thing it forbids is forbidden — `extraHTTPHeaders`
+ * appears in `live-page-service.ts` only inside "never
+ * `newContext({ extraHTTPHeaders })`". A source-level check that cannot tell
+ * code from prose fails on the correct fix and passes on a comment, which is
+ * both directions of wrong.
+ *
+ * Block comments, and line comments only where the line is nothing else —
+ * which is this repo's style, and which leaves a `"https://…"` inside real
+ * code alone. A trailing `//` after code would survive; nothing here needs it
+ * to be stripped, and a regex that tried would eat those URLs.
+ */
+function codeOnly(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("//"))
+    .join("\n");
+}
+
+// ── 3b. The live page presents it too ────────────────────────────────
+{
+  // The THIRD surface that loads a customer's site. It arrived after this
+  // feature and presented neither credential, so a protected storefront served
+  // the Script IDE's live page the password page while the same test's runs
+  // sailed through. Source-level here for the two properties that are silent
+  // when they break; `check:live-page` proves the header actually arrives, and
+  // `live-page-service.test.ts` proves the arm rule.
+  const src = codeOnly(readFileSync(join(root, "main/services/live-page-service.ts"), "utf-8"));
+
+  assert(
+    !src.includes("extraHTTPHeaders"),
+    "the live page never sets context-wide headers — that would hand the credential to the " +
+      "storefront's CDN, its analytics and every app the merchant installed",
+  );
+  assert(
+    src.includes("signatureForUrl("),
+    "…it decides per request through the shared signatureForUrl, not a host rule of its own",
+  );
+  // Every path out of the route handler must continue the request. An
+  // un-continued route hangs it until the page's own timeout, which presents as
+  // a live page that never finishes loading — the same property the trainer's
+  // callback has, and just as invisible.
+  const at = src.indexOf("async function installSignatureRoute(");
+  const body = src.slice(at, src.indexOf("\n}", at));
+  assert(at > 0 && /catch[\s\S]*route\.continue\(/.test(body),
+    "…and its route handler continues the request from the catch, so a throw cannot hang it",
+  );
+  assert(
+    src.includes("credentialOrigin("),
+    "the live page scopes basic auth through the SHARED credentialOrigin — an unscoped " +
+      "httpCredentials answers any server's 401, so a third-party subresource gets the password",
   );
 }
 

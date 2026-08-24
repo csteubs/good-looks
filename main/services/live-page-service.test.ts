@@ -4,7 +4,39 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { livePageService, type LiveBrowserLike, type LivePageLike } from "./live-page-service.js";
+import {
+  livePageService,
+  type LiveBrowserLike,
+  type LiveContextLike,
+  type LiveContextOptions,
+  type LivePageLike,
+  type LiveRouteLike,
+} from "./live-page-service.js";
+
+// The three stores the service now reads to decide what this page may present.
+// Mocked rather than driven off disk: what is under test is the DECISION (arm
+// or not, scope or not), and a real store would make each case a filesystem
+// setup instead of one line.
+const signatureEntries: {
+  id: string;
+  host: string;
+  signatureInput: string;
+  signature: string;
+  signatureAgent: string;
+  expiresAt: number | null;
+}[] = [];
+let testRecord: Record<string, unknown> | null = null;
+let testSecrets: Record<string, string> = {};
+
+vi.mock("./shopify-signature-store.js", () => ({
+  shopifySignatureStore: { entries: async () => signatureEntries },
+}));
+vi.mock("./test-store.js", () => ({
+  testStore: { get: () => testRecord },
+}));
+vi.mock("./test-secrets-store.js", () => ({
+  testSecretsStore: { valuesFor: async () => testSecrets },
+}));
 
 type Handler = (...args: unknown[]) => void;
 
@@ -60,10 +92,25 @@ function fakeBrowser(opts: { counts?: Record<string, number>; pick?: string; got
     getByText: (v: string) => bySelector(`text:${v}`),
     getByLabel: (v: string) => bySelector(`label:${v}`),
   });
-  const browser: LiveBrowserLike & { closed: boolean; _fire(ev: string): void } = {
-    closed: false,
+  // The context the service now creates. It records what it was OPENED with
+  // (the basic-auth credential) and what was ROUTED on it (the signature), so a
+  // test can assert on both without a real browser — the two things the live
+  // page presents are exactly the two things this fake remembers.
+  const routes: { predicate: (url: URL) => boolean; handler: (route: LiveRouteLike) => Promise<void> | void }[] = [];
+  let contextOptions: LiveContextOptions | undefined;
+  const context: LiveContextLike = {
     async newPage() {
       return page;
+    },
+    async route(predicate, handler) {
+      routes.push({ predicate, handler });
+    },
+  };
+  const browser: LiveBrowserLike & { closed: boolean; _fire(ev: string): void } = {
+    closed: false,
+    async newContext(options) {
+      contextOptions = options;
+      return context;
     },
     async close() {
       this.closed = true;
@@ -75,12 +122,52 @@ function fakeBrowser(opts: { counts?: Record<string, number>; pick?: string; got
       for (const h of browserHandlers.get(ev) ?? []) h();
     },
   };
-  return { browser, page, highlighted, built };
+
+  /**
+   * Drive one request through whatever route the service installed, and answer
+   * with the headers it would have gone out with.
+   *
+   * Returns null when NO route matched — which is a different answer from "it
+   * matched and added nothing", and the difference is the whole arm rule.
+   */
+  async function request(url: string, initial: Record<string, string> = { accept: "*/*" }) {
+    let sent: Record<string, string> | null = null;
+    let continued = false;
+    const route: LiveRouteLike = {
+      request: () => ({ url: () => url, allHeaders: async () => initial }),
+      async continue(options) {
+        continued = true;
+        sent = options?.headers ?? initial;
+      },
+    };
+    for (const r of routes) {
+      if (!r.predicate(new URL(url))) continue;
+      await r.handler(route);
+      // Every path through the handler must continue the request, or the real
+      // browser would hang it until the page timed out.
+      if (!continued) throw new Error("the route handler did not continue the request");
+      return sent;
+    }
+    return null;
+  }
+
+  return {
+    browser,
+    page,
+    highlighted,
+    built,
+    request,
+    routeCount: () => routes.length,
+    contextOptions: () => contextOptions,
+  };
 }
 
 describe("livePageService", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    signatureEntries.length = 0;
+    testRecord = null;
+    testSecrets = {};
   });
   afterEach(async () => {
     await livePageService.close();
@@ -161,5 +248,126 @@ describe("livePageService", () => {
     livePageService.useLauncher(async () => f.browser);
     const st = await livePageService.open("https://nowhere.invalid");
     expect(st.open).toBe(true);
+  });
+  // ── The credentials this page may present ──────────────────────────
+  //
+  // The live page is the app's THIRD surface that loads a customer's site (the
+  // trainer and the run are the other two) and, until this change, the only one
+  // that presented neither credential — so a password-protected Shopify
+  // storefront served it the "Enter password" page and a basic-auth wall stopped
+  // it at the door, while the same test's runs sailed through. Every assertion
+  // below is about which requests carry what, because that is the only place
+  // the difference is observable.
+
+  const SIG = {
+    id: "s1",
+    host: "shop.example",
+    signatureInput: 'sig1=("@authority");created=1;expires=4102444799;keyid="k";alg="ed25519"',
+    signature: "sig1=:AAAA:",
+    signatureAgent: '"https://shopify.com"',
+    expiresAt: 4102444799,
+  };
+
+  it("signs requests to the registered host it opened at", async () => {
+    signatureEntries.push(SIG);
+    const f = fakeBrowser();
+    livePageService.useLauncher(async () => f.browser);
+    await livePageService.open("https://shop.example/");
+
+    const sent = await f.request("https://shop.example/collections");
+    expect(sent, "the route matched and continued the request").not.toBeNull();
+    expect(sent).toMatchObject({
+      "signature-input": SIG.signatureInput,
+      signature: SIG.signature,
+      "signature-agent": SIG.signatureAgent,
+    });
+    // allHeaders() merged, not replaced: `continue({headers})` REPLACES the
+    // header set, so a header the browser was already sending must survive.
+    expect(sent).toMatchObject({ accept: "*/*" });
+  });
+
+  it("never offers the signature to another authority the page loads from", async () => {
+    // The property the exact-host rule exists for. A storefront pulls from its
+    // CDN, its analytics and whatever apps the merchant installed; a signature
+    // presented at an authority it was not issued for is an INVALID signature
+    // shown to a verifier whose job is spotting bot spoofing.
+    signatureEntries.push(SIG);
+    const f = fakeBrowser();
+    livePageService.useLauncher(async () => f.browser);
+    await livePageService.open("https://shop.example/");
+
+    // NULL, not "matched and added nothing": the predicate is the host test, so
+    // a request to another authority is never intercepted at all — it goes
+    // straight to the network with the browser's own headers. That is a
+    // stronger guarantee than a handler that decides to add nothing, and it is
+    // the same shape the run fixture's predicate has.
+    expect(await f.request("https://cdn.shopify.com/asset.js")).toBeNull();
+    // …while the registered host still is.
+    expect(await f.request("https://shop.example/x")).toMatchObject({
+      "signature-input": SIG.signatureInput,
+    });
+  });
+
+  it("does not arm routing at all for an address with no signature", async () => {
+    // The ARM rule, and it is not fussiness: routing disables the context's
+    // HTTP cache, so a machine with any signature registered would otherwise
+    // pay that on every unrelated live page it ever opens.
+    signatureEntries.push(SIG);
+    const f = fakeBrowser();
+    livePageService.useLauncher(async () => f.browser);
+    await livePageService.open("https://unrelated.example/");
+    expect(f.routeCount()).toBe(0);
+    expect(await f.request("https://shop.example/")).toBeNull();
+  });
+
+  it("signs a SECOND registered store once armed", async () => {
+    // Two rules, deliberately, matching the run: arming is decided by the
+    // address opened at, but what is installed covers every registered host —
+    // so typing another registered store into the address bar signs it too.
+    signatureEntries.push(SIG, { ...SIG, id: "s2", host: "other.example" });
+    const f = fakeBrowser();
+    livePageService.useLauncher(async () => f.browser);
+    await livePageService.open("https://shop.example/");
+    const sent = await f.request("https://other.example/x");
+    expect(sent).toMatchObject({ "signature-input": SIG.signatureInput });
+  });
+
+  it("answers the test's basic-auth wall, scoped to the test's own origin", async () => {
+    testRecord = {
+      id: "t1",
+      url: "https://walled.example/start",
+      basicAuth: { username: "admin", passwordVar: "wallPw" },
+    };
+    testSecrets = { wallPw: "s3cret" };
+    const f = fakeBrowser();
+    livePageService.useLauncher(async () => f.browser);
+    await livePageService.open("https://walled.example/start", "chromium", "t1");
+
+    expect(f.contextOptions()?.httpCredentials).toEqual({
+      username: "admin",
+      password: "s3cret",
+      // The scope is the whole point: without an origin Playwright answers ANY
+      // server's 401, so a third-party subresource would receive the password.
+      origin: "https://walled.example",
+    });
+  });
+
+  it("presents no credential when the page is opened without a test", async () => {
+    // check:live-page opens one this way, and so would any future caller — a
+    // page with no test behind it has no credentials to present.
+    testRecord = { id: "t1", url: "https://walled.example/", basicAuth: { username: "a", passwordVar: "p" } };
+    testSecrets = { p: "x" };
+    const f = fakeBrowser();
+    livePageService.useLauncher(async () => f.browser);
+    await livePageService.open("https://walled.example/");
+    expect(f.contextOptions()?.httpCredentials).toBeUndefined();
+  });
+
+  it("presents no credential for a test that has no basic auth", async () => {
+    testRecord = { id: "t1", url: "https://plain.example/" };
+    const f = fakeBrowser();
+    livePageService.useLauncher(async () => f.browser);
+    await livePageService.open("https://plain.example/", "chromium", "t1");
+    expect(f.contextOptions()?.httpCredentials).toBeUndefined();
   });
 });

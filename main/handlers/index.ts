@@ -1269,11 +1269,17 @@ export function registerHandlers(): void {
   ipcMain.handle("livePage:status", async () => livePageService.status());
   ipcMain.handle(
     "livePage:open",
-    async (_e, params: { url: unknown; browser?: unknown }) => {
+    async (_e, params: { url: unknown; browser?: unknown; testId?: unknown }) => {
       const url = typeof params?.url === "string" ? params.url : "";
       if (!/^https?:\/\//i.test(url)) throw new Error("The live page needs an http(s) address.");
       const browser = isRunBrowser(params?.browser) ? params.browser : "chromium";
-      return livePageService.open(url, browser);
+      // WHICH TEST'S CREDENTIALS this page may present — the basic-auth answer
+      // and the Shopify signature. Narrowed to a string here and looked up in
+      // the store there, so an id naming no test yields no credentials rather
+      // than an error: opening a live page is not the moment to fail over a
+      // stale id.
+      const testId = typeof params?.testId === "string" ? params.testId : undefined;
+      return livePageService.open(url, browser, testId);
     },
   );
   ipcMain.handle("livePage:close", async () => livePageService.close());

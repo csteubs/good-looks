@@ -117,6 +117,31 @@ const handlers = read("../../handlers/index.ts");
   );
 }
 
+// ── 3b. The live page is the THIRD consumer, and it scopes ───────────────────
+{
+  // Added 2026-08-24 with the live page's credential support. Nothing in this
+  // check asserts a CARDINALITY, so it stayed green whether a third surface
+  // scoped correctly, scoped wrongly, or did not scope at all — and an unscoped
+  // `httpCredentials` answers ANY server's 401, which is the leak this whole
+  // file exists to keep closed.
+  const live = read("../live-page-service.ts");
+  assert(
+    /credentialOrigin\(/.test(live),
+    "the live page derives its scope from the SHARED credentialOrigin, not a rule of its own",
+  );
+  // From the RECORD, not from the address it was handed. The renderer passes
+  // the `${var}`-interpolated URL, so scoping off that would give a live page a
+  // different origin from the run for the same test — the third dialect.
+  assert(
+    /credentialOrigin\(rec\?\.url\)\s*\?\?\s*credentialOrigin\(rec\?\.baseUrl\)/.test(live),
+    "…off the record's own url/baseUrl, in that precedence, exactly as the run and the trainer do",
+  );
+  assert(
+    !/setHTTPCredentials/.test(live),
+    "…and never through setHTTPCredentials, which is deprecated and cannot carry an origin at all",
+  );
+}
+
 // ── 4. The renderer refreshes the secret-status the basic-auth warning reads ─
 {
   const panel = read("../../../renderer/main/variables-panel.tsx");

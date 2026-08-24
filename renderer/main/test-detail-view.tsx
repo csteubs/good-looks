@@ -361,6 +361,12 @@ export function TestDetailView() {
   // working signature is working would be noise on every run of every test
   // against a registered store; the two that need saying are the ones where the
   // user thinks they are covered and are not.
+  //
+  // Since 2026-08-24 the LIVE PAGE reads the same store, so the first two cases
+  // stop it at the wall exactly as they stop a run — the wording says so, and
+  // this chip sits on the toolbar the live page is opened from. The imported
+  // case does NOT: the live page is a browser the editor drives, not a spec the
+  // app rewrote, so the fixture's reach is not its limit.
   const signatureWarning = ((): { text: string; title: string } | null => {
     if (!test) return null;
     const host = normalizeSignatureHost(test.sourceDir ? (test.baseUrl ?? "") : (test.url ?? ""));
@@ -370,13 +376,13 @@ export function TestDetailView() {
     if (entry.state === "expired") {
       return {
         text: "Signature expired",
-        title: `The Shopify crawler signature for ${host} has expired, so runs of this test go out unsigned. An expired signature fails verification, which is worse than sending none — create a new one in your Shopify admin.`,
+        title: `The Shopify crawler signature for ${host} has expired, so runs of this test — and its live page — go out unsigned. An expired signature fails verification, which is worse than sending none — create a new one in your Shopify admin.`,
       };
     }
     if (entry.state === "unreadable") {
       return {
         text: "Signature unreadable",
-        title: `A Shopify crawler signature is registered for ${host} but can't be decrypted on this Mac, so runs of this test go out unsigned.`,
+        title: `A Shopify crawler signature is registered for ${host} but can't be decrypted on this Mac, so runs of this test — and its live page — go out unsigned.`,
       };
     }
     if (test.sourceDir) {
@@ -593,7 +599,14 @@ export function TestDetailView() {
         await api.livePage.close();
         qc.setQueryData(["live-page"], { open: false });
       } else if (liveUrl) {
-        const next = await api.livePage.open(liveUrl, test?.runBrowser ?? settingsQuery.data?.defaultRunBrowser);
+        const next = await api.livePage.open(
+          liveUrl,
+          test?.runBrowser ?? settingsQuery.data?.defaultRunBrowser,
+          // The test's id, so the page can answer its basic-auth wall and sign
+          // for its store. Without it the live page opens credential-blind and
+          // a protected storefront serves it the password page.
+          test?.id,
+        );
         qc.setQueryData(["live-page"], next);
       }
     } catch (err) {
