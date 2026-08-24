@@ -180,16 +180,37 @@ const SIGNATURE_INPUT =
     "the header handler counts what it signed — the run fixture's per-host tally, on the " +
       "trainer side, where the only other evidence is a page that quietly serves a password form",
   );
-  const stop = src.slice(src.indexOf("function stopPolling("));
+  // Bounded to the function, not "from here to the end of the file". The first
+  // version of this sliced from `indexOf` to EOF, which is most of the module —
+  // so it asserted only that those strings exist SOMEWHERE below, and would
+  // have stayed green with the resets moved anywhere at all. Which is exactly
+  // what happened next: they belonged in `destroyViews`, not here.
+  const fnBody = (name: string): string => {
+    const at = src.indexOf(`function ${name}(`);
+    if (at < 0) return "";
+    const end = src.indexOf("\n}", at);
+    return end < 0 ? "" : src.slice(at, end);
+  };
+  const report = fnBody("reportSignatures");
   assert(
-    /signatureArmed = \[\];/.test(stop) && /signedRequests = new Map\(\);/.test(stop),
-    "…and stopPolling resets BOTH halves — a tally carried into the next session reports the " +
+    /signatureArmed = \[\];/.test(report) && /signedRequests = new Map\(\);/.test(report),
+    "reportSignatures resets BOTH halves — a tally carried into the next session reports the " +
       "previous one's requests against the new one's hosts",
   );
   assert(
-    /signed: Object\.fromEntries\(signedRequests\)/.test(stop) &&
-      /armed: signatureArmed/.test(stop),
-    "…and logs the PAIR at session end, since armed-with-nothing-signed is the case worth seeing",
+    /signed: Object\.fromEntries\(signedRequests\)/.test(report) &&
+      /armed: signatureArmed/.test(report),
+    "…and logs the PAIR, since armed-with-nothing-signed is the case worth seeing",
+  );
+  // WHERE it is called from is the load-bearing part. Every teardown path runs
+  // `stopPolling` BEFORE the page is gone, so reporting there logs and resets
+  // while the listener is still installed — a request landing in that window is
+  // counted into the next session and reported against the next session's
+  // hosts. `destroyViews` is where the page actually goes away.
+  assert(
+    fnBody("destroyViews").includes("reportSignatures()"),
+    "…and is called from destroyViews, not stopPolling — the page (and the listener) is still " +
+      "alive when stopPolling runs",
   );
 
   // The trainer's start-of-session announcement. The run has named the
@@ -201,15 +222,27 @@ const SIGNATURE_INPUT =
     "the trainer announces a signature registered for a DIFFERENT host — a signature is bound " +
       "to one authority, and that is the commonest reason a trainer sits on the bot wall",
   );
-  // The guard has to be the branch that RAISES it, not merely present somewhere
-  // in the file — an announcement moved out from behind that condition is a
-  // toast on every recording for every user who has never heard of this
-  // feature, and it would still pass a bare `includes`.
-  const guardAt = src.indexOf("registered.length > 0");
+  // What this proves, precisely: the announcement is preceded by a guard on
+  // USABLE entries rather than on the plaintext register. It is an ORDERING
+  // assertion, not a structural one — it cannot prove the guard encloses the
+  // call, and saying otherwise would be the kind of overclaim that makes a
+  // green check worthless. It is still worth having, because the mistake it
+  // catches is the one that was actually made: reading
+  // `shopifySignatureStore.list()` (which carries expired and unreadable rows)
+  // where the run reads `entries()`, so the trainer named a signature that
+  // could not have worked and fired for a machine whose only signature was
+  // expired.
+  const guardAt = src.indexOf("signatureEntries.length > 0");
+  const announceAt = src.indexOf('reason: "other-host"');
   assert(
-    guardAt > 0 && guardAt < src.indexOf('reason: "other-host"'),
-    "…and only when something IS registered — a machine with no signatures has not asked for " +
-      "this feature and must not be told about it on every recording",
+    guardAt > 0 && announceAt > 0 && guardAt < announceAt,
+    "the other-host announcement is gated on USABLE entries, as announceSignatureState is — " +
+      "not on the register, which carries expired and unreadable rows",
+  );
+  assert(
+    !/registered\.map\(\(entry\) => entry\.host\)/.test(src),
+    "…and names usable hosts, never the register's — 'one is registered for X' is only " +
+      "actionable if X could actually be presented",
   );
 }
 

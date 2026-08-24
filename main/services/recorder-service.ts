@@ -856,6 +856,22 @@ let captureStats = { console: 0, drain: 0, late: 0 };
 let signatureArmed: string[] = [];
 let signedRequests = new Map<string, number>();
 
+/** Say what the signature did for the session that is ending, and reset.
+ *
+ *  Called from `destroyViews`, which is where the page — and with it the
+ *  listener that increments this — actually goes away. */
+function reportSignatures(): void {
+  if (signatureArmed.length > 0) {
+    logger.info("recorder", "Shopify crawler signature for this session", {
+      armed: signatureArmed,
+      signed: Object.fromEntries(signedRequests),
+      signedTotal: [...signedRequests.values()].reduce((a, b) => a + b, 0),
+    });
+  }
+  signatureArmed = [];
+  signedRequests = new Map();
+}
+
 /** The training PAGE's webContents, or null if the session is gone. Every
  *  page-directed call in this file goes through here — see `pageView`. */
 function pageWc() {
@@ -880,6 +896,16 @@ function pageAlive(): boolean {
  * is why it is idempotent rather than guarded at the call sites.
  */
 function destroyViews(): void {
+  // The signature's end-of-session line lives HERE rather than in
+  // `stopPolling`, and the difference is not cosmetic: every teardown path
+  // calls `stopPolling` BEFORE the page is gone (see `finalize` and
+  // `discardExit`), so a tally logged and reset there is logged while the
+  // listener is still installed and the page is still unloading. A request that
+  // lands in that window is counted into the NEXT session's tally and reported
+  // against the next session's armed hosts — a diagnostic that lies, which is
+  // the one thing a diagnostic must not do. This function is what every path
+  // uses to actually end the page, and it is idempotent.
+  reportSignatures();
   for (const view of [chromeView, pageView]) {
     const wc = view?.webContents;
     if (!wc || wc.isDestroyed()) continue;
@@ -1824,21 +1850,8 @@ function stopPolling(): void {
   if (captureStats.console || captureStats.drain || captureStats.late || stranded) {
     logger.info("recorder", "Capture channels for this session", { ...captureStats, stranded });
   }
-  // The signature's own end-of-session line, and it is the PAIR that is worth
-  // reading: armed with nothing signed is the silent failure (a registered
-  // signature for a host this session never visited), and it looks identical
-  // from inside the app to a session that signed every request.
-  if (signatureArmed.length > 0) {
-    logger.info("recorder", "Shopify crawler signature for this session", {
-      armed: signatureArmed,
-      signed: Object.fromEntries(signedRequests),
-      signedTotal: [...signedRequests.values()].reduce((a, b) => a + b, 0),
-    });
-  }
   captureLedger.reset();
   captureStats = { console: 0, drain: 0, late: 0 };
-  signatureArmed = [];
-  signedRequests = new Map();
 }
 
 export const recorderService = {
@@ -2167,7 +2180,7 @@ export const recorderService = {
           host: status.host,
           reason: status.state,
         });
-      } else if (!status && startHost && registered.length > 0) {
+      } else if (!status && startHost && signatureEntries.length > 0) {
         // THE CASE THAT WAS SILENCE. A signature is bound to exactly one
         // authority, so "I registered one and the trainer still shows the
         // password page" is almost always "you registered it for the other
@@ -2177,17 +2190,24 @@ export const recorderService = {
         // branch); the trainer said nothing at all, which left the only
         // remaining reading "the trainer doesn't send it".
         //
-        // Only when something IS registered. A machine with no signatures has
-        // not asked for one and must not be told about a feature it isn't
-        // using on every recording it starts.
+        // Only when something USABLE is registered, and only usable hosts are
+        // named — `signatureEntries`, not the plaintext register. The register
+        // carries expired and unreadable rows too, and naming one of those
+        // would send the user to fix a signature that would not have worked at
+        // this host either: "one is registered for shop.example" is only
+        // actionable if that one could actually be presented. This is the rule
+        // `announceSignatureState` uses (`entries.length > 0`); reading the
+        // register here instead was a divergence, and the paragraph in
+        // DECISIONS claiming the two matched was written from the intent
+        // rather than the code.
         sendToMain("recorder:signatureNotSent", {
           host: startHost,
           reason: "other-host",
-          registered: registered.map((entry) => entry.host),
+          registered: signatureEntries.map((entry) => entry.host),
         });
         logger.info("recorder", "No Shopify signature for the host being recorded", {
           host: startHost,
-          registered: registered.map((entry) => entry.host),
+          registered: signatureEntries.map((entry) => entry.host),
         });
       }
     }

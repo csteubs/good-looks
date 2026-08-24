@@ -173,9 +173,16 @@ anything.** Two halves, both silent:
   the reading that arrived in the report. A third `recorder:signatureNotSent`
   reason, `other-host`, now names what is registered.
 
-  Raised only when something IS registered, matching the run's guard: a machine
-  with no signature has not asked for this feature, and a toast about it on every
-  recording is how a warning stops being read.
+  Raised only when a USABLE signature is registered — `entries()`, the decrypted
+  and unexpired set, which is what `announceSignatureState` gates on — and it
+  names only those hosts. The first version of this read the plaintext register
+  instead, which carries expired and unreadable rows, so it could fire for a
+  machine whose only signature was expired and send the user to fix a signature
+  that would not have worked at this host either. This paragraph originally
+  claimed the two guards matched; they did not, and the claim was written from
+  the intent rather than from the code. A machine with no usable signature has
+  not asked for this feature, and a toast about it on every recording is how a
+  warning stops being read.
 
 **Left alone deliberately: no toast for the working case.** The 2026-08-18 entry
 rejected a chip announcing a healthy signature — it would be on screen for every
