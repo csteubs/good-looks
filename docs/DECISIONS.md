@@ -78,6 +78,47 @@ and break the test in the one place the failure looks like a product bug. The
 generate-test dialog reads it too, where the URL was previously passed through
 untouched into both the model's prompt and the stored record.
 
+### 2026-08-25 — A checklist row keeps its size when it leaves the job
+
+Reported from the running app, against the tri-state tick below: selecting all
+resized the checklist. Every cell after the row's two marks moved 8px, and each
+row grew from 27px to 33px, so the list changed shape under a control whose
+whole job is to change one thing.
+
+**The design was already right and the numbers were wrong.** Three cells exist
+only on a row that is in the job — the structure mark, the after mark and the
+failure policy — and all three already left a spacer behind; the comment beside
+the third one even states the rule, and says it was found by looking at the
+screen because no test here could see it. What none of them had was a spacer
+that actually matched:
+
+- **Width.** The marks are `Menu`s given `width={24}`, and `.gl-menu-root` sets
+  `flex: 0 0 auto`, which beats the `flex: 0 0 20px` their own rules stated. So
+  the 20px was INERT on the control and authoritative on the spacer — the one
+  arrangement where a stylesheet reads as consistent and behaves as if it were
+  not. Both are 24px now, and the mark rules say why they cannot say anything
+  else.
+- **Height.** An empty `<span>` is 0 tall. The row is `align-items: center` over
+  its tallest cell, which on a ticked row is the 24px mark, so a row whose marks
+  had gone was simply shorter. Every spacer now carries its control's height.
+
+**The Run button got a floor for the same reason** — its label carries the
+selection count ("Run all", "Run 12", "Run 0") and Stop replaces it outright, so
+the toolbar's width tracked whatever happened to be ticked. `.gl-detail-run`
+already existed for exactly this on the detail view; this is the same fix in the
+same shape, and both buttons in the slot carry it, not just the one that
+prompted it.
+
+**It is guarded in two places because it fails in two ways.**
+`check:batch-row-cells` reads the view and both stylesheets and asserts each
+spacer matches its control on both axes — source is the only place that answer
+exists, since jsdom has no layout engine and the dom project runs with
+`css: false`. And `batch-view.test.tsx` asserts the shape a jsdom test CAN see:
+an unticked row has a cell in every column a ticked row has. The second is not
+redundant — deleting a `: (<span/>)` arm leaves a working row that silently
+slides its own columns, and the size check would still pass, because the rule it
+reads would still be correct for a spacer nothing renders.
+
 ### 2026-08-25 — Batch's two select buttons become one tri-state tick
 
 SELECT ALL and SELECT NONE were two buttons that between them could not answer

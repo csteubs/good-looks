@@ -2315,3 +2315,57 @@ describe("BatchView master selection", () => {
     );
   });
 });
+
+// ── A row is the same shape whether or not it is in the job ───────────
+//
+// Reported from the running app: ticking a box slid every cell after the marks
+// 8px left and each row collapsed from 33px to 27px, so selecting all resized
+// the whole checklist. The spacers that exist to prevent that were the wrong
+// size — which only `check:batch-row-cells` can see, since jsdom has no layout
+// engine and the dom project runs with `css: false`.
+//
+// What IS visible here is the half that has to be true first: the cell has to
+// exist at all. Deleting a `: (<span …/>)` arm leaves a working row that
+// silently slides its own columns, and no other test on this screen would fail.
+describe("BatchView row shape", () => {
+  /** One token per cell, in order: its gl-* class, or the tag for the rest. */
+  const shapeOf = (row: Element) =>
+    [...row.children].map((c) => {
+      const cls = [...c.classList].find((x) => x.startsWith("gl-batch-"));
+      return cls ?? c.tagName.toLowerCase();
+    });
+
+  it("gives an unticked row a cell in every column a ticked row has", async () => {
+    // One of each, in one render, so this compares two rows of the same list
+    // rather than two renders that could differ for unrelated reasons.
+    settings = { batchOrder: [], batchTestOptions: {} };
+    routines = [
+      routineOf([
+        { kind: "test", testId: "a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+
+    const rows = [...document.querySelectorAll(".gl-batch-row")];
+    const ticked = rows.find((r) => r.querySelector('[role="checkbox"][data-state="checked"]'));
+    const unticked = rows.find((r) => r.querySelector('[role="checkbox"][data-state="unchecked"]'));
+    expect(ticked && unticked).toBeTruthy();
+
+    const t = shapeOf(ticked!);
+    const u = shapeOf(unticked!);
+    expect(u).toHaveLength(t.length);
+
+    // The three cells that swap: control on a ticked row, spacer on an unticked
+    // one, in the same position. Anything else must be identical.
+    const SWAPS: Record<string, string> = {
+      "gl-batch-groupmark": "gl-batch-group-gap",
+      "gl-batch-aftermark": "gl-batch-waitmark-gap",
+      "gl-batch-policy": "gl-batch-policy-gap",
+    };
+    expect(t.map((cell) => SWAPS[cell] ?? cell)).toEqual(u);
+    // …and all three swaps really are exercised, or this passes vacuously on a
+    // row that never had the controls in the first place.
+    expect(t.filter((cell) => cell in SWAPS)).toHaveLength(3);
+  });
+});

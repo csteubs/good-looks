@@ -1219,12 +1219,20 @@ export function BatchView() {
         </div>
 
         {running ? (
-          <Btn tone="stop" onClick={() => void api.batch.stop()}>
+          <Btn tone="stop" className="gl-batch-run" onClick={() => void api.batch.stop()}>
             <Square aria-hidden="true" />
             Stop
           </Btn>
         ) : (
-          <Btn tone="go" onClick={requestBatch} disabled={selectedIds.length === 0}>
+          // The floor is on both this and Stop, not just here: the label
+          // carries the selection count and Stop replaces the button outright,
+          // so without it the toolbar's width tracked whatever was ticked.
+          <Btn
+            tone="go"
+            className="gl-batch-run"
+            onClick={requestBatch}
+            disabled={selectedIds.length === 0}
+          >
             <Play aria-hidden="true" />
             Run {selectedIds.length === tests.length ? "all" : selectedIds.length}
           </Btn>
