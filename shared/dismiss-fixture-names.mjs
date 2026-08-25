@@ -40,3 +40,30 @@ export function dismissEnvNames(index) {
     target: `${DISMISS_ENV_PREFIX}${index}_TARGET`,
   };
 }
+
+/**
+ * The environment one run's armed rules travel in — the whole set, count
+ * included, so a caller cannot supply rules without the count that makes the
+ * fixture read them.
+ *
+ * ONE variable per rule per field, never a JSON blob of the lot: a blob is a
+ * single string that shows up whole in a crash dump or a process listing. The
+ * target is itself JSON because a locator is structured, but that is one rule's
+ * locator per variable.
+ *
+ * Here rather than in each runner because BOTH write it now — the app for a
+ * recorded run, the MCP and CLI for an unattended one — and the fixture reads it
+ * back by name inside a Playwright worker. Three processes, one spelling; a
+ * transcribed copy is a rule that arms in one and not the other, silently,
+ * because a rule that never fires looks exactly like a page with no banner.
+ */
+export function dismissEnv(rules) {
+  const list = rules ?? [];
+  const out = { [DISMISS_COUNT_ENV]: String(list.length) };
+  list.forEach((rule, index) => {
+    const names = dismissEnvNames(index);
+    out[names.label] = rule.label || rule.host;
+    out[names.target] = JSON.stringify(rule.target);
+  });
+  return out;
+}

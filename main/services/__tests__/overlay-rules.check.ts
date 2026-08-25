@@ -33,7 +33,7 @@ import {
   DISMISS_ENV_PREFIX,
   dismissEnvNames,
   dismissFixtureSource,
-} from "../dismiss-fixture-source.js";
+} from "../../../shared/dismiss-fixture-source.mjs";
 import { buildCaptureScript } from "../../recorder/capture-script.js";
 import { normalizeOverlayRule } from "../../recorder/types.js";
 import {
@@ -68,7 +68,7 @@ assert(
 
 for (const [label, rel] of [
   ["the capture script", "main/recorder/capture-script.ts"],
-  ["the dismissal fixture", "main/services/dismiss-fixture-source.ts"],
+  ["the dismissal fixture", "shared/dismiss-fixture-source.mjs"],
 ] as const) {
   const src = read(rel);
   assert(src.includes("watcherSource()"), `${label} embeds the watcher through watcherSource()`);

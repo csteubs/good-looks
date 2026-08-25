@@ -265,12 +265,19 @@ export function describeRun(
   // test's host — a blanket "overlay rules do not run here" on every run of
   // every test is the kind of caveat people learn to skip past, and then miss
   // the one time it matters.
+  //
+  // Gated on what the run REPORTED arming, like every other note here, and not
+  // on this function re-deciding it. These now run (R51 put the locator engine
+  // where this process can reach it), so the caveat is for the case that is left
+  // — an IMPORTED spec, which is never redirected through our fixtures, and a
+  // caller that predates `ran.overlayRules` and therefore did not arm them.
   const armedHere = armedRulesFor(overlayRules, test?.url ?? "");
-  if (armedHere.length > 0) {
+  const armedInRun = ran.overlayRules ?? [];
+  if (armedHere.length > 0 && armedInRun.length === 0) {
     const named = armedHere.map((r) => r.label || r.host).join(", ");
     skipped.push(
-      `Overlay rules (${named}) — this server writes no fixtures, so the banner they dismiss ` +
-        "is left on the page here. A step that acts on something the banner covers can fail " +
+      `Overlay rules (${named}) — this run installed no dismissal watcher, so the banner they ` +
+        "dismiss is left on the page. A step that acts on something the banner covers can fail " +
         "in this run and pass in an app run of the same test.",
     );
   }

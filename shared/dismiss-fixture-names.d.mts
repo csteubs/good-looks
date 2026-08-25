@@ -11,3 +11,10 @@ export declare const DISMISS_ENV_PREFIX: string;
 /** The env names carrying one rule — one variable per field rather than a JSON
  *  blob, for the reason `variableEnv` gives about secrets. */
 export declare function dismissEnvNames(index: number): { label: string; target: string };
+
+/** The environment one run's armed rules travel in, count included. Written by
+ *  the app's runner and by the MCP/CLI runner; read back by the fixture inside a
+ *  Playwright worker. */
+export declare function dismissEnv(
+  rules: readonly { label?: string; host?: string; target?: unknown }[],
+): Record<string, string>;
