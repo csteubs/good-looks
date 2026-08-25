@@ -17,7 +17,7 @@
 // useless advice on a CI runner, the entire audience of this binary.
 //
 // ── What is deliberately not here ────────────────────────────────────────
-// `--base-url` (R5), `--secrets-file` (R7), `--dry-run` (R9), `--junit` and
+// `--base-url` (R5), `--secrets-file` (R7), `--junit` and
 // `--results-out` (R1/R13), `--retries`, `--fail-fast`, and the `report`,
 // `export`, `eject` and `ingest` subcommands are each their own ranked item. A
 // run that declares a secret variable is SKIPPED with a note here exactly as it
@@ -111,6 +111,33 @@ function humanReport(outcome) {
   if (outcome.fixturesSkipped.length > 0) {
     lines.push(`  Not applied to this run: ${outcome.fixturesSkipped.join(", ")}`);
   }
+  return lines.join("\n");
+}
+
+/** What a dry run prints. Deliberately shaped like the real report — same
+ *  ordering, same names, same dataset-row rendering — so that comparing "what
+ *  would run" with "what ran" is reading, not translation. */
+function dryReport(outcome) {
+  const lines = [`  Would run ${outcome.plan.length} test(s) on ${outcome.browser}:`];
+  for (const p of outcome.plan) {
+    const name = p.datasetName ? `${p.testName} [${p.datasetName}]` : p.testName;
+    lines.push(`    ${name} (${p.speed})${p.wouldSkip ? ` — SKIPPED: ${p.wouldSkip}` : ""}`);
+  }
+  lines.push("");
+  lines.push(`  ${outcome.parallel} at a time.`);
+  if (outcome.missing.length > 0) {
+    lines.push(`  Not found: ${outcome.missing.join(", ")}`);
+  }
+  // A fact, not a refusal — see runSelection. Someone dry-running on a fresh CI
+  // container has no browser yet, and that is precisely when they want the
+  // answer; but they also want to be told, since the real run will refuse.
+  if (!outcome.browserInstalled) {
+    lines.push(
+      `  ${outcome.browser} is not installed — a real run would stop here. ` +
+        `Run: good-looks install ${outcome.browser}`,
+    );
+  }
+  lines.push("  Nothing was run and nothing was recorded.");
   return lines.join("\n");
 }
 
@@ -238,10 +265,18 @@ export async function runCommand(options, { out, err, env = process.env } = {}) 
     allDatasets: options.allDatasets,
     parallel: options.parallel,
     speed: options.speed,
+    dryRun: options.dryRun,
   });
 
   if (!outcome.ok) {
     err(refusalMessage(outcome));
+    return exitCodeFor(outcome);
+  }
+
+  if (outcome.dryRun) {
+    // JSON.stringify of the plan itself, not a re-shaped copy: a pipeline that
+    // reads this is reading what the runner planned.
+    out(options.json ? JSON.stringify(outcome, null, 2) : dryReport(outcome));
     return exitCodeFor(outcome);
   }
 

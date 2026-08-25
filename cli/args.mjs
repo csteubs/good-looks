@@ -25,7 +25,7 @@ const SPEEDS = Object.keys(SLOW_MO_MS);
 /** Flags that take a value. Anything else beginning with `-` is a boolean, and
  *  anything not in either set is an error. */
 const VALUE_FLAGS = new Set(["--id", "--tag", "--group", "--browser", "--speed", "--parallel"]);
-const BOOL_FLAGS = new Set(["--all", "--json", "--all-datasets", "--help", "-h"]);
+const BOOL_FLAGS = new Set(["--all", "--json", "--all-datasets", "--dry-run", "--help", "-h"]);
 
 /** The selectors, in the precedence `selectTests` resolves them. Named here so
  *  the error message about combining them lists them in that order too. */
@@ -63,6 +63,7 @@ export function parseRunArgs(argv) {
   let parallel;
   let json = false;
   let allDatasets = false;
+  let dryRun = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -127,6 +128,7 @@ export function parseRunArgs(argv) {
       if (arg === "--all") all = true;
       if (arg === "--json") json = true;
       if (arg === "--all-datasets") allDatasets = true;
+      if (arg === "--dry-run") dryRun = true;
       continue;
     }
 
@@ -171,6 +173,7 @@ export function parseRunArgs(argv) {
       speed,
       parallel,
       allDatasets: allDatasets || undefined,
+      dryRun,
       json,
     },
   };
@@ -249,6 +252,10 @@ Options:
                      this run only, and is never written back to the test
   --parallel <n>     run n tests at once, 1-${MAX_PARALLEL} (default: 1)
   --all-datasets     run each selected test once per dataset row it declares
+  --dry-run          print what WOULD run and stop. Same selection and the same
+                     queue expansion as a real run, so the answer is the plan
+                     rather than a description of it. Still exits 2 when the
+                     selector matches nothing, which is what it is for
   --json             print the machine-readable result instead of a summary
   -h, --help         show this
 `;

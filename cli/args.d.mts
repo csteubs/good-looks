@@ -7,6 +7,8 @@ export interface RunOptions {
   speed?: string;
   parallel?: number;
   allDatasets?: true;
+  /** Report what WOULD run and stop — same selection, same queue expansion. */
+  dryRun: boolean;
   json: boolean;
 }
 

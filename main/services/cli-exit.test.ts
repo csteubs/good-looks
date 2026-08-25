@@ -55,6 +55,21 @@ describe("exitCodeFor", () => {
     }
   });
 
+  it("is 0 for a dry run, which cannot have failed", () => {
+    // Stated rather than left to fall through `summary?.failed > 0` on an
+    // object with no summary: that reaches the right answer by accident today
+    // and a wrong one the day the shape changes.
+    expect(exitCodeFor({ ok: true, dryRun: true, plan: [], missing: [] })).toBe(EXIT.PASSED);
+  });
+
+  it("is still 2 for a dry run that matched nothing", () => {
+    // The flag's whole reason to exist. `runSelection` refuses with `no-match`
+    // before it plans, so this never reaches the dryRun arm — a dry run that
+    // matches nothing has found the bug it was run to look for, and reporting
+    // success there would be the silently-green pipeline wearing a hat.
+    expect(exitCodeFor({ ok: false, reason: "no-match", how: 'tag "gone"' })).toBe(EXIT.NO_MATCH);
+  });
+
   it("does not fail the run for a skipped test", () => {
     // A test skipped for declaring secret variables is a run this process could
     // not do, not a test that is red. Counting it as a failure would make one
@@ -157,6 +172,15 @@ describe("parseRunArgs", () => {
     expect(parsed).toMatchObject({ ok: false });
     expect((parsed as { error: string }).error).toContain("--tag");
     expect((parsed as { error: string }).error).toContain("--all");
+  });
+
+  it("takes --dry-run as an ordinary boolean", () => {
+    expect(parseRunArgs(["--all", "--dry-run"])).toMatchObject({
+      ok: true,
+      options: { dryRun: true },
+    });
+    // Absent means a real run, never undefined-and-truthy-somewhere.
+    expect(parseRunArgs(["--all"])).toMatchObject({ ok: true, options: { dryRun: false } });
   });
 
   it("refuses an unrecognised speed rather than silently ignoring it", () => {

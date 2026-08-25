@@ -73,6 +73,17 @@ export function exitCodeFor(outcome) {
     // here is the one mistake this file exists to make impossible.
     return code ?? EXIT.CANNOT_START;
   }
+  // A DRY RUN that got this far matched something, and nothing ran, so it can
+  // only be 0 — it is never 1, because no test had the chance to fail. Stated
+  // rather than left to fall through `summary?.failed > 0` on an object with no
+  // summary: that reaches the right answer by accident today and would reach a
+  // wrong one the day the shape changes.
+  //
+  // An empty selection never gets here at all; `runSelection` refuses with
+  // `no-match` before it plans, so `--dry-run --tag gone` is exit 2. That is the
+  // whole reason the flag exists — a dry run that matches nothing has found the
+  // bug it was run to look for, and must not report success.
+  if (outcome.dryRun) return EXIT.PASSED;
   return outcome.summary?.failed > 0 ? EXIT.FAILED : EXIT.PASSED;
 }
 

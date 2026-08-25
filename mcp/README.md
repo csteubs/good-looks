@@ -209,6 +209,24 @@ headless, **one at a time by default**. A failing test does not stop the batch.
 | `allDatasets` | boolean | no — run each selected test once per dataset row it declares |
 | `datasetIds` | string[] | no — sweep only these rows |
 | `parallel` | number 1–16 | no — how many to run at once; defaults to 1 |
+| `dryRun` | boolean | no — report what WOULD run and stop |
+
+`dryRun` answers the question a selector that quietly matches nothing otherwise
+hides: a batch of zero reports the same shape as a clean pass. It resolves the
+selection and expands the queue through the same functions a real run uses — so
+the answer is the plan, not a description of it — then returns it without
+spawning anything or recording anything. There is no `batchId` and no `summary`
+in the response, because neither happened.
+
+It answers even when the chosen browser is not installed, reporting that as
+`browserInstalled: false` rather than refusing: "what would this run" is a
+question asked while setting a runner up. An empty selection is still an error,
+which is the whole point of asking.
+
+Each planned entry carries the pace it would run at (resolved, so an unpinned
+test reports the setting it would inherit rather than nothing) and, for a test
+this server would refuse, a `wouldSkip` naming the secret variables — finding
+out that a suite skips half its tests should not require running it.
 
 `parallel` trades CPU for wall-clock time: each unit is its own Node process
 plus its own browser, so past the machine's core count the runs contend and

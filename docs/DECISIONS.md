@@ -10,7 +10,7 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
-### 2026-08-25 — The CLI, what its exit code means, and its installer
+### 2026-08-25 — The CLI: its exit contract, its installer, and its dry run
 
 R3 and R2 together, because a `run` command without an exit contract is a
 command that lies to the thing it exists for. The runner plan sequences them
@@ -99,8 +99,37 @@ It is also a no-op when the engine is already there, which is not a nicety: an
 install step runs on every CI job, and the regression costs minutes per job with
 nothing failing.
 
+**`--dry-run` is the other half of code 2 (R9).** The exit code tells a pipeline
+that its selector matched nothing AFTER it has already been run; the dry run
+lets someone ask first. mabl gives this its own `?preview=true` and an entire
+troubleshooting section titled "Deployment succeeded but no tests ran" — the
+failure mode their docs spend the most words on.
+
+It plans through the **same** `selectTests` + `buildQueue` the real run uses,
+not a description of them. A dry run computed by different code answers a
+different question, which is worse than not answering, because it would be
+trusted.
+
+Two placement decisions carry it, and both are about what it is FOR. It answers
+**before** the Playwright and browser checks: "what would this run?" is the
+question asked on a fresh CI container that does not have a browser yet, and
+refusing until the environment is complete makes the flag useless exactly when
+it is wanted. The browser's state is REPORTED as a fact instead, with a warning
+that a real run would stop — an unknown *engine* still refuses, because that is
+a bad argument rather than an incomplete environment. And it answers **after**
+selection, so an empty selection is still exit 2. A dry run that matches nothing
+has found the bug it was run to look for; reporting success there would be the
+silently-green pipeline wearing a different hat.
+
+It reports the RESOLVED pace rather than the record's field, for the reason the
+entry above this one exists, and it names the tests a real run would SKIP for
+secrets — finding out that a suite skips half its tests should not require
+running the suite. `run_batch` takes the same `dryRun` over the same function:
+leaving it CLI-only would recreate the app/MCP asymmetry this whole line of work
+is about.
+
 **What is deliberately absent.** `--base-url` (R5), `--secrets-file` (R7),
-`--dry-run` (R9), `--junit`/`--results-out` (R1/R13), `--retries`, `--fail-fast`,
+`--junit`/`--results-out` (R1/R13), `--retries`, `--fail-fast`,
 and the `report`, `export`, `eject` and `ingest` subcommands are each
 their own ranked item. Half-answering R7 in particular would be worse than not
 answering it: a run declaring a secret is SKIPPED with a note here exactly as it

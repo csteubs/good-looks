@@ -230,6 +230,91 @@ try {
     );
   }
 
+  // ── `--dry-run` answers what WOULD run, and still refuses an empty one ──
+  //
+  // The whole value of a dry run is that it is trustworthy, and the only way it
+  // can be is by planning through the same code the run uses. These assertions
+  // are about the two ways it could quietly stop being that.
+  {
+    // 1. It answers on a machine with no browser. That is precisely when
+    //    someone asks — a fresh CI container — and refusing until the
+    //    environment is complete would make the flag useless when wanted.
+    //    (This fixture's `recorder/browsers` is empty, so a REAL run here
+    //    exits 3; the dry run must not.)
+    const r = runCli(["run", "--tag", "smoke", "--dry-run"], store);
+    assert(r.code === EXIT.PASSED, "a dry run answers even with no browser installed");
+    assert(r.stdout.includes("Would run 1 test(s)"), "…and says what it would run");
+    assert(
+      r.stdout.includes("nothing was recorded"),
+      "…and says plainly that nothing ran, which is the question being asked",
+    );
+    // …while still WARNING, because the real run will refuse.
+    assert(
+      r.stdout.includes("good-looks install chromium"),
+      "…and still names the missing browser a real run would stop on",
+    );
+  }
+
+  {
+    // 2. An empty selection is STILL exit 2. This is the flag's reason to
+    //    exist: a dry run that matches nothing has found the bug it was run to
+    //    look for, and reporting 0 there would be the silently-green pipeline
+    //    wearing a different hat.
+    const r = runCli(["run", "--tag", "nope", "--dry-run"], store);
+    assert(r.code === EXIT.NO_MATCH, `a dry run that matches nothing is still exit ${EXIT.NO_MATCH}`);
+  }
+
+  {
+    // 3. It reports the pace it WOULD go at, resolved rather than read. Every
+    //    test recorded since R18 is unpinned, so printing the record's field
+    //    would print nothing for all of them.
+    const paced = makeStore([{ ...ONE_TEST[0], speed: undefined }]);
+    try {
+      const r = runCli(["run", "--tag", "smoke", "--dry-run", "--speed", "crawl"], paced);
+      assert(
+        r.stdout.includes("(crawl)"),
+        "a dry run reports the resolved pace, including a --speed override",
+      );
+    } finally {
+      rmSync(paced, { recursive: true, force: true });
+    }
+  }
+
+  {
+    // 4. It surfaces what a run would REFUSE to do. Finding out a suite skips
+    //    half its tests for secrets should not require running it.
+    const secret = makeStore([
+      { ...ONE_TEST[0], variables: [{ name: "PASSWORD", kind: "secret" }] },
+    ]);
+    try {
+      const r = runCli(["run", "--tag", "smoke", "--dry-run"], secret);
+      assert(
+        r.stdout.includes("SKIPPED") && r.stdout.includes("PASSWORD"),
+        "a dry run names the tests a real run would skip, and why",
+      );
+    } finally {
+      rmSync(secret, { recursive: true, force: true });
+    }
+  }
+
+  {
+    // 5. `--json` emits the plan itself rather than a re-shaped copy, so a
+    //    pipeline reading it is reading what the runner planned.
+    const r = runCli(["run", "--tag", "smoke", "--dry-run", "--json"], store);
+    let parsed: { dryRun?: boolean; plan?: unknown[]; batchId?: string } = {};
+    try {
+      parsed = JSON.parse(r.stdout);
+    } catch {
+      // leave it empty; the assertions below report it
+    }
+    assert(parsed.dryRun === true, "--dry-run --json emits a plan marked as one");
+    assert(Array.isArray(parsed.plan) && parsed.plan.length === 1, "…carrying the planned queue");
+    assert(
+      parsed.batchId === undefined,
+      "…and no batchId, because nothing was recorded — a batch id would imply it was",
+    );
+  }
+
   // ── `install` refuses before downloading anything ──────────────────────
   //
   // Every case here is one where the alternative is a several-hundred-megabyte

@@ -462,6 +462,7 @@ export function createRunner({ dataDir, store }) {
     allDatasets,
     parallel,
     speed,
+    dryRun,
   }) {
     const engine = browser ?? "chromium";
     if (!RUN_BROWSERS.includes(engine)) {
@@ -482,6 +483,59 @@ export function createRunner({ dataDir, store }) {
               ? `tag "${tag}"`
               : "the library";
       return { ok: false, reason: "no-match", how };
+    }
+
+    // A DRY RUN answers before either of the checks below, deliberately.
+    // "What would this run?" is the question someone asks while debugging a
+    // runner that has no browser on it yet — refusing to answer it until the
+    // environment is complete would make the flag useless exactly when it is
+    // wanted. The browser's state is REPORTED instead, as a fact rather than a
+    // refusal. An unknown ENGINE still refuses above: that is a bad argument,
+    // not an incomplete environment.
+    //
+    // Placed before `findPlaywrightCli` for the same reason, and after the
+    // selection so that an empty selection is still exit 2 — a dry run that
+    // matches nothing has found the bug it was run to look for.
+    if (dryRun) {
+      const byIdDry = new Map(selected.map((t) => [t.id, t]));
+      // THE SAME expansion the real run uses, not a description of it. A dry
+      // run computed by different code answers a different question, which is
+      // worse than not answering: it would be trusted.
+      const plannedQueue = buildQueue(
+        { testIds: selected.map((t) => t.id), datasetIds, allDatasets },
+        (id) => byIdDry.get(id)?.datasets ?? [],
+      );
+      const dryDefaultSpeed = readSettings().defaultRunSpeed;
+      return {
+        ok: true,
+        dryRun: true,
+        browser: engine,
+        browserInstalled: isBrowserInstalled(engine),
+        parallel: clampParallel(parallel, plannedQueue.length),
+        missing,
+        plan: plannedQueue.map((entry) => {
+          const t = byIdDry.get(entry.testId);
+          return {
+            testId: entry.testId,
+            testName: t?.name ?? entry.testId,
+            // Resolved, not read: what it WOULD run at, through the same rule
+            // the run resolves. Reporting `t.speed` here would print nothing
+            // for every test recorded since R18.
+            speed: resolveRunSpeed(speed, t?.speed, dryDefaultSpeed),
+            // Named so a sweep's row count is visible; the row's VALUES are not
+            // here, for the reason the persisted batch record does not carry
+            // them either.
+            ...(entry.datasetId ? { datasetId: entry.datasetId } : {}),
+            ...(entry.datasetName ? { datasetName: entry.datasetName } : {}),
+            // What a run of this test would REFUSE to do. Surfacing it in the
+            // dry run is the point: finding out a suite skips half its tests
+            // for secrets should not require running it.
+            ...(t && secretVariableNames(t).length > 0
+              ? { wouldSkip: `declares secret variable(s): ${secretVariableNames(t).join(", ")}` }
+              : {}),
+          };
+        }),
+      };
     }
 
     const playwright = findPlaywrightCli();

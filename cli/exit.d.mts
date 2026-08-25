@@ -37,7 +37,24 @@ export interface RunSucceeded {
   results: RunResult[];
 }
 
-export type RunOutcome = RunSucceeded | RunRefusal;
+export interface RunPlanned {
+  ok: true;
+  dryRun: true;
+  browser: string;
+  browserInstalled: boolean;
+  parallel: number;
+  missing: string[];
+  plan: Array<{
+    testId: string;
+    testName: string;
+    speed: string;
+    datasetId?: string;
+    datasetName?: string;
+    wouldSkip?: string;
+  }>;
+}
+
+export type RunOutcome = RunSucceeded | RunPlanned | RunRefusal;
 
 /** The exit-code contract. See `cli/exit.mjs` for what each one means and why
  *  code 2 is separate from both 0 and 1. */
