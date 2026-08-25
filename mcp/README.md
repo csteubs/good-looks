@@ -612,30 +612,52 @@ isn't listening for requests, or after asking someone to press the shortcut.
 The reply says how old the capture is. A stale screenshot presented as current
 is how you end up debugging a UI state that stopped existing ten minutes ago.
 
-## What an MCP run does not do
+## What an MCP run captures, and what it still does not
 
-A run started here is **not** the same as a run started in the app, and the
-difference is invisible in Playwright's own output — the test executes, passes
-or fails on its own merits, and says nothing about what it skipped. So every
-`run_test` response carries a `fixtures` field that names it.
+A run started here used to be a plainly lesser thing than a run started in the
+app: every fixture-borne capability arrives by redirecting the spec's
+`@playwright/test` import onto a module written beside the spec, and this server
+ran the spec as it sat on disk. **R8 changed that.** The fixtures live in
+`shared/` now, this process writes them, and each capability reads the TEST's own
+preference exactly as the app reads it — an unattended run is not a different
+product. The gates are set at [run-tests.mjs:392](run-tests.mjs) and pinned by
+`check:ci-fixtures`.
 
-Everything in this list reaches a run through a Playwright *fixture*, which the
-app injects by redirecting the spec's `@playwright/test` import to a module it
-writes beside the spec. This server runs the spec as it sits on disk, so none of
-them load:
+Every `run_test` response still carries a `fixtures` field naming what actually
+ran, because the difference is invisible in Playwright's own output — the test
+executes, passes or fails on its own merits, and says nothing about what it
+skipped.
 
-| Not done here | Consequence |
+| Capability | Here |
 |---|---|
-| Screenshot capture | The run does not appear in the **Visual** tab, seeds no baseline and diffs against none |
-| Accessibility checks | axe is never injected |
-| Console + network recording | No `console.json` or `network.json` is written |
-| Run-time Auto-Heal | A step whose locator has gone stale **fails here but would pass in the app** |
-| Crawl page-settling | The slower step delay applies, but nothing waits for load, network quiet and paint |
+| Screenshot capture | **On** when the test asks (`GLAZE_CAPTURE_ARTIFACTS`) — but see the replay note below |
+| Accessibility checks | **On** when the test asks (`GLAZE_A11Y`) — same note |
+| Console + network recording | **On** when the test asks (`GLAZE_RECORD_LOGS`) |
+| Crawl page-settling | **On** at crawl speed (`GLAZE_SETTLE`) |
+| Run-time Auto-Heal | Switched on — **and currently inert.** See below |
+| Writing a heal BACK to the test | Never, by construction: there is no writeback code in this process, and it would edit a `tests.json` that dies with the container |
+| Signature headers | Off — the values are encrypted to the app and unreadable here |
+| Overlay dismissal | Off — its source embeds the recorder's locator engine, which has not moved to `shared/` yet |
+
+**Two gaps remain, and both are worth knowing before you trust a report.**
+
+*No replay model is written.* Screenshots and axe results land in the run's
+artifact directory, but nothing here writes the `replay.json` that
+`get_visual_report` and `get_a11y_report` read — `writeReplay` has no caller
+outside `main/`. So a run can capture and still have nothing to report, and its
+`RunRecord` is stamped `captureArtifacts: false`, which keeps it out of the
+Visual tab.
+
+*Auto-Heal is on and heals nothing.* `GLAZE_HEAL` is set, but the heal map this
+path names (`<testId>.heal.json`) is written by no process anywhere; the app
+writes `<runId>.heal-map.json`. A stale locator therefore still **fails here and
+would pass in the app**, exactly as before R8 — the switch moved, the effect did
+not. Tracked as R49 in `docs/plans/test-runner-improvements.md` §2a.
 
 The report is measured against what the *test* asks for, so a test that never
 wanted screenshots is not told it didn't get any.
 
-What an MCP run **does** now match: the test's speed, its per-test timeout
+What an MCP run also matches: the test's speed, its per-test timeout
 (crawl floor included), its variables and dataset rows, and a log with terminal
 escape sequences stripped.
 

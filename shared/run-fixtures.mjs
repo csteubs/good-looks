@@ -133,8 +133,10 @@ export const CI_FIXTURE_POLICY = [
     capability: "signature headers",
     onInCi: false,
     why:
-      "The header VALUES are encrypted to the app and unreadable here. R7 is the change that " +
-      "gives this an environment contract; until then the run says it went unsigned.",
+      "The header VALUES are encrypted to the app and unreadable here, so the run says it went " +
+      "unsigned. R7 SHIPPED (#260) and did not reach this: it gave test SECRETS an environment " +
+      "contract, not signature headers. Extending the same contract to header values is the " +
+      "remaining work — until then this stays off, which is a constraint and not a preference.",
   },
   {
     capability: "overlay dismissal",
