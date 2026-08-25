@@ -322,13 +322,30 @@ describes, and it is already ranked separately.
 
 **So what Phase C1 actually costs is smaller than the ranking implies, and its
 first step is different from the one listed.** Before `good-looks run` can be
-written, the run routine has to come OUT of `mcp/server.mjs` — `executeTest`,
-the batch driver, and the dozen `dataDir` readers around them are module-private
-inside a 2,150-line file that boots a server on import, so nothing can call them.
-Extracting them is the change that makes the CLI a third CALLER rather than a
-third implementation, which §3.3 already names as the load-bearing decision.
-Sequenced: extract → `bin` + `run` (R3) → the exit contract (R2) → R11, R9, R8,
-R7.
+written, the run routine has to come OUT of `mcp/server.mjs`: it is
+module-private inside a 2,150-line file that boots a server on import, so
+nothing can call it. Extracting it is the change that makes the CLI a third
+CALLER rather than a third implementation, which §3.3 already names as the
+load-bearing decision. Sequenced: extract → `bin` + `run` (R3) → the exit
+contract (R2) → R11, R9, R8, R7.
+
+**What the extraction actually involves, measured rather than estimated.** About
+534 lines across four groups, and only three of them are a move:
+
+| Lines | What | Shape of the change |
+| --- | --- | --- |
+| 108–192 (85) | The `dataDir` readers — `listTests`, `readSettings`, `readSignatures`, `readOverlayRules`, `saveRunRecord`, `saveBatchRecord` | Move. They are one-liners over `readJsonFile`, and the other tools need them too, so they want their own module rather than to ride along with the runner |
+| 193–269 (77) | `findPlaywrightCli`, `isBrowserInstalled`, `ensureModuleResolution`, `ensurePlaywrightConfig` | Move |
+| 270–437 (168) | `executeTest` | Move — it already returns a structured result, not MCP content |
+| 1123–1326 (204) | The batch driver | **NOT a move — a split.** It returns MCP tool content (`{content:[{type:"text"}], isError}`) at three exits, so a CLI cannot call it as it stands. The selection, planning, pooling and summarising have to come out as a function returning a RESULT, with the MCP tool left as the thing that renders that result into text |
+
+That last row is the whole reason this is its own change rather than a step
+inside the CLI's first commit: the split has to preserve every one of the tool's
+current answers — including the empty-selection message that names the selector
+that actually applied — while giving the CLI the same facts in a form it can
+turn into an exit code. Doing it under `check:mcp-boot`, `check:mcp-parity`,
+`check:mcp-run-history` and `check:mcp-select`, with no behaviour change, is what
+makes the CLI's own first commit small enough to review.
 
 Exit-code contract, pinned by a `check:cli-exit` script:
 
