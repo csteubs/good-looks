@@ -32,6 +32,7 @@ import { clearTimeout, setTimeout } from "node:timers";
 import { fileURLToPath } from "node:url";
 
 import { readJsonFile } from "./data-dir.mjs";
+import { resolveScriptPath, scriptsDirFor } from "../shared/script-path.mjs";
 import { recordRun } from "./metrics.mjs";
 import { clampParallel, runPool } from "./run-pool.mjs";
 import { selectTests, summarizeResults, UNGROUPED } from "./select-tests.mjs";
@@ -293,7 +294,7 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     // lives in a sandbox subdirectory beside the sibling modules it imports, so
     // deriving the root from the spec would drop a config and a node_modules
     // link into that sandbox — and resolve the spec against the wrong base.
-    const scriptsDir = path.join(dataDir, "recorder", "scripts");
+    const scriptsDir = scriptsDirFor(path.join(dataDir, "recorder"));
     ensureModuleResolution(scriptsDir, playwright.nodeModules);
     const configPath = ensurePlaywrightConfig(scriptsDir);
 
@@ -483,10 +484,39 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     // glaze-runtime.mjs on disk to load at all.
     ensureRunFixtures(scriptsDir, { capabilities: anyCapability });
 
+    // WHERE THE SPEC IS ON THIS MACHINE (R10), which is not necessarily where
+    // it was when the test was recorded. `scriptPath` is absolute and from the
+    // authoring machine, so a library copied to a CI runner used to resolve
+    // through `path.relative` into a `../../../../..`-prefixed path back up to
+    // the AUTHOR's home directory — outside the runner's scripts dir, and not a
+    // file that exists on it. Playwright reported
+    // "no tests found", which reads as broken tests rather than a library that
+    // did not arrive.
+    const specPath = resolveScriptPath(scriptsDir, test);
+    if (!specPath) {
+      // Refused rather than guessed: a record whose id cannot name a file is
+      // one this process should not invent a path for. Reported as a run that
+      // could not start, which is what it is.
+      return {
+        runId,
+        status: "failed",
+        exitCode: 1,
+        startedAt: Date.now(),
+        finishedAt: Date.now(),
+        durationMs: 0,
+        output:
+          `Could not work out where "${test.name ?? test.id}" keeps its spec. Its stored path ` +
+          `is outside this library's scripts directory and its id cannot name a file here.\n`,
+        timeoutMs: 0,
+        timeoutRaised: false,
+        ran: {},
+        speed,
+      };
+    }
     // Relative to the scripts root, so a sandboxed spec resolves as
     // `imported/<id>/tests/foo.spec.ts` rather than a bare basename that only
     // matches when the spec sits flat.
-    let specFile = path.relative(scriptsDir, test.scriptPath);
+    let specFile = path.relative(scriptsDir, specPath);
 
     // The capture fixture reaches a spec by REDIRECTING its `@playwright/test`
     // import in a temp copy — the stored spec stays pristine, and only the
@@ -496,7 +526,7 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     if (anyCapability) {
       let original = null;
       try {
-        original = fs.readFileSync(test.scriptPath, "utf-8");
+        original = fs.readFileSync(specPath, "utf-8");
       } catch {
         // Unreadable — run the original path and let Playwright report it.
       }

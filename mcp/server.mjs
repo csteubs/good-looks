@@ -16,6 +16,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 import { readJsonFile, resolveDataDir } from "./data-dir.mjs";
+import { resolveScriptPath, scriptsDirFor } from "../shared/script-path.mjs";
 import { createStore } from "./store.mjs";
 import { createRunner } from "./run-tests.mjs";
 import { summarizeResults, UNGROUPED, UNTAGGED } from "./select-tests.mjs";
@@ -169,7 +170,10 @@ server.registerTool(
     }
     let specSource = null;
     try {
-      specSource = fs.readFileSync(test.scriptPath, "utf-8");
+      // Resolved rather than trusted: on a copied library the stored path
+      // is the authoring machine's and points nowhere here (R10).
+      const specPath = resolveScriptPath(scriptsDirFor(path.join(dataDir, "recorder")), test);
+      specSource = specPath ? fs.readFileSync(specPath, "utf-8") : "";
     } catch {
       // generated spec file missing; steps are still returned
     }

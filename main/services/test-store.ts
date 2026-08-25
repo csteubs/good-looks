@@ -7,6 +7,11 @@ import * as path from "path";
 import { clearSessionState } from "./session-state-store.js";
 
 import { app, logger } from "@shell/backend";
+import {
+  isInsideScripts as isInsideScriptsDir,
+  resolveScriptPath,
+  scriptsDirFor,
+} from "../../shared/script-path.mjs";
 
 import { generateSpec } from "./script-generator.js";
 import { collectVarRefs } from "../recorder/types.js";
@@ -17,7 +22,7 @@ function dataDir(): string {
 }
 
 function scriptsDir(): string {
-  return path.join(dataDir(), "scripts");
+  return scriptsDirFor(dataDir());
 }
 
 function indexFile(): string {
@@ -38,11 +43,13 @@ export function scriptPathFor(id: string): string {
 }
 
 /** Whether a stored path still lives under the scripts dir. Guards the writes
- *  and deletes that take their path from a record rather than deriving it. */
+ *  and deletes that take their path from a record rather than deriving it.
+ *
+ *  The rule itself is in shared/script-path.mjs: the MCP and CLI apply the same
+ *  one when they RESOLVE a spec, and a library that has moved is the case both
+ *  sides have to agree about. */
 function isInsideScripts(p: string): boolean {
-  const root = path.resolve(scriptsDir());
-  const resolved = path.resolve(p);
-  return resolved === root || resolved.startsWith(root + path.sep);
+  return isInsideScriptsDir(scriptsDir(), p);
 }
 
 /** Serial for the scratch name a script write renames into place. */
@@ -219,14 +226,28 @@ export const testStore = {
   readScript(id: string): string {
     const rec = this.get(id);
     if (!rec) throw new Error("Test not found: " + id);
-    return fs.readFileSync(rec.scriptPath, "utf-8");
+    // RESOLVED, not trusted. `scriptPath` is absolute and from whichever
+    // machine recorded the test, so a library that arrived here some other way
+    // — restored from a backup, copied off another machine, carried through a
+    // userData move — names a file that is not there. `writeScript` has always
+    // refused a path outside the scripts dir; this is the same rule on the read
+    // side, where it was missing (R10).
+    const p = resolveScriptPath(scriptsDir(), rec);
+    if (!p) throw new Error("Test has no spec this library can locate: " + id);
+    return fs.readFileSync(p, "utf-8");
   },
 
   remove(id: string): void {
     const all = readAll();
     const rec = all.find((t) => t.id === id);
     if (rec) {
-      try { fs.rmSync(rec.scriptPath, { force: true }); } catch { /* ignore */ }
+      // Resolved for the same reason `readScript` is — and the resolver
+      // refuses anything outside the scripts dir, which matters more here:
+      // this deletes.
+      const specPath = resolveScriptPath(scriptsDir(), rec);
+      if (specPath) {
+        try { fs.rmSync(specPath, { force: true }); } catch { /* ignore */ }
+      }
       // An imported test owns a whole directory — its spec plus every sibling
       // module copied in with it. Removing only the spec would leave those
       // behind for good, since nothing else knows they were ever its.

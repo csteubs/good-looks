@@ -10,6 +10,58 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — A copied library could not find its own specs (R10)
+
+Phase C2's blocker, and the plan named it before I started: *"a test's
+`scriptPath` is an ABSOLUTE path from the authoring machine, so a library copied
+to a CI runner resolves through `path.relative` to a spec seven directories
+above the runner's scripts dir. Playwright finds no tests."* Reproduced exactly
+that before writing anything, which is worth doing when the plan is this
+specific — it is also how the imported case turned out to need its own answer.
+
+**The rule already existed on the write side.** `testStore.writeScript` has
+always refused a `scriptPath` outside the scripts dir — *"only an existing path
+INSIDE the scripts dir is honoured"* — and falls back to the default. Every
+READER trusted it. So the fix is not new policy; it is the same sentence applied
+in the direction it was missing, moved to `shared/` because three processes read
+it.
+
+**No migration, and nothing changes on the authoring machine.** A stored path
+inside this scripts dir is returned untouched, which is every run on the machine
+that recorded the test. A record that resolves wrongly is re-derived rather than
+rewritten, so there is no upgrade step to get wrong and no half-migrated
+library.
+
+**An imported test keeps its position, and that is not cosmetic.** Its spec
+relative-imports its siblings, so flattening it to `<id>.spec.ts` would resolve
+to a file that exists and then fail on its own imports — a worse failure than
+not resolving, because it looks like the test is broken. The position is
+recoverable from the stored path without knowing the old root: everything after
+the `imported/<id>/` segment was always relative.
+
+**A bundle's `tests.json` is untrusted input.** This is the half that is easy to
+miss, and it is the same argument the import sandbox makes: a bundle is a folder
+somebody hands you, and its index is a file they wrote. The derived path is
+joined onto the LOCAL scripts dir and then read and executed as a Playwright
+spec — so an id that is a path, or a `..` tail after the sandbox segment, walks
+straight out of the directory. Both are refused, and with both defences removed
+a `..` tail resolves outside the scripts directory entirely, which the test
+measures rather than asserts.
+
+**Three of my own test cases were vacuous, and the revert-test found all
+three.** Splitting stored paths on `\\` as well as `/` mattered for exactly one
+case I had not written — a Windows-authored IMPORTED test — because a flat
+record resolves the same either way. And two hostile cases were built with
+`path.join`, which NORMALISES `..` away: the hostile path arrived already
+harmless, so removing the segment validation broke nothing. A hostile
+`tests.json` contains the literal segments, because nothing normalised it on the
+way in; the cases use raw strings now.
+
+**Scoped deliberately.** R10 is "export the library as a portable bundle; stop
+storing absolute script paths". This is the second half — the correctness bug
+and R14's actual blocker. The export COMMAND (packaging a library into something
+you can hand to a runner) is the remaining half and is a feature rather than a
+fix.
 ### 2026-08-25 — The capture fixture imported a file no CI run wrote
 
 Found while wiring overlay dismissal onto the unattended path, which is a
