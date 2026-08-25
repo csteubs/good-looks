@@ -96,12 +96,26 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      step reporter, page-actions and step-marker. They are strings, so
                      they were always pure; what forced the move is that a CI runner has
                      no app, and a CLI that runs fixture-free reports failures the app
-                     would have healed. `dismiss-fixture-source.ts` is the ONE that
-                     stayed under main/services/: its source embeds the recorder's
-                     locator engine, and dragging ~600 lines of capture-script.ts across
-                     this boundary is its own change. Its four pure NAMES are split out
-                     as shared/dismiss-fixture-names.mjs, which is all the capture
+                     would have healed. `dismiss-fixture-source.ts` stays under
+                     main/services/, but its blocker is gone: locator-engine.mjs
+                     (R51, 2026-08-25) is the ~700 lines of capture-script.ts it
+                     embeds, moved here so a process with no build step can hold
+                     them. Its four pure NAMES are still split out as
+                     shared/dismiss-fixture-names.mjs, which is all the capture
                      fixture needed.
+                     locator-engine.mjs is THE DOM WALK every locator question is
+                     answered by — DOM_HELPERS (what an element IS), CONTEXT_HELPERS
+                     (ctxFilter), UNIQUENESS_HELPERS (matchesFor) and the scan caps —
+                     held as source text because none of it runs in the process that
+                     owns it. It was under main/recorder/ until 2026-08-25, which made
+                     it reachable only from the compiled app, and TWO features were
+                     blocked on exactly that: standing overlay rules did not run on an
+                     unattended run, and run-time Auto-Heal was switched ON for one and
+                     healed nothing (R49) because the heal MAP holds a probe built from
+                     these strings and nothing could build one. PICKED_HELPERS and
+                     CSS_PROPS_HELPER did NOT come: they describe a picked element for
+                     the refine dialog and interpolate CSS_ASSERT_PROPS from
+                     main/recorder/types.ts, a model no unattended run has a use for.
                      user-data-rules.mjs is the shape that rule forces: WHERE the data
                      lives needs the disk, so the probing stays on each side and only the
                      RULES are shared — the override name, the store markers, the legacy

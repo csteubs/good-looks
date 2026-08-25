@@ -30,7 +30,7 @@ import type { AddressInfo } from "node:net";
 
 import { expect, test, type Page } from "@playwright/test";
 
-import { DOM_HELPERS, UNIQUENESS_HELPERS } from "../main/recorder/capture-script.js";
+import { DOM_HELPERS, UNIQUENESS_HELPERS } from "../shared/locator-engine.mjs";
 import { generateSpec } from "../main/services/script-generator.js";
 import type { Locator, Step } from "../main/recorder/types.js";
 

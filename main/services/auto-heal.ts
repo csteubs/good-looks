@@ -13,7 +13,7 @@
 // inspect the live DOM in the training window. It reuses the shared DOM_HELPERS
 // so locator semantics stay aligned with the capture script + replayer.
 
-import { DOM_HELPERS, UNCAPPED_SCAN, UNIQUENESS_HELPERS } from "../recorder/capture-script.js";
+import { DOM_HELPERS, UNCAPPED_SCAN, UNIQUENESS_HELPERS } from "../../shared/locator-engine.mjs";
 import type { DebugEntry, HealCandidate, HealResult, Step } from "../recorder/types.js";
 
 /** Race a page `executeJavaScript` against a timeout so a hanging probe can't
