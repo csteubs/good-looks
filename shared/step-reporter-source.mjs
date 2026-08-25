@@ -6,7 +6,7 @@
 // — `check:step-progress` fails if the two disagree about which categories are
 // reported.
 
-import { STEP_MARKER } from "./step-marker.js";
+import { STEP_MARKER } from "./step-marker.mjs";
 
 export const stepReporterSource = `// Per-step progress reporter for Test Recorder. Emits parseable JSON lines on
 // stdout that the backend strips out and forwards to the renderer as

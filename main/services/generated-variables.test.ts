@@ -12,7 +12,7 @@ import { pathToFileURL } from "url";
 import { describe, expect, it } from "vitest";
 
 import { generateSpec } from "./script-generator.js";
-import { glazeRuntimeSource } from "./glaze-runtime-source.js";
+import { glazeRuntimeSource } from "../../shared/glaze-runtime-source.mjs";
 import { normalizeVariables } from "../recorder/types.js";
 import type { Step, TestVariable } from "../recorder/types.js";
 

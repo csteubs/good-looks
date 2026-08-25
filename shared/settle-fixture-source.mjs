@@ -38,7 +38,7 @@
 // Plain JavaScript (no TypeScript) because Playwright loads it through its own
 // Babel transform.
 
-import { actionsLiteral, LOCATOR_ACTIONS, PAGE_ACTIONS } from "./page-actions.js";
+import { actionsLiteral, LOCATOR_ACTIONS, PAGE_ACTIONS } from "./page-actions.mjs";
 
 export const SETTLE_FIXTURE_FILE = "glaze-settle.mjs";
 

@@ -38,7 +38,7 @@ import {
   urlPathPattern,
 } from "../shared/step-semantics.mjs";
 import type { CompareOp } from "../shared/step-semantics.mjs";
-import { glazeRuntimeSource } from "../main/services/glaze-runtime-source.js";
+import { glazeRuntimeSource } from "../shared/glaze-runtime-source.mjs";
 import type { Step, TestVariable } from "../main/recorder/types.js";
 
 const FIXTURE = `<!doctype html>

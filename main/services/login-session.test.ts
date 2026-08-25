@@ -19,7 +19,7 @@ import {
   sessionStatePath,
   sessionsDir,
 } from "./session-state-store.js";
-import { captureFixtureSource } from "./capture-fixture-source.js";
+import { captureFixtureSource } from "../../shared/capture-fixture-source.mjs";
 import { playwrightConfigSource } from "../../shared/playwright-config-source.mjs";
 
 let tmp: string;

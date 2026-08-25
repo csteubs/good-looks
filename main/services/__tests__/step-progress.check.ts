@@ -35,10 +35,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { captureFixtureSource } from "../capture-fixture-source.js";
-import { LOCATOR_ACTIONS, PAGE_ACTIONS } from "../page-actions.js";
-import { splitStepMarkers, STEP_MARKER } from "../step-marker.js";
-import { stepReporterSource } from "../step-reporter-source.js";
+import { captureFixtureSource } from "../../../shared/capture-fixture-source.mjs";
+import { LOCATOR_ACTIONS, PAGE_ACTIONS } from "../../../shared/page-actions.mjs";
+import { splitStepMarkers, STEP_MARKER } from "../../../shared/step-marker.mjs";
+import { stepReporterSource } from "../../../shared/step-reporter-source.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const read = (rel: string) => fs.readFileSync(path.join(here, "..", "..", rel), "utf8");
@@ -142,9 +142,14 @@ for (const method of [...PAGE_ACTIONS, ...LOCATOR_ACTIONS]) {
   // Quote characters only, so a backtick in prose ("prints a raw ... line")
   // does not read as a transcription.
   const transcribed = new RegExp(`["']${STEP_MARKER}`);
+  // Two of these moved to `shared/` when the fixture sources did (R8), so the
+  // paths are relative to the repo root's `main/` sibling rather than to
+  // `main/services/`. The rule is unchanged: every writer of the marker
+  // IMPORTS the prefix rather than typing it, because a second spelling is a
+  // marker the splitter does not recognise and a progress bar that never moves.
   const writers = [
-    "services/capture-fixture-source.ts",
-    "services/step-reporter-source.ts",
+    "../shared/capture-fixture-source.mjs",
+    "../shared/step-reporter-source.mjs",
     "services/step-reporter.ts",
     "services/playwright-runner.ts",
   ];

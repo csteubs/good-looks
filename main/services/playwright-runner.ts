@@ -16,15 +16,15 @@ import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import { sendToMain } from "./app-window.js";
 import { getScriptsDir, testStore } from "./test-store.js";
 import { runHistoryStore } from "./run-history-store.js";
-import { stepReporterSource } from "./step-reporter-source.js";
-import { splitStepMarkers } from "./step-marker.js";
-import { captureFixtureSource } from "./capture-fixture-source.js";
+import { stepReporterSource } from "../../shared/step-reporter-source.mjs";
+import { splitStepMarkers } from "../../shared/step-marker.mjs";
+import { captureFixtureSource } from "../../shared/capture-fixture-source.mjs";
 import {
   SIGNATURE_COUNT_ENV,
   SIGNATURE_FIXTURE_FILE,
   signatureEnvNames,
   signatureFixtureSource,
-} from "./signature-fixture-source.js";
+} from "../../shared/signature-fixture-source.mjs";
 import { downloadProxyEnv, runProxyEnv } from "./proxy-service.js";
 import * as overlayRuleStore from "./overlay-rule-store.js";
 import { shopifySignatureStore } from "./shopify-signature-store.js";
@@ -42,18 +42,18 @@ import { buildReplay, enrichWithA11y, enrichWithVisualDiffs } from "./replay-bui
 import { describeA11yOutcome } from "./a11y-diff.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import { generateSpec, generateSpecDetailed, secretEnvName } from "./script-generator.js";
-import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "./glaze-runtime-source.js";
+import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "../../shared/glaze-runtime-source.mjs";
 import { ensureSessionsDir, freshSessionState, sessionStatePath } from "./session-state-store.js";
 import { evaluateAiChecks } from "./ai-check.js";
-import { HEAL_FIXTURE_FILE, healFixtureSource } from "./heal-fixture-source.js";
+import { HEAL_FIXTURE_FILE, healFixtureSource } from "../../shared/heal-fixture-source.mjs";
 import {
   DISMISS_COUNT_ENV,
   DISMISS_FIXTURE_FILE,
   dismissEnvNames,
   dismissFixtureSource,
 } from "./dismiss-fixture-source.js";
-import { USER_PAGE_FIXTURE_FILE, userPageEnv, userPageFixtureSource } from "./user-page-fixture-source.js";
-import { SETTLE_FIXTURE_FILE, settleFixtureSource } from "./settle-fixture-source.js";
+import { USER_PAGE_FIXTURE_FILE, userPageEnv, userPageFixtureSource } from "../../shared/user-page-fixture-source.mjs";
+import { SETTLE_FIXTURE_FILE, settleFixtureSource } from "../../shared/settle-fixture-source.mjs";
 import { buildHealProbeScript } from "./auto-heal.js";
 import { healJournalStore } from "./heal-journal-store.js";
 import { describeStep } from "./script-generator.js";

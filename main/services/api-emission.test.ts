@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
 
 import { generateSpec } from "./script-generator.js";
 import { parseSpec } from "./spec-parser.js";
-import { glazeRuntimeSource } from "./glaze-runtime-source.js";
+import { glazeRuntimeSource } from "../../shared/glaze-runtime-source.mjs";
 import { normalizeRawStep } from "../recorder/types.js";
 import type { Step, TestVariable } from "../recorder/types.js";
 

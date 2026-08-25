@@ -23,7 +23,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { captureFixtureSource } from "./capture-fixture-source.js";
+import { captureFixtureSource } from "../../shared/capture-fixture-source.mjs";
 
 /** Pull one top-level function out of the fixture source by name. Top-level
  *  declarations there close with a `}` in column 0, which is what bounds it. */

@@ -37,19 +37,19 @@ import type { AddressInfo } from "node:net";
 
 import { expect, test } from "@playwright/test";
 
-import { captureFixtureSource } from "../main/services/capture-fixture-source.js";
-import { glazeRuntimeSource, GLAZE_RUNTIME_FILE } from "../main/services/glaze-runtime-source.js";
-import { healFixtureSource, HEAL_FIXTURE_FILE } from "../main/services/heal-fixture-source.js";
+import { captureFixtureSource } from "../shared/capture-fixture-source.mjs";
+import { glazeRuntimeSource, GLAZE_RUNTIME_FILE } from "../shared/glaze-runtime-source.mjs";
+import { healFixtureSource, HEAL_FIXTURE_FILE } from "../shared/heal-fixture-source.mjs";
 import { generateSpecDetailed, type FlowSource } from "../main/services/script-generator.js";
 import { dismissFixtureSource, DISMISS_FIXTURE_FILE } from "../main/services/dismiss-fixture-source.js";
-import { userPageFixtureSource, USER_PAGE_FIXTURE_FILE } from "../main/services/user-page-fixture-source.js";
-import { settleFixtureSource, SETTLE_FIXTURE_FILE } from "../main/services/settle-fixture-source.js";
+import { userPageFixtureSource, USER_PAGE_FIXTURE_FILE } from "../shared/user-page-fixture-source.mjs";
+import { settleFixtureSource, SETTLE_FIXTURE_FILE } from "../shared/settle-fixture-source.mjs";
 import {
   signatureFixtureSource,
   SIGNATURE_FIXTURE_FILE,
-} from "../main/services/signature-fixture-source.js";
-import { splitStepMarkers, type StepMarker } from "../main/services/step-marker.js";
-import { stepReporterSource } from "../main/services/step-reporter-source.js";
+} from "../shared/signature-fixture-source.mjs";
+import { splitStepMarkers, type StepMarker } from "../shared/step-marker.mjs";
+import { stepReporterSource } from "../shared/step-reporter-source.mjs";
 import { playwrightConfigSource, PLAYWRIGHT_CONFIG_FILE } from "../shared/playwright-config-source.mjs";
 import type { Step } from "../main/recorder/types.js";
 

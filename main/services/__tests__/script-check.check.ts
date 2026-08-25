@@ -27,7 +27,7 @@ import {
   runListCheck,
   type ScriptCheckResult,
 } from "../script-check.js";
-import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "../glaze-runtime-source.js";
+import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "../../../shared/glaze-runtime-source.mjs";
 import {
   PLAYWRIGHT_CONFIG_FILE,
   playwrightConfigSource,
