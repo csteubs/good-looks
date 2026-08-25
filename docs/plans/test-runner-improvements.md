@@ -120,8 +120,8 @@ row is only moved here with a file and a symbol behind it.
 | R4 | Make the runner reachable without Electron and without `safeStorage` | CI | **mostly built — see §3.3a** | S |
 | R5 | Add a per-run base-URL override | CI / Env | missing | M |
 | R6 | Record commit, branch and job provenance on each run | CI | missing | M |
-| R7 | Provision secrets from the environment for CI runs | CI | missing | M |
-| R8 | Ship the run fixtures with the CI runner | CI | missing | M |
+| R7 | Provision secrets from the environment for CI runs | CI | **done 2026-08-25** | M |
+| R8 | Ship the run fixtures with the CI runner | CI | **done 2026-08-25** | M |
 | R9 | Selector-based selection with a dry run, and a distinct empty-match outcome | CI | **done 2026-08-25** | M |
 | R10 | Export the library as a portable bundle; stop storing absolute script paths | CI | missing | L |
 | R11 | Install browsers from the CI entry point | CI | **done 2026-08-25** | S |
@@ -335,7 +335,30 @@ CALLER rather than a third implementation, which §3.3 already names as the
 load-bearing decision. Sequenced: extract → `bin` + `run` (R3) → the exit
 contract (R2) → R11, R9, R8, R7.
 
-**Status, 2026-08-25.** Everything up to and including R9 has landed. The
+**Status, 2026-08-25 — PHASE C1 IS COMPLETE.** Every item in it has landed:
+the extraction, `bin` + `run` (R3), the exit contract (R2), the installer (R11),
+the dry run (R9), the fixtures (R8) and the secret contract (R7). `good-looks
+run` exists, refuses rather than guessing, installs its own browser, says what
+it would do before doing it, gets the same fixtures an app run gets, and can be
+handed a credential it will also redact.
+
+**Two things Phase C2 should know before it starts.**
+
+*R14 depends on R10, which the ranking does not say.* A test's `scriptPath` is an
+ABSOLUTE path from the authoring machine, so a library copied to a CI runner
+resolves through `path.relative` to a spec seven directories above the runner's
+scripts dir. Playwright finds no tests. Shipping a GitHub Action (R14, ranked S)
+before the portable bundle (R10, ranked L) means shipping a workflow template
+that cannot work.
+
+*That dependency had a bug underneath it.* Until #261, a run in which every test
+was skipped exited 0 — so the copied-library case above would have reported a
+green pipeline that executed nothing. Worth remembering as the shape to look for
+in C2: the failure mode of this whole area is not a wrong answer, it is a
+confident one about nothing.
+
+**Earlier status, kept for the record.** Everything up to and including R9 had
+landed when this paragraph was first written. The
 extraction is `mcp/store.mjs` + `mcp/run-tests.mjs` (#255); the CLI is `bin/` +
 `cli/` with R3, R2, R11 and R9 in it (#257). One finding is worth carrying
 forward, because it changed the estimate: the batch driver was **not** a move.
