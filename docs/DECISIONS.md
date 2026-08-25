@@ -10,6 +10,60 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — A CI run gets the fixtures, and the dependency that was never written
+
+R8's second half. Part 1 moved the fixture sources into `shared/`; this is the
+runner actually writing them, plus the per-capability decision the plan asks for
+in writing.
+
+**The bug underneath it was not a missing capability — it was a missing
+dependency.** `glaze-runtime.mjs` is IMPORTED by any generated spec that uses a
+helper (`glazeCapture`, `glazeScrollTo`, `glazeA11yGate`, totp), so the file has
+to be on disk for the spec to load at all. Only `playwright-runner.ts` ever
+wrote it. An MCP or CLI run therefore worked exactly when the app had happened to
+run that same test on the same machine first — and failed on every fresh CI
+container, which is the entire audience of a CLI. It failed as "no tests found",
+never as a missing fixture, because a module that will not load has no tests in
+it. That is why it is in `ALWAYS_WRITTEN` rather than behind any gate: whether
+someone asked for screenshots has nothing to do with whether an import resolves.
+
+**The capability fixtures are written as a SET, not per capability.** The capture
+fixture imports settle, signature, dismissal and user-page; writing it without
+them is an import error rather than a feature switched off. What each one DOES is
+decided by the environment. Getting this backwards is a run that fails to start
+for a reason that reads like a missing feature.
+
+**The policy, and why it is a table rather than an `if`.** `CI_FIXTURE_POLICY`
+carries a `why` for every row, and two of the rows are off for reasons that will
+stop being true — signature headers wait on R7's environment contract, overlay
+dismissal on the locator-engine extraction part 1 deliberately did not do. A
+reader who finds them off should find out whether that is a decision or an
+omission without reading the runner.
+
+**Auto-Heal is on; the writeback is not, and cannot be.** Run-time healing is the
+difference between a run that fails on a stale locator and one that heals past it
+the way an app run would — the false red that teaches a team to distrust CI.
+Applying the heal back to the test is the opposite: it would edit a `tests.json`
+that dies with the container, so the run would report a fix it did not keep and
+the next run would fail identically. That holds by construction rather than by a
+flag, because this process has no writeback code at all, and `check:ci-fixtures`
+pins the absence rather than a boolean.
+
+**`describeRun` now takes what the run actually got.** It used to say every
+capability was skipped, which was true when nothing wrote a fixture and is a lie
+now. `ran` defaults to `{}` — so a caller predating this reports exactly what it
+reported before — and it is passed in from the run rather than re-derived, for
+the reason `executeTest` returns its own `speed`: a second derivation is a second
+chance to disagree with the run it describes.
+
+**One assertion in the new check was vacuous, and only reverting found it.** The
+"fixtures are written before the redirect" rule anchored on `ensureRunFixtures(`,
+which also matches the function's own definition — so it passed wherever the call
+went. It took three attempts to break it correctly (twice the break itself was
+wrong, moving the definition or moving the call to a line that was still early
+enough), which is its own argument for the rule: an assertion nobody has watched
+fail is an assertion nobody has tested.
+
 ### 2026-08-25 — The run fixtures move into shared/, and the one that could not
 
 R8's first half. A CLI that runs fixture-free "reports failures the app would
