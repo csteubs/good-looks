@@ -110,6 +110,14 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      heal-key.mjs is the same shape again: how a chained locator's
                      heal-map key is SPELLED, built from a Locator model on one side
                      and from factory ARGUMENTS on the other.
+                     heal-artifacts.mjs is the FILE that map arrives in —
+                     healMapFileName/healDirName. Added after R49, where the
+                     app wrote <runId>.heal-map.json and the MCP path pointed
+                     GLAZE_HEAL_MAP at <testId>.heal.json, a name nothing has
+                     ever written: healing installed itself and healed nothing,
+                     silently, on every unattended run. check:ci-fixtures now
+                     asserts a GLAZE_HEAL that is not "0" implies both a map
+                     named through here and a writer for it.
                      testid-attr.mjs is that shape for a testid locator's
                      ATTRIBUTE: getByTestId resolves only data-testid, so a
                      locator recorded off data-test-id/data-test carries

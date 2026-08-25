@@ -393,19 +393,15 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
       env.GLAZE_A11Y = wantsA11y ? "1" : "0";
       env.GLAZE_RECORD_LOGS = wantsLogs ? "1" : "0";
       env.GLAZE_SETTLE = wantsSettle ? "1" : "0";
-      env.GLAZE_HEAL = wantsHeal ? "1" : "0";
-      if (wantsScreenshots || wantsA11y || wantsLogs || wantsHeal) {
+      // Healing is OFF here, and it is off as ONE decision: no switch, no
+      // directory, no map. R49 is what a half-set gate looks like — the switch
+      // said "1" and the map named a file nothing writes, so the fixture
+      // installed itself and healed nothing. Setting "0" alone would leave the
+      // other half sitting there for the next person to re-enable in isolation.
+      env.GLAZE_HEAL = "0";
+      if (wantsScreenshots || wantsA11y || wantsLogs) {
         fs.mkdirSync(artifactDir, { recursive: true });
         env.GLAZE_ARTIFACT_DIR = artifactDir;
-      }
-      if (wantsHeal) {
-        // The heal fixture writes what it did into this directory. Nothing here
-        // reads it back into the test — that is the "suggest, never apply"
-        // half of the policy, and it holds by construction rather than by a
-        // flag: there is no writeback code in this process, and a writeback
-        // would edit a tests.json that dies with the container.
-        env.GLAZE_HEAL_DIR = artifactDir;
-        env.GLAZE_HEAL_MAP = path.join(scriptsDir, `${test.id}.heal.json`);
       }
       if (wantsUserPage) {
         Object.assign(env, userPageEnv(settings));
@@ -426,17 +422,36 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     const wantsA11y = !imported && Boolean(test.a11yChecks ?? settings.defaultA11yChecks);
     const wantsLogs = !imported && Boolean(test.recordLogs ?? settings.defaultRecordLogs);
     const wantsSettle = !imported && speed === "crawl";
-    // Run-time healing, ON. Without it a run fails on a stale locator the app
-    // would have healed past — the false red that teaches a team to distrust
-    // CI. The WRITEBACK is what stays off, and it stays off by construction:
-    // nothing in this process reads heals.json back into a test, and it could
-    // not usefully, since that tests.json dies with the container.
-    const wantsHeal =
-      !imported && Boolean(settings.autoHealEnabled) && (test.steps ?? []).some((st) => st?.locator);
+    // ── Run-time healing: OFF, and why there is no `wantsHeal` here (R49) ──
+    //
+    // R8 turned it on and it was never once on. The heal fixture does nothing
+    // for a locator it has no MAP ENTRY for — `if (!entry || !entry.probe) throw
+    // err` is the first line of every patched action — and the map is written by
+    // the runner, from the test's steps, with a probe script per step. This
+    // process cannot build that probe: `buildHealProbeScript` embeds the
+    // recorder's locator engine (DOM_HELPERS + UNIQUENESS_HELPERS out of
+    // main/recorder/capture-script.ts), which is TypeScript the app compiles and
+    // this plain-.mjs server has no way to import.
+    //
+    // So the honest state is off, and the run SAYS so: `describeRun` already
+    // carries the sentence for it ("a step whose locator has gone stale fails
+    // here rather than being healed past, so this run can fail where an app run
+    // of the same test passes"), and it was being suppressed by a `ran.autoHeal`
+    // that reported a capability this run did not have. That note is worth more
+    // than a switch that heals nothing — a run that quietly fails where the app
+    // would have succeeded is exactly how a team learns to distrust CI.
+    //
+    // What turns it on: the locator engine moving to shared/, which standing
+    // overlay rules wait on too. Then this becomes the app's own gate — the
+    // test's locators, `settings.autoHealEnabled` — plus a map written beside
+    // the spec under `healMapFileName(runId)`. The WRITEBACK stays off either
+    // way, by construction: nothing in this process reads heals.json back into a
+    // test, and it could not usefully, since that tests.json dies with the
+    // container.
     const wantsUserPage =
       !imported && Boolean(settings.userStylesheet || settings.userInitScript);
     const anyCapability =
-      wantsScreenshots || wantsA11y || wantsLogs || wantsSettle || wantsHeal || wantsUserPage;
+      wantsScreenshots || wantsA11y || wantsLogs || wantsSettle || wantsUserPage;
 
     // ALWAYS, capabilities or not: a generated spec importing a helper needs
     // glaze-runtime.mjs on disk to load at all.
@@ -598,7 +613,9 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
         screenshots: wantsScreenshots,
         accessibility: wantsA11y,
         consoleAndNetwork: wantsLogs,
-        autoHeal: wantsHeal,
+        // Never true here — see the R49 note above. Reported rather than
+        // omitted so `describeRun` can say what this run did NOT get.
+        autoHeal: false,
         pageSettling: wantsSettle,
       },
       // REPORTED, not re-derived by the caller. run_test describes the run it
@@ -871,9 +888,10 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
                     screenshots: Boolean(t.captureArtifacts ?? settings.defaultCaptureArtifacts),
                     accessibility: Boolean(t.a11yChecks ?? settings.defaultA11yChecks),
                     consoleAndNetwork: Boolean(t.recordLogs ?? settings.defaultRecordLogs),
-                    autoHeal:
-                      Boolean(settings.autoHealEnabled) &&
-                      (t.steps ?? []).some((st) => st?.locator),
+                    // Off for every test in the batch, exactly as executeTest
+                    // sets it — a batch that claimed healing its runs did not
+                    // do is the R49 shape one caller over.
+                    autoHeal: false,
                     pageSettling:
                       resolveRunSpeed(speed, t.speed, settings.defaultRunSpeed) === "crawl",
                   },
