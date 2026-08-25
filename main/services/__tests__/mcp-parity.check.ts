@@ -73,6 +73,7 @@ import { playwrightConfigSource } from "../../../shared/playwright-config-source
 import { buildQueue } from "../../../shared/batch-queue.mjs";
 import { routineRunPlan } from "../../../shared/routine-plan.mjs";
 import { RUN_TRIGGERS, normalizeRunTrigger } from "../../../shared/run-trigger.mjs";
+import { resolveRunSpeed } from "../../../shared/run-pacing.mjs";
 import type { Step, TestVariable } from "../../recorder/types.js";
 
 /** THE MCP'S RUN PATH, which is three files rather than one since the runner was
@@ -1181,6 +1182,91 @@ function codeOnly(source: string): string {
   assert(
     normalizeRunTrigger("manual") === "manual",
     "app: …and that default is a trigger the store will accept",
+  );
+}
+
+// ── 15. Both processes resolve a run's PACE the same way ──────────────
+//
+// The rule this section exists for is not "the delay table matches" — that has
+// been pinned since run-pacing moved into shared/ — but "the same test runs at
+// the same speed whichever process starts it". Those came apart in R18 and
+// nothing noticed.
+//
+// R18 stopped recordings STAMPING their speed, so `speed` absent flipped
+// meaning: it used to say "nobody chose" and now says INHERIT THE SETTING. The
+// app's runner was moved onto `resolveRunSpeed` in the same change; the MCP's
+// was left reading `test.speed ?? "fast"`. Since every test recorded after R18
+// is unstamped, that is not an edge case — it is every new test, run at fast by
+// one process and at the user's default by the other, with nothing anywhere
+// reporting a difference.
+//
+// The pace also decides the TIMEOUT (crawl raises the floor to five minutes)
+// and whether the run settles the page between actions, so resolving it wrongly
+// resolved two more things wrongly and silently.
+
+{
+  const mcpSrc = codeOnly(mcpRunSource());
+  const appSrc = codeOnly(
+    readFileSync(resolve(process.cwd(), "main/services/playwright-runner.ts"), "utf8"),
+  );
+
+  for (const [label, src] of [
+    ["app", appSrc],
+    ["mcp", mcpSrc],
+  ] as const) {
+    assert(
+      /resolveRunSpeed\(/.test(src),
+      `${label}: the run's pace is resolved through the shared three-layer rule`,
+    );
+    // The specific spelling that drifted. Left in either process, a test with no
+    // pin runs at full speed there and at the user's default in the other.
+    assert(
+      !/\.speed\s*\?\?\s*"fast"/.test(src),
+      `${label}: …and never by the two-layer fallback R18 made wrong`,
+    );
+  }
+
+  // EVERY call site, not "one that looks right somewhere". The first draft of
+  // this asserted that a correct call exists, which four call sites satisfy
+  // between them — breaking one left the other three matching and the check
+  // green. Caught by reverting it, which is the rule this repo keeps for
+  // exactly this.
+  //
+  // What each call must be is `resolveRunSpeed(<override>, <pin>, <default>)`
+  // with the pin in the SECOND position. Passing the test's own speed as the
+  // override too reads as correct and makes the setting unreachable: the pin
+  // wins at layer one, so an unpinned test still inherits and a pinned one
+  // still keeps its pin — identical behaviour today, and the layer silently
+  // gone the moment a real override (the CLI's `--speed`) is added above it.
+  const calls = [...mcpSrc.matchAll(/resolveRunSpeed\(([^,]*),/g)].map((m) => m[1].trim());
+  assert(calls.length >= 4, `mcp: found ${calls.length} resolveRunSpeed call sites to check`);
+  const withPinnedOverride = calls.filter((a) => /\.speed$/.test(a));
+  assert(
+    withPinnedOverride.length === 0,
+    withPinnedOverride.length === 0
+      ? "mcp: no call site passes the test's own pin as the override as well"
+      : `mcp: ${withPinnedOverride.length} call site(s) pass ${withPinnedOverride[0]} as the ` +
+        `OVERRIDE — the pin belongs in the second argument, or the global default ` +
+        `becomes unreachable the day a real override is added`,
+  );
+
+  // What a run REPORTS it went at has to come off the run, not be re-derived by
+  // whoever prints it: a second resolution is a second chance to get a different
+  // answer, which is how run_test came to print "fast" for a run that went at
+  // medium and `pageSettling: false` for one that settled.
+  assert(
+    /speed:\s*result\.speed/.test(mcpSrc),
+    "mcp: run_test describes the pace the run actually went at, off the result",
+  );
+
+  // Both layers are real, so the rule cannot be satisfied by ignoring one.
+  assert(
+    resolveRunSpeed(undefined, "slow", "medium") === "slow",
+    "shared: a pinned test keeps its pin whatever the default becomes",
+  );
+  assert(
+    resolveRunSpeed(undefined, undefined, "medium") === "medium",
+    "shared: …and an unpinned one inherits the default, which is what R18 made true",
   );
 }
 

@@ -96,6 +96,13 @@ List every recorded test: id, name, target URL, step count, tags, the library
 folder it is in, speed, browser, and timestamps. Newest-updated first, capped
 at 200. No arguments.
 
+`speed` is the pace the test would actually RUN at, not the field on its record.
+A test recorded since the run-defaults change carries no speed of its own — it
+inherits the app's Run speed setting — and those tests are reported with
+`speedInherited: true` beside the resolved value. Changing the app's setting
+therefore moves what this reports for every one of them, which is the point:
+the alternative was reporting `fast` for a test the app runs at `medium`.
+
 Two selectors come off this list and they are not the same thing. `tags` are
 labels a test can carry several of — what `run_batch tag=…` selects on.
 `group` is the one folder the test lives in, in the app's library rail — what
@@ -613,6 +620,12 @@ wanted screenshots is not told it didn't get any.
 What an MCP run **does** now match: the test's speed, its per-test timeout
 (crawl floor included), its variables and dataset rows, and a log with terminal
 escape sequences stripped.
+
+"The test's speed" means the resolved one — the test's own pin if it has one,
+otherwise the app's Run speed setting. It read the record's field directly until
+2026-08-25, which stopped being the same thing when recordings stopped stamping
+their speed: every test recorded after that ran at `fast` here and at the user's
+default in the app, and nothing reported the difference.
 
 ## Secrets
 

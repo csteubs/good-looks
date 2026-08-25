@@ -10,6 +10,51 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — R18 moved the app's pace rule and left the MCP's behind
+
+R18 changed what an absent `speed` MEANS. It used to say "nobody chose"; it now
+says INHERIT THE SETTING, because recordings stopped stamping their default onto
+every new record. The app's runner moved onto `resolveRunSpeed` in that same
+change. `mcp/server.mjs` kept `test.speed ?? "fast"`.
+
+**That is not an edge case, it is every new test.** Since R18 nothing stamps a
+speed, so every test recorded after it reads as unpinned — run at the user's
+`defaultRunSpeed` (medium, shipped) by the app and at `fast` by the MCP, for the
+same test, with nothing on either side reporting a difference. The failure is
+the one this repo keeps meeting: a change that is correct in the file it edits
+and silently wrong one process over.
+
+**Three more things were wrong downstream of it, all silently.** The pace decides
+the per-test timeout floor (a `crawl` run gets five minutes instead of one), it
+decides whether the run settles the page between actions, and `run_test` PRINTS
+it — so the tool reported `speed: "fast"` and `pageSettling: false` describing a
+run that had gone at medium and settled. Resolving one thing wrongly resolved
+three.
+
+**`executeTest` now returns the speed it used, and `run_test` prints that.** The
+alternative — have the caller resolve it again for the report — is a second
+chance to get a different answer, which is exactly how the printed pace and the
+actual pace came apart. A run says what it went at.
+
+**`list_tests` and `get_test` report the RESOLVED speed too, plus
+`speedInherited`.** Reporting the raw field meant asserting a pin that does not
+exist. The flag is what keeps "pinned to medium" and "inheriting medium"
+distinguishable to an agent that wants to change one — the same distinction the
+app's sidebar draws by showing "Inherit". Additive, so no existing client breaks.
+
+**Why the MCP passes `undefined` as the override rather than the test's pin.**
+Passing the pin twice behaves identically today: it wins at layer one either
+way. It stops behaving identically the moment a real override exists above it —
+the CLI's `--speed` (R3) — at which point the global default becomes silently
+unreachable. The layer is there to be correct before it is used, not after.
+
+**What the guard now pins, and the vacuous first draft of it.** `check:mcp-parity`
+§15 asserts both processes resolve through `resolveRunSpeed` and neither carries
+the two-layer fallback. Its ordering rule began as "a correct call exists
+somewhere", which four call sites satisfy between them — breaking one left three
+matching and the check green. It now checks EVERY call site's first argument.
+Caught by reverting it, which is why that rule is in CLAUDE.md.
+
 ### 2026-08-25 — The run routine comes out of the MCP server, and the batch driver splits
 
 `docs/plans/test-runner-improvements.md` §3.3 makes one load-bearing decision

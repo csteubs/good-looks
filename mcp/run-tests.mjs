@@ -48,7 +48,7 @@ import {
   PLAYWRIGHT_CONFIG_FILE,
   playwrightConfigSource,
 } from "../shared/playwright-config-source.mjs";
-import { resolveTestTimeoutMs } from "../shared/run-pacing.mjs";
+import { resolveRunSpeed, resolveTestTimeoutMs } from "../shared/run-pacing.mjs";
 
 const MCP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(MCP_DIR, "..");
@@ -151,7 +151,7 @@ export function createRunner({ dataDir, store }) {
    * Shared by run_test and run_batch so the two can't drift in how they invoke
    * Playwright or what they record.
    *
-   * @returns {{ runId, status, exitCode, startedAt, finishedAt, durationMs, output, timeoutMs, timeoutRaised }}
+   * @returns {{ runId, status, exitCode, startedAt, finishedAt, durationMs, output, timeoutMs, timeoutRaised, speed }}
    */
   async function executeTest(test, { playwright, browser, batchId, vars, datasetId, datasetName }) {
     // The scripts ROOT, not the spec's own directory. An imported test's spec
@@ -169,16 +169,39 @@ export function createRunner({ dataDir, store }) {
     const runId = randomUUID();
     const outputDir = path.join(scriptsDir, "test-results", runId);
 
-    const speed = test.speed ?? "fast";
+    // ONE read of the settings file, used for all three decisions below. It was
+    // read twice per run, which is not just wasteful: two reads are two answers
+    // if the app writes between them, and the pace a run went at would then
+    // disagree with the proxy it went through.
+    const settings = readSettings();
+
+    // The same three-layer rule the app resolves, through the same function:
+    // no override (that is the CLI's `--speed`, not the MCP's), then the test's
+    // own pin, then the global default.
+    //
+    // `test.speed ?? "fast"` is what this said, and R18 turned it into a real
+    // divergence: recordings STOPPED stamping their speed, so absent now means
+    // INHERIT rather than "nobody chose". Every test recorded since then reads
+    // as unpinned, so the app ran it at `defaultRunSpeed` (medium, shipped) and
+    // this server ran the same test at fast. Nothing reports it — the run just
+    // behaves differently depending on which process started it, which is the
+    // exact drift `check:mcp-parity` exists to catch and did not, because it
+    // had no rule about how the pace is RESOLVED.
+    const speed = resolveRunSpeed(undefined, test.speed, settings.defaultRunSpeed);
+
     // The per-test timeout, resolved exactly as the app resolves it: explicit
     // per-test value → the app's global default → 1 minute, then raised to the
     // crawl floor. Ignoring it (which this server did) meant an MCP run used
     // Playwright's own default no matter what the test said — so a test given
     // four minutes for a long flow was failed at one, and one deliberately held
     // to thirty seconds was allowed to run for far longer.
+    //
+    // It reads `speed` above, which is the other half of why the two have to be
+    // resolved together: an inherited `crawl` raises this floor to five minutes,
+    // and resolving the pace wrongly silently resolved the timeout wrongly too.
     const { timeoutMs: testTimeoutMs, raised: timeoutRaised } = resolveTestTimeoutMs(
       test.testTimeoutMs,
-      readSettings().defaultTestTimeoutMs,
+      settings.defaultTestTimeoutMs,
       speed,
     );
     // The hard kill must outlive the per-test timeout, or a legitimately long
@@ -199,7 +222,7 @@ export function createRunner({ dataDir, store }) {
       // The proxy settings ride the same file as everything else here. The
       // shared rule inside runEnv turns them into PW_PROXY_* — or into nothing,
       // which is most libraries.
-      settings: readSettings(),
+      settings,
     });
     // Relative to the scripts root, so a sandboxed spec resolves as
     // `imported/<id>/tests/foo.spec.ts` rather than a bare basename that only
@@ -319,6 +342,12 @@ export function createRunner({ dataDir, store }) {
       output: safeOutput,
       timeoutMs: testTimeoutMs,
       timeoutRaised,
+      // REPORTED, not re-derived by the caller. run_test describes the run it
+      // just did (`describeRun` prints the pace and the step delay, and gates
+      // `pageSettling` on crawl), and a caller resolving the speed a second time
+      // is a second chance to resolve it differently — which is precisely how
+      // this drifted. The run says what it went at.
+      speed,
     };
   }
   /**
@@ -491,7 +520,11 @@ export function createRunner({ dataDir, store }) {
         [...byId.values()].flatMap(
           (t) =>
             describeRun(t, settings, {
-              speed: t.speed ?? "fast",
+              // Resolved, not read: `pageSettling` below is `speed === "crawl"`,
+              // so a test inheriting crawl from the default would be REPORTED as
+              // not settling while the run it describes actually does. Same rule
+              // as executeTest, for the same reason.
+              speed: resolveRunSpeed(undefined, t.speed, settings.defaultRunSpeed),
               timeoutMs: 0,
               timeoutRaised: false,
               signatures,
