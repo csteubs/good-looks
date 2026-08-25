@@ -36,6 +36,9 @@ import {
 // tool" rather than a redirect.
 import { routineBlockedReason, routineRunPlan } from "../shared/routine-plan.mjs";
 import { describeSchedule } from "../shared/routine-schedule.mjs";
+// The pace rule, so what these tools REPORT a test runs at is resolved by the
+// same function that decides it — see mcp/run-tests.mjs.
+import { resolveRunSpeed } from "../shared/run-pacing.mjs";
 import { buildQueue } from "../shared/batch-queue.mjs";
 import {
   runEvidence,
@@ -114,6 +117,9 @@ server.registerTool(
     inputSchema: { isFlow: z.boolean().optional() },
   },
   async ({ isFlow } = {}) => {
+    // Once, outside the map: a test's effective speed depends on the global
+    // default, and this reads up to 200 of them.
+    const defaultRunSpeed = readSettings().defaultRunSpeed;
     const tests = listTests()
       .filter((t) => !t.hidden)
       .filter((t) => (isFlow === undefined ? true : Boolean(t.isFlow) === isFlow))
@@ -129,7 +135,15 @@ server.registerTool(
         // reported as `""`, so "ungrouped" reads the same here as it does on
         // the record — one condition, not two.
         ...(t.group ? { group: t.group } : {}),
-        speed: t.speed ?? "fast",
+        // What it would RUN at, plus whether that is the test's own choice.
+        // `t.speed ?? "fast"` asserted a pin that since R18 does not exist:
+        // recordings stopped stamping their speed, so absent means INHERIT, and
+        // this reported "fast" for a test the app runs at the default. The flag
+        // is what keeps the two states distinguishable to an agent that wants to
+        // change one — the same distinction the sidebar's menu draws by showing
+        // "Inherit".
+        speed: resolveRunSpeed(undefined, t.speed, defaultRunSpeed),
+        ...(t.speed ? {} : { speedInherited: true }),
         runBrowser: t.runBrowser ?? "chromium",
         scriptEdited: Boolean(t.scriptEdited),
         ...(t.isFlow ? { isFlow: true, flowParams: t.flowParams ?? [] } : {}),
@@ -164,7 +178,9 @@ server.registerTool(
       name: test.name,
       url: test.url,
       steps: test.steps,
-      speed: test.speed ?? "fast",
+      // Effective speed and whether it is pinned — see list_tests.
+      speed: resolveRunSpeed(undefined, test.speed, readSettings().defaultRunSpeed),
+      ...(test.speed ? {} : { speedInherited: true }),
       scriptEdited: Boolean(test.scriptEdited),
       createdAt: test.createdAt,
       updatedAt: test.updatedAt,
@@ -395,7 +411,12 @@ server.registerTool(
               durationMs: result.durationMs,
               ...(row ? { datasetId: row.id, datasetName: row.name } : {}),
               fixtures: describeRun(test, readSettings(), {
-                speed: test.speed ?? "fast",
+                // The speed the run ACTUALLY went at, off the result. Reading
+                // `test.speed ?? "fast"` here reported the pace of a run that
+                // did not happen: since R18 an unstamped test inherits the
+                // global default, so this printed "fast" for a run that went at
+                // medium, and said `pageSettling: false` for one that settled.
+                speed: result.speed,
                 timeoutMs: result.timeoutMs,
                 timeoutRaised: result.timeoutRaised,
                 signatures: readSignatures(),
