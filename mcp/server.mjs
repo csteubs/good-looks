@@ -817,7 +817,16 @@ server.registerTool(
  * counts as `isError`. Every sentence below is the one this tool produced
  * before the split.
  */
-async function runBatchTool({ testIds, tag, group, browser, datasetIds, allDatasets, parallel }) {
+async function runBatchTool({
+  testIds,
+  tag,
+  group,
+  browser,
+  datasetIds,
+  allDatasets,
+  parallel,
+  dryRun,
+}) {
   const outcome = await runSelection({
     testIds,
     tag,
@@ -826,6 +835,7 @@ async function runBatchTool({ testIds, tag, group, browser, datasetIds, allDatas
     datasetIds,
     allDatasets,
     parallel,
+    dryRun,
   });
 
   if (!outcome.ok) {
@@ -839,6 +849,14 @@ async function runBatchTool({ testIds, tag, group, browser, datasetIds, allDatas
             : `${outcome.browser} isn't installed yet. Run a test once from the app on ` +
               `${outcome.browser} (it installs the browser on first run), then retry.`;
     return { content: [{ type: "text", text }], isError: true };
+  }
+
+  // A DRY RUN is returned as it was planned, not re-shaped. It carries no
+  // batchId and no summary because nothing ran and nothing was recorded — and
+  // it is never `isError`, since an empty selection refused above with
+  // `no-match` and never reaches here.
+  if (outcome.dryRun) {
+    return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }] };
   }
 
   return {
@@ -889,6 +907,15 @@ const BATCH_RUN_OPTIONS = {
     .optional()
     .describe("Sweep every dataset row each selected test declares."),
   parallel: z.number().int().min(1).max(MAX_PARALLEL).optional(),
+  dryRun: z
+    .boolean()
+    .optional()
+    .describe(
+      "Report which tests WOULD run and stop, spawning nothing and recording nothing. " +
+        "Answers the question a selector that quietly matches nothing otherwise hides: " +
+        "a batch of zero reports the same shape as a clean pass. An empty selection is " +
+        "still an error here, which is the point.",
+    ),
 };
 
 server.registerTool(

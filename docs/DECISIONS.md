@@ -10,6 +10,131 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — The CLI: its exit contract, its installer, and its dry run
+
+R3 and R2 together, because a `run` command without an exit contract is a
+command that lies to the thing it exists for. The runner plan sequences them
+apart for review size; shipping them apart would mean an interim CLI whose
+whole purpose — CI — is broken.
+
+**It is a caller, not a runner.** `cli/run.mjs` resolves a data directory,
+calls `runSelection`, and renders the result. That it CAN is what the extraction
+bought: the batch driver returned MCP tool content at every exit, so the only
+thing able to call it was an MCP tool. §3.3 names "third caller, never third
+implementation" as the load-bearing decision, and `run-plan.mjs` records the
+four-way silent divergence that made it one.
+
+**Code 2 is the whole reason R2 is not just `exit(failed ? 1 : 0)`.** A selector
+that matches nothing produces a batch of zero, and a summary of zero is
+byte-identical in SHAPE to a clean pass. Rename a folder's capitalisation and
+the pipeline stays green while testing nothing, forever, with no signal
+anywhere. Folding it into 1 is wrong in the other direction: that reads as "your
+tests fail" and sends someone to read the tests rather than the selector.
+
+The plan's own example of this is a tag renamed `smoke` → `Smoke`, and **that
+exact case cannot happen here** — `selectTests` folds tag case. The asymmetry
+beside it is what makes the warning land: a folder name is matched EXACTLY. So
+`--group checkout` against a folder called `Checkout` is this library's real
+silently-empty selector, and it is the row `check:cli-exit` pins.
+
+**Three parser rules, each a way to run the wrong tests silently.** An unknown
+flag is a refusal rather than a warning — a pipeline passing `--fail-fast` to a
+build without it must not run the suite anyway and report green. There is no
+default selector, deliberately unlike `run_batch`, whose "everything visible"
+default is right for a tool an agent calls with an explicit intent and wrong for
+a CLI where a misspelt flag name would run the entire library on a CI runner.
+And two selectors is a refusal rather than a precedence: `selectTests` HAS one,
+so it would run something, just not necessarily what someone who wrote both
+flags expected, and they would never find out.
+
+**`--speed` is the override layer `resolveRunSpeed` was built with and nothing
+had yet used.** It is not written back to the test — "run this one slowly while
+I watch it" is a decision about one run, the same contract the app's Pace
+control has. An unrecognised value is REFUSED here rather than skipped: skipping
+is right inside `resolveRunSpeed`, where a stale or hostile value must not reach
+the delay table, but at a layer that has a person to talk to, silently running
+at a pace nobody chose after they explicitly asked for one is the wrong answer.
+
+**`process.exitCode`, never `process.exit(n)`.** `process.exit` terminates
+before pending stdout writes flush, and stdout to a PIPE — which is what a CI
+runner gives you — is asynchronous. A CLI that exits immediately after writing
+prints nothing at all when piped, reliably, and works perfectly every time you
+try it in a terminal. `check:cli-exit` reads stdout through a pipe so that
+regression shows up as empty output rather than as nothing.
+
+**Why `check:cli-exit` spawns the binary.** `check:mcp-boot` exists because
+nothing booted the MCP server: every other `check:mcp-*` read source or imported
+pure modules, and all of them stayed green through the six months the server
+threw at module load and no tool was reachable. A CLI is the same shape — one
+entry point, a `bin` field, an argv contract — and a source-level check would
+pass against a `bin/good-looks.mjs` with a syntax error in it. Codes 0 and 1
+need a browser and a real run, so they are pinned as a pure mapping instead;
+that split is stated in the file so nobody reads it as full coverage.
+
+**A skipped test does not fail the run.** A test skipped for declaring secret
+variables is a run this process could not do rather than a test that is red, and
+failing on it would make one secret-bearing test enough to redden every suite it
+sits in. The report names the count in words instead — silence there is how a
+test quietly stops being covered under a green pipeline.
+
+**`install` shipped with the CLI rather than after it (R11), for one sentence.**
+Without it, this binary's answer to a missing browser is the MCP's — "run a test
+once from the app" — and the entire audience of a CLI is a CI runner, which has
+no app on it. R11 is ranked S and is what lets that refusal name a command.
+
+Three decisions inside it, each the difference between a working install and a
+confusing one. It installs into the LIBRARY's browsers directory rather than
+Playwright's machine-wide cache, because that is where runs look — and the path
+comes from the same `browsersDir()` the runner launches from, since two
+spellings fail as "installed, and still not installed", a loop with no error in
+it that the obvious next move does not fix. It spawns the BUNDLED CLI, so the
+revision unpacked is by construction the one `isBrowserInstalled` expects;
+reaching for a Playwright on the caller's PATH is how the 1.62 upgrade broke
+this before. And it **re-asks whether the browser is installed after a
+successful install**, because `playwright install` can exit 0 having unpacked
+something this app will not launch — reporting success on the exit code alone is
+how that becomes silent.
+
+It is also a no-op when the engine is already there, which is not a nicety: an
+install step runs on every CI job, and the regression costs minutes per job with
+nothing failing.
+
+**`--dry-run` is the other half of code 2 (R9).** The exit code tells a pipeline
+that its selector matched nothing AFTER it has already been run; the dry run
+lets someone ask first. mabl gives this its own `?preview=true` and an entire
+troubleshooting section titled "Deployment succeeded but no tests ran" — the
+failure mode their docs spend the most words on.
+
+It plans through the **same** `selectTests` + `buildQueue` the real run uses,
+not a description of them. A dry run computed by different code answers a
+different question, which is worse than not answering, because it would be
+trusted.
+
+Two placement decisions carry it, and both are about what it is FOR. It answers
+**before** the Playwright and browser checks: "what would this run?" is the
+question asked on a fresh CI container that does not have a browser yet, and
+refusing until the environment is complete makes the flag useless exactly when
+it is wanted. The browser's state is REPORTED as a fact instead, with a warning
+that a real run would stop — an unknown *engine* still refuses, because that is
+a bad argument rather than an incomplete environment. And it answers **after**
+selection, so an empty selection is still exit 2. A dry run that matches nothing
+has found the bug it was run to look for; reporting success there would be the
+silently-green pipeline wearing a different hat.
+
+It reports the RESOLVED pace rather than the record's field, for the reason the
+entry above this one exists, and it names the tests a real run would SKIP for
+secrets — finding out that a suite skips half its tests should not require
+running the suite. `run_batch` takes the same `dryRun` over the same function:
+leaving it CLI-only would recreate the app/MCP asymmetry this whole line of work
+is about.
+
+**What is deliberately absent.** `--base-url` (R5), `--secrets-file` (R7),
+`--junit`/`--results-out` (R1/R13), `--retries`, `--fail-fast`,
+and the `report`, `export`, `eject` and `ingest` subcommands are each
+their own ranked item. Half-answering R7 in particular would be worse than not
+answering it: a run declaring a secret is SKIPPED with a note here exactly as it
+is over MCP, because this process cannot decrypt one either.
+
 ### 2026-08-25 — R18 moved the app's pace rule and left the MCP's behind
 
 R18 changed what an absent `speed` MEANS. It used to say "nobody chose"; it now

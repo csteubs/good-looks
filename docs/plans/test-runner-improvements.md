@@ -106,28 +106,34 @@ Merged from 102 findings (the same change often appeared under three themes).
 Ranked by user value × confidence ÷ effort, with a deliberate thumb on the scale
 for CI/CD.
 
+**Verdicts marked done were each confirmed against the code, not against
+memory.** That distinction is the whole point of #254: this table said `missing`
+for R4 while most of it shipped, and DECISIONS records the nine days the
+emit-adapter rows spent claiming five things did not exist after they landed. A
+row is only moved here with a file and a symbol behind it.
+
 | # | Item | Area | Verdict | Effort |
 |---|---|---|---|---|
 | R1 | Give `report:emit` a non-interactive destination, scoped to a run or batch | CI | partial | S |
-| R2 | Exit non-zero when a run fails, on a documented contract | CI | missing | S |
-| R3 | Add a `bin` and a headless `run` command | CI | missing | L |
+| R2 | Exit non-zero when a run fails, on a documented contract | CI | **done 2026-08-25** | S |
+| R3 | Add a `bin` and a headless `run` command | CI | **done 2026-08-25** | L |
 | R4 | Make the runner reachable without Electron and without `safeStorage` | CI | **mostly built — see §3.3a** | S |
 | R5 | Add a per-run base-URL override | CI / Env | missing | M |
 | R6 | Record commit, branch and job provenance on each run | CI | missing | M |
 | R7 | Provision secrets from the environment for CI runs | CI | missing | M |
 | R8 | Ship the run fixtures with the CI runner | CI | missing | M |
-| R9 | Selector-based selection with a dry run, and a distinct empty-match outcome | CI | partial | M |
+| R9 | Selector-based selection with a dry run, and a distinct empty-match outcome | CI | **done 2026-08-25** | M |
 | R10 | Export the library as a portable bundle; stop storing absolute script paths | CI | missing | L |
-| R11 | Install browsers from the CI entry point | CI | missing | S |
+| R11 | Install browsers from the CI entry point | CI | **done 2026-08-25** | S |
 | R12 | Ingest CI run results back into the local library | CI | missing | L |
 | R13 | Put the failing step in the JUnit message and make annotations point somewhere | CI | partial | S |
 | R14 | Ship a GitHub Action and workflow templates | CI | missing | S |
-| R15 | Ship the MCP server inside the packaged app | CI | missing | S |
+| R15 | Ship the MCP server inside the packaged app | CI | **done 2026-08-22** | S |
 | R16 | Add an Environment record and store | Env | missing | L |
-| R17 | Stop sweeping every test's artifacts after every run | Perf | missing | S |
-| R18 | Change the shipped batch defaults; add a run-level speed override | Perf | partial | M |
-| R19 | Record why a run ended, not just whether it passed | Stab | missing | M |
-| R20 | Segment stability analysis by browser | Stab | missing | M |
+| R17 | Stop sweeping every test's artifacts after every run | Perf | **done 2026-08-25** | S |
+| R18 | Change the shipped batch defaults; add a run-level speed override | Perf | **done 2026-08-25** | M |
+| R19 | Record why a run ended, not just whether it passed | Stab | **done 2026-08-21** | M |
+| R20 | Segment stability analysis by browser | Stab | **done 2026-08-25** | M |
 | R21 | Decouple page-settling from the Crawl speed | Stab | partial | M |
 | R22 | Put a score floor under an applied heal | Stab | missing | M |
 | R23 | Add a per-step Auto-Heal opt-out | Stab | missing | M |
@@ -155,7 +161,7 @@ for CI/CD.
 | R44 | Per-step run findings and a step filter on the Steps tab | UX | missing | L |
 | R45 | Show a suite's expected duration before it runs | Perf | missing | M |
 | R46 | Lean diagnostics mode for the app | Perf | partial | M |
-| R47 | Fix heal candidate scores above 1 being reported as 0 | Stab | missing | S |
+| R47 | Fix heal candidate scores above 1 being reported as 0 | Stab | **done 2026-08-25** | S |
 | R48 | Finish the Batch-to-Routine rename in UI copy | UX | partial | S |
 | R49 | Run the heal fixture for MCP-driven runs | Stab | missing | M |
 | R50 | Export a run as a shareable PDF | UX | missing | M |
@@ -328,6 +334,15 @@ nothing can call it. Extracting it is the change that makes the CLI a third
 CALLER rather than a third implementation, which §3.3 already names as the
 load-bearing decision. Sequenced: extract → `bin` + `run` (R3) → the exit
 contract (R2) → R11, R9, R8, R7.
+
+**Status, 2026-08-25.** Everything up to and including R9 has landed. The
+extraction is `mcp/store.mjs` + `mcp/run-tests.mjs` (#255); the CLI is `bin/` +
+`cli/` with R3, R2, R11 and R9 in it (#257). One finding is worth carrying
+forward, because it changed the estimate: the batch driver was **not** a move.
+It returned MCP tool content at every exit, so nothing that was not an MCP tool
+could call it — `runSelection` returns a discriminated result now, and the tool
+renders it. **R8 and R7 remain**, and they are the two the section below calls
+non-obvious for good reason.
 
 **What the extraction actually involves, measured rather than estimated.** About
 534 lines across four groups, and only three of them are a move:
