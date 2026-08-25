@@ -78,6 +78,34 @@ describe("exitCodeFor", () => {
     expect(exitCodeFor(ran({ passed: 1, failed: 0, skipped: 2 }))).toBe(EXIT.PASSED);
   });
 
+  it("is 3 when NOTHING executed, however many were skipped", () => {
+    // The hole in the first version of this contract. A skipped test does not
+    // fail the run — one secret-bearing test must not redden every suite it
+    // sits in — but a suite in which no test ran at all is not a pass.
+    //
+    // The shape that produced: a pipeline whose credentials had all gone
+    // missing skipped every test and reported EXIT 0. Green, forever, having
+    // tested nothing — the precise failure code 2 exists to end, arriving
+    // through the other door.
+    expect(exitCodeFor(ran({ passed: 0, failed: 0, skipped: 5 }))).toBe(EXIT.CANNOT_START);
+    expect(exitCodeFor(ran({ passed: 0, failed: 0, skipped: 1 }))).toBe(EXIT.CANNOT_START);
+  });
+
+  it("…but one test running is enough to judge the run on its result", () => {
+    // Not "most tests ran" or "no tests were skipped" — the question is only
+    // whether the suite executed anything, because a partially-skipped suite
+    // still produced a verdict on the tests it did run, and the report names
+    // the skipped count in words.
+    expect(exitCodeFor(ran({ passed: 1, failed: 0, skipped: 9 }))).toBe(EXIT.PASSED);
+    expect(exitCodeFor(ran({ passed: 0, failed: 1, skipped: 9 }))).toBe(EXIT.FAILED);
+  });
+
+  it("is 0 for a suite that ran everything and skipped nothing", () => {
+    // The guard against over-correcting: `executed === 0` must not catch an
+    // ordinary empty-ish summary that had nothing to skip either.
+    expect(exitCodeFor(ran({ passed: 0, failed: 0, skipped: 0 }))).toBe(EXIT.PASSED);
+  });
+
   it("never reports an unrecognised outcome as a pass", () => {
     // The one mistake this file exists to make impossible. A reason added to
     // `runSelection` and not mapped here must not inherit 0 — nothing ran.

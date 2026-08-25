@@ -130,7 +130,8 @@ try {
         : "…but its output was EMPTY through a pipe — process.exit() truncates stdout",
     );
     assert(
-      r.stdout.includes(`${EXIT.NO_MATCH}  the selector matched no tests`),
+      r.stdout.includes(`${EXIT.NO_MATCH}  the selector matched no tests`) &&
+        r.stdout.includes(`${EXIT.CANNOT_START}  the run could not start, or nothing in it ran`),
       "…and prints the exit-code contract, from the same table the code uses",
     );
   }
