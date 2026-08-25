@@ -72,13 +72,14 @@ function matchingLink(links: IssueLink[], source: DefectSource): IssueLink | nul
  * THE FORM before re-fetching. Keyed on the object, a Routine running in the
  * background wiped a half-typed report every few seconds (#121).
  *
- * ONE RESIDUE, AND IT IS NOT THIS FILE'S TO FIX. `a11y-panel` derives its
- * `runId` from the LATEST a11y run of the test, so a new run of that test
- * changes the key for real rather than by identity — and the panel then
- * unmounts this dialog behind its own `Loading…` gate while the replay query
- * refetches on the new key, which loses the form whatever this effect depends
- * on. That behaviour predates the key and needs a11y-panel's own change; see
- * DECISIONS 2026-08-25.
+ * THE ONE RESIDUE THIS COULD NOT FIX ALONE IS CLOSED, in `a11y-panel`.
+ * It derived its `runId` from the LATEST a11y run of the test, so a new run
+ * changed this dialog's key for real rather than by identity — and the panel
+ * then unmounted the dialog behind its own `Loading…` gate while the replay
+ * query refetched on the new key, losing the form before the key was ever
+ * consulted. It now captures the anchor run when the user clicks (as
+ * `a11y-view` always has) and keeps the previous run's replay while the new one
+ * loads. Both halves were needed; see DECISIONS 2026-08-25.
  *
  * Fixed here rather than by memoizing the three callers: a caller that forgets
  * to memoize is invisible — the form still works, it just quietly resets — and
