@@ -43,7 +43,7 @@ function assert(condition: boolean, label: string): void {
 
 for (const [label, relPath] of [
   ["the app runner", "main/services/playwright-runner.ts"],
-  ["the MCP server", "mcp/server.mjs"],
+  ["the MCP server", "mcp/run-tests.mjs"],
 ] as const) {
   const src = readFileSync(resolve(process.cwd(), relPath), "utf8");
   assert(
@@ -106,11 +106,31 @@ assert(
 // fallback puts every concurrent run back in one shared folder.
 for (const [label, relPath] of [
   ["the app runner", "main/services/playwright-runner.ts"],
-  ["the MCP server", "mcp/server.mjs"],
   ["the MCP run planner", "mcp/run-plan.mjs"],
 ] as const) {
   const src = readFileSync(resolve(process.cwd(), relPath), "utf8");
   assert(src.includes("PW_OUTPUT_DIR"), `${label} passes a per-run PW_OUTPUT_DIR`);
+}
+
+// The MCP's runner is asked a DIFFERENT question, because it does not name the
+// variable — `runEnv` does, and it emits nothing when handed no directory
+// (`...(outputDir ? { PW_OUTPUT_DIR: outputDir } : {})`). So what has to be true
+// here is that `executeTest` derives a per-RUN directory and hands it over.
+//
+// This entry used to sit in the loop above against `mcp/server.mjs`, where it
+// matched a COMMENT mentioning the variable and nothing else — green whatever
+// the code did, which is the failure this whole file exists to catch, one level
+// up. Confirmed by deleting the real wiring and watching it stay green.
+{
+  const src = readFileSync(resolve(process.cwd(), "mcp/run-tests.mjs"), "utf8");
+  assert(
+    /const outputDir = path\.join\([^)]*runId\)/.test(src),
+    "the MCP runner derives the output dir from the RUN's own id, not the test's",
+  );
+  assert(
+    /runEnv\(\{[\s\S]*?\n\s*outputDir,/.test(src),
+    "…and hands it to runEnv, which emits PW_OUTPUT_DIR only when it gets one",
+  );
 }
 
 // Same shape, same reason, for the base URL an imported test runs against.
@@ -129,7 +149,7 @@ for (const [label, relPath] of [
 // configured base URL would be one address for a library of imported projects.
 for (const [label, relPath, needle] of [
   ["the app runner", "main/services/playwright-runner.ts", "rec.baseUrl"],
-  ["the MCP server", "mcp/server.mjs", "test.baseUrl"],
+  ["the MCP server", "mcp/run-tests.mjs", "test.baseUrl"],
 ] as const) {
   const src = readFileSync(resolve(process.cwd(), relPath), "utf8");
   assert(src.includes(needle), `${label} reads the base URL from the test record`);

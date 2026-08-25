@@ -75,6 +75,17 @@ import { routineRunPlan } from "../../../shared/routine-plan.mjs";
 import { RUN_TRIGGERS, normalizeRunTrigger } from "../../../shared/run-trigger.mjs";
 import type { Step, TestVariable } from "../../recorder/types.js";
 
+/** THE MCP'S RUN PATH, which is three files rather than one since the runner was
+ *  extracted so a CLI could call it (mcp/run-tests.mjs). Joined rather than
+ *  pointed at the new file, so this check keeps answering "does the MCP do X"
+ *  no matter which of its modules holds X — moving code between them is exactly
+ *  what would otherwise silence a guard that is still needed. */
+function mcpRunSource(): string {
+  return ["mcp/server.mjs", "mcp/run-tests.mjs", "mcp/store.mjs"]
+    .map((f) => readFileSync(resolve(process.cwd(), f), "utf8"))
+    .join("\n");
+}
+
 let failures = 0;
 
 function assert(condition: boolean, label: string): void {
@@ -405,7 +416,7 @@ function codeOnly(source: string): string {
 
 {
   const appSrc = readFileSync(resolve(process.cwd(), "main/services/playwright-runner.ts"), "utf8");
-  const mcpSrc = readFileSync(resolve(process.cwd(), "mcp/server.mjs"), "utf8");
+  const mcpSrc = mcpRunSource();
   assert(
     appSrc.includes("playwrightConfigSource") && mcpSrc.includes("playwrightConfigSource"),
     "both writers use the shared playwright config source",
@@ -437,7 +448,7 @@ function codeOnly(source: string): string {
     "mcp: run output is stripped of terminal escape sequences before it is stored",
   );
   assert(!sanitizeOutput(raw).includes(ESC), "mcp: no ESC byte survives sanitizeOutput");
-  const mcpSrc = readFileSync(resolve(process.cwd(), "mcp/server.mjs"), "utf8");
+  const mcpSrc = mcpRunSource();
   // The saved record's byte count must describe the text actually written. It
   // used to be measured on the raw output, so every log reported a size larger
   // than the file on disk.
@@ -546,7 +557,7 @@ function codeOnly(source: string): string {
 // ── 8. The values a sweep uses never reach the persisted batch ────────
 
 {
-  const mcpSrc = codeOnly(readFileSync(resolve(process.cwd(), "mcp/server.mjs"), "utf8"));
+  const mcpSrc = codeOnly(mcpRunSource());
   // batch-history.json is read back by the app for display. A row's VALUES have
   // no business there; its id and name are what identify a failing row.
   const resultsBlock = /const results = queue\.map\(\(entry\) => \(\{[\s\S]*?\}\)\);/.exec(mcpSrc)?.[0] ?? "";
@@ -566,7 +577,7 @@ function codeOnly(source: string): string {
 // row sitting at "pending" forever, reported as a batch that finished.
 
 {
-  const mcpSrc = codeOnly(readFileSync(resolve(process.cwd(), "mcp/server.mjs"), "utf8"));
+  const mcpSrc = codeOnly(mcpRunSource());
   assert(
     /runPool\(\s*queue\s*,/.test(mcpSrc),
     "mcp: the batch pool iterates the expanded queue, not the selection",
@@ -688,7 +699,7 @@ function codeOnly(source: string): string {
 // tool could look correct and be wrong, none of which surface as an error.
 
 {
-  const mcpSrc = codeOnly(readFileSync(resolve(process.cwd(), "mcp/server.mjs"), "utf8"));
+  const mcpSrc = codeOnly(mcpRunSource());
 
   // Renaming a tool breaks every external client SILENTLY — an MCP client gets
   // "unknown tool", not a redirect. The rename table rules it out, so the two
@@ -850,7 +861,7 @@ function codeOnly(source: string): string {
 // selection semantics the folder feature depends on are the app's own.
 
 {
-  const mcpSrc = codeOnly(readFileSync(resolve(process.cwd(), "mcp/server.mjs"), "utf8"));
+  const mcpSrc = codeOnly(mcpRunSource());
 
   // Both registered, and neither a rename of the other — same rule that keeps
   // run_batch and run_routine coexisting. An MCP client meeting a renamed tool
@@ -882,8 +893,14 @@ function codeOnly(source: string): string {
   // app's rail and this tool have to agree about what "the Checkout folder"
   // contains, and that answer lives in one module for the reason the tags one
   // does — a second read is how the two end up running different sets.
-  const batchSrc = /async function runBatchTool\([\s\S]*?\n\}\n/.exec(mcpSrc)?.[0] ?? "";
-  assert(batchSrc.length > 0, "mcp: isolated runBatchTool's own body");
+  //
+  // ISOLATES `runSelection`, which is where the selecting happens since the run
+  // routine was extracted for the CLI (mcp/run-tests.mjs). `runBatchTool` is now
+  // the renderer that turns its result into MCP text, so scanning that body
+  // would find no selector at all — and would pass vacuously the day someone
+  // wrote a second one back into it.
+  const batchSrc = /async function runSelection\([\s\S]*?\n {2}\}\n/.exec(mcpSrc)?.[0] ?? "";
+  assert(batchSrc.length > 0, "mcp: isolated runSelection's own body");
   assert(
     /selectTests\(listTests\(\), \{ testIds, tag, group \}\)/.test(batchSrc),
     "mcp: the group selector goes through selectTests, not a filter written here",
@@ -1108,7 +1125,7 @@ function codeOnly(source: string): string {
 // normalizer, which is the function that would have dropped it.
 
 {
-  const mcpSrc = codeOnly(readFileSync(resolve(process.cwd(), "mcp/server.mjs"), "utf8"));
+  const mcpSrc = codeOnly(mcpRunSource());
 
   // Scoped to `executeTest`'s record literal, not the file — the lesson from
   // the `routineId` assertion in section 11. Several tools RETURN a `trigger`

@@ -10,6 +10,64 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — The run routine comes out of the MCP server, and the batch driver splits
+
+`docs/plans/test-runner-improvements.md` §3.3 makes one load-bearing decision
+about the CLI: it must be a third CALLER of what `mcp/` already does, never a
+third implementation. `run-plan.mjs` records the reason — the app's runner and
+this server's had silently diverged in four ways by 2026-08-07, and
+`check:mcp-parity` exists to stop a third. But there was nothing to call: the
+readers, the Playwright discovery, `executeTest` and the batch driver were all
+module-private inside a **2,150-line file that boots an MCP server on stdio the
+moment it is imported**. So this change is the CLI's precondition, done on its
+own, with no behaviour change, under the four `check:mcp-*` guards.
+
+**Three of the four pieces were a move; one was not, and that is the finding.**
+The batch driver **returned MCP tool content** — `{content:[{type:"text"}],
+isError}` — at every one of its exits. Not as a wrapper at the end: the three
+refusals returned it directly, each one having already formatted its own English
+sentence. A caller that is not an MCP tool could not use the function at all,
+which is why measuring this step (PR #254) changed its estimate: it reads as a
+mechanical move and is a split.
+
+`runSelection` now returns a **result**. Four refusals as a discriminated union
+carrying the FACT the sentence was built from, not the sentence —
+`{ok:false, reason:"unknown-browser", browser}`, `"no-match"` with `how` (the
+selector that actually applied, in the order `selectTests` resolves them),
+`"no-playwright"` with the root it looked under, `"no-browser"` with the engine —
+and `{ok:true, batchId, browser, parallel, missing, summary, fixturesSkipped,
+results}` for a run that happened. `runBatchTool` in `server.mjs` is now purely
+the renderer: it turns that result into exactly the text the tool produced
+before, keeps the `summary.failed > 0 ⇒ isError` rule, and is the only place that
+knows what MCP content looks like. The CLI (R3) turns the same result into an
+exit code, which is the contract §3.3 pins — and it can, because the refusals
+arrive as reasons rather than as prose it would have to parse.
+
+**Why factories rather than modules of free functions.** Everything extracted is
+bound to one `dataDir`. Threading it through every call site is a parameter
+nobody reads and anybody can pass wrong, and `server.mjs` has dozens of those
+call sites. `createStore(dataDir)` and `createRunner({dataDir, store})` return
+objects the server destructures into **the names it already used**, so the 2,150
+lines lost 470 and gained no call-site churn — which is what makes the diff
+reviewable as "this moved" rather than "this was rewritten".
+
+**Why two modules rather than one.** The store's readers are not the runner's:
+`list_tests`, `list_runs`, `list_routines` and every evidence tool need them and
+have nothing to do with spawning a browser. Folding them into the runner would
+make the CLI's `list` subcommand depend on Playwright discovery, and would make
+the store's ownership of the app's on-disk shapes — the `routines.json`
+envelope, the batch-history cap, the signature register's plaintext half —
+something you find by reading a run routine.
+
+**The guard the change had to move with it.** `check:mcp-parity` reads MCP source
+as a string, and every one of its rules was anchored on `mcp/server.mjs`. After
+the extraction, half of them would have been asking a file that no longer
+contains the code — and **they would have gone green, not red**, because a rule
+that finds nothing to object to passes. `mcpRunSource()` now joins all three
+files, and the isolation regex that scopes the routine-stamping rules targets
+`runSelection`. That is the same failure mode `check:mcp-boot` was written
+against: a check that reads source is only as honest as the file list it reads.
+
 ### 2026-08-25 — Closing the a11y-panel residue: an anchor, and a subtree that stays
 
 The #121 entry below names a residue it deliberately did not fix — the one call
