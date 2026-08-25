@@ -17,7 +17,7 @@
     "build:main": "node scripts/build-main.mjs",
     "dev": "node scripts/dev.mjs",
     "start": "electron .",
-    "lint": "eslint main renderer mcp e2e cli bin",
+    "lint": "eslint main renderer mcp e2e cli bin shared",
     "test:e2e": "npm run build && playwright test --config e2e/playwright.config.ts",
     "dev:web": "vite --mode preview",
     "build:preview": "vite build --mode preview",

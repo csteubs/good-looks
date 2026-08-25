@@ -57,8 +57,9 @@ function parseStepMarker(json) {
  *  • A marker can straddle chunk boundaries, so the trailing partial line is
  *    handed back as `rest` and passed in again with the next chunk.
  *  • A marker does not always START its line. Playwright's `line` reporter
- *    writes its cursor-control prefix (`[1A[2K`) with no trailing
- *    newline, and a marker written from the WORKER process — which is where the
+ *    writes its cursor-control prefix — ESC[1A ESC[2K, written here in that
+ *    notation rather than as the bytes themselves — with no trailing newline,
+ *    and a marker written from the WORKER process — which is where the
  *    capture fixture runs — lands directly after it. Anchoring on the start of
  *    the line drops those, and then prints them to the user instead.
  *

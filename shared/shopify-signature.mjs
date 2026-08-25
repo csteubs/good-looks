@@ -218,7 +218,10 @@ export function headerValueProblem(raw, label = "value") {
   if (text.length > MAX_HEADER_VALUE_LENGTH) {
     return `The ${label} is longer than ${MAX_HEADER_VALUE_LENGTH} characters.`;
   }
-  // eslint-disable-next-line no-control-regex -- the control characters ARE the check
+  // No eslint-disable here, and that is the point: the class is a NEGATED
+  // printable range, so it names no control character and `no-control-regex`
+  // has nothing to say about it. The directive that used to sit here was
+  // inert — which nothing reported, because shared/ was not linted.
   if (/[^\x20-\x7E]/.test(text)) {
     return `The ${label} contains a line break or a character that can't appear in an HTTP header.`;
   }
