@@ -153,7 +153,10 @@ export function createRunner({ dataDir, store }) {
    *
    * @returns {{ runId, status, exitCode, startedAt, finishedAt, durationMs, output, timeoutMs, timeoutRaised, speed }}
    */
-  async function executeTest(test, { playwright, browser, batchId, vars, datasetId, datasetName }) {
+  async function executeTest(
+    test,
+    { playwright, browser, batchId, vars, datasetId, datasetName, speed: speedOverride },
+  ) {
     // The scripts ROOT, not the spec's own directory. An imported test's spec
     // lives in a sandbox subdirectory beside the sibling modules it imports, so
     // deriving the root from the spec would drop a config and a node_modules
@@ -187,7 +190,10 @@ export function createRunner({ dataDir, store }) {
     // behaves differently depending on which process started it, which is the
     // exact drift `check:mcp-parity` exists to catch and did not, because it
     // had no rule about how the pace is RESOLVED.
-    const speed = resolveRunSpeed(undefined, test.speed, settings.defaultRunSpeed);
+    // The override layer is real now: the CLI's `--speed`. It is deliberately
+    // NOT written back to the test — "run this one slowly while I watch it" is a
+    // decision about one run, the same contract the app's Pace control has.
+    const speed = resolveRunSpeed(speedOverride, test.speed, settings.defaultRunSpeed);
 
     // The per-test timeout, resolved exactly as the app resolves it: explicit
     // per-test value → the app's global default → 1 minute, then raised to the
@@ -371,6 +377,7 @@ export function createRunner({ dataDir, store }) {
     datasetIds,
     allDatasets,
     parallel,
+    speed,
   }) {
     const engine = browser ?? "chromium";
     if (!RUN_BROWSERS.includes(engine)) {
@@ -487,6 +494,9 @@ export function createRunner({ dataDir, store }) {
           vars: entry.vars,
           datasetId: entry.datasetId,
           datasetName: entry.datasetName,
+          // Undefined for an MCP batch, which has no override; `resolveRunSpeed`
+          // skips it and the test's own layers decide, exactly as before.
+          speed,
         });
         results[i].status = r.status;
         results[i].exitCode = r.exitCode;
@@ -524,7 +534,7 @@ export function createRunner({ dataDir, store }) {
               // so a test inheriting crawl from the default would be REPORTED as
               // not settling while the run it describes actually does. Same rule
               // as executeTest, for the same reason.
-              speed: resolveRunSpeed(undefined, t.speed, settings.defaultRunSpeed),
+              speed: resolveRunSpeed(speed, t.speed, settings.defaultRunSpeed),
               timeoutMs: 0,
               timeoutRaised: false,
               signatures,

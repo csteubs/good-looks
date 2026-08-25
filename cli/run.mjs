@@ -1,0 +1,178 @@
+// `good-looks run` — the CLI as the THIRD CALLER of the run path.
+//
+// docs/plans/test-runner-improvements.md §3.3 makes that the load-bearing
+// decision, and `mcp/run-plan.mjs` records why: the app's runner and the MCP's
+// had already silently diverged in four ways by 2026-08-07, and
+// `check:mcp-parity` exists to stop a third. So there is no runner here. This
+// file resolves a data directory, calls `runSelection`, and turns the result
+// into text and a number.
+//
+// That it CAN is the whole point of the extraction (#255): the batch driver
+// used to return MCP tool content at every exit, so the only thing that could
+// call it was an MCP tool. It returns a result now, and this is the second
+// thing rendering one.
+//
+// ── What is deliberately not here ────────────────────────────────────────
+// `--base-url` (R5), `--secrets-file` (R7), `--dry-run` (R9), `--junit` and
+// `--results-out` (R1/R13), `--retries`, `--fail-fast`, and the `install`,
+// `report`, `export`, `eject` and `ingest` subcommands are each their own
+// ranked item. A run that declares a secret variable is SKIPPED with a note
+// here exactly as it is over MCP, because this process cannot decrypt one
+// either — that is R7's subject, not something to half-answer now.
+
+import process from "node:process";
+
+import { resolveDataDir } from "../mcp/data-dir.mjs";
+import { createStore } from "../mcp/store.mjs";
+import { createRunner } from "../mcp/run-tests.mjs";
+import { EXIT, exitCodeFor } from "./exit.mjs";
+
+/**
+ * The sentence for a refusal.
+ *
+ * Rendered from the REASON rather than passed through from the runner, which is
+ * what the extraction bought: the MCP renders the same four reasons into text
+ * an agent reads, and this renders them into text a person reads at a terminal
+ * with a CI log around it. Neither had to become the other's wording.
+ *
+ * @param {object} outcome a `{ok:false}` result from `runSelection`
+ */
+export function refusalMessage(outcome) {
+  switch (outcome.reason) {
+    case "no-match":
+      // The message names the selector that ACTUALLY applied, because the
+      // commonest cause is a selector that no longer matches anything — a tag
+      // renamed from `smoke` to `Smoke` — and "no tests matched" without saying
+      // what was asked for sends people to the wrong file.
+      return (
+        `No tests matched ${outcome.how}. Nothing ran.\n` +
+        `  This is exit ${EXIT.NO_MATCH} rather than a pass: a suite of zero tests is not a green suite.`
+      );
+    case "unknown-browser":
+      return `Unknown browser: ${outcome.browser}`;
+    case "no-playwright":
+      return (
+        `Could not find @playwright/test under ${outcome.projectRoot}/node_modules.\n` +
+        `  The CLI runs the bundled Playwright rather than one on your PATH.`
+      );
+    case "no-browser":
+      return (
+        `${outcome.browser} is not installed.\n` +
+        `  Run a test once from the app on ${outcome.browser} — it installs the browser on first run.`
+      );
+    default:
+      // Not reachable through `runSelection`'s own union, and deliberately not
+      // an assertion: a CLI's last act should be to say something, not to throw
+      // a stack trace at a CI log.
+      return `The run could not start (${outcome.reason ?? "no reason given"}).`;
+  }
+}
+
+/** The human summary of a run that happened. One line per test, then a total —
+ *  short enough to read in a CI log without folding, since that is where it
+ *  will be read. */
+function humanReport(outcome) {
+  const lines = [];
+  for (const r of outcome.results) {
+    const mark = r.status === "passed" ? "✓" : r.status === "skipped" ? "–" : "✗";
+    const name = r.datasetName ? `${r.testName} [${r.datasetName}]` : r.testName;
+    const ms = typeof r.durationMs === "number" ? ` (${(r.durationMs / 1000).toFixed(1)}s)` : "";
+    lines.push(`  ${mark} ${name}${ms}${r.note ? `\n      ${r.note}` : ""}`);
+  }
+  const s = outcome.summary;
+  lines.push("");
+  lines.push(
+    `  ${s.passed} passed, ${s.failed} failed` +
+      (s.skipped ? `, ${s.skipped} skipped` : "") +
+      ` in ${(s.durationMs / 1000).toFixed(1)}s on ${outcome.browser}`,
+  );
+  // Named explicitly, because a skip does NOT fail the run and someone reading
+  // a green pipeline deserves to know a test in it did not execute. Silence
+  // here is how a secret-bearing test quietly stops being covered.
+  if (s.skipped > 0) {
+    lines.push(`  ${s.skipped} test(s) were skipped and did not run. See the notes above.`);
+  }
+  if (outcome.missing.length > 0) {
+    // Ids that matched nothing. Reported even on a pass, and NOT folded into
+    // exit code 2 — some tests did run, so calling it an empty selection would
+    // be a lie in the other direction. "Run these 5" must never quietly run 4
+    // and report success.
+    lines.push(`  Not found: ${outcome.missing.join(", ")}`);
+  }
+  if (outcome.fixturesSkipped.length > 0) {
+    lines.push(`  Not applied to this run: ${outcome.fixturesSkipped.join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
+/** The machine-readable form, for `--json`. The same fields the MCP tool
+ *  reports, so a pipeline switching between them reads one shape. */
+function jsonReport(outcome) {
+  return JSON.stringify(
+    {
+      batchId: outcome.batchId,
+      browser: outcome.browser,
+      parallel: outcome.parallel,
+      ...(outcome.missing.length > 0 ? { missingTestIds: outcome.missing } : {}),
+      summary: outcome.summary,
+      ...(outcome.fixturesSkipped.length > 0 ? { fixturesSkipped: outcome.fixturesSkipped } : {}),
+      results: outcome.results.map((r) => ({
+        testId: r.testId,
+        testName: r.testName,
+        status: r.status,
+        durationMs: r.durationMs,
+        runId: r.runRecordId,
+        ...(r.datasetId ? { datasetId: r.datasetId, datasetName: r.datasetName } : {}),
+        ...(r.note ? { note: r.note } : {}),
+      })),
+    },
+    null,
+    2,
+  );
+}
+
+/**
+ * Run the selection and report it.
+ *
+ * `out` and `err` are injected so this is drivable from a test without
+ * capturing the process's own streams, and it RETURNS the exit code rather than
+ * calling `process.exit` — the entry point owns that, so nothing here can end
+ * the process halfway through writing a report.
+ *
+ * @param {object} options parsed by `cli/args.mjs`
+ * @param {{out: (s: string) => void, err: (s: string) => void, env?: object}} io
+ * @returns {Promise<number>}
+ */
+export async function runCommand(options, { out, err, env = process.env } = {}) {
+  let dataDir;
+  try {
+    dataDir = resolveDataDir(env);
+  } catch (error) {
+    // `resolveDataDir` throws a sentence naming every path it looked in and the
+    // override that fixes it — the reader is usually looking at a CI log with
+    // no other context, which is the same reason the MCP keeps this message.
+    err(String(error.message ?? error));
+    return EXIT.CANNOT_START;
+  }
+
+  const store = createStore(dataDir);
+  const { runSelection } = createRunner({ dataDir, store });
+
+  const outcome = await runSelection({
+    testIds: options.testIds,
+    tag: options.tag,
+    group: options.group,
+    browser: options.browser,
+    allDatasets: options.allDatasets,
+    parallel: options.parallel,
+    speed: options.speed,
+  });
+
+  if (!outcome.ok) {
+    err(refusalMessage(outcome));
+    return exitCodeFor(outcome);
+  }
+
+  out(options.json ? jsonReport(outcome) : humanReport(outcome));
+  return exitCodeFor(outcome);
+}

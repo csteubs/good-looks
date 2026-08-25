@@ -10,6 +10,80 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — The CLI, and what its exit code means
+
+R3 and R2 together, because a `run` command without an exit contract is a
+command that lies to the thing it exists for. The runner plan sequences them
+apart for review size; shipping them apart would mean an interim CLI whose
+whole purpose — CI — is broken.
+
+**It is a caller, not a runner.** `cli/run.mjs` resolves a data directory,
+calls `runSelection`, and renders the result. That it CAN is what the extraction
+bought: the batch driver returned MCP tool content at every exit, so the only
+thing able to call it was an MCP tool. §3.3 names "third caller, never third
+implementation" as the load-bearing decision, and `run-plan.mjs` records the
+four-way silent divergence that made it one.
+
+**Code 2 is the whole reason R2 is not just `exit(failed ? 1 : 0)`.** A selector
+that matches nothing produces a batch of zero, and a summary of zero is
+byte-identical in SHAPE to a clean pass. Rename a folder's capitalisation and
+the pipeline stays green while testing nothing, forever, with no signal
+anywhere. Folding it into 1 is wrong in the other direction: that reads as "your
+tests fail" and sends someone to read the tests rather than the selector.
+
+The plan's own example of this is a tag renamed `smoke` → `Smoke`, and **that
+exact case cannot happen here** — `selectTests` folds tag case. The asymmetry
+beside it is what makes the warning land: a folder name is matched EXACTLY. So
+`--group checkout` against a folder called `Checkout` is this library's real
+silently-empty selector, and it is the row `check:cli-exit` pins.
+
+**Three parser rules, each a way to run the wrong tests silently.** An unknown
+flag is a refusal rather than a warning — a pipeline passing `--fail-fast` to a
+build without it must not run the suite anyway and report green. There is no
+default selector, deliberately unlike `run_batch`, whose "everything visible"
+default is right for a tool an agent calls with an explicit intent and wrong for
+a CLI where a misspelt flag name would run the entire library on a CI runner.
+And two selectors is a refusal rather than a precedence: `selectTests` HAS one,
+so it would run something, just not necessarily what someone who wrote both
+flags expected, and they would never find out.
+
+**`--speed` is the override layer `resolveRunSpeed` was built with and nothing
+had yet used.** It is not written back to the test — "run this one slowly while
+I watch it" is a decision about one run, the same contract the app's Pace
+control has. An unrecognised value is REFUSED here rather than skipped: skipping
+is right inside `resolveRunSpeed`, where a stale or hostile value must not reach
+the delay table, but at a layer that has a person to talk to, silently running
+at a pace nobody chose after they explicitly asked for one is the wrong answer.
+
+**`process.exitCode`, never `process.exit(n)`.** `process.exit` terminates
+before pending stdout writes flush, and stdout to a PIPE — which is what a CI
+runner gives you — is asynchronous. A CLI that exits immediately after writing
+prints nothing at all when piped, reliably, and works perfectly every time you
+try it in a terminal. `check:cli-exit` reads stdout through a pipe so that
+regression shows up as empty output rather than as nothing.
+
+**Why `check:cli-exit` spawns the binary.** `check:mcp-boot` exists because
+nothing booted the MCP server: every other `check:mcp-*` read source or imported
+pure modules, and all of them stayed green through the six months the server
+threw at module load and no tool was reachable. A CLI is the same shape — one
+entry point, a `bin` field, an argv contract — and a source-level check would
+pass against a `bin/good-looks.mjs` with a syntax error in it. Codes 0 and 1
+need a browser and a real run, so they are pinned as a pure mapping instead;
+that split is stated in the file so nobody reads it as full coverage.
+
+**A skipped test does not fail the run.** A test skipped for declaring secret
+variables is a run this process could not do rather than a test that is red, and
+failing on it would make one secret-bearing test enough to redden every suite it
+sits in. The report names the count in words instead — silence there is how a
+test quietly stops being covered under a green pipeline.
+
+**What is deliberately absent.** `--base-url` (R5), `--secrets-file` (R7),
+`--dry-run` (R9), `--junit`/`--results-out` (R1/R13), `--retries`, `--fail-fast`,
+and the `install`, `report`, `export`, `eject` and `ingest` subcommands are each
+their own ranked item. Half-answering R7 in particular would be worse than not
+answering it: a run declaring a secret is SKIPPED with a note here exactly as it
+is over MCP, because this process cannot decrypt one either.
+
 ### 2026-08-25 — R18 moved the app's pace rule and left the MCP's behind
 
 R18 changed what an absent `speed` MEANS. It used to say "nobody chose"; it now
