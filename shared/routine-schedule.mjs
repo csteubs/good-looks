@@ -112,11 +112,6 @@ function minuteOfDay(date) {
   return date.getHours() * 60 + date.getMinutes();
 }
 
-/** Midnight local, on the day `date` falls in. */
-function startOfDay(date) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-}
-
 /** Monday–Friday, in LOCAL time — the same week the user is looking at. */
 function isWeekday(date) {
   const day = date.getDay();

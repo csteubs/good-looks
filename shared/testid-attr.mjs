@@ -126,6 +126,7 @@ export function testIdOverride(attr) {
 export function testIdSelector(attr, value) {
   var v = String(value == null ? "" : value)
     .replace(/[\\"]/g, "\\$&")
+    // eslint-disable-next-line no-control-regex -- the control characters ARE the check
     .replace(/[\u0000-\u001f\u007f]/g, function (c) {
       return "\\" + c.charCodeAt(0).toString(16) + " ";
     });
