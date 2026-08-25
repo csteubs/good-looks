@@ -41,6 +41,17 @@ const restoreNotice = vi.fn(async (_testId: string, _runId: string, kind: RunNot
 });
 const acceptRun = vi.fn(async () => replay);
 
+// The compose dialog, stubbed to RECORD THE SOURCE IT WAS HANDED. The bug this
+// file now guards is entirely about that prop: which defect the dialog is told
+// it is filing, and whether that answer moves under an open form.
+const composeSources: (unknown | null)[] = [];
+vi.mock("../components/issue-compose-dialog", () => ({
+  IssueComposeDialog: (props: { source: unknown | null; open: boolean }) => {
+    composeSources.push(props.source);
+    return props.open ? <div data-testid="compose-open" /> : null;
+  },
+}));
+
 vi.mock("../lib/api", () => ({
   api: {
     runs: { list: async () => runs },
@@ -124,11 +135,17 @@ function record(over: Partial<TestRecord> = {}): TestRecord {
 
 function renderPanel(test: TestRecord = record()) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
-      <A11yPanel test={test} />
-    </QueryClientProvider>,
-  );
+  // The client comes back so a test can land a new run the way the app does —
+  // `invalidateRunDerived` writes `["runs"]` when a run finishes, and that is
+  // the event the panel has to survive.
+  return {
+    ...render(
+      <QueryClientProvider client={qc}>
+        <A11yPanel test={test} />
+      </QueryClientProvider>,
+    ),
+    qc,
+  };
 }
 
 beforeEach(() => {
@@ -136,6 +153,7 @@ beforeEach(() => {
   clearToastCalls();
   runs = [];
   replay = null;
+  composeSources.length = 0;
 });
 
 describe("when nothing has been checked", () => {
@@ -338,4 +356,86 @@ describe("the banner slot", () => {
       expect(copy.className).toContain("text-center");
     });
   }
+});
+
+// ── A background run must not take the report with it ─────────────────
+//
+// #121 fixed the compose dialog's own keying: it depends on the defect's
+// IDENTITY, so a caller re-rendering with an equal-but-new object no longer
+// blanks the form. This panel was the one call site where that was not enough,
+// and both halves had to move.
+//
+//   1. Its `source.runId` came from `latest`, which moves whenever a new
+//      a11y-checked run of this test lands — so the identity genuinely changed
+//      and the dialog reloaded, discarding whatever was typed. The anchor is
+//      captured at click time now, the way `a11y-view` has always done it.
+//   2. The panel returns a `Loading…` early return while `["replay", testId,
+//      latest.id]` refetches on its new key, and the dialog is rendered BELOW
+//      that return — so the form was destroyed by an unmount before its key was
+//      ever consulted. Keeping the previous run's data while the new one loads
+//      is what stops the subtree going away.
+//
+// Either one alone leaves the report lost, which is why both are pinned here.
+describe("a new run landing while a report is open", () => {
+  const openReport = async () => {
+    runs = [runRecord({ id: "r1", a11yMs: 900, a11yChecks: 5, a11yNewSteps: 1 })];
+    replay = replayOf([step({ stepId: "s1", a11y: result() })]);
+    const { qc } = renderPanel();
+    fireEvent.click(await screen.findByLabelText("Send color-contrast to the issue tracker"));
+    await waitFor(() => expect(screen.getByTestId("compose-open")).toBeTruthy());
+    return qc;
+  };
+
+  /** A finished background run of this same test, landed the way the app lands
+   *  one: the `["runs"]` cache gets the new list. That moves `latest`, which
+   *  moves the replay query's KEY — and a key with nothing cached is what makes
+   *  the panel's early return fire. */
+  const landAnotherRun = async (qc: QueryClient) => {
+    const later = runRecord({
+      id: "r2",
+      startedAt: 1_700_000_100_000,
+      a11yMs: 900,
+      a11yChecks: 5,
+      a11yNewSteps: 1,
+    });
+    runs = [later, ...runs];
+    await act(async () => {
+      qc.setQueryData(["runs"], runs);
+      await Promise.resolve();
+    });
+  };
+
+  /** The last source the dialog was handed. */
+  const currentSource = () =>
+    composeSources.filter(Boolean)[composeSources.filter(Boolean).length - 1] as
+      | { runId: string; stepId: string; ruleId: string }
+      | undefined;
+
+  it("anchors the report to the run that was on screen when Send was pressed", async () => {
+    const qc = await openReport();
+    expect(currentSource()).toMatchObject({ runId: "r1", stepId: "s1", ruleId: "color-contrast" });
+
+    // A background run of this same test finishes — exactly what a Routine does
+    // every few seconds.
+    await landAnotherRun(qc);
+    await waitFor(() => expect(screen.getByTestId("compose-open")).toBeTruthy());
+
+    // The defect being filed is still the one they chose. Reading `latest` here
+    // would have moved it to r2, changing the dialog's key and blanking the
+    // form — and would file the report against evidence from a run the user
+    // never looked at, since the draft's screenshots come from the run the
+    // source names.
+    expect(currentSource()).toMatchObject({ runId: "r1", stepId: "s1" });
+  });
+
+  it("keeps the panel mounted while the new run's replay loads", async () => {
+    // The half the keying cannot fix: an unmount destroys the form outright.
+    const qc = await openReport();
+    await landAnotherRun(qc);
+
+    // No "Loading…" flash, and the dialog is still there throughout.
+    await waitFor(() => expect(screen.getByTestId("compose-open")).toBeTruthy());
+    expect(document.body.textContent).not.toMatch(/Loading…/);
+    expect(screen.getByTestId("compose-open")).toBeTruthy();
+  });
 });

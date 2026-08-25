@@ -68,6 +68,40 @@ files, and the isolation regex that scopes the routine-stamping rules targets
 `runSelection`. That is the same failure mode `check:mcp-boot` was written
 against: a check that reads source is only as honest as the file list it reads.
 
+### 2026-08-25 — Closing the a11y-panel residue: an anchor, and a subtree that stays
+
+The #121 entry below names a residue it deliberately did not fix — the one call
+site where keying the compose dialog on the defect's identity was not enough.
+This closes it, and it took both halves, which is why it was worth separating
+from the fix that prompted it.
+
+**The anchor moves.** `a11y-panel` built `source.runId` from
+`latestA11yRun(runs, test.id)`, which changes whenever a new a11y-checked run of
+that test lands. So the defect's identity genuinely changed under an open form,
+the dialog reloaded, and the typed report went. `a11y-view` had always captured
+the whole anchor into state at click time through `ruleAnchor`; the panel now
+does the same. The run matters beyond the key: the draft's screenshots are read
+from the run the source names, so anchoring also means the evidence attached is
+the evidence the user was looking at when they pressed Send.
+
+**And the subtree goes away.** The panel returns a `Loading…` early return while
+`["replay", testId, latest.id]` refetches, and the dialog is rendered below that
+return. A new run changes that key, a key with nothing cached is `pending`, and
+the whole subtree unmounts — destroying the form before any dependency array is
+consulted. `placeholderData: (prev) => prev` keeps the previous run's data while
+the new one loads, which is also simply better than a loading flash on a screen
+someone is reading.
+
+**Neither half is sufficient, and the tests say so separately.** Reverting the
+anchor makes the source's `runId` move from `r1` to `r2`; reverting the
+placeholder makes the panel render `Loading…`. That mattered here: the first
+version of these tests drove the refetch with `fireEvent.focus(window)`, which
+does not reach React Query's focus manager in jsdom — so `latest` never moved,
+neither failure path ran, and **both tests passed against the un-fixed code**.
+They land the new run through the query cache now, the way `invalidateRunDerived`
+does. It is the repo's own rule earning its place again: a test written against
+behaviour nobody verified can fail is a test that proves nothing.
+
 ### 2026-08-25 — The shipped run defaults, and the layer that was missing under them
 
 R18, the fourth Phase 0 item, and the only one that is not a defect: four
