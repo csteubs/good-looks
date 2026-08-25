@@ -122,8 +122,9 @@ export const CI_FIXTURE_POLICY = [
       "step built from the recorder's locator engine — TypeScript the app compiles, which a " +
       "plain-.mjs server cannot import. R8 set the switch anyway and pointed the map at a file " +
       "nothing writes, so every unattended run installed healing and healed nothing (R49). Off " +
-      "is the honest state, and the run says so. Turning it on needs the same locator-engine " +
-      "extraction overlay dismissal waits on (R51); the WRITEBACK stays off regardless — that would " +
+      "is the honest state, and the run says so. R51 LANDED, so the map is now buildable here and " +
+      "turning this on is the next change rather than a blocked one; the WRITEBACK stays off " +
+      "regardless — that would " +
       "edit a tests.json which dies with the container, so the fix would be lost and the run " +
       "would still report a heal it did not keep.",
   },
@@ -145,10 +146,10 @@ export const CI_FIXTURE_POLICY = [
     capability: "overlay dismissal",
     onInCi: false,
     why:
-      "Its source embeds the recorder's locator engine, which deliberately did not move to " +
-      "shared/ — see the 2026-08-25 DECISIONS entry. Turning it on needs that extraction " +
-      "(R51) first, the same one Auto-Heal above waits on, and this is a constraint rather " +
-      "than a preference.",
+      "Its source embeds the recorder's locator engine, which lives in shared/locator-engine.mjs " +
+      "as of R51 — so this is no longer blocked, it is unbuilt. dismiss-fixture-source.ts is " +
+      "still main/-side TypeScript and has to be reachable from this process before a run can " +
+      "install the watcher. Same next change as Auto-Heal above.",
   },
 ];
 
