@@ -10,6 +10,45 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — A suite that skipped everything was reporting green
+
+A bug in the exit contract shipped hours earlier in #257, found while checking
+whether R14 could be built next.
+
+`exitCodeFor` judged a run on `summary.failed > 0`. A SKIPPED test deliberately
+does not fail the run — one secret-bearing test must not redden every suite it
+sits in, and that reasoning is still right. But it left the case where NOTHING
+executed reporting **exit 0**: a pipeline whose credentials had all gone
+missing, or a library copied to a runner where none of its specs resolve, skips
+every test and reports success. Green, indefinitely, having tested nothing.
+
+That is the exact failure code 2 was introduced to end, arriving through the
+other door. The contract had a number for "the selector matched nothing" and no
+number for "the selector matched, and then nothing ran".
+
+**Reported as 3 rather than 2**, because the cause is the environment and not
+the selector. Code 2 stays specifically "your selector is stale", which is what
+makes it actionable — folding a missing-credentials run into it would send
+someone to check their tag names. Code 3 already means "the run could not
+start"; a run in which no test started is that.
+
+**The guard against over-correcting is its own test.** "Any skip is a failure to
+start" is the obvious wrong fix, and it would undo the reason skips exist. The
+question is only whether the suite executed ANYTHING: a partially-skipped run
+still produced a verdict on the tests it ran, and the report already names the
+skipped count in words. Both directions are pinned, and both were confirmed by
+reverting — the fix, and the over-correction.
+
+**How it was found is the part worth keeping.** Not by a test, and not by
+rereading the code — by asking whether R14 (ship a GitHub Action) could be built
+next, discovering that a library's `scriptPath` is an absolute path from the
+AUTHORING machine, and then following what a CLI run against a copied library
+would actually report. `path.relative` turns that into a spec path escaping
+seven directories above the runner's scripts dir, Playwright finds no tests, and
+the run skips everything and exits 0. **R14 therefore depends on R10** (export
+the library as a portable bundle), which the plan ranks separately and at L —
+and this bug was sitting underneath that dependency.
+
 ### 2026-08-25 — Secrets reach a CI run, and the rule that makes that safe
 
 R7, the last Phase C1 item. Until now an unattended run could not supply a

@@ -84,7 +84,29 @@ export function exitCodeFor(outcome) {
   // whole reason the flag exists — a dry run that matches nothing has found the
   // bug it was run to look for, and must not report success.
   if (outcome.dryRun) return EXIT.PASSED;
-  return outcome.summary?.failed > 0 ? EXIT.FAILED : EXIT.PASSED;
+
+  const summary = outcome.summary ?? {};
+  if (summary.failed > 0) return EXIT.FAILED;
+
+  // NOTHING EXECUTED. A skipped test does not fail the run — one secret-bearing
+  // test must not redden every suite it sits in — but a suite in which NO test
+  // ran is not a pass, and that is the distinction the first version of this
+  // file missed.
+  //
+  // The shape it produced: a pipeline whose credentials had all gone missing,
+  // or a library copied to a runner where none of its specs resolve, skipped
+  // every test and reported EXIT 0. Green, forever, having tested nothing —
+  // the precise failure code 2 was introduced to end, arriving through the
+  // other door.
+  //
+  // Reported as 3 rather than 2 because the cause is the environment, not the
+  // selector: the selector matched, and the setup is what stopped the tests
+  // running. Code 2 stays specifically "your selector is stale", which is what
+  // makes it actionable.
+  const executed = (summary.passed ?? 0) + (summary.failed ?? 0);
+  if (executed === 0 && (summary.skipped ?? 0) > 0) return EXIT.CANNOT_START;
+
+  return EXIT.PASSED;
 }
 
 /** One line per code, for `--help` and for the error path. Kept beside the
@@ -94,5 +116,5 @@ export const EXIT_MEANINGS = [
   [EXIT.PASSED, "every selected test passed"],
   [EXIT.FAILED, "at least one test failed"],
   [EXIT.NO_MATCH, "the selector matched no tests — nothing ran"],
-  [EXIT.CANNOT_START, "the run could not start (bad argument, missing browser)"],
+  [EXIT.CANNOT_START, "the run could not start, or nothing in it ran"],
 ];
