@@ -10,7 +10,7 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
-### 2026-08-25 — The CLI, and what its exit code means
+### 2026-08-25 — The CLI, what its exit code means, and its installer
 
 R3 and R2 together, because a `run` command without an exit contract is a
 command that lies to the thing it exists for. The runner plan sequences them
@@ -77,9 +77,31 @@ failing on it would make one secret-bearing test enough to redden every suite it
 sits in. The report names the count in words instead — silence there is how a
 test quietly stops being covered under a green pipeline.
 
+**`install` shipped with the CLI rather than after it (R11), for one sentence.**
+Without it, this binary's answer to a missing browser is the MCP's — "run a test
+once from the app" — and the entire audience of a CLI is a CI runner, which has
+no app on it. R11 is ranked S and is what lets that refusal name a command.
+
+Three decisions inside it, each the difference between a working install and a
+confusing one. It installs into the LIBRARY's browsers directory rather than
+Playwright's machine-wide cache, because that is where runs look — and the path
+comes from the same `browsersDir()` the runner launches from, since two
+spellings fail as "installed, and still not installed", a loop with no error in
+it that the obvious next move does not fix. It spawns the BUNDLED CLI, so the
+revision unpacked is by construction the one `isBrowserInstalled` expects;
+reaching for a Playwright on the caller's PATH is how the 1.62 upgrade broke
+this before. And it **re-asks whether the browser is installed after a
+successful install**, because `playwright install` can exit 0 having unpacked
+something this app will not launch — reporting success on the exit code alone is
+how that becomes silent.
+
+It is also a no-op when the engine is already there, which is not a nicety: an
+install step runs on every CI job, and the regression costs minutes per job with
+nothing failing.
+
 **What is deliberately absent.** `--base-url` (R5), `--secrets-file` (R7),
 `--dry-run` (R9), `--junit`/`--results-out` (R1/R13), `--retries`, `--fail-fast`,
-and the `install`, `report`, `export`, `eject` and `ingest` subcommands are each
+and the `report`, `export`, `eject` and `ingest` subcommands are each
 their own ranked item. Half-answering R7 in particular would be worse than not
 answering it: a run declaring a secret is SKIPPED with a note here exactly as it
 is over MCP, because this process cannot decrypt one either.

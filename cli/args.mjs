@@ -176,6 +176,59 @@ export function parseRunArgs(argv) {
   };
 }
 
+/**
+ * Parse `good-looks install <browser> [--with-deps]`.
+ *
+ * The browser is POSITIONAL here where `run` takes it as a flag, and that is
+ * not an inconsistency: `run` has a default engine (chromium) and `install` has
+ * no sensible default at all. Installing "whatever you assumed I meant" is a
+ * several-hundred-megabyte download nobody asked for.
+ *
+ * @param {string[]} argv arguments AFTER the subcommand
+ * @returns {{ok: true, options: {browser: string, withDeps: boolean}} | {ok: false, error: string} | {ok: "help"}}
+ */
+export function parseInstallArgs(argv) {
+  if (argv.includes("--help") || argv.includes("-h")) return { ok: "help" };
+
+  let browser;
+  let withDeps = false;
+  for (const arg of argv) {
+    if (arg === "--with-deps") {
+      withDeps = true;
+      continue;
+    }
+    if (arg.startsWith("-")) return fail(`Unknown option "${arg}".`);
+    // A second positional is a mistake worth naming rather than ignoring:
+    // `install chromium firefox` reads as installing both and would install one.
+    if (browser !== undefined) {
+      return fail(`Install one browser at a time — got "${browser}" and "${arg}".`);
+    }
+    if (!RUN_BROWSERS.includes(arg)) {
+      return fail(`Unknown browser "${arg}". Choose one of: ${RUN_BROWSERS.join(", ")}.`);
+    }
+    browser = arg;
+  }
+  if (browser === undefined) {
+    return fail(`Which browser? Choose one of: ${RUN_BROWSERS.join(", ")}.`);
+  }
+  return { ok: true, options: { browser, withDeps } };
+}
+
+export const INSTALL_USAGE = `Usage: good-looks install <${RUN_BROWSERS.join("|")}> [--with-deps]
+
+Download a browser engine into this library's own browsers directory.
+
+Playwright's ordinary install puts engines in a machine-wide cache; runs here
+look under the app's data directory, so \`npx playwright install\` leaves a
+browser no run can find. This installs the bundled Playwright's revision into
+the place runs actually launch from, and is a no-op when the engine is there.
+
+Options:
+  --with-deps    also install the system libraries the engine needs (Linux CI
+                 images; needs root, and is not a concept on macOS)
+  -h, --help     show this
+`;
+
 /** Everything `--help` prints for `run`. A template literal rather than a
  *  generated table: the flags are few, and a reader wants them in a sensible
  *  order rather than in declaration order. */

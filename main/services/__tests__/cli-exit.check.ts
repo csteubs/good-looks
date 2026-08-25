@@ -25,12 +25,16 @@
 // Run with: npm run check:cli-exit
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { EXIT } from "../../../cli/exit.mjs";
 import { USERDATA_OVERRIDE_ENV } from "../../../shared/user-data-rules.mjs";
+import {
+  expectedBrowserDirs,
+  type InstallableBrowser,
+} from "../../../shared/browser-install.mjs";
 
 const root = process.cwd();
 const BIN = join(root, "bin", "good-looks.mjs");
@@ -61,6 +65,23 @@ function makeStore(tests: unknown[]): string {
   mkdirSync(join(recorder, "browsers"), { recursive: true });
   mkdirSync(join(recorder, "scripts"), { recursive: true });
   return dir;
+}
+
+/** The `<engine>-<revision>` directory names the BUNDLED Playwright would
+ *  unpack, read from its own manifest through the app's shared rule. Read
+ *  rather than hard-coded for the reason `shared/browser-install.mjs` exists:
+ *  a name-prefix guess accepted the previous Playwright's build after the 1.62
+ *  upgrade, and every run then launched a browser that was not there. */
+function expectedRevisions(engine: InstallableBrowser): string[] {
+  try {
+    const manifest = readFileSync(
+      join(root, "node_modules", "playwright-core", "browsers.json"),
+      "utf8",
+    );
+    return expectedBrowserDirs(manifest, engine) ?? [];
+  } catch {
+    return [];
+  }
 }
 
 /** Run the CLI and report what the OS saw. `execFileSync` throws on a non-zero
@@ -206,6 +227,75 @@ try {
     assert(
       r.code !== EXIT.PASSED && r.code !== EXIT.FAILED,
       "a usage error is never reported as a pass or as a test failure",
+    );
+  }
+
+  // ── `install` refuses before downloading anything ──────────────────────
+  //
+  // Every case here is one where the alternative is a several-hundred-megabyte
+  // download the caller did not ask for, so all of them have to fail at parse
+  // time rather than after the network is busy.
+  for (const [label, args] of [
+    ["no browser named", ["install"]],
+    ["an unknown engine", ["install", "safari"]],
+    ["two browsers at once", ["install", "chromium", "firefox"]],
+    ["an unknown flag", ["install", "chromium", "--force"]],
+  ] as const) {
+    const r = runCli([...args], store);
+    assert(r.code === EXIT.CANNOT_START, `install exits ${EXIT.CANNOT_START} for ${label}`);
+  }
+
+  {
+    const r = runCli(["install", "--help"], store);
+    assert(r.code === EXIT.PASSED, "`install --help` exits 0");
+    assert(
+      r.stdout.includes("--with-deps"),
+      "…and documents --with-deps, which a Linux CI image needs and macOS has no concept of",
+    );
+  }
+
+  // ── An engine already there is a NO-OP, and says so ────────────────────
+  //
+  // The one that costs real money when it regresses. An install step runs on
+  // every CI job, and re-downloading a browser that is already present is
+  // minutes per job on every pipeline using this. Driven without a network by
+  // planting the directories `isBrowserInstalled` looks for — which means this
+  // also pins that the installer and the detector agree about what "installed"
+  // means, since a mismatch here shows up as an attempted download.
+  {
+    const revisions = expectedRevisions("chromium");
+    if (revisions.length === 0) {
+      // Reported rather than skipped silently: a check that quietly covers
+      // nothing is the shape this repo has been bitten by.
+      assert(false, "could not read the bundled Playwright's chromium revision to plant it");
+    } else {
+      const planted = makeStore(ONE_TEST);
+      try {
+        for (const dir of revisions) mkdirSync(join(planted, "recorder", "browsers", dir));
+        const r = runCli(["install", "chromium"], planted);
+        assert(r.code === EXIT.PASSED, "installing an engine that is present exits 0");
+        assert(
+          r.stdout.includes("already installed"),
+          r.stdout.includes("Installing")
+            ? "…but it started a DOWNLOAD for a browser that is already there — minutes per CI job"
+            : "…and says it is already installed rather than doing it again",
+        );
+      } finally {
+        rmSync(planted, { recursive: true, force: true });
+      }
+    }
+  }
+
+  // ── `run` now points at a command that exists ──────────────────────────
+  //
+  // The whole reason R11 shipped with the CLI rather than after it. The MCP's
+  // answer to a missing browser is "run a test once from the app"; this binary's
+  // audience is a CI runner, which has no app.
+  {
+    const r = runCli(["run", "--tag", "smoke"], store);
+    assert(
+      r.stderr.includes("good-looks install chromium"),
+      "the missing-browser refusal names `good-looks install`, not the app",
     );
   }
 

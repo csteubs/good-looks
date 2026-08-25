@@ -155,6 +155,36 @@ for (const [label, relPath, needle] of [
   assert(src.includes(needle), `${label} reads the base URL from the test record`);
 }
 
+// ── The installer and the runner look in ONE directory ──────────────────
+//
+// R11 added a third caller of "where do this library's browsers live": the
+// install unpacks there, `isBrowserInstalled` reads it, and `executeTest` tells
+// Playwright to launch from it. It was already spelled out twice before the
+// installer arrived.
+//
+// Two spellings fail in the worst available way — `good-looks install chromium`
+// reports success, and the very next run says chromium is not installed. There
+// is no error anywhere in that loop, and the obvious next move (install again)
+// makes no difference.
+{
+  const src = readFileSync(resolve(process.cwd(), "mcp/run-tests.mjs"), "utf8");
+  const derivations = [...src.matchAll(/path\.join\(dataDir,\s*"recorder",\s*"browsers"\)/g)];
+  assert(
+    derivations.length === 1,
+    derivations.length === 1
+      ? "the browsers directory is derived exactly once in the MCP runner"
+      : `the browsers directory is derived ${derivations.length} times — the installer and ` +
+        `the runner can now disagree, which fails as "installed, and still not installed"`,
+  );
+  // …and every consumer goes through it. Deriving once and then hand-writing
+  // the path at one call site would satisfy the count above.
+  const uses = [...src.matchAll(/browsersDir\(\)/g)].length;
+  assert(
+    uses >= 4,
+    `the install, the detection and the run all read browsersDir() (${uses} references)`,
+  );
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

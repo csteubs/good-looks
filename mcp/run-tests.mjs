@@ -76,6 +76,18 @@ export function createRunner({ dataDir, store }) {
   const { listTests, readSettings, readSignatures, readOverlayRules, saveRunRecord, saveBatchRecord } =
     store;
 
+  /** WHERE BROWSERS LIVE, once. Three things need this answer and they must be
+   *  the same one: `isBrowserInstalled` asks whether an engine is there,
+   *  `executeTest` tells Playwright where to launch it from, and
+   *  `installBrowser` unpacks it. Two spellings would mean the CLI installing a
+   *  browser into a directory the run does not look in — which fails as
+   *  "install it, then it is still not installed", with nothing naming the
+   *  cause. It was already written out twice before the installer made it
+   *  three. */
+  function browsersDir() {
+    return path.join(dataDir, "recorder", "browsers");
+  }
+
   function findPlaywrightCli() {
     const nodeModules = path.join(PROJECT_ROOT, "node_modules");
     const candidates = [
@@ -92,7 +104,7 @@ export function createRunner({ dataDir, store }) {
    *  stood here until 2026-08-22 and accepted the previous Playwright's build
    *  after an upgrade, so every run launched a browser that was not there. */
   function isBrowserInstalled(browser = "chromium") {
-    const dir = path.join(dataDir, "recorder", "browsers");
+    const dir = browsersDir();
     try {
       if (!fs.existsSync(dir)) return false;
       let expected = null;
@@ -111,6 +123,78 @@ export function createRunner({ dataDir, store }) {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Install one engine into the library's own browsers directory (R11).
+   *
+   * WHY THIS IS NOT `npx playwright install`. Playwright's default install
+   * location is a machine-wide cache; this app keeps its browsers under the
+   * user's data directory, so an engine installed the ordinary way is invisible
+   * to every run. `PLAYWRIGHT_BROWSERS_PATH` is what makes the two agree, and
+   * it comes from the SAME `browsersDir()` the runner launches from — a second
+   * spelling would fail as "I installed it and it is still not installed".
+   *
+   * It is also the same bundled CLI the run spawns, so the revision installed
+   * is by construction the revision `isBrowserInstalled` expects. Reaching for a
+   * Playwright on the caller's PATH is how the 1.62 upgrade broke installs
+   * before: a different CLI unpacks a different `<engine>-<revision>` directory
+   * and nothing here would launch it.
+   *
+   * `onOutput` receives the child's bytes as they arrive rather than at the end,
+   * because a browser download is the longest thing this CLI does and silence
+   * for a minute reads as a hang.
+   *
+   * @returns {Promise<{ok: true} | {ok: false, reason: string, exitCode?: number}>}
+   */
+  async function installBrowser(browser, { withDeps = false, onOutput } = {}) {
+    if (!RUN_BROWSERS.includes(browser)) {
+      return { ok: false, reason: "unknown-browser" };
+    }
+    const playwright = findPlaywrightCli();
+    if (!playwright) {
+      return { ok: false, reason: "no-playwright" };
+    }
+    // Created here rather than left to Playwright: the directory is the thing
+    // `isBrowserInstalled` reads, and an install that succeeds into a path
+    // nothing created is a difference between the two answers.
+    fs.mkdirSync(browsersDir(), { recursive: true });
+
+    const args = [playwright.cliPath, "install", browser];
+    // `--with-deps` needs root on Linux and does not exist as a concept on
+    // macOS. Passed through rather than inferred: a CI image that needs it
+    // knows it does, and running it unasked on a developer's laptop would
+    // prompt for a password out of nowhere.
+    if (withDeps) args.push("--with-deps");
+
+    return new Promise((resolveInstall) => {
+      const child = spawn(process.execPath, args, {
+        env: {
+          ...process.env,
+          PLAYWRIGHT_BROWSERS_PATH: browsersDir(),
+          NODE_PATH: playwright.nodeModules,
+          // Harmless from plain Node, required when this same code runs inside
+          // the packaged app: `process.execPath` is the Electron binary there,
+          // and without the flag spawning it launches a second copy of the app
+          // instead of running the CLI.
+          ELECTRON_RUN_AS_NODE: "1",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const emit = (buf) => onOutput?.(sanitizeOutput(String(buf)));
+      child.stdout.on("data", emit);
+      child.stderr.on("data", emit);
+      child.on("error", (error) => {
+        resolveInstall({ ok: false, reason: String(error?.message ?? error) });
+      });
+      child.on("close", (code) => {
+        resolveInstall(
+          code === 0
+            ? { ok: true }
+            : { ok: false, reason: "install-failed", exitCode: code ?? -1 },
+        );
+      });
+    });
   }
 
   function ensureModuleResolution(scriptsDir, nodeModules) {
@@ -216,7 +300,7 @@ export function createRunner({ dataDir, store }) {
 
     const env = runEnv({
       base: process.env,
-      browsersPath: path.join(dataDir, "recorder", "browsers"),
+      browsersPath: browsersDir(),
       nodeModules: playwright.nodeModules,
       speed,
       testTimeoutMs,
@@ -556,5 +640,5 @@ export function createRunner({ dataDir, store }) {
     };
   }
 
-  return { findPlaywrightCli, isBrowserInstalled, executeTest, runSelection };
+  return { findPlaywrightCli, isBrowserInstalled, installBrowser, executeTest, runSelection };
 }

@@ -15,9 +15,9 @@
 
 import process from "node:process";
 
-import { parseRunArgs, RUN_USAGE } from "../cli/args.mjs";
+import { INSTALL_USAGE, parseInstallArgs, parseRunArgs, RUN_USAGE } from "../cli/args.mjs";
 import { EXIT, EXIT_MEANINGS } from "../cli/exit.mjs";
-import { runCommand } from "../cli/run.mjs";
+import { installCommand, runCommand } from "../cli/run.mjs";
 import { resolveDataDir } from "../mcp/data-dir.mjs";
 
 const USAGE = `good-looks — run recorded Playwright tests from the command line.
@@ -26,6 +26,7 @@ Usage: good-looks <command> [options]
 
 Commands:
   run        run recorded tests and exit on their result
+  install    download a browser engine into this library's browsers directory
   data-dir   print the library directory this CLI reads
   help       show this
 
@@ -70,6 +71,21 @@ async function main(argv) {
       err(String(error.message ?? error));
       return EXIT.CANNOT_START;
     }
+  }
+
+  if (command === "install") {
+    const parsed = parseInstallArgs(rest);
+    if (parsed.ok === "help") {
+      out(INSTALL_USAGE);
+      return EXIT.PASSED;
+    }
+    if (!parsed.ok) {
+      err(parsed.error);
+      err("");
+      err(INSTALL_USAGE);
+      return EXIT.CANNOT_START;
+    }
+    return installCommand(parsed.options, { out, err });
   }
 
   if (command === "run") {

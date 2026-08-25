@@ -14,7 +14,7 @@
 import { describe, it, expect } from "vitest";
 
 import { EXIT, EXIT_MEANINGS, exitCodeFor } from "../../cli/exit.mjs";
-import { parseRunArgs } from "../../cli/args.mjs";
+import { parseInstallArgs, parseRunArgs } from "../../cli/args.mjs";
 import { refusalMessage } from "../../cli/run.mjs";
 
 /** A `{ok:true}` outcome with the summary counts under test. Only `summary`
@@ -185,5 +185,56 @@ describe("parseRunArgs", () => {
     // Even alongside an otherwise-invalid line: someone reaching for --help is
     // asking what the flags are, which is exactly what they should get.
     expect(parseRunArgs(["--fail-fast", "--help"])).toEqual({ ok: "help" });
+  });
+});
+
+describe("parseInstallArgs", () => {
+  it("takes the browser positionally", () => {
+    // Positional here where `run` takes a flag, and not an inconsistency: `run`
+    // has a default engine and `install` has no sensible default at all.
+    expect(parseInstallArgs(["firefox"])).toEqual({
+      ok: true,
+      options: { browser: "firefox", withDeps: false },
+    });
+  });
+
+  it("passes --with-deps through rather than inferring it", () => {
+    // It needs root on Linux and is not a concept on macOS. A CI image that
+    // needs it knows it does; running it unasked would prompt for a password
+    // out of nowhere on someone's laptop.
+    expect(parseInstallArgs(["chromium", "--with-deps"])).toMatchObject({
+      ok: true,
+      options: { withDeps: true },
+    });
+  });
+
+  it("refuses rather than guessing when no browser is named", () => {
+    // Installing "whatever you assumed I meant" is a several-hundred-megabyte
+    // download nobody asked for.
+    expect(parseInstallArgs([])).toMatchObject({ ok: false });
+  });
+
+  it("refuses an unknown engine before downloading anything", () => {
+    expect(parseInstallArgs(["safari"])).toMatchObject({ ok: false });
+  });
+
+  it("refuses two browsers instead of installing one of them", () => {
+    // `install chromium firefox` reads as installing both and would install one.
+    expect(parseInstallArgs(["chromium", "firefox"])).toMatchObject({ ok: false });
+  });
+
+  it("refuses an unknown flag", () => {
+    expect(parseInstallArgs(["chromium", "--force"])).toMatchObject({ ok: false });
+  });
+});
+
+describe("the no-browser refusal", () => {
+  it("names a command this CLI actually has", () => {
+    // R11 exists mostly for this sentence. The MCP's answer is "run a test once
+    // from the app", which is useless advice on a CI runner — the entire
+    // audience of this binary, and a machine with no app on it.
+    const msg = refusalMessage({ ok: false, reason: "no-browser", browser: "webkit" });
+    expect(msg).toContain("good-looks install webkit");
+    expect(msg).not.toContain("from the app");
   });
 });

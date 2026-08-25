@@ -20,3 +20,17 @@ export type ParsedRunArgs =
 export declare function parseRunArgs(argv: string[]): ParsedRunArgs;
 
 export declare const RUN_USAGE: string;
+
+export interface InstallOptions {
+  browser: string;
+  withDeps: boolean;
+}
+
+export type ParsedInstallArgs =
+  | { ok: true; options: InstallOptions }
+  | { ok: false; error: string }
+  | { ok: "help" };
+
+export declare function parseInstallArgs(argv: string[]): ParsedInstallArgs;
+
+export declare const INSTALL_USAGE: string;

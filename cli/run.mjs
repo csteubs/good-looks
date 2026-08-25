@@ -12,13 +12,17 @@
 // call it was an MCP tool. It returns a result now, and this is the second
 // thing rendering one.
 //
+// `install` (R11) lives here too, for one reason: without it the CLI's answer
+// to a missing browser is the MCP's — "run a test once from the app" — which is
+// useless advice on a CI runner, the entire audience of this binary.
+//
 // ── What is deliberately not here ────────────────────────────────────────
 // `--base-url` (R5), `--secrets-file` (R7), `--dry-run` (R9), `--junit` and
-// `--results-out` (R1/R13), `--retries`, `--fail-fast`, and the `install`,
-// `report`, `export`, `eject` and `ingest` subcommands are each their own
-// ranked item. A run that declares a secret variable is SKIPPED with a note
-// here exactly as it is over MCP, because this process cannot decrypt one
-// either — that is R7's subject, not something to half-answer now.
+// `--results-out` (R1/R13), `--retries`, `--fail-fast`, and the `report`,
+// `export`, `eject` and `ingest` subcommands are each their own ranked item. A
+// run that declares a secret variable is SKIPPED with a note here exactly as it
+// is over MCP, because this process cannot decrypt one either — that is R7's
+// subject, not something to half-answer now.
 
 import process from "node:process";
 
@@ -56,9 +60,14 @@ export function refusalMessage(outcome) {
         `  The CLI runs the bundled Playwright rather than one on your PATH.`
       );
     case "no-browser":
+      // The MCP tells an agent to run a test once from the app. That is useless
+      // advice on a CI runner, which is the whole audience of this binary and
+      // has no app — so R11 exists mostly to make this sentence able to name a
+      // command instead.
       return (
         `${outcome.browser} is not installed.\n` +
-        `  Run a test once from the app on ${outcome.browser} — it installs the browser on first run.`
+        `  Run: good-looks install ${outcome.browser}\n` +
+        `  (add --with-deps on a Linux CI image that has no system libraries.)`
       );
     default:
       // Not reachable through `runSelection`'s own union, and deliberately not
@@ -129,6 +138,69 @@ function jsonReport(outcome) {
     null,
     2,
   );
+}
+
+/**
+ * `good-looks install <browser>` (R11).
+ *
+ * The reason a CLI needs its own installer at all: this app keeps its browsers
+ * under the user's data directory rather than in Playwright's machine-wide
+ * cache, so `npx playwright install` puts an engine somewhere no run looks. The
+ * runner owns that path and the spawn; this reports them.
+ *
+ * @returns {Promise<number>} an exit code from the same contract
+ */
+export async function installCommand({ browser, withDeps }, { out, err, env = process.env } = {}) {
+  let dataDir;
+  try {
+    dataDir = resolveDataDir(env);
+  } catch (error) {
+    err(String(error.message ?? error));
+    return EXIT.CANNOT_START;
+  }
+
+  const { isBrowserInstalled, installBrowser } = createRunner({
+    dataDir,
+    store: createStore(dataDir),
+  });
+
+  // Idempotent, and says so. An install step in a pipeline runs on every job,
+  // and re-downloading a browser that is already there is minutes per job.
+  if (isBrowserInstalled(browser)) {
+    out(`${browser} is already installed.`);
+    return EXIT.PASSED;
+  }
+
+  out(`Installing ${browser}…`);
+  // Streamed as it arrives rather than collected: a browser download is the
+  // longest thing this binary does, and a minute of silence reads as a hang.
+  const result = await installBrowser(browser, { withDeps, onOutput: (s) => out(s.trimEnd()) });
+
+  if (!result.ok) {
+    err(
+      result.reason === "no-playwright"
+        ? "Could not find the bundled @playwright/test to install with."
+        : `Installing ${browser} failed${result.exitCode !== undefined ? ` (exit ${result.exitCode})` : ""}: ${result.reason}`,
+    );
+    return EXIT.CANNOT_START;
+  }
+
+  // Asked again rather than trusting exit 0. `playwright install` can succeed
+  // while leaving nothing this app's own detection recognises — a mismatched
+  // revision is exactly the bug shared/browser-install.mjs was written for —
+  // and reporting success then is how "install it, then it is still not
+  // installed" becomes a loop with no error in it.
+  if (!isBrowserInstalled(browser)) {
+    err(
+      `${browser} still is not detected after a successful install.\n` +
+        `  It went to ${dataDir}/recorder/browsers, which is where runs look; ` +
+        `the revision there may not match the bundled Playwright's.`,
+    );
+    return EXIT.CANNOT_START;
+  }
+
+  out(`${browser} installed.`);
+  return EXIT.PASSED;
 }
 
 /**
