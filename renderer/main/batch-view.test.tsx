@@ -2226,3 +2226,92 @@ describe("BatchView empty state", () => {
 // Keep `within` referenced for future row-scoped assertions without tripping
 // the unused-import lint rule.
 void within;
+
+// ── The checklist's master tick ───────────────────────────────────────
+//
+// #74. SELECT ALL and SELECT NONE were two buttons that between them could not
+// answer the question they were about: whether everything was already ticked.
+// One tri-state box both reports and changes it. What must survive the rewrite
+// is the property the two buttons had — it acts on the VISIBLE tests, so
+// selecting all under a tag filter cannot silently untick what is hidden.
+describe("BatchView master selection", () => {
+  const master = () => screen.getByLabelText(/^(Select|Deselect) all /);
+
+  it("reports none, some and all as three distinguishable states", async () => {
+    // Three states, three renderings. "some" collapsing onto "all" is the
+    // failure that would leave the control reporting nothing useful — it is
+    // the state neither button could express.
+    settings = { batchOrder: [], batchTestOptions: {} };
+    routines = [routineOf([])];
+    renderView();
+    await rowNames();
+
+    expect(master().getAttribute("data-state")).toBe("unchecked");
+
+    fireEvent.click(screen.getByLabelText("Include Beta in the batch"));
+    await waitFor(() => expect(master().getAttribute("data-state")).toBe("indeterminate"));
+
+    fireEvent.click(master());
+    await waitFor(() => expect(master().getAttribute("data-state")).toBe("checked"));
+    expect(checkedByName()).toEqual({ Alpha: true, Beta: true, Gamma: true });
+  });
+
+  it("clears the selection when everything visible is already ticked", async () => {
+    routines = [everyTest()];
+    renderView();
+    await rowNames();
+    expect(master().getAttribute("data-state")).toBe("checked");
+
+    fireEvent.click(master());
+
+    await waitFor(() =>
+      expect(checkedByName()).toEqual({ Alpha: false, Beta: false, Gamma: false }),
+    );
+  });
+
+  it("acts on the filtered rows and leaves hidden ticks alone", async () => {
+    // The property a rewrite is most likely to lose, and the reason the two
+    // buttons said "Select these" under a filter. Ticking what is shown must
+    // not replace the whole selection.
+    library = [test_("a", "Alpha", ["smoke"]), test_("b", "Beta", ["checkout"])];
+    settings = { batchOrder: [], batchTestOptions: {} };
+    routines = [
+      routineOf([
+        { kind: "test", testId: "b", browsers: ["chromium"], headless: false, onFailure: "continue" },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+
+    fireEvent.click(await screen.findByRole("button", { name: /^smoke/ }));
+    expect(await rowNames()).toEqual(["Alpha"]);
+    // Alpha alone is visible and unticked; Beta is ticked and hidden. The box
+    // therefore reads "none" — it answers for the rows on screen, not for the
+    // library, or clicking it would act on tests the user cannot see.
+    expect(master().getAttribute("data-state")).toBe("unchecked");
+
+    fireEvent.click(master());
+
+    await waitFor(() => expect(checkedByName()).toEqual({ Alpha: true }));
+    fireEvent.click(screen.getByRole("button", { name: /^All/ }));
+    await waitFor(() => expect(checkedByName()).toEqual({ Alpha: true, Beta: true }));
+  });
+
+  it("says which set it acts on, and keeps saying the same thing", async () => {
+    // The scope moved into the accessible name, where the two buttons carried
+    // it in their visible labels ("Select these" under a filter). The name is
+    // STABLE across states on purpose: a checkbox renamed by its own state is
+    // announced as a different control every time it is clicked.
+    library = [test_("a", "Alpha", ["smoke"]), test_("b", "Beta", ["checkout"])];
+    routines = [everyTest()];
+    renderView();
+    await rowNames();
+    expect(master().getAttribute("data-state")).toBe("checked");
+    expect(master().getAttribute("aria-label")).toBe("Select all 2 tests");
+
+    fireEvent.click(await screen.findByRole("button", { name: /^smoke/ }));
+    await waitFor(() =>
+      expect(master().getAttribute("aria-label")).toBe("Select all 1 test shown by this filter"),
+    );
+  });
+});

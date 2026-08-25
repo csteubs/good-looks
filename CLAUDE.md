@@ -120,6 +120,12 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      generated test.use({ httpCredentials, origin }) and the
                      trainer's login handler derive the scope from one
                      `answersLoginFor`. check:basic-auth pins both.
+                     start-url.mjs is that shape for the address a TYPED SITE
+                     resolves to: the recorder has always prepended `https://`,
+                     and once a dialog SHOWS that too, the note and the
+                     navigation must agree. Start URLs only — a goto step's
+                     URL may be baseUrl-relative, which is why the module is
+                     named for the question rather than for `normalize`.
                      a11y-rollup.mjs is that shape a third time, and it retired two
                      hand-copies rather than adding a third: violationKey/keysOf lived
                      in main/services/a11y-diff.ts AND renderer/lib/a11y-format.ts,

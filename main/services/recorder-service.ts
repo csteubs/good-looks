@@ -126,6 +126,9 @@ import { bindFlowStep, describeStep, flowCallBindings } from "./script-generator
 import { testStore } from "./test-store.js";
 import { testSecretsStore } from "./test-secrets-store.js";
 import { answersLoginFor } from "../../shared/basic-auth.mjs";
+// The scheme rule the New recording dialog now SHOWS the user, so both sides
+// resolve a typed site the same way (#134). It was a private function here.
+import { normalizeStartUrl } from "../../shared/start-url.mjs";
 import { MASKED, redact, refreshSecretSnapshot } from "./secret-redaction.js";
 
 /** Isolated world the recorder's scripts run in. Any id above 0 is isolated
@@ -1383,12 +1386,6 @@ function addStep(raw: RawStep): void {
   broadcastState();
 }
 
-function normalizeUrl(input: string): string {
-  const trimmed = input.trim();
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return "https://" + trimmed;
-}
-
 async function injectCapture(): Promise<void> {
   const page = pageWc();
   if (!page || !session) return;
@@ -1923,7 +1920,7 @@ export const recorderService = {
     }
 
     let testId: string = randomUUID();
-    let url = normalizeUrl(params.url);
+    let url = normalizeStartUrl(params.url);
     let name = params.name?.trim() || "Recorded test";
     let existingSteps: Step[] = [];
     let existingVariables: TestVariable[] = [];

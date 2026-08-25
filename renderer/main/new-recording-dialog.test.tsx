@@ -248,3 +248,47 @@ describe("browser picker", () => {
     expect(startedBrowser()).toBeUndefined();
   });
 });
+
+// ── What the field will actually open ─────────────────────────────────────
+//
+// #134. Typing `example.com` has always recorded against `https://example.com`
+// — `recorder-service` prepends the scheme — but the placeholder vanishes at
+// the first keystroke, so the field showed `example.com` and the user was never
+// told what the training browser would load. The rule now lives in
+// `shared/start-url.mjs` and both sides read it, so the note under the field
+// cannot claim one address while the recorder opens another.
+describe("the URL field says what it will open", () => {
+  it("names the resolved address for a bare host", async () => {
+    open();
+    fireEvent.change(screen.getByPlaceholderText("https://example.com"), {
+      target: { value: "example.com" },
+    });
+    await waitFor(() => expect(screen.getByText("Opens https://example.com")).toBeTruthy());
+  });
+
+  it("says nothing when the typed URL already names its scheme", () => {
+    // Including the http case, which must stay reachable: an internal target on
+    // plain HTTP is typed with its scheme and is opened exactly as typed.
+    open();
+    fireEvent.change(screen.getByPlaceholderText("https://example.com"), {
+      target: { value: "http://localhost:3000" },
+    });
+    expect(screen.queryByText(/^Opens /)).toBeNull();
+  });
+
+  it("says nothing before anything is typed", () => {
+    open();
+    expect(screen.queryByText(/^Opens /)).toBeNull();
+  });
+
+  it("describes the input rather than renaming it", async () => {
+    // The note is `aria-describedby`, not part of the label. Inside the label it
+    // would become the input's accessible NAME — "URL Opens https://example.com"
+    // — which is how a helpful sentence turns into a broken form control.
+    open();
+    const field = screen.getByPlaceholderText("https://example.com");
+    fireEvent.change(field, { target: { value: "example.com" } });
+    await waitFor(() => expect(field.getAttribute("aria-describedby")).toBeTruthy());
+    expect(screen.getByLabelText("URL")).toBe(field);
+  });
+});

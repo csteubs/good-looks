@@ -60,6 +60,52 @@ function matchingLink(links: IssueLink[], source: DefectSource): IssueLink | nul
   );
 }
 
+/**
+ * WHICH defect this is, as a string — what the load effect below depends on.
+ *
+ * All three call sites build `source` as an object literal during render
+ * (`test-detail-view`, `a11y-panel`, `visual-view`), so its identity changes on
+ * every parent re-render even when every field is identical. Those parents
+ * re-render whenever a run finishes — `invalidateRunDerived` touches queries all
+ * three read — and the load effect BLANKS THE FORM before re-fetching. Keyed on
+ * the object, a Routine running in the background wiped a half-typed report
+ * every few seconds (#121).
+ *
+ * Fixed here rather than by memoizing the three callers: a caller that forgets
+ * to memoize is invisible — the form still works, it just quietly resets — and
+ * the next call site added would forget again.
+ *
+ * The switch is exhaustive on purpose. A new `DefectSource` kind whose
+ * identifying field went unspelled here would key two different defects the
+ * same, and the dialog would render the first one's draft while filing the
+ * second; the `never` makes that a type error instead. `scope` is part of the
+ * identity for the same reason — the same anchor occurrence builds a different
+ * draft when the send is widened to the whole rule.
+ */
+export function defectSourceKey(source: DefectSource): string {
+  switch (source.kind) {
+    case "a11y":
+      return [
+        "a11y",
+        source.testId,
+        source.runId,
+        source.stepId,
+        source.ruleId,
+        source.scope ?? "",
+      ].join("|");
+    case "visual":
+      return ["visual", source.testId, source.runId, source.stepId].join("|");
+    case "failure":
+      return ["failure", source.testId, source.runId, source.stepId ?? ""].join("|");
+    case "insight-report":
+      return ["insight-report", source.reportId].join("|");
+    default: {
+      const unreached: never = source;
+      return String(unreached);
+    }
+  }
+}
+
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
@@ -111,10 +157,20 @@ export function IssueComposeDialog({
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
 
+  /** The defect's identity, not its object identity — see `defectSourceKey`. */
+  const sourceKey = source ? defectSourceKey(source) : null;
+  /** Read inside the effect through a ref so it can depend on the KEY without
+   *  depending on the caller's object. Assigned during render, which is safe
+   *  here for the reason it usually is not: nothing reads it during render,
+   *  only the effect below — which runs after the commit that wrote it. */
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
+
   // Everything the dialog needs, in one pass when it opens. Reset first so a
   // second defect never renders against the previous one's draft — the failure
   // there is silent and it files the wrong thing.
   useEffect(() => {
+    const source = sourceRef.current;
     if (!open || !source) return;
     let cancelled = false;
     setDraft(null);
@@ -186,7 +242,10 @@ export function IssueComposeDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, source]);
+    // KEYED ON THE STRING, NEVER ON `source` — see `defectSourceKey`. The
+    // effect's first act is to blank the form, so an identity-keyed dep made
+    // every background run destroy whatever was typed.
+  }, [open, sourceKey]);
 
   /**
    * Re-fetch what the chosen container scopes.

@@ -24,6 +24,7 @@ import {
   presetIdForViewport,
   viewportForPresetId,
 } from "../lib/viewport-presets";
+import { startUrlHint } from "../lib/start-url-hint";
 import { useRecorder } from "./recorder-store";
 
 
@@ -49,6 +50,10 @@ export function NewRecordingDialog({
   const [error, setError] = React.useState<string | null>(null);
   const browser = useRunBrowserChoice(open);
   const canStart = url.trim().length > 0;
+  // What the training browser will actually open. The backend has always
+  // prepended the scheme; the field never said so, so `example.com` recorded
+  // against an address the user was never shown (#134).
+  const resolvedUrl = startUrlHint(url);
 
   // Load the persisted defaults when the dialog opens.
   React.useEffect(() => {
@@ -116,16 +121,29 @@ export function NewRecordingDialog({
       }}
     >
       <div className="gl-create">
-        <label className="gl-create-field">
-          <span className="gl-section-title">URL</span>
+        {/* A `div` + `htmlFor`, not a wrapping `label`, because the note below
+            is part of this field: inside the label it would join the input's
+            ACCESSIBLE NAME ("URL Opens https://example.com") instead of
+            describing it. `aria-describedby` is where a description goes. */}
+        <div className="gl-create-field">
+          <label className="gl-section-title" htmlFor="new-recording-url">
+            URL
+          </label>
           <input
+            id="new-recording-url"
             className="gl-input"
             placeholder="https://example.com"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
+            aria-describedby={resolvedUrl ? "new-recording-url-resolved" : undefined}
             autoFocus
           />
-        </label>
+          {resolvedUrl ? (
+            <p className="gl-note" id="new-recording-url-resolved">
+              Opens {resolvedUrl}
+            </p>
+          ) : null}
+        </div>
 
         <label className="gl-create-field">
           <span className="gl-section-title">Test name</span>

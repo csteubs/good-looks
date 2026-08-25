@@ -39,6 +39,8 @@ import { Btn, Segmented, StatusChip } from "../theme";
 import { CodeBlock } from "./ai-debug-panel";
 import { RunBrowserField, useRunBrowserChoice } from "./run-browser-field";
 
+import { startUrlHint } from "../lib/start-url-hint";
+import { normalizeStartUrl } from "../../shared/start-url.mjs";
 import { api } from "../lib/api";
 import { friendlyError } from "../lib/llm-errors";
 import type { LlmModel } from "../lib/llm-types";
@@ -177,6 +179,8 @@ export function GenerateTestDialog({
   );
 
   const canGenerate = prompt.trim().length > 0 && url.trim().length > 0;
+  /** What this test will be created against — see `new-recording-dialog`. */
+  const resolvedUrl = startUrlHint(url);
 
   const generate = React.useCallback(() => {
     if (!canGenerate) return;
@@ -189,7 +193,10 @@ export function GenerateTestDialog({
     void start(
       buildGenerateMessages({
         prompt: prompt.trim(),
-        url: url.trim(),
+        // The SAME rule the recorder applies to a typed site, so the model is
+        // asked for a `goto` that resolves and the record stores an address
+        // rather than a hostname (#134). The note under the field says so.
+        url: normalizeStartUrl(url),
         name: name.trim() || "Generated test",
         speed,
         viewport,
@@ -206,7 +213,7 @@ export function GenerateTestDialog({
     try {
       const rec = await api.tests.createFromPrompt({
         name: name.trim() || "Generated test",
-        url: url.trim(),
+        url: normalizeStartUrl(url),
         speed,
         source: generatedScript,
         runBrowser: browser.toStore,
@@ -262,15 +269,27 @@ export function GenerateTestDialog({
               onChange={(e) => setName(e.target.value)}
             />
           </label>
-          <label className="gl-create-field">
-            <span className="gl-section-title">Starting URL</span>
+          {/* `div` + `htmlFor` rather than a wrapping label — see the same
+              field in `new-recording-dialog`: the note describes the input, it
+              is not part of its name. */}
+          <div className="gl-create-field">
+            <label className="gl-section-title" htmlFor="generate-test-url">
+              Starting URL
+            </label>
             <input
+              id="generate-test-url"
               className="gl-input"
               placeholder="https://example.com"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
+              aria-describedby={resolvedUrl ? "generate-test-url-resolved" : undefined}
             />
-          </label>
+            {resolvedUrl ? (
+              <p className="gl-note" id="generate-test-url-resolved">
+                Opens {resolvedUrl}
+              </p>
+            ) : null}
+          </div>
         </div>
 
         <div className="gl-create-pair">
