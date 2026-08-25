@@ -29,3 +29,13 @@ export declare function resolveTestTimeoutMs(
 ): { timeoutMs: number; raised: boolean };
 
 export declare function slowMoFor(speed: TestSpeed | string | undefined): number;
+
+/** Which pace a run goes at: this run's override, then the test's own pin, then
+ *  the global default, then `"fast"`. Anything unrecognised at any layer is
+ *  skipped rather than passed on — an unknown key reaching `SLOW_MO_MS` runs the
+ *  test at full speed, the opposite of what asking for `crawl` meant. */
+export declare function resolveRunSpeed(
+  override: string | undefined,
+  pinned: string | undefined,
+  fallback: string | undefined,
+): TestSpeed;

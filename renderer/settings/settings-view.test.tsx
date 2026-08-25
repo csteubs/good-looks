@@ -207,9 +207,9 @@ describe("navigation", () => {
   it("shows only the selected pane's controls", async () => {
     await renderSettings({ pane: "appearance" });
     // Headless lives in Test defaults, not Appearance.
-    expect(screen.queryByRole("switch", { name: /headless/i })).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Run tests in headless mode" })).toBeNull();
     await goToPane("Test defaults");
-    expect(screen.getByRole("switch", { name: /headless/i })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "Run tests in headless mode" })).toBeTruthy();
     expect(screen.queryByRole("switch", { name: /ai thinking gif/i })).toBeNull();
   });
 
@@ -265,7 +265,7 @@ describe("navigation", () => {
 describe("a control still reaches the backend", () => {
   it("persists through the real provider, not a spy", async () => {
     await renderSettings({ pane: "test-defaults" });
-    fireEvent.click(await screen.findByRole("switch", { name: /headless/i }));
+    fireEvent.click(await screen.findByRole("switch", { name: "Run tests in headless mode" }));
     await waitFor(() =>
       expect(setSettings).toHaveBeenCalledWith(
         expect.objectContaining({ defaultRunHeadless: true }),
@@ -277,7 +277,7 @@ describe("a control still reaches the backend", () => {
     // Every feature writes settings independently; a patch carrying unrelated
     // keys would let one pane's stale copy overwrite another's write.
     await renderSettings({ pane: "test-defaults" });
-    fireEvent.click(await screen.findByRole("switch", { name: /headless/i }));
+    fireEvent.click(await screen.findByRole("switch", { name: "Run tests in headless mode" }));
     await waitFor(() => expect(setSettings).toHaveBeenCalled());
     expect(Object.keys(setSettings.mock.calls[0][0])).toEqual(["defaultRunHeadless"]);
   });
@@ -318,7 +318,7 @@ describe("search", () => {
     expect(
       await screen.findByRole("switch", { name: /include all request headers/i }),
     ).toBeTruthy();
-    expect(screen.queryByRole("switch", { name: /headless/i })).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Run tests in headless mode" })).toBeNull();
   });
 
   it("moves off a pane the search emptied", async () => {
@@ -381,7 +381,7 @@ describe("search", () => {
     await waitFor(() => expect(screen.queryByText("Storage")).toBeNull());
     search("");
     await waitFor(() => expect(screen.getByText("Storage")).toBeTruthy());
-    expect(screen.getByRole("switch", { name: /headless/i })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "Run tests in headless mode" })).toBeTruthy();
   });
 
   it("treats a whitespace-only query as no search", async () => {

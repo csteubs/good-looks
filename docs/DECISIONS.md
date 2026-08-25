@@ -10,6 +10,61 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — The shipped run defaults, and the layer that was missing under them
+
+R18, the fourth Phase 0 item, and the only one that is not a defect: four
+choices that were each right when made and then never revisited, all paid for by
+whoever never found the picker.
+
+**Batch concurrency is seeded from the machine.** It was the constant 1, on the
+reasoning that parallel batches multiply CPU load and, run headed, open a window
+per test. The second half of that is answered below; the first was being paid by
+every user who ticked sixty tests and got them one at a time on an eight-core
+laptop. Half the cores, because a lane is a BROWSER rather than a thread — it
+wants a core to itself plus room for the app, the runner and the OS — and 1 when
+the CPU count cannot be read, which is exactly what shipped before.
+
+**A batch defaults to headless; a single run does not.** These are now two
+settings rather than one, and the split is the whole point: watching one run is
+usually the reason for starting it, while sixty windows opening in turn, each
+taking focus as it launches, is not something a tick box should hand anyone. One
+switch driving both is how it did.
+
+**A recording no longer stamps its speed.** `speed` was seeded from
+`defaultRunSpeed` onto every new record, so each test was pinned to whatever the
+default was on the day it was recorded — and a user who changed the setting
+later found their library unmoved. Absent now means INHERIT, the same asymmetry
+`runBrowser` has used since the browser picker, for the same reason. The sidebar's
+"Adjust Test Speed" menu is what PINS one test.
+
+That change required the layer under it. `playwright-runner` resolved
+`rec.speed ?? "fast"`, so an unstamped test would have run at full speed and the
+New recording dialog's Run speed picker would have become a control that does
+nothing. `resolveRunSpeed(override, pinned, fallback)` in `shared/run-pacing.mjs`
+is the three-layer rule, and it SKIPS an unrecognised value at any layer rather
+than passing it on — an unknown key reaching `SLOW_MO_MS` resolves to `undefined`
+and runs at full speed, which is the opposite of what asking for `crawl` meant.
+
+**And the shipped default became `medium`.** Slow is 1200ms before every action;
+medium is 400. Stamping plus a `slow` default is what made "record a test" mean
+"record a test that takes four minutes forever". Watchable was the intent, not
+slow.
+
+**A run can now be paced without editing the test.** The detail view's Pace
+control and `runner:run`'s `speed` are the override layer: "run the suite fast,
+run this one slowly while I watch it" was previously expressible only by editing
+the test and remembering to put it back. It is deliberately not persisted and
+deliberately reads "Inherit" rather than the test's own speed, so that it reads
+as an override rather than as a second place the test's speed is stored.
+
+**What is guarded, and why source-level.** `run-pacing.test.ts` pins both
+decisions as pure functions — the resolution order and the concurrency
+arithmetic, the latter as a function of a core count so it does not have to
+guess the test machine's. `check:run-defaults` pins the wiring, because every
+one of these is invisible when broken: re-seeding the speed fails nothing, it
+just quietly pins each new test again; pointing a batch row back at
+`defaultRunHeadless` fails nothing, it just opens sixty windows.
+
 ### 2026-08-25 — Three defects from the runner plan's Phase 0
 
 `docs/plans/test-runner-improvements.md` §10 names five small defects to clear

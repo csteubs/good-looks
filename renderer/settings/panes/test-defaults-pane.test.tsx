@@ -73,9 +73,16 @@ describe("browser", () => {
 });
 
 describe("headless", () => {
+  // Two switches say "headless" now — one for a run, one for a batch — so these
+  // queries are exact. A regex that matched both is what turned this file red
+  // the moment the second row landed, which is the query telling the truth: it
+  // was never asserting WHICH switch it clicked.
+  const runSwitch = () => screen.getByRole("switch", { name: "Run tests in headless mode" });
+  const batchSwitch = () => screen.getByRole("switch", { name: "Run batches in headless mode" });
+
   it("saves being turned on", () => {
     const { controller } = renderPane(<TestDefaultsPane />);
-    fireEvent.click(screen.getByRole("switch", { name: /headless/i }));
+    fireEvent.click(runSwitch());
     expect(savedPatch(controller)).toEqual({ defaultRunHeadless: true });
   });
 
@@ -84,8 +91,29 @@ describe("headless", () => {
     // switch state, or the second toggle writes `true` a second time.
     const controller = makeController({ settings: { defaultRunHeadless: true } });
     renderPane(<TestDefaultsPane />, { controller });
-    fireEvent.click(screen.getByRole("switch", { name: /headless/i }));
+    fireEvent.click(runSwitch());
     expect(savedPatch(controller)).toEqual({ defaultRunHeadless: false });
+  });
+
+  it("keeps the batch's default separate from the single run's", () => {
+    // R18. The two are deliberately different settings: a batch ships headless
+    // and a single run ships headed. One switch driving both is how sixty
+    // windows got opened by a tick box, and how someone who wants to WATCH one
+    // run would have had to turn batches headed to get it.
+    const controller = makeController({
+      settings: { defaultRunHeadless: false, defaultBatchHeadless: true },
+    });
+    renderPane(<TestDefaultsPane />, { controller });
+    expect(runSwitch().getAttribute("data-state")).toBe("unchecked");
+    expect(batchSwitch().getAttribute("data-state")).toBe("checked");
+
+    fireEvent.click(batchSwitch());
+    expect(savedPatch(controller)).toEqual({ defaultBatchHeadless: false });
+  });
+
+  it("ships batches headless when nothing is stored", () => {
+    renderPane(<TestDefaultsPane />, { controller: makeController({ settings: {} }) });
+    expect(batchSwitch().getAttribute("data-state")).toBe("checked");
   });
 });
 
@@ -258,7 +286,7 @@ describe("the request-headers setting is nested under its parent", () => {
 describe("search filtering", () => {
   it("shows only the matched row", () => {
     renderPane(<TestDefaultsPane />, { matchedIds: ["default-run-headless"] });
-    expect(screen.getByRole("switch", { name: /headless/i })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "Run tests in headless mode" })).toBeTruthy();
     expect(screen.queryByRole("switch", { name: /capture screenshots/i })).toBeNull();
   });
 

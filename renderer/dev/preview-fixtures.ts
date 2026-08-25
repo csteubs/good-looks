@@ -985,6 +985,7 @@ export const SETTINGS: RecorderSettings = {
   siteIconsFromWeb: false,
   keepRunningAiDebugJobs: false,
   defaultRunHeadless: false,
+  defaultBatchHeadless: true,
   defaultRunBrowser: "chromium",
   defaultTestTimeoutMs: 60_000,
   alertWebhookEnabled: false,

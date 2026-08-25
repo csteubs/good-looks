@@ -113,6 +113,19 @@ export function TestDefaultsPane() {
         </SettingRow>
 
         <SettingRow
+          id="default-batch-headless"
+          label="Run batches in headless mode"
+          summary="A batch runs without opening browser windows, whatever a single run does."
+          details="Separate from the setting above because the two cases differ: watching one run is usually the point of starting it, while sixty windows opening in turn — each taking focus as it launches — is not something a tick box should hand you. A row's own Headless toggle still overrides this."
+        >
+          <Switch
+            id="default-batch-headless"
+            checked={settings.defaultBatchHeadless ?? true}
+            onCheckedChange={(checked) => void save({ defaultBatchHeadless: checked })}
+          />
+        </SettingRow>
+
+        <SettingRow
           id="default-batch-concurrency"
           label="Batch tests at once"
           summary="How many tests a batch run starts in parallel. Off runs them one after another."

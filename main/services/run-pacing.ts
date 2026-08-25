@@ -17,6 +17,7 @@ export {
   SLOW_MO_MS,
   clampTestTimeoutMs,
   isTestTimeoutMs,
+  resolveRunSpeed,
   resolveTestTimeoutMs,
   slowMoFor,
 } from "../../shared/run-pacing.mjs";

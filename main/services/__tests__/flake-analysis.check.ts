@@ -253,9 +253,9 @@ function main(): void {
     // running on three engines made the stability signal worse the more it was
     // used.
     const engines = [
-      { runBrowser: "chromium", fails: false },
-      { runBrowser: "firefox", fails: false },
-      { runBrowser: "webkit", fails: true },
+      { runBrowser: "chromium" as const, fails: false },
+      { runBrowser: "firefox" as const, fails: false },
+      { runBrowser: "webkit" as const, fails: true },
     ];
     const runs: RunRecord[] = [];
     for (let sweep = 0; sweep < 2; sweep++) {

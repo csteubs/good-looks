@@ -2074,6 +2074,7 @@ export function registerHandlers(): void {
         captureArtifacts?: boolean;
         runHeadless?: boolean;
         browser?: string;
+        speed?: string;
       },
     ) => {
       // A run executes stored specs, so an open inline-flow scope commits
@@ -2088,6 +2089,11 @@ export function registerHandlers(): void {
         // Unvalidated input would reach the Playwright CLI verbatim; fall back
         // to the test/global default rather than failing the run.
         browser: isRunBrowser(params.browser) ? params.browser : undefined,
+        // Same rule for the pace: an unrecognised speed falls back to the
+        // test's own rather than failing, and never reaches `SLOW_MO_MS` as a
+        // key it does not have — which is how the MCP once turned a typo into a
+        // full-speed run of a test the user had deliberately slowed down.
+        speed: isTestSpeed(params.speed) ? params.speed : undefined,
       });
     },
   );

@@ -80,6 +80,9 @@ import {
   type TestRecord,
   type TestVariable,
   type VariableKind,
+  type TestSpeed,
+  TEST_SPEEDS,
+  TEST_SPEED_LABELS,
 } from "../lib/recorder-types";
 
 /** What to say when a record admits its steps and its script disagree. Three
@@ -223,6 +226,12 @@ export function TestDetailView() {
   // visible browser. Falls back to the global Settings default. Runs only; the
   // trainer/"Edit in Trainer" flow is always headed.
   const [runHeadless, setRunHeadless] = React.useState(false);
+  // THIS RUN'S pace, not the test's (R18). Deliberately NOT persisted and
+  // deliberately reset to "inherit" on every test: "run this one slowly while I
+  // watch it" is a decision about one run, and a control that quietly rewrote
+  // the test would leave the library changed behind it. Empty = whatever the
+  // test itself pins, or the Settings default.
+  const [runSpeed, setRunSpeed] = React.useState<TestSpeed | "">("");
   // Per-test browser engine — same fall-back chain as the toggles above.
   const [runBrowser, setRunBrowser] = React.useState<RunBrowser>("chromium");
   // Per-test Playwright timeout override, in seconds for the input. null means
@@ -1289,6 +1298,28 @@ export function TestDetailView() {
                   ))}
                 </SelectContent>
               </Select>
+              {/* PACE FOR THIS RUN ONLY. It sits beside the engine because it
+                  is the same kind of question — how this execution behaves —
+                  and it defaults to "Inherit" rather than to the test's own
+                  speed so that the control reads as an override rather than as
+                  a second place the test's speed is stored. */}
+              <label className="gl-run-option">
+                <span className="whitespace-nowrap">Pace</span>
+                <select
+                  className="gl-input gl-detail-pace w-24"
+                  value={runSpeed}
+                  disabled={runInfo?.running}
+                  aria-label="Speed for this run only; leave on Inherit to use the test's own"
+                  onChange={(e) => setRunSpeed((e.target.value as TestSpeed | "") ?? "")}
+                >
+                  <option value="">Inherit</option>
+                  {TEST_SPEEDS.map((sp) => (
+                    <option key={sp} value={sp}>
+                      {TEST_SPEED_LABELS[sp]}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label className="gl-run-option gl-detail-timeout">
                 <span className="whitespace-nowrap">Timeout</span>
                 <Input
@@ -1458,7 +1489,9 @@ export function TestDetailView() {
               <Btn
                 className="gl-detail-run"
                 tone="go"
-                onClick={() => run(id, captureArtifacts, runHeadless, runBrowser)}
+                onClick={() =>
+                  run(id, captureArtifacts, runHeadless, runBrowser, runSpeed || undefined)
+                }
               >
                 Run test
               </Btn>
