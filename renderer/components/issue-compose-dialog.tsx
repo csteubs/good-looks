@@ -63,13 +63,22 @@ function matchingLink(links: IssueLink[], source: DefectSource): IssueLink | nul
 /**
  * WHICH defect this is, as a string — what the load effect below depends on.
  *
- * All three call sites build `source` as an object literal during render
- * (`test-detail-view`, `a11y-panel`, `visual-view`), so its identity changes on
- * every parent re-render even when every field is identical. Those parents
- * re-render whenever a run finishes — `invalidateRunDerived` touches queries all
- * three read — and the load effect BLANKS THE FORM before re-fetching. Keyed on
- * the object, a Routine running in the background wiped a half-typed report
- * every few seconds (#121).
+ * FOUR OF THE FIVE call sites build `source` as an object literal during render
+ * — `test-detail-view`, `visual-view`, `a11y-panel` and `insights-view`; only
+ * `a11y-view` passes a value it captured into state when the user clicked. So
+ * for those four the identity changes on every parent re-render even when every
+ * field is identical, and they re-render whenever a run finishes:
+ * `invalidateRunDerived` touches queries they read, and the load effect BLANKS
+ * THE FORM before re-fetching. Keyed on the object, a Routine running in the
+ * background wiped a half-typed report every few seconds (#121).
+ *
+ * ONE RESIDUE, AND IT IS NOT THIS FILE'S TO FIX. `a11y-panel` derives its
+ * `runId` from the LATEST a11y run of the test, so a new run of that test
+ * changes the key for real rather than by identity — and the panel then
+ * unmounts this dialog behind its own `Loading…` gate while the replay query
+ * refetches on the new key, which loses the form whatever this effect depends
+ * on. That behaviour predates the key and needs a11y-panel's own change; see
+ * DECISIONS 2026-08-25.
  *
  * Fixed here rather than by memoizing the three callers: a caller that forgets
  * to memoize is invisible — the form still works, it just quietly resets — and

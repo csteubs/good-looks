@@ -2235,7 +2235,7 @@ void within;
 // is the property the two buttons had — it acts on the VISIBLE tests, so
 // selecting all under a tag filter cannot silently untick what is hidden.
 describe("BatchView master selection", () => {
-  const master = () => screen.getByLabelText(/^(Select|Deselect) all /);
+  const master = () => screen.getByLabelText(/^Select all/);
 
   it("reports none, some and all as three distinguishable states", async () => {
     // Three states, three renderings. "some" collapsing onto "all" is the
@@ -2297,6 +2297,29 @@ describe("BatchView master selection", () => {
     await waitFor(() => expect(checkedByName()).toEqual({ Alpha: true, Beta: true }));
   });
 
+  it("clears only what is shown, leaving hidden ticks set", async () => {
+    // THE DESELECT DIRECTION, which the select case cannot cover: there, the
+    // hidden test is already ticked and stays ticked under either
+    // implementation, so pointing the click at the whole library instead of the
+    // visible rows passes it. Here the click's scope is the whole assertion —
+    // aiming it at `orderedTests` unticks Beta, which is the silent loss of
+    // hidden selection the two buttons were written to avoid.
+    library = [test_("a", "Alpha", ["smoke"]), test_("b", "Beta", ["checkout"])];
+    routines = [everyTest()];
+    renderView();
+    await rowNames();
+
+    fireEvent.click(await screen.findByRole("button", { name: /^smoke/ }));
+    expect(await rowNames()).toEqual(["Alpha"]);
+    expect(master().getAttribute("data-state")).toBe("checked");
+
+    fireEvent.click(master());
+
+    await waitFor(() => expect(checkedByName()).toEqual({ Alpha: false }));
+    fireEvent.click(screen.getByRole("button", { name: /^All/ }));
+    await waitFor(() => expect(checkedByName()).toEqual({ Alpha: false, Beta: true }));
+  });
+
   it("says which set it acts on, and keeps saying the same thing", async () => {
     // The scope moved into the accessible name, where the two buttons carried
     // it in their visible labels ("Select these" under a filter). The name is
@@ -2307,11 +2330,38 @@ describe("BatchView master selection", () => {
     renderView();
     await rowNames();
     expect(master().getAttribute("data-state")).toBe("checked");
-    expect(master().getAttribute("aria-label")).toBe("Select all 2 tests");
+    expect(master().getAttribute("aria-label")).toBe("Select all: 2 tests");
 
     fireEvent.click(await screen.findByRole("button", { name: /^smoke/ }));
     await waitFor(() =>
-      expect(master().getAttribute("aria-label")).toBe("Select all 1 test shown by this filter"),
+      expect(master().getAttribute("aria-label")).toBe("Select all shown: 1 test"),
+    );
+  });
+
+  it("puts its visible label inside its accessible name, in both states", async () => {
+    // WCAG 2.5.3. A speech-input user says the words they can see, so a name
+    // that shares none of them is a control they cannot operate. The two
+    // buttons this replaced got it for free — their name WAS their text — and
+    // building the name separately is exactly how that gets lost: the first
+    // version read "Select these" while announcing "Select all 1 test shown by
+    // this filter", which have no words in common at all.
+    library = [test_("a", "Alpha", ["smoke"]), test_("b", "Beta", ["checkout"])];
+    routines = [everyTest()];
+    renderView();
+    await rowNames();
+
+    const containsItsLabel = () => {
+      const label = master().closest("label") as HTMLElement;
+      const visible = (label.textContent ?? "").trim();
+      const name = master().getAttribute("aria-label") ?? "";
+      return { visible, name, contained: visible.length > 0 && name.includes(visible) };
+    };
+
+    expect(containsItsLabel()).toMatchObject({ visible: "Select all", contained: true });
+
+    fireEvent.click(await screen.findByRole("button", { name: /^smoke/ }));
+    await waitFor(() =>
+      expect(containsItsLabel()).toMatchObject({ visible: "Select all shown", contained: true }),
     );
   });
 });

@@ -17,12 +17,26 @@ the background. During a Routine that is every few seconds, and the form it
 blanked is a typed bug report (#121).
 
 The cause is not in the dialog's logic but in its dependency array. The load
-effect was keyed on `[open, source]`, and all three callers — `test-detail-view`,
-`a11y-panel`, `visual-view` — build `source` as an **object literal during
-render**. Every field of `DefectSource` is a scalar, so nothing about the defect
-changes between renders; only the identity does. And those three parents re-render
-on exactly the event in the report: a finished run invalidates the queries
-`invalidateRunDerived` owns, every one of which they read.
+effect was keyed on `[open, source]`, and **four of the dialog's five callers**
+— `test-detail-view`, `visual-view`, `a11y-panel` and `insights-view` — build
+`source` as an **object literal during render**; only `a11y-view` passes a value
+captured into state at click time. For those four the fields are scalars that do
+not change between renders, so the identity is the only thing that moves. And
+they re-render on exactly the event in the report: a finished run invalidates the
+queries `invalidateRunDerived` owns, every one of which they read.
+
+**One caller has a residue this does not fix, and saying so is the point.**
+`a11y-panel` builds `runId` from `latestA11yRun(...)`, so a new a11y run of that
+same test changes the key by VALUE — legitimately, since the draft's screenshots
+are read from that run. Worse, the panel returns a `Loading…` early return while
+its `["replay", testId, latest.id]` query refetches on the new key, and the
+dialog is rendered below that return — so the typed form is destroyed by an
+unmount before the key is even consulted. Both behaviours predate this change and
+neither is caused by it; freezing the key there would not save the form, and
+freezing `runId` at click time (what `a11y-view` does through `ruleAnchor`) has
+its own hazard, since the attachments are loaded from the run the source names.
+It is a11y-panel's own change to make, with its own review question. Recorded
+here rather than bundled in.
 
 **Fixed in the dialog, not in the three callers.** Memoizing at the call sites
 would work and would be invisible when the next call site forgets — the form
@@ -134,14 +148,25 @@ tests the user cannot see. `selectionState` takes the list it answers for, so
 that is a property of the call rather than of the caller's discipline —
 `batch-view.test.tsx` drives it through a real filter change.
 
-**Its accessible name is stable.** The buttons' labels flipped ("Select these" /
-"Deselect these" under a filter), and the reflex is to flip a checkbox's label
-with its state too. A checkbox renamed by its own state is announced as a
-different control every time it is clicked; the name says which set it acts on
-("Select all 3 tests", "…shown by this filter") and `aria-checked` says what a
-click will do. The count stays out of it as well: the toolbar already reads
-"N of M selected" over the whole library, and a second count over the visible
-subset would read as that one contradicting itself.
+**Its accessible name is stable, and it contains its visible label.** The
+buttons' labels flipped ("Select these" / "Deselect these" under a filter), and
+the reflex is to flip a checkbox's label with its state too. A checkbox renamed
+by its own state is announced as a different control every time it is clicked;
+the name says which set it acts on and `aria-checked` says what a click will do.
+
+The first version got the second half wrong, and it is worth recording because
+the two buttons had it for free: their accessible name WAS their visible text.
+Building the name separately produced a control reading "Select these" while
+announcing "Select all 1 test shown by this filter" — two strings with no words
+in common, which is a control a speech-input user cannot operate (WCAG 2.5.3,
+Label in Name). Both are now built from one stem — "Select all" / "Select all
+shown", with the name adding ": N tests" — and a test asserts the containment in
+both states rather than the two strings separately, since asserting them apart is
+what let them drift.
+
+The count stays out of the visible label: the toolbar already reads "N of M
+selected" over the whole library, and a second count over the visible subset
+would read as that one contradicting itself.
 
 **The indeterminate glyph is Batch's, not the component library's.** Radix
 renders the Indicator for "some" exactly as for "all", and the shared `Checkbox`

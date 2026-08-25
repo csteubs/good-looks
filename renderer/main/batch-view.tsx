@@ -946,6 +946,15 @@ export function BatchView() {
     [rowOptions, visibleTests, rowDefaults],
   );
 
+  /** The visible label, and the STEM of the accessible name below it.
+   *
+   *  The name has to CONTAIN the visible text — a speech-input user says what
+   *  they can see, and a control whose name shares no words with its label is
+   *  one they cannot reach (WCAG 2.5.3). The two buttons this replaced got that
+   *  for free, since their name WAS their text; building the name separately is
+   *  what put them at risk of drifting apart, so they are built from one stem. */
+  const masterText = tagFilter === ALL_TAGS ? "Select all" : "Select all shown";
+
   /** WHICH SET the master tick acts on, spelled out for the tooltip and the
    *  accessible name.
    *
@@ -956,9 +965,9 @@ export function BatchView() {
    *  deliberately absent from the visible label too: the toolbar already reads
    *  "N of M selected" over the whole library, and a second count over the
    *  visible subset would read as that one contradicting itself. */
-  const masterLabel = `Select all ${visibleTests.length} ${
+  const masterLabel = `${masterText}: ${visibleTests.length} ${
     visibleTests.length === 1 ? "test" : "tests"
-  }${tagFilter === ALL_TAGS ? "" : " shown by this filter"}`;
+  }`;
 
   const toggle = (test: { id: string; runBrowser?: RunBrowser }) => {
     const row = resolveRow(test, rowOptions, rowDefaults);
@@ -1372,7 +1381,7 @@ export function BatchView() {
                     disabled={running || visibleTests.length === 0}
                     aria-label={masterLabel}
                   />
-                  {tagFilter === ALL_TAGS ? "Select all" : "Select these"}
+                  {masterText}
                 </label>
                 {/* Drag-to-reorder is otherwise a one-way door: there'd be no
                     way back to library order once you'd rearranged things. */}

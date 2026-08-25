@@ -226,6 +226,19 @@ describe("a background run does not wipe what was typed", () => {
 
     await waitFor(() => expect(screen.getByDisplayValue("Step 9 looks different")).toBeTruthy());
     expect(api.issues.buildDraft).toHaveBeenCalledTimes(2);
+    // WHICH defect it asked for, not just that it asked again. The mock answers
+    // the same draft for any argument, so without this the ref that keeps
+    // `source` current could be deleted and this test would still pass — while
+    // the dialog fetched the FIRST defect's draft and filed it under the
+    // second, which is the misfile the key exists to prevent.
+    expect(api.issues.buildDraft).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ stepId: "s5" }),
+    );
+    expect(api.issues.buildDraft).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ stepId: "s9" }),
+    );
   });
 
   it("keys a widened accessibility send apart from the single occurrence", async () => {

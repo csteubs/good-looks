@@ -43,9 +43,13 @@ describe("normalizeStartUrl", () => {
     expect(normalizeStartUrl("  https://example.com ")).toBe("https://example.com");
   });
 
-  it("does not invent a host for empty input", () => {
-    // Both callers gate on a non-empty field, so this only pins that the rule
-    // stays a pure string operation with no surprise default.
+  it("answers `https://` for empty input, which is why callers gate", () => {
+    // NOT a useful address, and that is the point of pinning it: the rule is a
+    // pure string operation with no surprise default, so deciding what an empty
+    // field MEANS belongs to the caller. `generate-test-dialog` learned that
+    // the hard way — it applied the rule ungated on the create path and stored
+    // `https://` as a test's site, a hostname nobody typed (#251). Both callers
+    // now gate; this test is what says they have to.
     expect(normalizeStartUrl("")).toBe("https://");
     expect(normalizeStartUrl("   ")).toBe("https://");
   });
