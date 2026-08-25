@@ -9,7 +9,7 @@
 // with the capture script. The `logs` array carries verbose, ordered
 // diagnostics for the trainer's step debug panel.
 
-import { DOM_HELPERS, UNCAPPED_SCAN, UNIQUENESS_HELPERS } from "../recorder/capture-script.js";
+import { DOM_HELPERS, UNCAPPED_SCAN, UNIQUENESS_HELPERS } from "../../shared/locator-engine.mjs";
 import { DEFAULT_WAIT_TIMEOUT_MS } from "./script-generator.js";
 import {
   ASSERT_SEMANTICS,

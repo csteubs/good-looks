@@ -10,6 +10,52 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — The locator engine moved to `shared/` (R51)
+
+Not tidying. Two features were blocked on exactly this, and neither could say
+so in code.
+
+**What moved.** `DOM_HELPERS`, `CONTEXT_HELPERS`, `UNIQUENESS_HELPERS` and the
+three scan caps — about 700 lines of `main/recorder/capture-script.ts` — into
+`shared/locator-engine.mjs`. They are source TEXT: ES5-flavoured, closing over
+nothing, interpolated into scripts that four different runtimes evaluate. Being
+strings is what made them portable all along; being in a `.ts` file under
+`main/` is what made them unreachable.
+
+**What it unblocks.** Standing overlay rules run in the app and not on an
+unattended run, because `dismiss-fixture-source.ts` embeds these strings and a
+plain-`.mjs` MCP server cannot import compiled TypeScript — so a banner the app
+clicks away stays on the page in CI, and a step behind it fails there and passes
+here. Run-time Auto-Heal was the same constraint with a worse symptom: it was
+switched ON for those runs and healed nothing, because the heal MAP holds a
+probe script per step built from these same strings and nothing in that process
+could build one (see the R49 entry below). Both are now a small change away
+rather than a large one.
+
+**What did NOT move, and why that is the interesting half.** `PICKED_HELPERS`
+and `CSS_PROPS_HELPER` stayed. They describe a PICKED element for the refine
+dialog, and `CSS_PROPS_HELPER` interpolates `CSS_ASSERT_PROPS` from
+`main/recorder/types.ts`. Taking them would have dragged an app-owned model
+across the boundary to serve a caller that does not exist — and `shared/`'s
+admission rule is a caller on each side, not a family resemblance. The line is
+drawn at what an unattended run can use.
+
+**The extraction changed no emitted byte.** Verified rather than asserted: the
+capture script, the count script, the heal probe, the replayer and the dismiss
+fixture were all hashed on `main` and on the branch, and all five match exactly.
+For a change whose entire claim is "same strings, different file", that is the
+property worth measuring, and it is cheap.
+
+**The guard is a boot, not a read.** `locator-engine-single-source.test.ts`
+pins one spelling — each name declared in exactly one file, every consumer
+importing from here — and then hands the module to a bare `node` with no loader,
+alias table or bundler and asks whether it loads and every export is non-empty.
+Reading an import list would prove what the file says; the failure this move
+exists to end was a file that said the right thing and could not be loaded by
+the process that needed it. Same lesson as `check:mcp-boot` and
+`check:cli-exit`, and the revert-test that mattered was a TypeScript annotation
+snuck into the `.mjs`: a bundler takes it, `node` does not, and nothing else in
+the gate would have noticed.
 ### 2026-08-25 — Auto-Heal for CI runs is now OFF, and the gate can see it
 
 The fix for the entry below, and it lands in the order that entry argued for:

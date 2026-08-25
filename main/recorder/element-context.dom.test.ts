@@ -33,11 +33,10 @@ import {
   ATTR_PICKED,
   ATTR_REFINE,
   buildCaptureScript,
-  DOM_HELPERS,
   PICKED_HELPERS,
-  UNIQUENESS_HELPERS,
   WORLD_STATE_KEY,
 } from "./capture-script.js";
+import { DOM_HELPERS, UNIQUENESS_HELPERS } from "../../shared/locator-engine.mjs";
 import { normalizePickedElement } from "./types.js";
 import type { ContextSignal, Locator, LocatorContext, PickedElement } from "./types.js";
 

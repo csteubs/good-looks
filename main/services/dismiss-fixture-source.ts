@@ -56,7 +56,7 @@ import {
   MAX_UNIQUENESS_SCAN,
   UNCAPPED_SCAN,
   UNIQUENESS_HELPERS,
-} from "../recorder/capture-script.js";
+} from "../../shared/locator-engine.mjs";
 import { overlayVisibleSource, watcherSource } from "../../shared/overlay-rules.mjs";
 // The pure half — see shared/dismiss-fixture-names.mjs for why it is split.
 // Re-exported so this module stays the one import site for its callers.

@@ -43,13 +43,8 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import {
-  buildCaptureScript,
-  DOM_HELPERS,
-  MAX_SHADOW_ROOTS,
-  UNIQUENESS_HELPERS,
-  WORLD_STATE_KEY,
-} from "./capture-script.js";
+import { buildCaptureScript, WORLD_STATE_KEY } from "./capture-script.js";
+import { DOM_HELPERS, MAX_SHADOW_ROOTS, UNIQUENESS_HELPERS } from "../../shared/locator-engine.mjs";
 import { normalizeRawSteps } from "./types.js";
 import type { Locator, RawStep } from "./types.js";
 

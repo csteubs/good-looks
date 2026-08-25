@@ -163,9 +163,9 @@ row is only moved here with a file and a symbol behind it.
 | R46 | Lean diagnostics mode for the app | Perf | partial | M |
 | R47 | Fix heal candidate scores above 1 being reported as 0 | Stab | **done 2026-08-25** | S |
 | R48 | Finish the Batch-to-Routine rename in UI copy | UX | partial | S |
-| R49 | Run the heal fixture for MCP-driven runs | Stab | **guard done 2026-08-25; feature blocked on R51** | M |
+| R49 | Run the heal fixture for MCP-driven runs | Stab | **guard done; R51 landed, feature is next** | M |
 | R50 | Export a run as a shareable PDF | UX | missing | M |
-| R51 | Move the recorder's locator engine into `shared/` | Stab | missing — blocks R49 and CI overlay rules | L |
+| R51 | Move the recorder's locator engine into `shared/` | Stab | **done 2026-08-25** — R49 and CI overlay rules unblocked | L |
 | N1 | A bounded site sweep (link crawler) | New | missing | L |
 | N2 | Report which pages the suite never touches | New | missing | M |
 | N3 | Mobile-web device emulation | New | missing | M |

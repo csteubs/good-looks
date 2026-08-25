@@ -329,13 +329,20 @@ const appRunner = code("main/services/playwright-runner.ts");
     off.some((p) => p.capability === "overlay dismissal" && /locator engine/.test(p.why)),
     "overlay dismissal names the locator-engine extraction as its blocker",
   );
-  // The third joined them through R49, and it names the same blocker — which is
-  // the useful part of writing the reason down: two capabilities waiting on one
-  // extraction is an argument for doing that extraction, and two unexplained
-  // `false`s are not.
+  // The third joined them through R49, and both name the SAME piece of work —
+  // which is the useful part of writing the reason down: two capabilities
+  // waiting on one extraction is an argument for doing that extraction, and two
+  // unexplained `false`s are not. Asserted on the row id rather than on the
+  // phrase "extraction", so it keeps holding once that work has LANDED and the
+  // reason changes from "blocked on R51" to "R51 is in, this is unbuilt" — a
+  // check that goes red for being satisfied teaches people to edit the check.
+  const waited = off.filter(
+    (p) => p.capability === "Auto-Heal" || p.capability === "overlay dismissal",
+  );
+  assert(waited.length === 2, `both locator-engine capabilities are listed (${waited.length})`);
   assert(
-    off.some((p) => p.capability === "Auto-Heal" && /locator-engine extraction/.test(p.why)),
-    "Auto-Heal names the same extraction, so the two blocked capabilities are visibly one job",
+    waited.every((p) => /R51/.test(p.why)),
+    "…and both name R51, so the two are visibly one job rather than two omissions",
   );
   assert(
     off.some((p) => p.capability === "Auto-Heal" && /R49/.test(p.why)),

@@ -14,7 +14,8 @@ import {
   parseTestIdSelector,
   testIdOverride,
 } from "../../shared/testid-attr.mjs";
-import { DOM_HELPERS, UNIQUENESS_HELPERS, buildCaptureScript, buildCountScript } from "./capture-script.js";
+import { buildCaptureScript, buildCountScript } from "./capture-script.js";
+import { DOM_HELPERS, UNIQUENESS_HELPERS } from "../../shared/locator-engine.mjs";
 import { normalizeLocator } from "./types.js";
 import { generateSpec } from "../services/script-generator.js";
 import { parseSpec } from "../services/spec-parser.js";
