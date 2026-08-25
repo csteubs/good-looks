@@ -417,6 +417,9 @@ server.registerTool(
                 // global default, so this printed "fast" for a run that went at
                 // medium, and said `pageSettling: false` for one that settled.
                 speed: result.speed,
+                // …and what it actually ran, for the same reason: off the
+                // result, never re-derived by whoever prints it.
+                ran: result.ran,
                 timeoutMs: result.timeoutMs,
                 timeoutRaised: result.timeoutRaised,
                 signatures: readSignatures(),

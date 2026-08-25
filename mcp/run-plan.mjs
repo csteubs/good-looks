@@ -193,7 +193,24 @@ export function sanitizeOutput(output) {
 export function describeRun(
   test,
   settings = {},
-  { speed, timeoutMs, timeoutRaised, signatures = [], overlayRules = [], nowMs = Date.now() } = {},
+  {
+    speed,
+    timeoutMs,
+    timeoutRaised,
+    signatures = [],
+    overlayRules = [],
+    nowMs = Date.now(),
+    // WHICH capabilities this run actually got (R8). Absent means none, which
+    // is what every caller predating the fixture work meant and still means —
+    // so an old caller keeps reporting exactly what it reported before, and
+    // only a runner that DOES write the fixtures says so.
+    //
+    // Passed in rather than inferred: whether a fixture fired is a fact about
+    // the run that just happened, and a second derivation here could disagree
+    // with the run — the failure `executeTest` returning its own `speed` was
+    // added to prevent, one field over.
+    ran = {},
+  } = {},
 ) {
   const wants = {
     screenshots: test?.captureArtifacts ?? settings.defaultCaptureArtifacts ?? false,
@@ -205,23 +222,23 @@ export function describeRun(
     pageSettling: speed === "crawl",
   };
   const skipped = [];
-  if (wants.screenshots) {
+  if (wants.screenshots && !ran.screenshots) {
     skipped.push(
       "Screenshot capture — this run took none, so it does not appear in the Visual tab, " +
         "seeds no baseline and diffs against none.",
     );
   }
-  if (wants.accessibility) skipped.push("Accessibility checks — axe was not injected.");
-  if (wants.consoleAndNetwork) {
+  if (wants.accessibility && !ran.accessibility) skipped.push("Accessibility checks — axe was not injected.");
+  if (wants.consoleAndNetwork && !ran.consoleAndNetwork) {
     skipped.push("Console and network recording — no console.json or network.json was written.");
   }
-  if (wants.autoHeal) {
+  if (wants.autoHeal && !ran.autoHeal) {
     skipped.push(
       "Run-time Auto-Heal — a step whose locator has gone stale fails here rather than being " +
         "healed past, so this run can fail where an app run of the same test passes.",
     );
   }
-  if (wants.pageSettling) {
+  if (wants.pageSettling && !ran.pageSettling) {
     skipped.push(
       "Crawl page-settling — the slower step delay applied, but no waiting for load, network " +
         "quiet and paint after each action.",
