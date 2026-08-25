@@ -133,17 +133,16 @@ export const CI_FIXTURE_POLICY = [
   },
   {
     capability: "Auto-Heal",
-    onInCi: false,
+    onInCi: "suggest only",
     why:
-      "The heal fixture does nothing without a heal MAP, and the map holds a probe script per " +
-      "step built from the recorder's locator engine — TypeScript the app compiles, which a " +
-      "plain-.mjs server cannot import. R8 set the switch anyway and pointed the map at a file " +
-      "nothing writes, so every unattended run installed healing and healed nothing (R49). Off " +
-      "is the honest state, and the run says so. R51 LANDED, so the map is now buildable here and " +
-      "turning this on is the next change rather than a blocked one; the WRITEBACK stays off " +
-      "regardless — that would " +
-      "edit a tests.json which dies with the container, so the fix would be lost and the run " +
-      "would still report a heal it did not keep.",
+      "Run-time healing is ON, and it is on for the first time: R8 set the switch and pointed " +
+      "the map at a file nothing writes, so every unattended run installed healing and healed " +
+      "nothing (R49). The map is what the fixture needs — it rethrows untouched for a key it " +
+      "cannot find — and it holds a probe per step built from the recorder's locator engine, " +
+      "which R51 put in shared/ where this process can reach it. Without healing a run fails on " +
+      "a stale locator the app would have healed past, the false red that makes a team distrust " +
+      "CI. The WRITEBACK is not on and cannot be: it would edit a tests.json which dies with the " +
+      "container, so the fix would be lost and the run would still report a heal it did not keep.",
   },
   {
     capability: "user stylesheet / init script",

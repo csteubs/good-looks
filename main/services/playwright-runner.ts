@@ -10,9 +10,15 @@ import { fileURLToPath } from "url";
 
 import { app, logger } from "@shell/backend";
 
-import { healDirName, healMapFileName } from "../../shared/heal-artifacts.mjs";
-import { healKeyAnd, healKeyHasText, healKeyText, healKeyWithin } from "../../shared/heal-key.mjs";
-import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
+import {
+  HEAL_EVENTS_FILE,
+  HEAL_MATCHES_FILE,
+  healDirName,
+  healMapFileName,
+  isHeal as isHealEvent,
+  isHealFailure as isHealFailureEvent,
+} from "../../shared/heal-artifacts.mjs";
+import { buildHealMap } from "../../shared/heal-map.mjs";
 
 import { sendToMain } from "./app-window.js";
 import { getScriptsDir, testStore } from "./test-store.js";
@@ -54,7 +60,6 @@ import {
 } from "../../shared/dismiss-fixture-source.mjs";
 import { USER_PAGE_FIXTURE_FILE, userPageEnv, userPageFixtureSource } from "../../shared/user-page-fixture-source.mjs";
 import { SETTLE_FIXTURE_FILE, settleFixtureSource } from "../../shared/settle-fixture-source.mjs";
-import { buildHealProbeScript } from "./auto-heal.js";
 import { healJournalStore } from "./heal-journal-store.js";
 import { describeStep } from "./script-generator.js";
 import { browserInstalledIn, expectedBrowserDirs } from "../../shared/browser-install.mjs";
@@ -465,96 +470,12 @@ function signatureEnv(entries: readonly ShopifySignatureEntry[]): Record<string,
   return out;
 }
 
-/** One factory call's key. MUST match the `FACTORIES` table in
- *  heal-fixture-source.ts — if the two spellings drift, every lookup misses and
- *  healing silently stops happening with no error. */
-function healKeyBase(loc: Locator): string {
-  switch (loc.k) {
-    case "testid": {
-      // A testid on a non-default attribute is EMITTED as `locator("[…]")`,
-      // so at run time the fixture tags it through the `locator` factory —
-      // the key must therefore be the css key of that exact selector string,
-      // or every lookup for such a step misses.
-      const attr = testIdOverride(loc.attr);
-      return attr ? `css|${testIdSelector(attr, loc.v ?? "")}` : `testid|${loc.v ?? ""}`;
-    }
-    case "label":
-      return `label|${loc.v ?? ""}`;
-    case "placeholder":
-      return `placeholder|${loc.v ?? ""}`;
-    case "text":
-      return healKeyText(loc.v ?? "", loc.exact === true);
-    case "role":
-      return `role|${loc.role ?? ""}|${loc.name ?? ""}`;
-    case "xpath":
-      return `css|xpath=${loc.v ?? ""}`;
-    case "css":
-    default:
-      return `css|${loc.v ?? ""}`;
-  }
-}
 
-/**
- * The canonical key the heal fixture tags a locator with.
- *
- * A context-carrying locator is a CHAIN, so its key is composed — in the same
- * order the generator emits the chain and therefore the order the fixture
- * observes it: the container, then its `hasText` filter, then the target, then
- * each `and` predicate. The three operators come from `shared/heal-key.mjs`
- * rather than being spelled here, because the fixture builds the identical key
- * from factory ARGUMENTS at run time and the two must agree exactly. See that
- * file for why a transcribed copy is not good enough.
- *
- * `nth` is deliberately absent, here and in the fixture: `.nth()` is a REFINER
- * that propagates the tag it was given (see `REFINERS`), so an indexed step
- * shares its key with the unindexed one it narrows — which is what makes a
- * `.nth()` step healable at all.
- */
-export function healKeyFor(loc: Locator): string {
-  let key = healKeyBase(loc);
-  const ctx = loc.ctx;
-  if (ctx?.within) {
-    let container = healKeyBase(ctx.within);
-    if (ctx.withinHasText !== undefined) container = healKeyHasText(container, ctx.withinHasText);
-    key = healKeyWithin(container, key);
-  }
-  if (ctx?.and) {
-    for (const pred of ctx.and) key = healKeyAnd(key, healKeyBase(pred));
-  }
-  return key;
-}
+// `buildHealMap` moved to shared/heal-map.mjs (R49). The MCP and CLI runner
+// has to build the same map — the heal fixture rethrows untouched for a key it
+// cannot find, so a runner that cannot build one cannot heal. `describeStep` is
+// passed in because it is still app-side, alongside its own renderer mirror.
 
-/**
- * Build the heal map the run-time fixture reads: canonical locator key → the
- * step's identity plus a pre-built probe script.
- *
- * The probe is built HERE, with `buildHealProbeScript` — the same function the
- * trainer uses. The fixture only evaluates it. That's deliberate: two
- * implementations of candidate ranking would drift, and the ranking is where
- * every Auto-Heal bug so far has lived.
- */
-export function buildHealMap(steps: Step[]): Record<string, unknown> {
-  const map: Record<string, unknown> = {};
-  steps.forEach((step, index) => {
-    if (!step.locator || step.disabled) return;
-    // Framed steps are excluded from the run-time heal fixture too: the probe
-    // is a top-document query and cannot reach inside an iframe. A key that
-    // never gets a probe simply is not healed, which is the honest outcome.
-    if (step.locator.frame && step.locator.frame.length > 0) return;
-    const key = healKeyFor(step.locator);
-    // First step wins on a collision. Two steps with an identical locator act
-    // on the same element, so they'd share a fingerprint anyway.
-    if (map[key]) return;
-    map[key] = {
-      stepId: step.id,
-      stepIndex: index,
-      stepLabel: describeStep(step),
-      locator: step.locator,
-      probe: buildHealProbeScript(step, []),
-    };
-  });
-  return map;
-}
 
 /** Environment carrying this run's variable values into the spec.
  *
@@ -834,14 +755,18 @@ interface HealEvent {
  *  test is not belt-and-braces: journalling one without a locator would write a
  *  review row whose "revert" button has nothing to revert to. */
 function isHeal(e: HealEvent): e is HealEvent & { appliedLocator: Locator } {
-  return (e.outcome ?? "healed") === "healed" && !!e.appliedLocator;
+  // Delegates rather than re-deciding: the rule is in shared/heal-artifacts.mjs
+  // because an unattended run classifies the same events, and this wrapper
+  // exists only to carry the type predicate a `.d.mts` cannot express.
+  return isHealEvent(e);
 }
 
 /** A failed attempt. Keyed on the outcomes that EXIST rather than on
  *  "not a heal", so a value this build doesn't recognise is dropped from both
  *  counts instead of silently inflating the failure one. */
 function isHealFailure(e: HealEvent): e is HealEvent & HealFailure {
-  return e.outcome === "exhausted" || e.outcome === "no-candidates";
+  // Delegates, for the reason `isHeal` above does.
+  return isHealFailureEvent(e);
 }
 
 /**
@@ -879,7 +804,7 @@ function isHealFailure(e: HealEvent): e is HealEvent & HealFailure {
 function collectRunMatches(testId: string, runId: string, healDir: string): number {
   if (!healDir) return 0;
   try {
-    const raw = fs.readFileSync(path.join(healDir, "matches.json"), "utf-8");
+    const raw = fs.readFileSync(path.join(healDir, HEAL_MATCHES_FILE), "utf-8");
     const sets = JSON.parse(raw);
     if (!Array.isArray(sets) || sets.length === 0) return 0;
     artifactStore.writeStepMatches(testId, runId, sets);
@@ -928,7 +853,7 @@ export function collectRunHeals(
       /* best-effort */
     }
   };
-  const file = path.join(healDir, "heals.json");
+  const file = path.join(healDir, HEAL_EVENTS_FILE);
   let all: HealEvent[] = [];
   try {
     all = JSON.parse(fs.readFileSync(file, "utf-8"));
@@ -1505,7 +1430,11 @@ export const playwrightRunner = {
           healDir = path.join(getScriptsDir(), healDirName(recordId));
           healMapPath = path.join(scriptsDir, healMapFileName(recordId));
           try {
-            fs.writeFileSync(healMapPath, JSON.stringify(buildHealMap(runSteps)), "utf-8");
+            fs.writeFileSync(
+              healMapPath,
+              JSON.stringify(buildHealMap(runSteps, { describeStep })),
+              "utf-8",
+            );
           } catch (err) {
             logger.warn("runner", "Could not write the heal map", { err: String(err) });
           }

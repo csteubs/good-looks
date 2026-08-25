@@ -56,6 +56,15 @@ import {
   CAPABILITY_FIXTURES,
   redirectToCaptureFixture,
 } from "../shared/run-fixtures.mjs";
+import {
+  HEAL_EVENTS_FILE,
+  HEAL_MATCHES_FILE,
+  healArtifactEnvelope,
+  healDirName,
+  healMapFileName,
+  isHealFailure,
+} from "../shared/heal-artifacts.mjs";
+import { buildHealMap } from "../shared/heal-map.mjs";
 import { dismissEnv } from "../shared/dismiss-fixture-names.mjs";
 import { armedRulesFor } from "../shared/overlay-rules.mjs";
 import { userPageEnv } from "../shared/user-page-fixture-source.mjs";
@@ -245,6 +254,79 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     }
   }
 
+  /**
+   * Turn the heal fixture's scratch output into this run's artifacts.
+   *
+   * The fixture writes `heals.json` and `matches.json` into GLAZE_HEAL_DIR as
+   * it goes; every reader — `get_step_matches`, the failure view, the app's own
+   * artifact store — asks for `step-matches.json` and `heal-failures.json` in
+   * the RUN's artifact directory instead. The app's collector does this
+   * conversion and also journals the heals; this does the file half only,
+   * because journalling means writing back into a library that dies with the
+   * container.
+   *
+   * Envelope and discriminator both come from shared/heal-artifacts.mjs: two
+   * writers of one artifact format is a run whose evidence is simply not found.
+   *
+   * Best-effort throughout, and it removes the scratch directory on every path
+   * out — including the common one where nothing healed and the fixture wrote
+   * nothing at all. Returns what it saw, for the run's own reporting.
+   */
+  function collectHealEvidence(env, artifactDir, testId, runId) {
+    const healDir = env.GLAZE_HEAL_DIR;
+    const none = { healed: 0, failed: 0, matched: 0 };
+    if (!healDir) return none;
+    const out = { ...none };
+    const readJson = (file) => {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(path.join(healDir, file), "utf-8"));
+        return Array.isArray(parsed) ? parsed : null;
+      } catch {
+        // The common case is that the file does not exist — nothing failed to
+        // resolve. A corrupt one is the same answer: no data for this run.
+        return null;
+      }
+    };
+    const write = (name, entries) => {
+      if (!entries.length) return;
+      try {
+        fs.mkdirSync(artifactDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(artifactDir, name),
+          JSON.stringify(healArtifactEnvelope(testId, runId, entries), null, 2),
+          "utf-8",
+        );
+      } catch {
+        // Evidence is a diagnostic aid. Failing to persist it must never become
+        // a second failure on top of whatever the run already reported.
+      }
+    };
+    const events = readJson(HEAL_EVENTS_FILE) ?? [];
+    const failures = events.filter(isHealFailure);
+    out.healed = events.length - failures.length;
+    out.failed = failures.length;
+    write("heal-failures.json", failures);
+    const matches = readJson(HEAL_MATCHES_FILE) ?? [];
+    out.matched = matches.length;
+    write("step-matches.json", matches);
+    // The scratch directory goes on EVERY path out, the map with it. The app's
+    // collector learned this the hard way: cleaning only on the heals path left
+    // a directory behind for good whenever a run failed to heal.
+    try {
+      fs.rmSync(healDir, { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
+    if (env.GLAZE_HEAL_MAP) {
+      try {
+        fs.rmSync(env.GLAZE_HEAL_MAP, { force: true });
+      } catch {
+        // best-effort
+      }
+    }
+    return out;
+  }
+
   function ensureModuleResolution(scriptsDir, nodeModules) {
     const link = path.join(scriptsDir, "node_modules");
     if (fs.existsSync(link)) return;
@@ -399,15 +481,45 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
       env.GLAZE_A11Y = wantsA11y ? "1" : "0";
       env.GLAZE_RECORD_LOGS = wantsLogs ? "1" : "0";
       env.GLAZE_SETTLE = wantsSettle ? "1" : "0";
-      // Healing is OFF here, and it is off as ONE decision: no switch, no
-      // directory, no map. R49 is what a half-set gate looks like — the switch
-      // said "1" and the map named a file nothing writes, so the fixture
-      // installed itself and healed nothing. Setting "0" alone would leave the
-      // other half sitting there for the next person to re-enable in isolation.
-      env.GLAZE_HEAL = "0";
-      if (wantsScreenshots || wantsA11y || wantsLogs) {
+      // Healing, and it is ONE decision: the switch, the map and the directory
+      // are set together or not at all. R49 is what a half-set gate looks like —
+      // the switch said "1" and the map named a file nothing writes, so the
+      // fixture installed itself, patched every locator factory and healed
+      // nothing, on every unattended run, with no error anywhere.
+      env.GLAZE_HEAL = wantsHeal ? "1" : "0";
+      if (wantsScreenshots || wantsA11y || wantsLogs || wantsHeal) {
         fs.mkdirSync(artifactDir, { recursive: true });
         env.GLAZE_ARTIFACT_DIR = artifactDir;
+      }
+      if (wantsHeal) {
+        // The map IS the feature: the fixture rethrows untouched for a key it
+        // cannot find. Built through the shared builder so the key matches what
+        // the fixture derives from Playwright's factory arguments and the probe
+        // ranks candidates the way the trainer does — one implementation of
+        // each, which is what R51 made possible.
+        //
+        // No `describeStep`: it is still app-side, next to its own renderer
+        // mirror. Entries carry an empty label and the fixture falls back to the
+        // step id, which is a visible difference in an artifact rather than a
+        // silent one in the ranking.
+        env.GLAZE_HEAL_MAP = path.join(scriptsDir, healMapFileName(runId));
+        // The fixture's scratch dir, converted into the two run artifacts below
+        // and then removed — the same shape the app's collector has. Nothing
+        // here reads a heal back INTO the test: that is the "suggest, never
+        // apply" half of the policy, and it holds by construction rather than
+        // by a flag, since a writeback would edit a tests.json that dies with
+        // the container.
+        env.GLAZE_HEAL_DIR = path.join(scriptsDir, healDirName(runId));
+        try {
+          fs.writeFileSync(env.GLAZE_HEAL_MAP, JSON.stringify(buildHealMap(test.steps)), "utf-8");
+        } catch {
+          // A map that could not be written is a run that does not heal, which
+          // is the state this path was already in. It must never take the run
+          // down with it.
+          delete env.GLAZE_HEAL_MAP;
+          delete env.GLAZE_HEAL_DIR;
+          env.GLAZE_HEAL = "0";
+        }
       }
       if (wantsUserPage) {
         Object.assign(env, userPageEnv(settings));
@@ -434,32 +546,30 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     const wantsA11y = !imported && Boolean(test.a11yChecks ?? settings.defaultA11yChecks);
     const wantsLogs = !imported && Boolean(test.recordLogs ?? settings.defaultRecordLogs);
     const wantsSettle = !imported && speed === "crawl";
-    // ── Run-time healing: OFF, and why there is no `wantsHeal` here (R49) ──
+    // ── Run-time healing (R49) ──────────────────────────────────────────
     //
-    // R8 turned it on and it was never once on. The heal fixture does nothing
-    // for a locator it has no MAP ENTRY for — `if (!entry || !entry.probe) throw
-    // err` is the first line of every patched action — and the map is written by
-    // the runner, from the test's steps, with a probe script per step. This
-    // process cannot build that probe: `buildHealProbeScript` embeds the
-    // recorder's locator engine (DOM_HELPERS + UNIQUENESS_HELPERS out of
-    // main/recorder/capture-script.ts), which is TypeScript the app compiles and
-    // this plain-.mjs server has no way to import.
+    // ON, and gated exactly as the app gates it: the user's setting, and a test
+    // with at least one locator to heal. Without it a run fails on a stale
+    // locator the app would have healed past, which is the false red that
+    // teaches a team to distrust CI.
     //
-    // So the honest state is off, and the run SAYS so: `describeRun` already
-    // carries the sentence for it ("a step whose locator has gone stale fails
-    // here rather than being healed past, so this run can fail where an app run
-    // of the same test passes"), and it was being suppressed by a `ran.autoHeal`
-    // that reported a capability this run did not have. That note is worth more
-    // than a switch that heals nothing — a run that quietly fails where the app
-    // would have succeeded is exactly how a team learns to distrust CI.
+    // It was ON here once before and healed NOTHING — see the R49 entry in
+    // DECISIONS. The reason was never the switch: the heal fixture rethrows
+    // untouched for a locator it has no MAP ENTRY for, and the map holds a probe
+    // script per step built from the recorder's locator engine, which was
+    // compiled TypeScript this plain-.mjs server could not import. R51 moved the
+    // engine to shared/ and the probe builder followed it; the map is buildable
+    // here now, and `check:ci-fixtures` asserts a switch that is not "0" implies
+    // both a map named through shared/heal-artifacts.mjs AND a writer for it.
+    const wantsHeal =
+      !imported && Boolean(settings.autoHealEnabled) && (test.steps ?? []).some((st) => st?.locator);
+    // ── The WRITEBACK, which stays off ─────────────────────────────────
     //
-    // What turns it on: the locator engine moving to shared/, which standing
-    // overlay rules wait on too. Then this becomes the app's own gate — the
-    // test's locators, `settings.autoHealEnabled` — plus a map written beside
-    // the spec under `healMapFileName(runId)`. The WRITEBACK stays off either
-    // way, by construction: nothing in this process reads heals.json back into a
-    // test, and it could not usefully, since that tests.json dies with the
-    // container.
+    // "Suggest, never apply", and it holds by construction rather than by a
+    // flag: nothing in this process reads a heal back into a test. It could not
+    // usefully — the tests.json it would edit dies with the container, so the
+    // fix would be lost and the run would still report a heal it did not keep.
+    // `check:ci-fixtures` asserts the absence directly.
     const wantsUserPage =
       !imported && Boolean(settings.userStylesheet || settings.userInitScript);
     // Standing overlay rules, armed by HOST from the test's own starting URL —
@@ -477,7 +587,13 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     const armedRules = imported ? [] : armedRulesFor(overlayRules, test.url ?? "");
     const wantsDismiss = armedRules.length > 0;
     const anyCapability =
-      wantsScreenshots || wantsA11y || wantsLogs || wantsSettle || wantsUserPage || wantsDismiss;
+      wantsScreenshots ||
+      wantsA11y ||
+      wantsLogs ||
+      wantsSettle ||
+      wantsHeal ||
+      wantsUserPage ||
+      wantsDismiss;
 
     // ALWAYS, capabilities or not: a generated spec importing a helper needs
     // glaze-runtime.mjs on disk to load at all.
@@ -555,6 +671,11 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
         // ignore
       }
     }
+    // What Auto-Heal did, turned into the two artifacts every reader asks for.
+    // Without this the fixture writes its evidence into a scratch directory
+    // nothing opens, which is "healed and recorded no evidence of having tried"
+    // — the second half of the R49 sentence, and no better than the first.
+    const healed = collectHealEvidence(env, artifactDir, test.id, runId);
     const logFile = path.join(dataDir, "recorder", "logs", `${runId}.log`);
     const record = {
       id: runId,
@@ -603,7 +724,23 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     // ONE choke point for everything written or returned, mirroring the app's
     // `emitOutput`.
     // With THIS run's secret values — see sanitizeOutput.
-    const safeOutput = sanitizeOutput(output, secrets.values);
+    //
+    // The heal SUMMARY is appended BEFORE this rather than after it. It is
+    // counts only and carries nothing to redact today — the point is that it
+    // does not become a second exit from this function. Everything returned
+    // leaves through one call; a string appended after it is a second path that
+    // is safe exactly until somebody makes the summary name the steps, which is
+    // the obvious next edit.
+    //
+    // The fixture already narrates each event to stderr. This is the count,
+    // which is what makes "this run healed nothing" distinguishable from "this
+    // run was not healing" without reading the whole log.
+    const healNote =
+      healed.healed || healed.failed
+        ? `\n[Auto-Heal] ${healed.healed} healed, ${healed.failed} could not be healed` +
+          `${healed.matched ? `, ${healed.matched} step(s) recorded what their locator matched` : ""}\n`
+        : "";
+    const safeOutput = sanitizeOutput(output + healNote, secrets.values);
 
     saveRunRecord(
       { ...record, logBytes: Buffer.byteLength(safeOutput, "utf-8") },
@@ -639,9 +776,12 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
         screenshots: wantsScreenshots,
         accessibility: wantsA11y,
         consoleAndNetwork: wantsLogs,
-        // Never true here — see the R49 note above. Reported rather than
-        // omitted so `describeRun` can say what this run did NOT get.
-        autoHeal: false,
+        // What the run actually installed, which is `wantsHeal` AND a map that
+        // was written — the two are set together above, and a map that could
+        // not be written turns the switch back off. Reporting the preference
+        // instead is what made `ran.autoHeal` claim a capability the run did not
+        // have (R49).
+        autoHeal: env.GLAZE_HEAL === "1",
         pageSettling: wantsSettle,
         // The rules this run actually armed, by label — not a boolean. A caveat
         // that says "overlay rules did not run" when they did is the same lie as
@@ -922,10 +1062,13 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
                     screenshots: Boolean(t.captureArtifacts ?? settings.defaultCaptureArtifacts),
                     accessibility: Boolean(t.a11yChecks ?? settings.defaultA11yChecks),
                     consoleAndNetwork: Boolean(t.recordLogs ?? settings.defaultRecordLogs),
-                    // Off for every test in the batch, exactly as executeTest
-                    // sets it — a batch that claimed healing its runs did not
-                    // do is the R49 shape one caller over.
-                    autoHeal: false,
+                    // Keyed off the same conditions executeTest applies. A
+                    // batch that claimed healing its runs did not do is the R49
+                    // shape one caller over, so this tracks the gate rather
+                    // than being written by hand.
+                    autoHeal:
+                      Boolean(settings.autoHealEnabled) &&
+                      (t.steps ?? []).some((st) => st?.locator),
                     pageSettling:
                       resolveRunSpeed(speed, t.speed, settings.defaultRunSpeed) === "crawl",
                     // Armed per test by host, exactly as executeTest arms them.

@@ -10,6 +10,68 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — Auto-Heal runs on an unattended run, for the first time
+
+The feature half of R49, and the thing R51 was done for. The guard landed
+first, off, and it is what this had to satisfy: `check:ci-fixtures` demanded
+that a `GLAZE_HEAL` which is not `"0"` implies a map named through
+`shared/heal-artifacts.mjs` **and** a writer for it. That assertion had been
+sitting there, in its unreachable arm, waiting for the engine.
+
+**What moved, and why each piece had to.** `buildHealProbeScript` →
+`shared/heal-probe.mjs`; `healKeyFor`/`healKeyBase` → `shared/heal-key.mjs`
+beside the grammar they apply; `buildHealMap` → `shared/heal-map.mjs`. None of
+this is tidying either: the map IS the feature, because the fixture rethrows
+untouched for a key it cannot find, and a runner that cannot build a probe
+cannot heal however loudly its environment says otherwise.
+
+**The extraction changed no key, no probe and no map entry** — measured the way
+R51's was, by running the identical comparison through the identical bundler on
+both sides. The first attempt compared a `tsx` run against an `esbuild` run and
+showed a difference; that was the pipeline, not the code, and it is worth
+recording because a hash comparison across two toolchains is a confident signal
+about nothing.
+
+**`stepLabel` is injected, and that is the one visible gap.** It comes from
+`describeStep`, which lives in `script-generator.ts` next to its own mirror in
+`renderer/lib/describe-step.ts` — a duplication with a parity test over it and
+its own extraction to do. Transcribing a third copy to serve a heal artifact
+would be the exact mistake this file keeps recording, so the label is a
+parameter: the app passes its own, an unattended run passes none, and the
+fixture falls back to the step id it already falls back to. The difference shows
+up in an artifact, where somebody can see it, rather than in the ranking, where
+they could not.
+
+**Evidence, or this would be the other half of R49's own sentence.** "Healed
+nothing, and recorded no evidence of having tried" is two failures, and shipping
+only the first fix would leave the second. The fixture writes `heals.json` and
+`matches.json` into a scratch directory; every reader — `get_step_matches`, the
+failure view, the app's own store — asks for `step-matches.json` and
+`heal-failures.json` in the run's artifact directory. So the unattended runner
+converts them and removes the scratch on every path out, including the common
+one where nothing healed. The envelope and the heal/failure discriminator moved
+to `shared/heal-artifacts.mjs` with it: two writers of one artifact format is a
+run whose evidence is simply not found. The app's `isHeal`/`isHealFailure` stay
+as one-line delegating wrappers, because a `.d.mts` cannot express a type
+predicate and re-deciding the rule is what we were avoiding.
+
+**A summary line, inside the choke point.** The counts go through
+`sanitizeOutput` with everything else — not because they carry a secret today
+(they are counts) but so the function keeps exactly one exit. A string appended
+after redaction is safe until somebody makes the summary name the steps, which
+is the obvious next edit.
+
+**Three assertions were wrong on the way, all the same shape.** The check's own
+`…and writes it, rather than naming a file nothing produces` was
+`/buildHealMap|…writeFileSync/` — an alternation satisfied by the IMPORT of
+`buildHealMap` alone, so it passed against a runner with the call deleted, which
+is R49's exact root cause. The assertion whose entire purpose was to catch that
+bug could not. It is anchored on the write of `env.GLAZE_HEAL_MAP` now. Two
+`check:ci-secrets` assertions matched `sanitizeOutput(output, …)` literally and
+went red for text being routed through redaction correctly — a check that fails
+on being satisfied teaches people to loosen it, so they match the argument
+rather than the identifier while still pinning the values.
+
 ### 2026-08-25 — The capture fixture imported a file no CI run wrote
 
 Found while wiring overlay dismissal onto the unattended path, which is a

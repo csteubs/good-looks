@@ -39,3 +39,39 @@ export function healMapFileName(runId) {
 export function healDirName(runId) {
   return `${runId}.heal`;
 }
+
+// ── The fixture's scratch files, and what a run makes of them ─────────────
+//
+// The heal fixture writes two files into `GLAZE_HEAL_DIR` as it goes, and the
+// runner that started the run turns them into the two artifacts every reader
+// asks for. Three processes and one set of names again: the fixture (a string
+// Playwright loads) writes them, and BOTH runners read them.
+
+/** What the fixture writes each heal and failed attempt into. */
+export const HEAL_EVENTS_FILE = "heals.json";
+
+/** What the fixture writes each failing locator's real match set into. */
+export const HEAL_MATCHES_FILE = "matches.json";
+
+/** A heal that happened: a candidate was applied and the step got past.
+ *
+ *  `?? "healed"` because the outcome field postdates the first heals written;
+ *  an entry from before it carries an applied locator and nothing else. */
+export function isHeal(event) {
+  return (event?.outcome ?? "healed") === "healed" && !!event?.appliedLocator;
+}
+
+/** A failed attempt. Keyed on the outcomes that EXIST rather than on "not a
+ *  heal", so a value this build does not recognise is dropped from both counts
+ *  instead of silently inflating the failure one. */
+export function isHealFailure(event) {
+  return event?.outcome === "exhausted" || event?.outcome === "no-candidates";
+}
+
+/** The envelope both `heal-failures.json` and `step-matches.json` are written
+ *  in. Spelled once because the app writes it through its artifact store and an
+ *  unattended run writes it directly — and `mcp/artifacts.mjs` reads whichever
+ *  produced it, so a second shape is a run whose evidence is simply not found. */
+export function healArtifactEnvelope(testId, runId, entries) {
+  return { testId, runId, entries };
+}

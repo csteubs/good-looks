@@ -22,7 +22,9 @@ import * as os from "os";
 import * as path from "path";
 
 import { healJournalStore, type HealEntry } from "../heal-journal-store.js";
-import { buildHealMap, collectRunHeals, healKeyFor } from "../playwright-runner.js";
+import { collectRunHeals } from "../playwright-runner.js";
+import { buildHealMap } from "../../../shared/heal-map.mjs";
+import { healKeyFor } from "../../../shared/heal-key.mjs";
 import { testStore } from "../test-store.js";
 import type { Locator, Step } from "../../recorder/types.js";
 
