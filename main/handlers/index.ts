@@ -74,7 +74,7 @@ import { parseSpecDetailed } from "../services/spec-parser.js";
 import { checkTestScript } from "../services/script-check.js";
 import { livePageService } from "../services/live-page-service.js";
 import { tsService } from "../services/ts-service/client.js";
-import { glazeRuntimeSource } from "../services/glaze-runtime-source.js";
+import { glazeRuntimeSource } from "../../shared/glaze-runtime-source.mjs";
 import { SCRIPT_CHANGED_ON_DISK } from "../../shared/script-save.mjs";
 import { activeProviderEndpoint, llmService } from "../services/llm-service.js";
 import { proxyPasswordStore } from "../services/proxy-password-store.js";

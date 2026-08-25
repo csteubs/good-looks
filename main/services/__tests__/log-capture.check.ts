@@ -19,7 +19,7 @@ import {
   HEADER_ALLOWLIST,
   LOG_CAPTURE_HELPERS,
   MAX_TEXT_CHARS,
-} from "../log-capture-source.js";
+} from "../../../shared/log-capture-source.mjs";
 
 let failures = 0;
 

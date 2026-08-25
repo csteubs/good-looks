@@ -17,7 +17,7 @@
 // Cookie, ?token=) from ever being written; read-time redaction catches the
 // specific values the user has told the app about.
 
-import { SIGNATURE_HEADER_NAMES } from "../../shared/shopify-signature.mjs";
+import { SIGNATURE_HEADER_NAMES } from "./shopify-signature.mjs";
 
 /** Response/request headers worth keeping, lowercase.
  *
@@ -27,7 +27,7 @@ import { SIGNATURE_HEADER_NAMES } from "../../shared/shopify-signature.mjs";
  *  denylist leaks the entry nobody thought of; this fails closed instead.
  *  Headers not on the list are still REPORTED BY NAME with their value elided,
  *  so a missing header is visible rather than invisible. */
-export const HEADER_ALLOWLIST: readonly string[] = [
+export const HEADER_ALLOWLIST = [
   // Content shape
   "content-type",
   "content-length",
@@ -79,7 +79,7 @@ export const HEADER_ALLOWLIST: readonly string[] = [
  *
  *  Spelled in shared/shopify-signature.mjs so the injector and the filter
  *  cannot disagree about a header name. */
-export const HEADER_NEVER_RECORD: readonly string[] = [...SIGNATURE_HEADER_NAMES];
+export const HEADER_NEVER_RECORD = [...SIGNATURE_HEADER_NAMES];
 
 /** Query parameters whose VALUES are masked in recorded URLs.
  *

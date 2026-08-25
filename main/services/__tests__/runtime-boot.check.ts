@@ -37,7 +37,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "../glaze-runtime-source.js";
+import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "../../../shared/glaze-runtime-source.mjs";
 import { generateSpec } from "../script-generator.js";
 import {
   PLAYWRIGHT_CONFIG_FILE,

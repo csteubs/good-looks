@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { transform } from "esbuild";
 
-import { USER_CSS_ENV, USER_INIT_ENV, userPageEnv, userPageFixtureSource, USER_PAGE_FIXTURE_FILE } from "./user-page-fixture-source.js";
+import { USER_CSS_ENV, USER_INIT_ENV, userPageEnv, userPageFixtureSource, USER_PAGE_FIXTURE_FILE } from "../../shared/user-page-fixture-source.mjs";
 
 describe("user page fixture", () => {
   it("carries each setting as one base64 value, and nothing when both are blank", () => {

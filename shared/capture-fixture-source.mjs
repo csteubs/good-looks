@@ -22,13 +22,13 @@ import {
   MAX_CONSOLE_TAIL,
   MAX_NETWORK_HEAD,
   MAX_NETWORK_TAIL,
-} from "./log-capture-source.js";
-import { actionsLiteral, LOCATOR_ACTIONS, PAGE_ACTIONS } from "./page-actions.js";
-import { SETTLE_FIXTURE_FILE } from "./settle-fixture-source.js";
-import { DISMISS_COUNT_ENV, DISMISS_FIXTURE_FILE } from "./dismiss-fixture-source.js";
-import { USER_CSS_ENV, USER_INIT_ENV, USER_PAGE_FIXTURE_FILE } from "./user-page-fixture-source.js";
-import { SIGNATURE_COUNT_ENV, SIGNATURE_FIXTURE_FILE } from "./signature-fixture-source.js";
-import { STEP_MARKER } from "./step-marker.js";
+} from "./log-capture-source.mjs";
+import { actionsLiteral, LOCATOR_ACTIONS, PAGE_ACTIONS } from "./page-actions.mjs";
+import { SETTLE_FIXTURE_FILE } from "./settle-fixture-source.mjs";
+import { DISMISS_COUNT_ENV, DISMISS_FIXTURE_FILE } from "./dismiss-fixture-names.mjs";
+import { USER_CSS_ENV, USER_INIT_ENV, USER_PAGE_FIXTURE_FILE } from "./user-page-fixture-source.mjs";
+import { SIGNATURE_COUNT_ENV, SIGNATURE_FIXTURE_FILE } from "./signature-fixture-source.mjs";
+import { STEP_MARKER } from "./step-marker.mjs";
 
 export const captureFixtureSource = `import { test as base, expect } from "@playwright/test";
 import * as fs from "fs";

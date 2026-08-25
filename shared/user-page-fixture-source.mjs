@@ -23,8 +23,8 @@ export const USER_CSS_ENV = "GLAZE_USER_CSS_B64";
 export const USER_INIT_ENV = "GLAZE_USER_INIT_B64";
 
 /** The environment a run gets for the two settings; empty when both are. */
-export function userPageEnv(settings: { userStylesheet?: string; userInitScript?: string }): Record<string, string> {
-  const out: Record<string, string> = {};
+export function userPageEnv(settings) {
+  const out = {};
   const css = (settings.userStylesheet ?? "").trim();
   const js = (settings.userInitScript ?? "").trim();
   if (css) out[USER_CSS_ENV] = Buffer.from(css, "utf-8").toString("base64");

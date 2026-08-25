@@ -17,21 +17,12 @@ export const STEP_MARKER = "__GLAZE_STEP__:";
 /** One step transition, as the runner uses it. `title` is deliberately not
  *  carried: nothing consumes it, and it is the only field that can contain
  *  page-derived text. */
-export interface StepMarker {
-  event: "begin" | "end";
-  /** 1-based line in the spec that ran — mapped to a step index by the runner. */
-  line: number;
-  /** False only on a reported failure. A `begin` is always true. */
-  ok: boolean;
-}
-
-export interface StdoutSplit {
-  /** The chunk with every marker removed — what the user should see. */
-  visible: string;
-  markers: StepMarker[];
-  /** Trailing partial line, to be passed back in as `buffered` next time. */
-  rest: string;
-}
+// The two shapes this module speaks are declared in step-marker.d.mts:
+//   StepMarker  { event: "begin" | "end"; line: number; ok: boolean }
+//   StdoutSplit { visible: string; markers: StepMarker[]; rest: string }
+// `line` is 1-based and maps to a step index in the runner; `ok` is false only
+// on a reported failure, and a `begin` is always true. `rest` is the trailing
+// partial line, handed back in as `buffered` next time.
 
 /**
  * Validate one marker payload.
@@ -43,15 +34,15 @@ export interface StdoutSplit {
  * well-formed marker could otherwise move the highlight, so a payload that
  * isn't exactly a step transition is dropped rather than coerced.
  */
-function parseStepMarker(json: string): StepMarker | null {
-  let raw: unknown;
+function parseStepMarker(json) {
+  let raw;
   try {
     raw = JSON.parse(json);
   } catch {
     return null;
   }
   if (!raw || typeof raw !== "object") return null;
-  const { event, line, ok } = raw as Record<string, unknown>;
+  const { event, line, ok } = raw;
   if (event !== "begin" && event !== "end") return null;
   if (typeof line !== "number" || !Number.isInteger(line) || line < 1) return null;
   // Absent means "fine" — a `begin` never carries one.
@@ -74,12 +65,12 @@ function parseStepMarker(json: string): StepMarker | null {
  * Markers are stripped whether or not the caller can map them. A run with no
  * line map would otherwise show raw `__GLAZE_STEP__:` lines in its output.
  */
-export function splitStepMarkers(buffered: string, chunk: string): StdoutSplit {
+export function splitStepMarkers(buffered, chunk) {
   const lines = (buffered + chunk).split("\n");
   // Last element is the partial trailing line (no trailing newline) — hold it.
   const rest = lines.pop() ?? "";
   let visible = "";
-  const markers: StepMarker[] = [];
+  const markers = [];
   for (const line of lines) {
     const at = line.indexOf(STEP_MARKER);
     if (at === -1) {

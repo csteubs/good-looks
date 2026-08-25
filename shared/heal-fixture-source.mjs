@@ -36,8 +36,8 @@
 // Plain JavaScript (no TypeScript) because Playwright loads it through its own
 // Babel transform.
 
-import { healKeyOperatorSource } from "../../shared/heal-key.mjs";
-import { testIdSelectorSource } from "../../shared/testid-attr.mjs";
+import { healKeyOperatorSource } from "./heal-key.mjs";
+import { testIdSelectorSource } from "./testid-attr.mjs";
 
 export const HEAL_FIXTURE_FILE = "glaze-heal.mjs";
 

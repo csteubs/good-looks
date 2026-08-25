@@ -58,32 +58,16 @@ import {
   UNIQUENESS_HELPERS,
 } from "../recorder/capture-script.js";
 import { overlayVisibleSource, watcherSource } from "../../shared/overlay-rules.mjs";
+// The pure half — see shared/dismiss-fixture-names.mjs for why it is split.
+// Re-exported so this module stays the one import site for its callers.
+import {
+  DISMISS_COUNT_ENV,
+  DISMISS_ENV_PREFIX,
+  DISMISS_FIXTURE_FILE,
+  dismissEnvNames,
+} from "../../shared/dismiss-fixture-names.mjs";
 
-export const DISMISS_FIXTURE_FILE = "glaze-dismiss.mjs";
-
-/** How many rules this run was given. Zero means the fixture no-ops. */
-export const DISMISS_COUNT_ENV = "GLAZE_DISMISS_COUNT";
-
-/** The prefix every per-rule variable is built from.
- *
- *  ONE definition, because two processes spell these names: the runner WRITES
- *  them (`dismissEnv`) and the generated fixture READS them. A second
- *  hand-written spelling is the drift this repo has paid for more than once —
- *  and here it would be silent in the worst way, because the runner would set
- *  variables the fixture never looks at, every test would stay green, and the
- *  feature would simply never fire. The fixture interpolates this constant
- *  rather than retyping it. */
-export const DISMISS_ENV_PREFIX = "GLAZE_DISMISS_";
-
-/** The env names carrying one rule. One variable per field rather than a JSON
- *  blob, for the reason `variableEnv` states about secrets: a blob is a single
- *  string that shows up whole in a crash dump or a process listing. */
-export function dismissEnvNames(index: number): { label: string; target: string } {
-  return {
-    label: `${DISMISS_ENV_PREFIX}${index}_LABEL`,
-    target: `${DISMISS_ENV_PREFIX}${index}_TARGET`,
-  };
-}
+export { DISMISS_COUNT_ENV, DISMISS_ENV_PREFIX, DISMISS_FIXTURE_FILE, dismissEnvNames };
 
 /** The locator engine, with the click-path cap lifted. */
 const resolverSource = `

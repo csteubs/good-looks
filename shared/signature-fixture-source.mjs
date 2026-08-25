@@ -47,12 +47,7 @@ export const SIGNATURE_COUNT_ENV = "GLAZE_SIG_COUNT";
 
 /** The env var names for signature `index`. One place, so the writer in
  *  playwright-runner.ts and the reader below cannot disagree. */
-export function signatureEnvNames(index: number): {
-  host: string;
-  input: string;
-  value: string;
-  agent: string;
-} {
+export function signatureEnvNames(index) {
   return {
     host: `GLAZE_SIG_${index}_HOST`,
     input: `GLAZE_SIG_${index}_INPUT`,

@@ -29,7 +29,7 @@
 
 import type { Reporter, TestCase, TestResult, TestStep } from "@playwright/test/reporter";
 
-import { STEP_MARKER } from "./step-marker.js";
+import { STEP_MARKER } from "../../shared/step-marker.mjs";
 
 function emit(payload: Record<string, unknown>): void {
   process.stdout.write(STEP_MARKER + JSON.stringify(payload) + "\n");

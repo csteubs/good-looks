@@ -38,9 +38,9 @@ import {
   SETTLE_LOAD_TIMEOUT_MS,
   SETTLE_PAINT_TIMEOUT_MS,
   settleFixtureSource,
-} from "../settle-fixture-source.js";
-import { captureFixtureSource } from "../capture-fixture-source.js";
-import { LOCATOR_ACTIONS, PAGE_ACTIONS } from "../page-actions.js";
+} from "../../../shared/settle-fixture-source.mjs";
+import { captureFixtureSource } from "../../../shared/capture-fixture-source.mjs";
+import { LOCATOR_ACTIONS, PAGE_ACTIONS } from "../../../shared/page-actions.mjs";
 import { MAX_TEST_TIMEOUT_MS } from "../recorder-settings-store.js";
 import { isTestSpeed, TEST_SPEEDS, TEST_SPEED_LABELS } from "../../recorder/types.js";
 import {

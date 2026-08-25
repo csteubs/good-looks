@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 import { generateSpec } from "./script-generator.js";
 import { parseSpec, parseSpecDetailed } from "./spec-parser.js";
 import { normalizeRawStep, MAX_TYPE_DELAY_MS } from "../recorder/types.js";
-import { LOCATOR_ACTIONS, PAGE_ACTIONS } from "./page-actions.js";
+import { LOCATOR_ACTIONS, PAGE_ACTIONS } from "../../shared/page-actions.mjs";
 import type { Step } from "../recorder/types.js";
 
 let seq = 0;

@@ -23,7 +23,7 @@ import * as os from "os";
 import * as path from "path";
 import { pathToFileURL } from "url";
 
-import { healFixtureSource } from "./heal-fixture-source.js";
+import { healFixtureSource } from "../../shared/heal-fixture-source.mjs";
 import { healKeyFor } from "./playwright-runner.js";
 import { healKeyOperatorSource } from "../../shared/heal-key.mjs";
 import { testIdSelector } from "../../shared/testid-attr.mjs";

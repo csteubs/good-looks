@@ -1,6 +1,6 @@
 // Convert recorded steps into a @playwright/test spec file.
 
-import { GLAZE_RUNTIME_FILE } from "./glaze-runtime-source.js";
+import { GLAZE_RUNTIME_FILE } from "../../shared/glaze-runtime-source.mjs";
 import {
   ASSERT_SEMANTICS,
   COMPARE_OP_LABEL,

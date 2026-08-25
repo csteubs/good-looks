@@ -10,6 +10,59 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — The run fixtures move into shared/, and the one that could not
+
+R8's first half. A CLI that runs fixture-free "reports failures the app would
+have healed, and the team's conclusion will be that the CI integration is
+flaky" — the runner plan calls fixtures **not optional** for exactly that
+reason. But the fixture sources were TypeScript under `main/services/`, and the
+MCP and the CLI are plain `.mjs` with no build step, so neither could reach
+them. This change makes them reachable; wiring them into a CI run is the second
+half and its own commit.
+
+**Ten modules, ~2,500 lines, and almost none of it was TypeScript.** These files
+export STRINGS — the fixtures are raw JavaScript that Playwright loads through
+its own Babel transform, so they were never allowed to contain type syntax in
+the first place. The whole conversion was two `as const`s, one `as Record`, two
+interfaces and about six annotations. That is why the move is mechanical rather
+than a rewrite, and why the diff is mostly `git mv`.
+
+**They were already pure.** `shared/`'s admission rule is no `fs`, no shell
+import, no IPC, no `process` — and every `import * as fs from "fs"` in these
+files is INSIDE the emitted template literal, describing what the fixture does
+when Playwright runs it, not what the module does when we import it. Verified by
+backtick parity rather than by eye, because that distinction is the whole
+question and a grep answers it wrongly.
+
+**`dismiss-fixture-source.ts` is the one that could not move, and the split is
+the interesting part.** Its `resolverSource` embeds the recorder's own locator
+engine — `DOM_HELPERS` (347 lines) and `UNIQUENESS_HELPERS` (221) from
+`capture-script.ts`, which also pulls `CONTEXT_HELPERS` and three constants.
+Moving it would mean dragging ~600 lines of the recorder's most safety-critical
+file across this boundary as a *side effect* of a fixture move, and that file is
+the capture boundary: page input becomes generated code becomes executed Node.
+It is its own change, with its own review.
+
+So the module was split at the line the dependency actually falls on. The four
+pure names — `DISMISS_FIXTURE_FILE`, `DISMISS_COUNT_ENV`, `DISMISS_ENV_PREFIX`,
+`dismissEnvNames` — are now `shared/dismiss-fixture-names.mjs`, and they are
+**exactly what `capture-fixture-source` needed**: a filename to import from and
+a variable naming the count, never the dismissal source itself. So the capture
+fixture reached `shared/` and only the overlay-dismissal emission stayed behind.
+The source module re-exports the names, so `playwright-runner.ts` and
+`check:overlay-rules` import from one place still and did not change.
+
+**The consequence, stated rather than discovered later:** overlay dismissal is
+OFF in a CI run, and turning it on needs the locator-engine extraction first.
+R8 asks for a per-capability decision in writing; this is the first entry in
+that table, and it is a constraint rather than a choice.
+
+**What the declarations are for.** Ten hand-written `.d.mts` files, following
+`shared/`'s existing rule. They are not paperwork: `npm run type-check` is the
+real gate over every TypeScript caller of a `.mjs`, and it caught the move's
+only genuine error on the first run. Confirmed load-bearing by handing
+`splitStepMarkers` a third argument and watching TS2554.
+
 ### 2026-08-25 — The CLI: its exit contract, its installer, and its dry run
 
 R3 and R2 together, because a `run` command without an exit contract is a

@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { splitStepMarkers, STEP_MARKER } from "./step-marker.js";
+import { splitStepMarkers, STEP_MARKER } from "../../shared/step-marker.mjs";
 
 const marker = (payload: Record<string, unknown>): string =>
   STEP_MARKER + JSON.stringify(payload) + "\n";

@@ -91,6 +91,17 @@ renderer/theme/      the indie redesign's bespoke layer: --gl-* tokens, self-hos
 renderer/dev/        the browser preview's fake backend (`npm run dev:web`) — never shipped
 shared/              the ONE pure core both the app and the MCP import (.mjs + hand-written
                      .d.mts). Pure only: no fs, no @shell/backend, no IPC, no process.
+                     THE RUN FIXTURES LIVE HERE (R8, 2026-08-25) — capture, heal,
+                     settle, signature, user-page, log-capture, the spec runtime, the
+                     step reporter, page-actions and step-marker. They are strings, so
+                     they were always pure; what forced the move is that a CI runner has
+                     no app, and a CLI that runs fixture-free reports failures the app
+                     would have healed. `dismiss-fixture-source.ts` is the ONE that
+                     stayed under main/services/: its source embeds the recorder's
+                     locator engine, and dragging ~600 lines of capture-script.ts across
+                     this boundary is its own change. Its four pure NAMES are split out
+                     as shared/dismiss-fixture-names.mjs, which is all the capture
+                     fixture needed.
                      user-data-rules.mjs is the shape that rule forces: WHERE the data
                      lives needs the disk, so the probing stays on each side and only the
                      RULES are shared — the override name, the store markers, the legacy

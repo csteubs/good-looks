@@ -36,7 +36,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { generateSpec } from "../script-generator.js";
-import { HEADER_NEVER_RECORD, LOG_CAPTURE_HELPERS, ELIDED } from "../log-capture-source.js";
+import { HEADER_NEVER_RECORD, LOG_CAPTURE_HELPERS, ELIDED } from "../../../shared/log-capture-source.mjs";
 import { SIGNATURE_HEADER_NAMES } from "../../../shared/shopify-signature.mjs";
 import type { TestRecord } from "../../recorder/types.js";
 

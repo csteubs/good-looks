@@ -19,7 +19,7 @@ export const PAGE_ACTIONS = [
   "reload",
   "setViewportSize",
   "setContent",
-] as const;
+];
 
 /** Locator-level actions: everything that touches an element. Patched on the
  *  Locator PROTOTYPE, so one patch covers every locator in the run. */
@@ -46,12 +46,12 @@ export const LOCATOR_ACTIONS = [
   "clear",
   "setInputFiles",
   "dragTo",
-] as const;
+];
 
 /** Render a list as a JS array literal for embedding in a fixture source
  *  string. Values are known identifiers, but they go through JSON.stringify
  *  anyway — a fixture source is code, and nothing should be concatenated into
  *  code unquoted just because it "can't" contain a quote. */
-export function actionsLiteral(actions: readonly string[]): string {
+export function actionsLiteral(actions) {
   return JSON.stringify(actions);
 }

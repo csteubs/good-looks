@@ -24,10 +24,10 @@
 //    embedded via toString(), the step-semantics idiom, so the gate and the
 //    app's baseline bookkeeping can never disagree about what a key means.
 
-import { gateFailures } from "../../shared/a11y-rollup.mjs";
-import { compareValues, reEscape, urlPathPattern } from "../../shared/step-semantics.mjs";
+import { gateFailures } from "./a11y-rollup.mjs";
+import { compareValues, reEscape, urlPathPattern } from "./step-semantics.mjs";
 
-import { totpCode } from "../../shared/totp.mjs";
+import { totpCode } from "./totp.mjs";
 
 export const GLAZE_RUNTIME_FILE = "glaze-runtime.mjs";
 
