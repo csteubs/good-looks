@@ -10,6 +10,41 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — Auto-Heal is ON for CI runs and heals nothing
+
+Found re-verifying the backlog after #263, and worth recording as a shape rather
+than a bug: **the switch moved and the effect did not.**
+
+R8 turned run-time healing on for the MCP and CLI path — `run-tests.mjs` sets
+`GLAZE_HEAL = "1"`, the capture fixture installs the heal fixture, and
+`shared/run-fixtures.mjs` states the policy ("healing is ON; writeback is not").
+All of that is true. What is also true is that the two halves name different
+files: the app writes `<runId>.heal-map.json`, and this path points
+`GLAZE_HEAL_MAP` at `<testId>.heal.json` — a filename that **no process in the
+repository writes**. Every unattended run therefore installs a map that does not
+exist, heals nothing, and records no evidence of having tried. A stale locator
+still fails in CI and still passes in the app, which is precisely the false red
+R8 existed to remove.
+
+**Why the gate did not catch it.** `check:ci-fixtures` asserts the ENV VAR is set
+from the right preference. It never asserts that anything downstream of the var
+exists. That is a guard on the decision, not on the effect — and a capability
+delivered by a string an external process loads has no other witness. The same
+blind spot produced `check:mcp-boot` and `check:cli-exit`: reading source proves
+what the code says, not what the run does.
+
+**So the check is the first fix, not the second.** Assert that `GLAZE_HEAL="1"`
+implies a non-empty map file on disk. The feature fix needs the recorder's
+locator engine in `shared/` — the extraction overlay dismissal also waits on —
+and is roughly a dozen lines once that lands. Ordering it the other way would
+fix this instance and leave the shape.
+
+Filed as R49 in `docs/plans/test-runner-improvements.md` §2a, which also records
+the six rows that same pass found already built. Three of them shipped BEFORE
+the table that calls them missing was written; the drift #254 named is not a
+one-off, and the standing answer is the one that section already states — a row
+moves only with a file and a symbol behind it.
+
 ### 2026-08-25 — A suite that skipped everything was reporting green
 
 A bug in the exit contract shipped hours earlier in #257, found while checking

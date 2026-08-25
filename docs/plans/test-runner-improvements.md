@@ -114,7 +114,7 @@ row is only moved here with a file and a symbol behind it.
 
 | # | Item | Area | Verdict | Effort |
 |---|---|---|---|---|
-| R1 | Give `report:emit` a non-interactive destination, scoped to a run or batch | CI | partial | S |
+| R1 | Give `report:emit` a non-interactive destination, scoped to a run or batch | CI | **built — no caller yet, see §2a** | S |
 | R2 | Exit non-zero when a run fails, on a documented contract | CI | **done 2026-08-25** | S |
 | R3 | Add a `bin` and a headless `run` command | CI | **done 2026-08-25** | L |
 | R4 | Make the runner reachable without Electron and without `safeStorage` | CI | **mostly built — see §3.3a** | S |
@@ -126,7 +126,7 @@ row is only moved here with a file and a symbol behind it.
 | R10 | Export the library as a portable bundle; stop storing absolute script paths | CI | missing | L |
 | R11 | Install browsers from the CI entry point | CI | **done 2026-08-25** | S |
 | R12 | Ingest CI run results back into the local library | CI | missing | L |
-| R13 | Put the failing step in the JUnit message and make annotations point somewhere | CI | partial | S |
+| R13 | Put the failing step in the JUnit message and make annotations point somewhere | CI | **built for app runs — see §2a** | S |
 | R14 | Ship a GitHub Action and workflow templates | CI | missing | S |
 | R15 | Ship the MCP server inside the packaged app | CI | **done 2026-08-22** | S |
 | R16 | Add an Environment record and store | Env | missing | L |
@@ -139,20 +139,20 @@ row is only moved here with a file and a symbol behind it.
 | R23 | Add a per-step Auto-Heal opt-out | Stab | missing | M |
 | R24a | Attempt-key the run evidence (prerequisite for R24; unblocks R27/R29) | Stab | missing | M |
 | R24 | Add opt-in retries, marked on the RunRecord | Stab | missing | L |
-| R25 | Emit per-step timeouts for action and assertion steps | Stab | missing | S |
+| R25 | Emit per-step timeouts for action and assertion steps | Stab | **done 2026-08-21** | S |
 | R26 | Learn per-step wait budgets from run history | Stab | missing | L |
 | R27 | Rerun failed tests from a finished batch or routine | UX | missing | M |
 | R28 | Persist the failing step for every run, not only capture runs | UX | partial | M |
 | R29 | Compare a failed run against the last run that passed, in the app | UX | partial | M |
-| R30 | Put a deep link in the alert webhook payload | CI | missing | S |
+| R30 | Put a deep link in the alert webhook payload | CI | **done 2026-08-21** | S |
 | R31 | Add a Runs tab to the test detail view | UX | missing | S |
 | R32 | Add Run to library row and folder context menus | UX | missing | S |
-| R33 | Record how a run was triggered | UX | missing | S |
+| R33 | Record how a run was triggered | UX | **done 2026-08-22** | S |
 | R34 | Environment variables, credentials, and per-environment state keying | Env | missing | L |
-| R35 | Add HTTP basic auth | Env | missing | S |
+| R35 | Add HTTP basic auth | Env | **done 2026-08-23** | S |
 | R36 | Add locale, timezone and custom headers | Env | missing | M |
 | R37 | Parallelise the fan-out inside one test | Perf | missing | L |
-| R38 | Per-group concurrency in Routines | Perf | missing | M |
+| R38 | Per-group concurrency in Routines | Perf | missing (blocker cleared — §2a) | M |
 | R39 | One concurrency budget across the app and the MCP | Stab | missing | M |
 | R40 | Run a test N times in one action | Stab | missing | S |
 | R41 | Live output and per-test stop during a routine run | UX | missing | M |
@@ -163,12 +163,55 @@ row is only moved here with a file and a symbol behind it.
 | R46 | Lean diagnostics mode for the app | Perf | partial | M |
 | R47 | Fix heal candidate scores above 1 being reported as 0 | Stab | **done 2026-08-25** | S |
 | R48 | Finish the Batch-to-Routine rename in UI copy | UX | partial | S |
-| R49 | Run the heal fixture for MCP-driven runs | Stab | missing | M |
+| R49 | Run the heal fixture for MCP-driven runs | Stab | **defect — on but inert, see §2a** | M |
 | R50 | Export a run as a shareable PDF | UX | missing | M |
 | N1 | A bounded site sweep (link crawler) | New | missing | L |
 | N2 | Report which pages the suite never touches | New | missing | M |
 | N3 | Mobile-web device emulation | New | missing | M |
 | N4 | One write on the MCP: `create_test` | New | missing | M |
+
+### 2a. Correction, 2026-08-25 — eight rows re-verified against the code
+
+**Every open row in the table above was re-checked against `main` after #263.**
+Six claimed work that had already shipped, one was a defect rather than a
+missing feature, and one had a blocker that no longer exists. This is the same
+drift #254 was written about, and in three cases the shipping commit *predates
+this table's own verdict pass* — R25 landed roughly four hours before this file
+was first committed.
+
+| Row | Said | Is | Evidence |
+| --- | --- | --- | --- |
+| R25 | missing | **done** | Per-step timeouts: `timeoutParts` at [script-generator.ts:110](../../main/services/script-generator.ts:110), threaded into every emission site, normalized at [types.ts:1722](../../main/recorder/types.ts:1722), round-trips through the parser. `077af4d` (#214), 2026-08-21 |
+| R30 | missing | **done** | The run alert carries the deep link, built by the same `n` the issue-tracker path uses ([alert-service.ts](../../main/services/alert-service.ts)); pinned by `check:alerts`. `fa497be` (#221), 2026-08-21 |
+| R33 | missing | **done** | `trigger?: RunTrigger` at [types.ts:2585](../../main/recorder/types.ts:2585), one spelling in `shared/run-trigger.mjs`, all four writers wired, pinned by `check:mcp-parity`. `0801e3f` (#224), 2026-08-22 |
+| R35 | missing | **done** | `shared/basic-auth.mjs` scopes the credential by origin; emitted as `test.use({ httpCredentials, origin })` at [script-generator.ts:2189](../../main/services/script-generator.ts:2189); trainer and live-page handled too; `check:basic-auth` + `e2e/basic-auth.spec.ts`. `f1eb226` (#244), 2026-08-23 |
+| R1 | partial | **built, uncalled** | `emitReportTo` and the full `EmitScope` — `{testId?, batchId?, since?, until?, runIds?}` — exist at [report-emitter.ts:146](../../main/services/report-emitter.ts:146) and `:63`. What is missing is a CALLER: `report:emit` still narrows to `{testId}`, and the CLI has no `--junit` |
+| R13 | partial | **built for app runs** | `failedStepLabel` IS persisted on `RunRecord` and read by `failureSummary` in `shared/emitters.mjs`. The residue is CI-side and belongs with C2: the MCP/CLI run path writes no label at all |
+| R38 | missing | blocker cleared | [types.ts:3419](../../main/recorder/types.ts:3419) defers the `parallel` flag pending "the same barrier machinery `wait` does". That machinery shipped 2026-08-13 (`shared/routine-plan.mjs`). Re-rank it |
+| R49 | missing | **a defect** | See below — this one is not a missing feature |
+
+**R49 is not missing. It is on, and inert, and the gate cannot see it.**
+R8 turned run-time healing on for the MCP and CLI path
+([run-tests.mjs:396](../../mcp/run-tests.mjs:396) sets `GLAZE_HEAL = "1"`) and
+the capture fixture installs it. But the two halves disagree about the file:
+the app writes `<runId>.heal-map.json`
+([playwright-runner.ts:1513](../../main/services/playwright-runner.ts:1513)),
+while this path points `GLAZE_HEAL_MAP` at `<testId>.heal.json`
+([run-tests.mjs:408](../../mcp/run-tests.mjs:408)) — and that assignment is the
+**only** occurrence of that filename in the repository. Nothing writes it, so
+every unattended run installs a heal map that does not exist, heals nothing, and
+records no evidence of having tried.
+
+`check:ci-fixtures` pins the SWITCH and never the MAP
+([ci-fixtures.check.ts:159](../../main/services/__tests__/ci-fixtures.check.ts:159)),
+which is why the gate stayed green through it. **Fix the check first** — assert
+that `GLAZE_HEAL="1"` implies a non-empty map file — because that guard is what
+stops the same shape recurring; the feature fix rides on the `shared/`
+locator-engine extraction that overlay dismissal also waits on, and is a dozen
+lines behind it.
+
+This is the failure mode §3.3a names, one layer down: not a wrong answer, a
+confident one about nothing.
 
 ---
 
@@ -541,8 +584,7 @@ override → environment → `record.baseUrl`, validated through the same
 run's history is not misleading. It is cheap, it unblocks the PR-preview story,
 and it does not require the environment record. Then R16 (the record and store),
 then R34 (variables, credentials, and the per-environment keying of sessions and
-baselines), then the settings that ride on it: R35 basic auth (a password-protected
-staging site is untestable today, with no workaround), R36 locale/timezone/headers,
+baselines), then the settings that ride on it: R36 locale/timezone/headers,
 per-environment proxy, and environment selection on Routines.
 
 ---

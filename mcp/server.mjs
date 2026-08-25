@@ -980,8 +980,9 @@ function replayFor(runId) {
       run,
       error:
         `Run ${runId} ("${run.testName}") captured no artifacts, so there is nothing to report. ` +
-        "A run only captures when the test has capture switched on and the run came from the " +
-        "app — MCP-driven runs do not capture yet. Retention also prunes older run directories.",
+        "Since R8 an MCP-driven run DOES capture when the test asks it to, but nothing on this " +
+        "path writes the replay model these reports read — so a run can capture and still have " +
+        "nothing here. Retention also prunes older run directories.",
     };
   }
   return { run, replay };

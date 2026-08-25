@@ -17,12 +17,20 @@
 // useless advice on a CI runner, the entire audience of this binary.
 //
 // ── What is deliberately not here ────────────────────────────────────────
-// `--base-url` (R5), `--secrets-file` (R7), `--junit` and
-// `--results-out` (R1/R13), `--retries`, `--fail-fast`, and the `report`,
-// `export`, `eject` and `ingest` subcommands are each their own ranked item. A
-// run that declares a secret variable is SKIPPED with a note here exactly as it
-// is over MCP, because this process cannot decrypt one either — that is R7's
-// subject, not something to half-answer now.
+// `--base-url` (R5), `--junit` and `--results-out` (R1/R13), `--retries`,
+// `--fail-fast`, and the `report`, `export`, `eject` and `ingest` subcommands
+// are each their own ranked item.
+//
+// ── What arrived since, and changed the paragraph above ──────────────────
+// `--secrets-file` IS here as of R7 (#260) — see `cli/args.mjs`. R7 narrowed
+// the skip rather than removing it: a test is skipped only for the secret names
+// that actually resolved to nothing, and the note NAMES the variables to set
+// rather than saying "secrets are unavailable". It is never run with a blank.
+// A suite in which everything skipped then exits 3, not 0 (#261) — a green
+// pipeline that executed nothing is the failure this binary exists to avoid.
+//
+// What R7 did NOT extend to is signature headers, whose values are still
+// encrypted to the app and unreadable here; see `shared/run-fixtures.mjs`.
 
 import process from "node:process";
 import { readFileSync } from "node:fs";
