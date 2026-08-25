@@ -129,6 +129,18 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      heal-key.mjs is the same shape again: how a chained locator's
                      heal-map key is SPELLED, built from a Locator model on one side
                      and from factory ARGUMENTS on the other.
+                     heal-probe.mjs and heal-map.mjs are the rest of that
+                     feature: the probe a failing locator is diagnosed with, and
+                     the MAP keyed by heal-key that carries one per step. The
+                     fixture rethrows untouched for a key it cannot find, so the
+                     map IS run-time Auto-Heal — a runner that cannot build one
+                     cannot heal, whatever GLAZE_HEAL says. Both moved here once
+                     locator-engine.mjs did (R51). `stepLabel` is INJECTED, not
+                     computed: describeStep is still in script-generator.ts
+                     beside its renderer mirror, so the app passes it and an
+                     unattended run does not — the fixture falls back to the
+                     step id, which puts the gap in the artifact rather than in
+                     the ranking.
                      heal-artifacts.mjs is the FILE that map arrives in —
                      healMapFileName/healDirName. Added after R49, where the
                      app wrote <runId>.heal-map.json and the MCP path pointed

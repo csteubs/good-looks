@@ -11,7 +11,7 @@
 import { describe, expect, it } from "vitest";
 
 import { generateSpec } from "./script-generator.js";
-import { buildHealMap } from "./playwright-runner.js";
+import { buildHealMap } from "../../shared/heal-map.mjs";
 import { healStep } from "./auto-heal.js";
 import { buildReplayScript } from "./step-replayer.js";
 import { normalizeStep, MAX_FRAME_DEPTH } from "../recorder/types.js";

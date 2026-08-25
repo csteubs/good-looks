@@ -17,7 +17,8 @@ import { describe, expect, it } from "vitest";
 
 import { generateSpec } from "./script-generator.js";
 import { parseSpecDetailed } from "./spec-parser.js";
-import { buildHealMap, healKeyFor } from "./playwright-runner.js";
+import { buildHealMap } from "../../shared/heal-map.mjs";
+import { healKeyFor } from "../../shared/heal-key.mjs";
 import { normalizeRawStep } from "../recorder/types.js";
 import type { Step } from "../recorder/types.js";
 

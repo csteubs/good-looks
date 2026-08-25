@@ -158,6 +158,7 @@ const appRunner = code("main/services/playwright-runner.ts");
     ["wantsA11y", /const wantsA11y =\s*!imported/],
     ["wantsLogs", /const wantsLogs =\s*!imported/],
     ["wantsSettle", /const wantsSettle =\s*!imported/],
+    ["wantsHeal", /const wantsHeal =\s*\n?\s*!imported/],
     ["wantsUserPage", /const wantsUserPage =\s*!imported/],
     ["wantsDismiss", /const armedRules = imported \? \[\] :[\s\S]{0,200}?const wantsDismiss =/],
   ];
@@ -222,9 +223,25 @@ const appRunner = code("main/services/playwright-runner.ts");
     );
     // And the file has to EXIST, which means this process builds one. The map
     // is per-step and carries a probe script; nothing else can stand in for it.
+    //
+    // Anchored on the WRITE of the variable the fixture is pointed at. The first
+    // draft was `/buildHealMap|…writeFileSync/`, and the alternation made it
+    // satisfiable by the IMPORT of `buildHealMap` alone — so it passed against a
+    // runner with the call deleted, which is R49's exact root cause. Caught by
+    // deleting the call and watching nothing happen; this is the assertion whose
+    // whole purpose is to catch that, so it had to be the one anchored hardest.
     assert(
-      /buildHealMap|healMap[A-Za-z]*\s*=\s*[^;]*\n?[\s\S]{0,400}?writeFileSync/.test(runner),
+      /fs\.writeFileSync\(\s*env\.GLAZE_HEAL_MAP\s*,\s*JSON\.stringify\(buildHealMap\(/.test(
+        runner,
+      ),
       "…and writes it, rather than naming a file nothing produces",
+    );
+    // Built through the shared builder, not a second one. Two builders would not
+    // fail; they would disagree, and disagreeing means a locator that heals in
+    // the app and misses in CI.
+    assert(
+      /from "\.\.\/shared\/heal-map\.mjs"/.test(runner),
+      "…from the shared builder, so the key and the probe are the app's own",
     );
   } else {
     // Off, wholly. Each of these being absent is what makes turning it back on
@@ -325,7 +342,7 @@ const appRunner = code("main/services/playwright-runner.ts");
 // them — which is the difference between a decision and an omission.
 {
   const off = CI_FIXTURE_POLICY.filter((p) => p.onInCi === false);
-  assert(off.length === 2, `exactly two capabilities are off in CI (${off.length})`);
+  assert(off.length === 1, `exactly one capability is off in CI (${off.length})`);
   for (const p of off) {
     assert(
       p.why.length > 40,
@@ -351,9 +368,18 @@ const appRunner = code("main/services/playwright-runner.ts");
     waited.every((p) => /R51/.test(p.why)),
     "…and both name R51, so the two are visibly one job rather than two omissions",
   );
+  // Auto-Heal is ON now, so this is no longer an "off" row — and the row must
+  // still name R49. That is not history for its own sake: the reason healing
+  // was inert is the reason it can be inert again, and the next person to touch
+  // this gate should meet the sentence before they touch it.
+  const heal = CI_FIXTURE_POLICY.find((p) => p.capability === "Auto-Heal");
   assert(
-    off.some((p) => p.capability === "Auto-Heal" && /R49/.test(p.why)),
-    "…and names the defect it was turned off by, so nobody re-enables it as an oversight",
+    heal?.onInCi === "suggest only",
+    `Auto-Heal is on and suggest-only (${String(heal?.onInCi)})`,
+  );
+  assert(
+    /R49/.test(heal?.why ?? ""),
+    "…and its row still names the defect that made it inert, so nobody re-creates the shape",
   );
   const dismissal = CI_FIXTURE_POLICY.find((p) => p.capability === "overlay dismissal");
   assert(

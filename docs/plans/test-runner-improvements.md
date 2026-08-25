@@ -163,7 +163,7 @@ row is only moved here with a file and a symbol behind it.
 | R46 | Lean diagnostics mode for the app | Perf | partial | M |
 | R47 | Fix heal candidate scores above 1 being reported as 0 | Stab | **done 2026-08-25** | S |
 | R48 | Finish the Batch-to-Routine rename in UI copy | UX | partial | S |
-| R49 | Run the heal fixture for MCP-driven runs | Stab | **guard done; R51 landed, feature is next** | M |
+| R49 | Run the heal fixture for MCP-driven runs | Stab | **done 2026-08-25** — guard, then feature | M |
 | R50 | Export a run as a shareable PDF | UX | missing | M |
 | R51 | Move the recorder's locator engine into `shared/` | Stab | **done 2026-08-25** — R49 and CI overlay rules unblocked | L |
 | R52 | Write `glaze-dismiss.mjs` on an unattended run, and arm the rules | Stab | **done 2026-08-25** — was also a load failure, see DECISIONS | M |
@@ -215,7 +215,17 @@ lines behind it.
 This is the failure mode §3.3a names, one layer down: not a wrong answer, a
 confident one about nothing.
 
-**Done, 2026-08-25.** The guard landed, and with it the honest state.
+**Done, 2026-08-25 — both halves.** The FEATURE followed R51: the probe builder
+and the map builder are in `shared/`, the unattended runner writes the map under
+`healMapFileName(runId)`, and the check's "on" arm — a switch that is not `"0"`
+implies a map named through `shared/heal-artifacts.mjs` AND a writer for it — is
+the arm that now runs. Its evidence is converted into `step-matches.json` and
+`heal-failures.json` like an app run's, because "healed nothing and recorded no
+evidence of having tried" is two failures and fixing one would have left the
+other. The only difference from an app run is `stepLabel`, which is empty
+because `describeStep` is still app-side; the fixture falls back to the step id.
+
+**The guard, earlier the same day.**
 `check:ci-fixtures` now asserts the implication in BOTH arms — written only for
 the "on" arm it would be satisfied by disabling the feature, which is the same
 shape again — so "off" has to prove the map and the heal directory are absent
