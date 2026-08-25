@@ -111,7 +111,7 @@ for CI/CD.
 | R1 | Give `report:emit` a non-interactive destination, scoped to a run or batch | CI | partial | S |
 | R2 | Exit non-zero when a run fails, on a documented contract | CI | missing | S |
 | R3 | Add a `bin` and a headless `run` command | CI | missing | L |
-| R4 | Make the runner reachable without Electron and without `safeStorage` | CI | missing | L |
+| R4 | Make the runner reachable without Electron and without `safeStorage` | CI | **mostly built — see §3.3a** | S |
 | R5 | Add a per-run base-URL override | CI / Env | missing | M |
 | R6 | Record commit, branch and job provenance on each run | CI | missing | M |
 | R7 | Provision secrets from the environment for CI runs | CI | missing | M |
@@ -298,6 +298,38 @@ good-looks ingest  DIR              # results back into the local library
 good-looks data-dir
 ```
 
+### 3.3a Correction, 2026-08-25 — R4 is mostly already built
+
+**R4 was ranked `missing` / L, and that is wrong.** The Electron-free run path
+exists today, in `mcp/`, and has since before this plan was written. A CLI does
+not have to make the runner reachable without Electron; it has to CALL what
+already is:
+
+| What R4 asks for | Where it already lives |
+| --- | --- |
+| Spawn Playwright from plain Node | `mcp/server.mjs` `executeTest` — `spawn(cliPath, runArgs(...))`, no Electron anywhere on the path |
+| Find the library without `app.getPath` | `mcp/data-dir.mjs` `resolveDataDir`, sharing its rules with the app through `shared/user-data-rules.mjs` |
+| Plan a queue and bound concurrency | `mcp/run-plan.mjs`, `mcp/run-pool.mjs` |
+| Write run history | `mcp/run-history.mjs` `saveRunRecord` |
+| Write the Playwright config both callers read | `shared/playwright-config-source.mjs` |
+
+**The `safeStorage` half is real but is R7, not R4.** Nothing on the run path
+needs `safeStorage` — it is needed only to decrypt a test's SECRET values, and
+the MCP's answer today is to refuse by name any test that declares one
+([server.mjs:650](../../mcp/server.mjs:650)). That refusal is correct and
+deliberate; replacing it with an environment contract is exactly what R7
+describes, and it is already ranked separately.
+
+**So what Phase C1 actually costs is smaller than the ranking implies, and its
+first step is different from the one listed.** Before `good-looks run` can be
+written, the run routine has to come OUT of `mcp/server.mjs` — `executeTest`,
+the batch driver, and the dozen `dataDir` readers around them are module-private
+inside a 2,150-line file that boots a server on import, so nothing can call them.
+Extracting them is the change that makes the CLI a third CALLER rather than a
+third implementation, which §3.3 already names as the load-bearing decision.
+Sequenced: extract → `bin` + `run` (R3) → the exit contract (R2) → R11, R9, R8,
+R7.
+
 Exit-code contract, pinned by a `check:cli-exit` script:
 
 | Code | Meaning |
@@ -357,7 +389,10 @@ each is a prerequisite for the CLI.
 
 **Phase C1 — the CLI.** R3, R4, R2, R11, R9, R8, R7. The order inside this phase
 is: make the runner Electron-free, then add the `bin`, then the exit contract,
-then browsers, then selection with the dry run, then fixtures, then secrets. Two
+then browsers, then selection with the dry run, then fixtures, then secrets.
+**Corrected 2026-08-25 — the first step is already done and the real one is
+different: see §3.3a.** The Electron-free path exists in `mcp/`; what stands in
+the way of a CLI is that it is module-private inside `mcp/server.mjs`. Two
 non-obvious requirements:
 
 - **Fixtures are not optional.** A CLI that runs fixture-free is a CLI that
