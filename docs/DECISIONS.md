@@ -10,6 +10,171 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — A dialog keyed on a caller's object is a dialog that resets
+
+`IssueComposeDialog` blanked its form and re-fetched whenever a run finished in
+the background. During a Routine that is every few seconds, and the form it
+blanked is a typed bug report (#121).
+
+The cause is not in the dialog's logic but in its dependency array. The load
+effect was keyed on `[open, source]`, and **four of the dialog's five callers**
+— `test-detail-view`, `visual-view`, `a11y-panel` and `insights-view` — build
+`source` as an **object literal during render**; only `a11y-view` passes a value
+captured into state at click time. For those four the fields are scalars that do
+not change between renders, so the identity is the only thing that moves. And
+they re-render on exactly the event in the report: a finished run invalidates the
+queries `invalidateRunDerived` owns, every one of which they read.
+
+**One caller has a residue this does not fix, and saying so is the point.**
+`a11y-panel` builds `runId` from `latestA11yRun(...)`, so a new a11y run of that
+same test changes the key by VALUE — legitimately, since the draft's screenshots
+are read from that run. Worse, the panel returns a `Loading…` early return while
+its `["replay", testId, latest.id]` query refetches on the new key, and the
+dialog is rendered below that return — so the typed form is destroyed by an
+unmount before the key is even consulted. Both behaviours predate this change and
+neither is caused by it; freezing the key there would not save the form, and
+freezing `runId` at click time (what `a11y-view` does through `ruleAnchor`) has
+its own hazard, since the attachments are loaded from the run the source names.
+It is a11y-panel's own change to make, with its own review question. Recorded
+here rather than bundled in.
+
+**Fixed in the dialog, not in the three callers.** Memoizing at the call sites
+would work and would be invisible when the next call site forgets — the form
+still works, it just quietly resets, and nothing in the suite would notice. So
+the dialog derives `defectSourceKey(source)` and depends on **that**, reading the
+object itself through a ref.
+
+The key is an **exhaustive switch** rather than a template string over "the
+fields we happen to use". Two different defects sharing a key is the failure
+that reads the first one's draft while filing the second, and it would arrive
+whenever a new `DefectSource` kind is added — the `never` in the default arm
+makes it a type error instead. `scope: "rule"` is part of the identity for the
+same reason: the accessibility view's widened send builds a different draft from
+the same anchor occurrence.
+
+The counter-test matters as much as the fix. `[open]` alone would also stop the
+resetting, by never reloading at all; `issue-compose-dialog.test.tsx` pins both
+directions — an equal-but-new object does not reload, a different defect does.
+
+### 2026-08-25 — The scheme a typed URL gets is now shown, and spelled once
+
+Typing `example.com` into the New recording dialog has always recorded against
+`https://example.com` — `recorder-service` prepended the scheme before it
+navigated. Nothing on screen said so (#134): a placeholder disappears at the
+first keystroke, so the field read `example.com` and the training browser opened
+an address the user was never told about.
+
+**A note, not a fixed prefix inside the field.** The obvious design is a
+non-editable `https://` chip with the input holding only the host. It has two
+failure modes the note has neither of: a pasted `https://example.com` becomes
+`https://https://example.com` unless every change is stripped (typing the scheme
+character by character reaches the same state), and `http://localhost:3000` — an
+internal target not on TLS — becomes inexpressible without a second control. The
+note says the same thing, cannot corrupt a paste, and needs no new control.
+
+It appears **only when the app is adding something the user did not type**, which
+is `startUrlHint`'s whole job. A note repeating the field back is noise, and the
+silence carries information of its own: no note under `http://localhost:3000` is
+what says the scheme survived rather than being upgraded behind the user's back.
+
+**The rule moved to `shared/start-url.mjs` rather than being copied.** The
+renderer cannot import a private function out of a compiled main-process module,
+and a transcribed regex is right the day it is written and silently divergent
+afterwards — the drift `shared/` exists to prevent, and here the drift would mean
+the note claiming one address while the recorder opened another.
+
+**It is named for the question, not the operation**, following `basic-auth.mjs`
+and `heal-key.mjs`: a *start* URL is an address a person typed, which has to
+resolve on its own. A `goto` step's URL is not the same thing — since a test's
+site address became a variable, `page.goto("/checkout")` under a `baseUrl` is
+correct, and a module called `url-normalize` invites someone to apply it there
+and break the test in the one place the failure looks like a product bug. The
+generate-test dialog reads it too, where the URL was previously passed through
+untouched into both the model's prompt and the stored record.
+
+### 2026-08-25 — A checklist row keeps its size when it leaves the job
+
+Reported from the running app, against the tri-state tick below: selecting all
+resized the checklist. Every cell after the row's two marks moved 8px, and each
+row grew from 27px to 33px, so the list changed shape under a control whose
+whole job is to change one thing.
+
+**The design was already right and the numbers were wrong.** Three cells exist
+only on a row that is in the job — the structure mark, the after mark and the
+failure policy — and all three already left a spacer behind; the comment beside
+the third one even states the rule, and says it was found by looking at the
+screen because no test here could see it. What none of them had was a spacer
+that actually matched:
+
+- **Width.** The marks are `Menu`s given `width={24}`, and `.gl-menu-root` sets
+  `flex: 0 0 auto`, which beats the `flex: 0 0 20px` their own rules stated. So
+  the 20px was INERT on the control and authoritative on the spacer — the one
+  arrangement where a stylesheet reads as consistent and behaves as if it were
+  not. Both are 24px now, and the mark rules say why they cannot say anything
+  else.
+- **Height.** An empty `<span>` is 0 tall. The row is `align-items: center` over
+  its tallest cell, which on a ticked row is the 24px mark, so a row whose marks
+  had gone was simply shorter. Every spacer now carries its control's height.
+
+**The Run button got a floor for the same reason** — its label carries the
+selection count ("Run all", "Run 12", "Run 0") and Stop replaces it outright, so
+the toolbar's width tracked whatever happened to be ticked. `.gl-detail-run`
+already existed for exactly this on the detail view; this is the same fix in the
+same shape, and both buttons in the slot carry it, not just the one that
+prompted it.
+
+**It is guarded in two places because it fails in two ways.**
+`check:batch-row-cells` reads the view and both stylesheets and asserts each
+spacer matches its control on both axes — source is the only place that answer
+exists, since jsdom has no layout engine and the dom project runs with
+`css: false`. And `batch-view.test.tsx` asserts the shape a jsdom test CAN see:
+an unticked row has a cell in every column a ticked row has. The second is not
+redundant — deleting a `: (<span/>)` arm leaves a working row that silently
+slides its own columns, and the size check would still pass, because the rule it
+reads would still be correct for a spacer nothing renders.
+
+### 2026-08-25 — Batch's two select buttons become one tri-state tick
+
+SELECT ALL and SELECT NONE were two buttons that between them could not answer
+the question they were about: whether everything was already selected. That was
+something the user answered by scanning rows (#74). One tri-state checkbox both
+reports the state and changes it.
+
+**It answers for the VISIBLE tests**, which is the property the two buttons had
+and the one a rewrite loses first. Under a tag filter, selecting all ticks what
+is shown and leaves hidden ticks alone; a master computed over the library would
+read "some" while every row on screen was ticked, and clicking it would act on
+tests the user cannot see. `selectionState` takes the list it answers for, so
+that is a property of the call rather than of the caller's discipline —
+`batch-view.test.tsx` drives it through a real filter change.
+
+**Its accessible name is stable, and it contains its visible label.** The
+buttons' labels flipped ("Select these" / "Deselect these" under a filter), and
+the reflex is to flip a checkbox's label with its state too. A checkbox renamed
+by its own state is announced as a different control every time it is clicked;
+the name says which set it acts on and `aria-checked` says what a click will do.
+
+The first version got the second half wrong, and it is worth recording because
+the two buttons had it for free: their accessible name WAS their visible text.
+Building the name separately produced a control reading "Select these" while
+announcing "Select all 1 test shown by this filter" — two strings with no words
+in common, which is a control a speech-input user cannot operate (WCAG 2.5.3,
+Label in Name). Both are now built from one stem — "Select all" / "Select all
+shown", with the name adding ": N tests" — and a test asserts the containment in
+both states rather than the two strings separately, since asserting them apart is
+what let them drift.
+
+The count stays out of the visible label: the toolbar already reads "N of M
+selected" over the whole library, and a second count over the visible subset
+would read as that one contradicting itself.
+
+**The indeterminate glyph is Batch's, not the component library's.** Radix
+renders the Indicator for "some" exactly as for "all", and the shared `Checkbox`
+draws one thing — a check — so a partial selection would be drawn identically to
+a full one, which is the single thing this control exists to say. A dash added to
+`Checkbox` would change every checkbox in the app for one caller's benefit, so it
+is two rules on `.gl-batch-master-box` instead.
+
 ### 2026-08-24 — Settings stops being a window and becomes two views
 
 Settings had been its own `BrowserWindow` since before the redesign, and it was

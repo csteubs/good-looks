@@ -15,9 +15,9 @@
 //     complete, which is the expensive way to find out.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import { IssueComposeDialog } from "./issue-compose-dialog";
+import { IssueComposeDialog, defectSourceKey } from "./issue-compose-dialog";
 import type { DefectSource, ProviderVocabulary } from "../lib/issue-types";
 
 const LINEAR: ProviderVocabulary = {
@@ -183,5 +183,76 @@ describe("the dialog does not ask which tracker", () => {
     await waitFor(() => expect(screen.getByText(/create an issue in GitHub/i)).toBeTruthy());
     expect(screen.queryByText(/^Linear$/)).toBeNull();
     expect(document.getElementById("issue-tracker-provider")).toBeNull();
+  });
+});
+
+describe("a background run does not wipe what was typed", () => {
+  // #121. The load effect's first act is to blank the form, so what it depends
+  // on decides whether a half-written report survives the next finished run.
+  // All three callers build `source` inline during render, and all three
+  // re-render on `invalidateRunDerived` — so an identity-keyed effect reloaded
+  // (and cleared) the dialog every few seconds of a Routine.
+
+  it("keeps the draft when the caller hands it an equal-but-new source object", async () => {
+    const { rerender } = render(
+      <IssueComposeDialog source={{ ...SOURCE }} open onOpenChange={() => {}} />,
+    );
+    await waitFor(() => expect(screen.getByDisplayValue("Step 5 looks different")).toBeTruthy());
+
+    const title = screen.getByLabelText("Title") as HTMLInputElement;
+    fireEvent.change(title, { target: { value: "Half-typed report" } });
+
+    // A finished run: the parent re-renders and builds a fresh object with
+    // identical fields. This is the whole bug — nothing about the defect
+    // changed.
+    rerender(<IssueComposeDialog source={{ ...SOURCE }} open onOpenChange={() => {}} />);
+
+    await waitFor(() => expect(api.issues.buildDraft).toHaveBeenCalledTimes(1));
+    expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("Half-typed report");
+  });
+
+  it("still reloads when the defect itself changes", async () => {
+    // The other half, and the reason the key is not simply `open`: a second
+    // defect rendered against the first one's draft files the wrong thing.
+    const { rerender } = render(
+      <IssueComposeDialog source={SOURCE} open onOpenChange={() => {}} />,
+    );
+    await waitFor(() => expect(screen.getByDisplayValue("Step 5 looks different")).toBeTruthy());
+
+    api.issues.buildDraft.mockResolvedValue({ ...draft(), title: "Step 9 looks different" });
+    rerender(
+      <IssueComposeDialog source={{ ...SOURCE, stepId: "s9" }} open onOpenChange={() => {}} />,
+    );
+
+    await waitFor(() => expect(screen.getByDisplayValue("Step 9 looks different")).toBeTruthy());
+    expect(api.issues.buildDraft).toHaveBeenCalledTimes(2);
+    // WHICH defect it asked for, not just that it asked again. The mock answers
+    // the same draft for any argument, so without this the ref that keeps
+    // `source` current could be deleted and this test would still pass — while
+    // the dialog fetched the FIRST defect's draft and filed it under the
+    // second, which is the misfile the key exists to prevent.
+    expect(api.issues.buildDraft).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ stepId: "s5" }),
+    );
+    expect(api.issues.buildDraft).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ stepId: "s9" }),
+    );
+  });
+
+  it("keys a widened accessibility send apart from the single occurrence", async () => {
+    // `scope: "rule"` builds a different draft from the same anchor. It is part
+    // of the identity for that reason, and the exhaustive switch in
+    // `defectSourceKey` is what stops the next kind from forgetting.
+    const one: DefectSource = {
+      kind: "a11y",
+      testId: "t-checkout",
+      runId: "r-1",
+      stepId: "s5",
+      ruleId: "color-contrast",
+    };
+    expect(defectSourceKey(one)).not.toBe(defectSourceKey({ ...one, scope: "rule" }));
+    expect(defectSourceKey(one)).toBe(defectSourceKey({ ...one }));
   });
 });

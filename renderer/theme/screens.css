@@ -711,6 +711,65 @@
   background: var(--gl-sel-bg);
 }
 
+/* THE CHECKLIST'S MASTER TICK — one control where SELECT ALL and SELECT NONE
+   were two buttons (#74). Shaped like a `gl-batch-cluster-cell` because it is
+   the same kind of thing: a checkbox with its meaning written beside it. */
+.gl-batch-master {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  cursor: pointer;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.gl-batch-master:hover {
+  color: var(--gl-tx-2);
+}
+
+/* INDETERMINATE NEEDS ITS OWN GLYPH, and this is the whole reason the control
+   is drawn here rather than taken as-is. Radix renders the Indicator for "some"
+   exactly as it does for "all", and the shared `Checkbox` draws one thing — a
+   check — so a partial selection would be indistinguishable from a full one,
+   which is the single question this control exists to answer.
+
+   Local to Batch rather than added to `Checkbox`: nothing else in the app has
+   three states, and a dash added to the shared component would change every
+   checkbox in it. */
+.gl-batch-master-box[data-state="indeterminate"] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gl-batch-master-box[data-state="indeterminate"] svg {
+  display: none;
+}
+
+.gl-batch-master-box[data-state="indeterminate"]::after {
+  content: "";
+  width: 8px;
+  height: 2px;
+  background: var(--gl-tx-1);
+}
+
+/* A FLOOR UNDER THE PRIMARY ACTION, the same one `.gl-detail-run` puts under
+   Run test / Stop and for the same reason: this button's label carries the
+   count ("Run all", "Run 12", "Run 0") and Stop replaces it outright, so its
+   width tracked the selection and the toolbar moved every time a box was
+   ticked. 104px clears "Run all" (99px) with the play glyph. */
+.gl-batch-run {
+  min-width: 104px;
+}
+
 .gl-batch-note {
   font-family: var(--gl-sans);
   font-size: 11px;
@@ -1005,9 +1064,24 @@
 
 /* Holds the group column open on a row that is not in the job — same reason as
    `.gl-batch-policy-gap`: a missing cell slides every later column. */
-.gl-batch-group-gap,
 .gl-batch-groupmark {
-  flex: 0 0 20px;
+  /* 24px, matching the `width={24}` the Menu is given in batch-view.tsx —
+     `.gl-menu-root`'s own `flex: 0 0 auto` wins over a basis stated here, so a
+     different number in this rule would be INERT and would read as the truth.
+     `check:batch-row-cells` pins the two together. */
+  flex: 0 0 24px;
+}
+
+/* Holds the mark's column open on a row that is not in the job. It has to match
+   the control on BOTH axES: the width, or every cell after it slides left by the
+   difference on an unticked row (it was 20px against a 24px control, and the
+   whole checklist jumped 8px when you ticked a box); and the HEIGHT, because an
+   empty span is 0 tall and the row is centred on its tallest cell — so a row
+   whose marks were gone collapsed from 33px to 27px, and selecting all resized
+   the entire list. */
+.gl-batch-group-gap {
+  flex: 0 0 24px;
+  height: 24px;
 }
 
 /* A member of a group, indented under its header. The indent is what makes the
@@ -1097,15 +1171,23 @@
    open on a row that is not in the job. Same basis as the structure mark
    before it — two 20px cells, not two words, is what let the row keep its
    status chip. */
-.gl-batch-waitmark-gap,
 .gl-batch-aftermark {
-  flex: 0 0 20px;
+  /* Same 24px, and the same reason it cannot be stated as anything else — see
+     `.gl-batch-groupmark`. */
+  flex: 0 0 24px;
+}
+
+.gl-batch-waitmark-gap {
+  flex: 0 0 24px;
+  height: 24px;
 }
 
 /* Holds the policy column open on a row that has no policy. Same basis as the
-   control, so the cells after it line up whether or not a row is in the job. */
+   control, so the cells after it line up whether or not a row is in the job —
+   and the same HEIGHT, so the row does not shrink when the control is gone. */
 .gl-batch-policy-gap {
   flex: 0 0 80px;
+  height: 18px;
 }
 
 .gl-batch-time {

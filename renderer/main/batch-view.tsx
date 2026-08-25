@@ -47,6 +47,7 @@ import {
   resultKeyOf,
   rowStatus,
   setRow,
+  selectionState,
   setSelection,
   toggleRowBrowser,
   type RowOptionsMap,
@@ -937,6 +938,37 @@ export function BatchView() {
   );
   const selectedIds = plan.testIds;
 
+  // What the checklist's master tick draws, over the VISIBLE tests — see
+  // `selectionState`. "Is everything selected?" was previously a question the
+  // user answered by scanning rows; the box answers it.
+  const masterState = React.useMemo(
+    () => selectionState(rowOptions, visibleTests, rowDefaults),
+    [rowOptions, visibleTests, rowDefaults],
+  );
+
+  /** The visible label, and the STEM of the accessible name below it.
+   *
+   *  The name has to CONTAIN the visible text — a speech-input user says what
+   *  they can see, and a control whose name shares no words with its label is
+   *  one they cannot reach (WCAG 2.5.3). The two buttons this replaced got that
+   *  for free, since their name WAS their text; building the name separately is
+   *  what put them at risk of drifting apart, so they are built from one stem. */
+  const masterText = tagFilter === ALL_TAGS ? "Select all" : "Select all shown";
+
+  /** WHICH SET the master tick acts on, spelled out for the tooltip and the
+   *  accessible name.
+   *
+   *  STABLE — it does not flip to "Deselect" once everything is ticked, the way
+   *  the two buttons' labels did. A checkbox's name says what it is; its
+   *  CHECKED STATE says what a click will do, and a name that changed under the
+   *  user would be announced as a different control each time. The count is
+   *  deliberately absent from the visible label too: the toolbar already reads
+   *  "N of M selected" over the whole library, and a second count over the
+   *  visible subset would read as that one contradicting itself. */
+  const masterLabel = `${masterText}: ${visibleTests.length} ${
+    visibleTests.length === 1 ? "test" : "tests"
+  }`;
+
   const toggle = (test: { id: string; runBrowser?: RunBrowser }) => {
     const row = resolveRow(test, rowOptions, rowDefaults);
     commitRows(setRow(rowOptions, test, rowDefaults, { selected: !row.selected }));
@@ -1196,12 +1228,20 @@ export function BatchView() {
         </div>
 
         {running ? (
-          <Btn tone="stop" onClick={() => void api.batch.stop()}>
+          <Btn tone="stop" className="gl-batch-run" onClick={() => void api.batch.stop()}>
             <Square aria-hidden="true" />
             Stop
           </Btn>
         ) : (
-          <Btn tone="go" onClick={requestBatch} disabled={selectedIds.length === 0}>
+          // The floor is on both this and Stop, not just here: the label
+          // carries the selection count and Stop replaces the button outright,
+          // so without it the toolbar's width tracked whatever was ticked.
+          <Btn
+            tone="go"
+            className="gl-batch-run"
+            onClick={requestBatch}
+            disabled={selectedIds.length === 0}
+          >
             <Play aria-hidden="true" />
             Run {selectedIds.length === tests.length ? "all" : selectedIds.length}
           </Btn>
@@ -1307,27 +1347,42 @@ export function BatchView() {
               />
 
               <div className="gl-batch-controls">
-                <Btn
-                  tone="ghost"
-                  disabled={running}
-                  onClick={() =>
-                    // Ticks the visible tests rather than replacing the whole
-                    // selection, so "select all" under a filter doesn't
-                    // silently untick everything hidden.
-                    commitRows(setSelection(rowOptions, visibleTests, rowDefaults, true))
-                  }
-                >
-                  {tagFilter === ALL_TAGS ? "Select all" : "Select these"}
-                </Btn>
-                <Btn
-                  tone="ghost"
-                  disabled={running}
-                  onClick={() =>
-                    commitRows(setSelection(rowOptions, visibleTests, rowDefaults, false))
-                  }
-                >
-                  {tagFilter === ALL_TAGS ? "Select none" : "Deselect these"}
-                </Btn>
+                {/* ONE CONTROL WHERE SELECT ALL AND SELECT NONE WERE TWO
+                    BUTTONS (#74). A tri-state box reports the answer as well as
+                    changing it, which two buttons could not: neither of them
+                    ever said whether everything was already ticked.
+
+                    IT ACTS ON THE VISIBLE TESTS, and the label says which set
+                    those are. Ticking the visible subset rather than replacing
+                    the whole selection is what stops "select all" under a tag
+                    filter from silently unticking everything hidden — the
+                    property the two buttons had and the one a rewrite is most
+                    likely to lose. */}
+                <label className="gl-batch-master" title={masterLabel}>
+                  <Checkbox
+                    className="gl-batch-master-box"
+                    checked={
+                      masterState === "all"
+                        ? true
+                        : masterState === "some"
+                          ? "indeterminate"
+                          : false
+                    }
+                    onCheckedChange={() =>
+                      commitRows(
+                        setSelection(
+                          rowOptions,
+                          visibleTests,
+                          rowDefaults,
+                          masterState !== "all",
+                        ),
+                      )
+                    }
+                    disabled={running || visibleTests.length === 0}
+                    aria-label={masterLabel}
+                  />
+                  {masterText}
+                </label>
                 {/* Drag-to-reorder is otherwise a one-way door: there'd be no
                     way back to library order once you'd rearranged things. */}
                 {isCustomOrder(tests, order) ? (

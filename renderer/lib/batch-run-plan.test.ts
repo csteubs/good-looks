@@ -8,6 +8,7 @@ import {
   resultKeyOf,
   rowOptionsAreStale,
   rowStatus,
+  selectionState,
   setRow,
   setSelection,
   toggleRowBrowser,
@@ -113,6 +114,42 @@ describe("setSelection", () => {
     const next = setSelection(stored, [{ id: "a" }], {}, false);
     expect(next.a.selected).toBe(false);
     expect(next.b.selected).toBe(true);
+  });
+});
+
+describe("selectionState", () => {
+  // What the checklist's master tick draws. The three states have to be
+  // distinguishable, because "some" is the only one that tells the user there
+  // are ticks they cannot currently see the whole of.
+  const TESTS = [{ id: "a" }, { id: "b" }];
+
+  it("is none when a test has never been touched", () => {
+    // A row with no stored entry falls back to the defaults, which start
+    // UNTICKED — so an untouched library must not draw a ticked master.
+    expect(selectionState({}, TESTS, NO_DEFAULTS)).toBe("none");
+  });
+
+  it("is all only when every test handed to it is ticked", () => {
+    const half = setSelection({}, [{ id: "a" }], NO_DEFAULTS, true);
+    expect(selectionState(half, TESTS, NO_DEFAULTS)).toBe("some");
+    expect(selectionState(setSelection(half, TESTS, NO_DEFAULTS, true), TESTS, NO_DEFAULTS)).toBe(
+      "all",
+    );
+  });
+
+  it("answers over the tests it was given, not over the map", () => {
+    // The property the filter case depends on: under a tag filter the visible
+    // list is a subsequence, and a master computed over everything stored would
+    // say "some" while every row on screen was ticked.
+    const stored = setSelection({}, [{ id: "a" }], NO_DEFAULTS, true);
+    expect(selectionState(stored, [{ id: "a" }], NO_DEFAULTS)).toBe("all");
+    expect(selectionState(stored, TESTS, NO_DEFAULTS)).toBe("some");
+  });
+
+  it("is none for an empty list", () => {
+    // A tag that matches nothing. "all" over zero tests would draw a ticked box
+    // above an empty checklist.
+    expect(selectionState({}, [], NO_DEFAULTS)).toBe("none");
   });
 });
 

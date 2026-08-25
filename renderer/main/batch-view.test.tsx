@@ -2226,3 +2226,196 @@ describe("BatchView empty state", () => {
 // Keep `within` referenced for future row-scoped assertions without tripping
 // the unused-import lint rule.
 void within;
+
+// ── The checklist's master tick ───────────────────────────────────────
+//
+// #74. SELECT ALL and SELECT NONE were two buttons that between them could not
+// answer the question they were about: whether everything was already ticked.
+// One tri-state box both reports and changes it. What must survive the rewrite
+// is the property the two buttons had — it acts on the VISIBLE tests, so
+// selecting all under a tag filter cannot silently untick what is hidden.
+describe("BatchView master selection", () => {
+  const master = () => screen.getByLabelText(/^Select all/);
+
+  it("reports none, some and all as three distinguishable states", async () => {
+    // Three states, three renderings. "some" collapsing onto "all" is the
+    // failure that would leave the control reporting nothing useful — it is
+    // the state neither button could express.
+    settings = { batchOrder: [], batchTestOptions: {} };
+    routines = [routineOf([])];
+    renderView();
+    await rowNames();
+
+    expect(master().getAttribute("data-state")).toBe("unchecked");
+
+    fireEvent.click(screen.getByLabelText("Include Beta in the batch"));
+    await waitFor(() => expect(master().getAttribute("data-state")).toBe("indeterminate"));
+
+    fireEvent.click(master());
+    await waitFor(() => expect(master().getAttribute("data-state")).toBe("checked"));
+    expect(checkedByName()).toEqual({ Alpha: true, Beta: true, Gamma: true });
+  });
+
+  it("clears the selection when everything visible is already ticked", async () => {
+    routines = [everyTest()];
+    renderView();
+    await rowNames();
+    expect(master().getAttribute("data-state")).toBe("checked");
+
+    fireEvent.click(master());
+
+    await waitFor(() =>
+      expect(checkedByName()).toEqual({ Alpha: false, Beta: false, Gamma: false }),
+    );
+  });
+
+  it("acts on the filtered rows and leaves hidden ticks alone", async () => {
+    // The property a rewrite is most likely to lose, and the reason the two
+    // buttons said "Select these" under a filter. Ticking what is shown must
+    // not replace the whole selection.
+    library = [test_("a", "Alpha", ["smoke"]), test_("b", "Beta", ["checkout"])];
+    settings = { batchOrder: [], batchTestOptions: {} };
+    routines = [
+      routineOf([
+        { kind: "test", testId: "b", browsers: ["chromium"], headless: false, onFailure: "continue" },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+
+    fireEvent.click(await screen.findByRole("button", { name: /^smoke/ }));
+    expect(await rowNames()).toEqual(["Alpha"]);
+    // Alpha alone is visible and unticked; Beta is ticked and hidden. The box
+    // therefore reads "none" — it answers for the rows on screen, not for the
+    // library, or clicking it would act on tests the user cannot see.
+    expect(master().getAttribute("data-state")).toBe("unchecked");
+
+    fireEvent.click(master());
+
+    await waitFor(() => expect(checkedByName()).toEqual({ Alpha: true }));
+    fireEvent.click(screen.getByRole("button", { name: /^All/ }));
+    await waitFor(() => expect(checkedByName()).toEqual({ Alpha: true, Beta: true }));
+  });
+
+  it("clears only what is shown, leaving hidden ticks set", async () => {
+    // THE DESELECT DIRECTION, which the select case cannot cover: there, the
+    // hidden test is already ticked and stays ticked under either
+    // implementation, so pointing the click at the whole library instead of the
+    // visible rows passes it. Here the click's scope is the whole assertion —
+    // aiming it at `orderedTests` unticks Beta, which is the silent loss of
+    // hidden selection the two buttons were written to avoid.
+    library = [test_("a", "Alpha", ["smoke"]), test_("b", "Beta", ["checkout"])];
+    routines = [everyTest()];
+    renderView();
+    await rowNames();
+
+    fireEvent.click(await screen.findByRole("button", { name: /^smoke/ }));
+    expect(await rowNames()).toEqual(["Alpha"]);
+    expect(master().getAttribute("data-state")).toBe("checked");
+
+    fireEvent.click(master());
+
+    await waitFor(() => expect(checkedByName()).toEqual({ Alpha: false }));
+    fireEvent.click(screen.getByRole("button", { name: /^All/ }));
+    await waitFor(() => expect(checkedByName()).toEqual({ Alpha: false, Beta: true }));
+  });
+
+  it("says which set it acts on, and keeps saying the same thing", async () => {
+    // The scope moved into the accessible name, where the two buttons carried
+    // it in their visible labels ("Select these" under a filter). The name is
+    // STABLE across states on purpose: a checkbox renamed by its own state is
+    // announced as a different control every time it is clicked.
+    library = [test_("a", "Alpha", ["smoke"]), test_("b", "Beta", ["checkout"])];
+    routines = [everyTest()];
+    renderView();
+    await rowNames();
+    expect(master().getAttribute("data-state")).toBe("checked");
+    expect(master().getAttribute("aria-label")).toBe("Select all: 2 tests");
+
+    fireEvent.click(await screen.findByRole("button", { name: /^smoke/ }));
+    await waitFor(() =>
+      expect(master().getAttribute("aria-label")).toBe("Select all shown: 1 test"),
+    );
+  });
+
+  it("puts its visible label inside its accessible name, in both states", async () => {
+    // WCAG 2.5.3. A speech-input user says the words they can see, so a name
+    // that shares none of them is a control they cannot operate. The two
+    // buttons this replaced got it for free — their name WAS their text — and
+    // building the name separately is exactly how that gets lost: the first
+    // version read "Select these" while announcing "Select all 1 test shown by
+    // this filter", which have no words in common at all.
+    library = [test_("a", "Alpha", ["smoke"]), test_("b", "Beta", ["checkout"])];
+    routines = [everyTest()];
+    renderView();
+    await rowNames();
+
+    const containsItsLabel = () => {
+      const label = master().closest("label") as HTMLElement;
+      const visible = (label.textContent ?? "").trim();
+      const name = master().getAttribute("aria-label") ?? "";
+      return { visible, name, contained: visible.length > 0 && name.includes(visible) };
+    };
+
+    expect(containsItsLabel()).toMatchObject({ visible: "Select all", contained: true });
+
+    fireEvent.click(await screen.findByRole("button", { name: /^smoke/ }));
+    await waitFor(() =>
+      expect(containsItsLabel()).toMatchObject({ visible: "Select all shown", contained: true }),
+    );
+  });
+});
+
+// ── A row is the same shape whether or not it is in the job ───────────
+//
+// Reported from the running app: ticking a box slid every cell after the marks
+// 8px left and each row collapsed from 33px to 27px, so selecting all resized
+// the whole checklist. The spacers that exist to prevent that were the wrong
+// size — which only `check:batch-row-cells` can see, since jsdom has no layout
+// engine and the dom project runs with `css: false`.
+//
+// What IS visible here is the half that has to be true first: the cell has to
+// exist at all. Deleting a `: (<span …/>)` arm leaves a working row that
+// silently slides its own columns, and no other test on this screen would fail.
+describe("BatchView row shape", () => {
+  /** One token per cell, in order: its gl-* class, or the tag for the rest. */
+  const shapeOf = (row: Element) =>
+    [...row.children].map((c) => {
+      const cls = [...c.classList].find((x) => x.startsWith("gl-batch-"));
+      return cls ?? c.tagName.toLowerCase();
+    });
+
+  it("gives an unticked row a cell in every column a ticked row has", async () => {
+    // One of each, in one render, so this compares two rows of the same list
+    // rather than two renders that could differ for unrelated reasons.
+    settings = { batchOrder: [], batchTestOptions: {} };
+    routines = [
+      routineOf([
+        { kind: "test", testId: "a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+
+    const rows = [...document.querySelectorAll(".gl-batch-row")];
+    const ticked = rows.find((r) => r.querySelector('[role="checkbox"][data-state="checked"]'));
+    const unticked = rows.find((r) => r.querySelector('[role="checkbox"][data-state="unchecked"]'));
+    expect(ticked && unticked).toBeTruthy();
+
+    const t = shapeOf(ticked!);
+    const u = shapeOf(unticked!);
+    expect(u).toHaveLength(t.length);
+
+    // The three cells that swap: control on a ticked row, spacer on an unticked
+    // one, in the same position. Anything else must be identical.
+    const SWAPS: Record<string, string> = {
+      "gl-batch-groupmark": "gl-batch-group-gap",
+      "gl-batch-aftermark": "gl-batch-waitmark-gap",
+      "gl-batch-policy": "gl-batch-policy-gap",
+    };
+    expect(t.map((cell) => SWAPS[cell] ?? cell)).toEqual(u);
+    // …and all three swaps really are exercised, or this passes vacuously on a
+    // row that never had the controls in the first place.
+    expect(t.filter((cell) => cell in SWAPS)).toHaveLength(3);
+  });
+});

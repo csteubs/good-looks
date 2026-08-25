@@ -23,6 +23,9 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 import type { LlmConfig, LlmModel, LlmProviderStatus } from "../lib/llm-types";
 import { GenerateTestDialog } from "./generate-test-dialog";
+// The mocked module itself, so the create path can be asserted on the spy the
+// factory made. Safe beside `vi.mock` — Vitest returns the same object.
+import { api } from "../lib/api";
 
 const chat = vi.fn(async (_params: unknown) => ({ requestId: "req-1" }));
 
@@ -48,9 +51,29 @@ vi.mock("../lib/api", () => ({
     },
     tests: { createFromPrompt: vi.fn() },
     recorder: { getSettings: async () => recorderSettings },
-    on: () => () => {},
+    // CAPTURED, NOT DROPPED. `on: () => () => {}` is the inert form CLAUDE.md
+    // warns about, and here it hid a whole path: with nothing ever pushing
+    // `llm:done`, `status` never reaches "done", "Create test" never renders,
+    // and every test in this file stops at the generate step. The button that
+    // PERSISTS A RECORD was therefore unreachable — which is how it came to
+    // store a fabricated `https://` (#251).
+    on: (channel: string, fn: (payload: unknown) => void) => {
+      const set = listeners.get(channel) ?? new Set();
+      set.add(fn);
+      listeners.set(channel, set);
+      return () => set.delete(fn);
+    },
   },
 }));
+
+/** Push-event handlers registered by the dialog, by channel. */
+const listeners = new Map<string, Set<(payload: unknown) => void>>();
+
+/** Drive the stream the way the backend does. `requestId` matches what the
+ *  `chat` mock answers with, since `useLlmChat` filters on it. */
+function emit(channel: string, payload: Record<string, unknown>): void {
+  for (const fn of listeners.get(channel) ?? []) fn({ requestId: "req-1", ...payload });
+}
 
 /** The model list the provider reports, with load state where it has one. */
 function withModels(models: LlmModel[], overrides: Partial<LlmProviderStatus> = {}) {
@@ -59,6 +82,7 @@ function withModels(models: LlmModel[], overrides: Partial<LlmProviderStatus> = 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  listeners.clear();
   config = { provider: "lmstudio", model: "qwen3-8b", baseUrls: {} };
   recorderSettings = {};
   status = {
@@ -179,5 +203,68 @@ describe("browser picker", () => {
         "true",
       ),
     );
+  });
+});
+
+// ── What the test is actually created against ─────────────────────────
+//
+// The starting URL goes two places — into the prompt the model answers, and
+// onto the record as the test's site — and until #251 neither was covered,
+// because the "Create test" button only appears once the stream reports done
+// and nothing in this file could make that happen.
+//
+// The scheme rule (`shared/start-url.mjs`) is why this matters: it resolves a
+// typed host to an address, and `normalizeStartUrl("")` is `"https://"`. That
+// is a hostname nobody typed, and the note under the field deliberately stays
+// quiet on an empty field — so the app would have been inventing an address at
+// exactly the moment it showed nothing.
+describe("the starting URL a generated test is created with", () => {
+  /** Run a generation to completion so "Create test" is on screen. */
+  async function generateAndFinish(url: string) {
+    fireEvent.change(screen.getByPlaceholderText("https://example.com"), {
+      target: { value: url },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/Go to the URL/), {
+      target: { value: "Log in and assert the dashboard" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^generate$/i }));
+    await waitFor(() => expect(chat).toHaveBeenCalled());
+    emit("llm:chunk", {
+      delta: "```ts\nimport { test } from '@playwright/test';\ntest('t', async ({ page }) => {});\n```",
+    });
+    emit("llm:done", {});
+    await screen.findByRole("button", { name: /create test/i });
+  }
+
+  it("resolves a typed host to the address the note showed", async () => {
+    open();
+    await generateAndFinish("example.com");
+    expect(screen.getByText("Opens https://example.com")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /create test/i }));
+
+    await waitFor(() => expect(api.tests.createFromPrompt).toHaveBeenCalled());
+    expect(api.tests.createFromPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "https://example.com" }),
+    );
+  });
+
+  it("never invents a host from an empty field", async () => {
+    // The reachable case: the button is rendered on `generatedScript` alone, so
+    // the field can be cleared after the stream finishes and pressed anyway.
+    // `normalizeStartUrl("")` would store `https://` — an address the user
+    // never typed and the UI never showed.
+    open();
+    await generateAndFinish("example.com");
+    fireEvent.change(screen.getByPlaceholderText("https://example.com"), {
+      target: { value: "" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /create test/i }));
+
+    await waitFor(() => expect(api.tests.createFromPrompt).toHaveBeenCalled());
+    const sent = (api.tests.createFromPrompt as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(sent.url).not.toBe("https://");
+    expect(sent.url).toBe("");
   });
 });
