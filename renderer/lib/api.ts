@@ -703,6 +703,9 @@ export const api = {
       captureArtifacts?: boolean,
       runHeadless?: boolean,
       browser?: RunBrowser,
+      /** Pace THIS run only. Undefined means the test's own speed, then the
+       *  global default — nothing is written back to the record. */
+      speed?: TestSpeed,
     ) =>
       ipc().invoke<{ runId: string }>("runner:run", {
         id,
@@ -710,6 +713,7 @@ export const api = {
         captureArtifacts,
         runHeadless,
         browser,
+        speed,
       }),
     stop: (runId: string) => ipc().invoke<void>("runner:stop", { runId }),
     replayRun: (testId: string, runId: string, runHeadless?: boolean) =>

@@ -244,6 +244,70 @@ function main(): void {
     );
   }
 
+  // ── R20: the engine is not the test changing its mind ───────────────────
+  {
+    // THE case the cross-browser matrix created. This test has never once
+    // disagreed with itself: it passes on Chromium and Firefox every time and
+    // fails on WebKit every time. Counted across the interleaved sequence that
+    // reads P, P, F, P, P, F — four state changes and a confident "flaky", so
+    // running on three engines made the stability signal worse the more it was
+    // used.
+    const engines = [
+      { runBrowser: "chromium" as const, fails: false },
+      { runBrowser: "firefox" as const, fails: false },
+      { runBrowser: "webkit" as const, fails: true },
+    ];
+    const runs: RunRecord[] = [];
+    for (let sweep = 0; sweep < 2; sweep++) {
+      for (const e of engines) {
+        runs.push(run("matrix", e.fails ? "failed" : "passed", { runBrowser: e.runBrowser }));
+      }
+    }
+    const t = analyseFlake(runs.reverse()).tests[0];
+    assertEqual(t.transitions, 0, "a test consistent within every engine transitions zero times");
+    assertEqual(t.verdict, "browser-dependent", "…and is engine-dependent, not flaky");
+    assertEqual(
+      t.failingBrowsers.map((b) => b.browser),
+      ["webkit"],
+      "the failing engine is named, so it is actionable",
+    );
+
+    // The other direction, which the fix must not swallow: an engine that
+    // flips is flake WITHIN that engine, exactly as a flipping dataset row is.
+    const flipping: RunRecord[] = [
+      run("flip", "passed", { runBrowser: "chromium" }),
+      run("flip", "passed", { runBrowser: "webkit" }),
+      run("flip", "failed", { runBrowser: "chromium" }),
+      run("flip", "passed", { runBrowser: "webkit" }),
+      run("flip", "passed", { runBrowser: "chromium" }),
+      run("flip", "failed", { runBrowser: "webkit" }),
+    ];
+    assertEqual(
+      verdictOf(flipping.reverse()),
+      "flaky",
+      "an engine that flips is flake, not engine-dependence",
+    );
+
+    // A history with no engine recorded predates the picker; it has to behave
+    // exactly as it did before, or every old test's verdict moves.
+    assertEqual(
+      verdictOf(history("legacy", "PFPFP")),
+      "flaky",
+      "a history with no engine recorded is analysed as one sequence, as before",
+    );
+
+    // And the rate follows the segmentation: counting per-engine transitions
+    // over a whole-history denominator would report a third of the real rate.
+    const oneEngineFlapping: RunRecord[] = [
+      run("rate", "passed", { runBrowser: "chromium" }),
+      run("rate", "failed", { runBrowser: "chromium" }),
+      run("rate", "passed", { runBrowser: "chromium" }),
+    ];
+    const rateTest = analyseFlake(oneEngineFlapping.reverse()).tests[0];
+    assertEqual(rateTest.transitions, 2, "two flips within one engine are two transitions");
+    assertEqual(rateTest.flakeRate, 1, "…over the two adjacent pairs they happened between");
+  }
+
   // ── verdicts that aren't flake ───────────────────────────────────────────
   assertEqual(verdictOf(history("s", "PPPPP")), "stable", "all passing is stable");
   assertEqual(verdictOf(history("f", "FFFFF")), "still-failing", "all failing is broken, not flaky");

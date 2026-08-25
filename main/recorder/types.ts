@@ -2865,6 +2865,10 @@ export interface RecorderSettings {
    *  haven't set their own preference (default false → runs are headed). Only
    *  affects test runs, not the trainer. */
   defaultRunHeadless: boolean;
+  /** Default for a BATCH's rows, separately from a single run (default true).
+   *  Sixty headed tests are sixty windows that each steal focus; a single run
+   *  is the case where watching it is the point, so that one stays headed. */
+  defaultBatchHeadless: boolean;
   /** default browser engine for tests that haven't set their own preference
    *  (default "chromium"). Only affects test runs, not the trainer. */
   defaultRunBrowser: RunBrowser;

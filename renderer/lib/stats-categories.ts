@@ -173,6 +173,7 @@ export const FACET_LABELS: Partial<Record<CategoryId, Record<string, string>>> =
     "changed-since": "Broke recently",
     flaky: "Flaky",
     "data-dependent": "Data-dependent",
+    "browser-dependent": "Engine-dependent",
     fixed: "Fixed",
     stable: "Stable",
     unknown: "Too few runs",

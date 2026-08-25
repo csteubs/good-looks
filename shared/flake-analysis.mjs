@@ -64,12 +64,15 @@ export function countTransitions(statuses) {
  * that reads as flake — and calling it flake would send someone hunting for a
  * race condition that isn't there.
  */
-function verdictFor(statuses, transitions, dataDependent) {
+function verdictFor(statuses, transitions, dataDependent, browserDependent) {
   if (statuses.length < MIN_RUNS_FOR_VERDICT) return "unknown";
   const failed = statuses.filter((s) => s === "failed").length;
   if (failed === 0) return "stable";
   if (failed === statuses.length) return "still-failing";
   if (dataDependent) return "data-dependent";
+  // Checked after the data rule, which is the more specific claim when both
+  // hold: a row that fails on every engine is about the row.
+  if (browserDependent) return "browser-dependent";
   // One transition means it changed state once and stayed there — a regression
   // or a fix, both of which have a cause you can go and find. Flake is the
   // pattern that keeps changing its mind.
@@ -124,6 +127,81 @@ function analyseDatasets(runs) {
 }
 
 /**
+ * Whether a test's failures are confined to particular BROWSERS.
+ *
+ * The same shape as `analyseDatasets`, and for the same reason — a cause the
+ * run history can name is worth more than a verdict that says "sometimes".
+ *
+ * This one also fixes a verdict that was actively wrong (R20). Transitions were
+ * counted across the interleaved sequence, so a test that passes on Chromium
+ * and Firefox and fails EVERY time on WebKit reads as pass, pass, fail, pass,
+ * pass, fail — four state changes and a confident "flaky", for a test that has
+ * never once changed its mind. The cross-browser matrix made the stability
+ * signal worse the more it was used, which is the opposite of what running on
+ * three engines is for.
+ */
+function analyseBrowsers(runs) {
+  const byBrowser = new Map();
+  let withoutBrowser = 0;
+  for (const r of runs) {
+    if (!r.runBrowser) {
+      withoutBrowser++;
+      continue;
+    }
+    const entry = byBrowser.get(r.runBrowser) ?? { runs: 0, failed: 0 };
+    entry.runs++;
+    if (r.status === "failed") entry.failed++;
+    byBrowser.set(r.runBrowser, entry);
+  }
+  const rows = [...byBrowser.entries()].map(([browser, e]) => ({
+    browser,
+    failed: e.failed,
+    runs: e.runs,
+  }));
+  // Needs at least two engines to be ABOUT the engine, and no un-attributed
+  // runs muddying the comparison — the same two guards the dataset rule uses.
+  if (rows.length < 2 || withoutBrowser > 0) {
+    return { rows: rows.filter((r) => r.failed > 0), browserDependent: false };
+  }
+  const alwaysFails = rows.filter((r) => r.failed === r.runs);
+  const alwaysPasses = rows.filter((r) => r.failed === 0);
+  const browserDependent =
+    alwaysFails.length > 0 &&
+    alwaysPasses.length > 0 &&
+    alwaysFails.length + alwaysPasses.length === rows.length;
+  return { rows: rows.filter((r) => r.failed > 0), browserDependent };
+}
+
+/**
+ * Transitions counted WITHIN each engine, then summed.
+ *
+ * A state change only means something between two runs that were comparable.
+ * Counting chromium-pass -> webkit-fail as a change is counting the engine, not
+ * the test. Runs with no engine recorded fall into one group, which is exactly
+ * the old behaviour for a history that predates the picker.
+ *
+ * Returns the pairs it counted over as well, since the flake RATE has to be
+ * over the same population — three engines of four runs each offer nine
+ * adjacent pairs, not eleven.
+ */
+function transitionsByBrowser(runs) {
+  const groups = new Map();
+  for (const r of runs) {
+    const key = r.runBrowser ?? "";
+    const list = groups.get(key) ?? [];
+    list.push(r.status);
+    groups.set(key, list);
+  }
+  let transitions = 0;
+  let pairs = 0;
+  for (const statuses of groups.values()) {
+    transitions += countTransitions(statuses);
+    pairs += Math.max(0, statuses.length - 1);
+  }
+  return { transitions, pairs };
+}
+
+/**
  * Analyse a run history.
  *
  * `records` may be in any order; they're sorted oldest-first here, because
@@ -161,8 +239,10 @@ export function analyseFlake(records, details = []) {
   for (const [testId, unsorted] of byTest) {
     const testRuns = [...unsorted].sort((a, b) => a.startedAt - b.startedAt);
     const statuses = testRuns.map((r) => r.status);
-    const transitions = countTransitions(statuses);
+    // Segmented, not sequential — see `transitionsByBrowser`.
+    const { transitions, pairs } = transitionsByBrowser(testRuns);
     const { rows, dataDependent } = analyseDatasets(testRuns);
+    const { rows: browserRows, browserDependent } = analyseBrowsers(testRuns);
 
     // Per-step: which step was the failure point, and which needed healing.
     const stepStats = new Map();
@@ -209,9 +289,13 @@ export function analyseFlake(records, details = []) {
       passed: statuses.filter((s) => s === "passed").length,
       failed: statuses.filter((s) => s === "failed").length,
       transitions,
-      flakeRate: testRuns.length > 1 ? transitions / (testRuns.length - 1) : 0,
-      verdict: verdictFor(statuses, transitions, dataDependent),
+      // Over the pairs the transitions were actually counted over, or three
+      // engines would divide a per-engine count by a whole-history denominator
+      // and report a third of the real rate.
+      flakeRate: pairs > 0 ? transitions / pairs : 0,
+      verdict: verdictFor(statuses, transitions, dataDependent, browserDependent),
       failingDatasets: rows,
+      failingBrowsers: browserRows,
       steps,
       healedRuns,
     });
@@ -266,15 +350,19 @@ function verdictRank(v) {
       return 0;
     case "data-dependent":
       return 1;
-    case "changed-since":
+    // Beside data-dependent, not below "changed-since": both name a CAUSE, and
+    // a named cause is what someone can act on this morning.
+    case "browser-dependent":
       return 2;
-    case "still-failing":
+    case "changed-since":
       return 3;
-    case "fixed":
+    case "still-failing":
       return 4;
-    case "stable":
+    case "fixed":
       return 5;
-    default:
+    case "stable":
       return 6;
+    default:
+      return 7;
   }
 }

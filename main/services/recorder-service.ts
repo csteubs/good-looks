@@ -4134,10 +4134,16 @@ async function finalize(): Promise<void> {
   const existing = testStore.get(s.testId);
   const record: TestRecord = {
     // Seed from the persisted defaults so NEW recordings inherit the user's
-    // last-chosen run speed and capture preference. Placed before the spread so
-    // an existing test keeps its own choices; the sidebar "Adjust Test Speed"
-    // menu and the per-test toggle still override per test.
-    speed: recorderSettingsStore.get().defaultRunSpeed,
+    // capture preference. Placed before the spread so an existing test keeps
+    // its own choices.
+    //
+    // `speed` IS DELIBERATELY NOT SEEDED HERE (R18). Stamping it pinned every
+    // recording to whatever the default was on the day it was made, so a user
+    // who later changed the setting found their library unmoved — and since the
+    // shipped default was `slow`, that library ran at 1200ms per action
+    // forever. Absent means INHERIT, the same asymmetry `runBrowser` uses and
+    // for the same reason: the run resolves it against the setting, and the
+    // sidebar's "Adjust Test Speed" menu is what PINS one test.
     captureArtifacts: recorderSettingsStore.get().defaultCaptureArtifacts,
     // Before the spread, like the two above: a chosen engine seeds a NEW test,
     // and an existing one keeps whatever its own toolbar says.

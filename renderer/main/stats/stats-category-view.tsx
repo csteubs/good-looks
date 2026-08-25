@@ -119,6 +119,7 @@ const DRILLABLE: StabilityVerdict[] = [
   "changed-since",
   "flaky",
   "data-dependent",
+  "browser-dependent",
   "fixed",
 ];
 

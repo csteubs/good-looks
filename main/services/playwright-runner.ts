@@ -34,10 +34,10 @@ import { artifactStore, DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
 import type { HealFailure } from "./artifact-store.js";
 import { metricsStore } from "./metrics-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
-import { resolveTestTimeoutMs, SLOW_MO_MS } from "./run-pacing.js";
+import { resolveRunSpeed, resolveTestTimeoutMs, SLOW_MO_MS } from "./run-pacing.js";
 import { notifyRunOutcome, shouldNotifyRun } from "./run-notifier.js";
 import { sendAlert } from "./alert-service.js";
-import { applyRetention } from "./retention.js";
+import { applyRetentionForTest, sweepRetentionIfDue } from "./retention.js";
 import { buildReplay, enrichWithA11y, enrichWithVisualDiffs } from "./replay-builder.js";
 import { describeA11yOutcome } from "./a11y-diff.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
@@ -1255,6 +1255,11 @@ export const playwrightRunner = {
     /** Browser engine to run on. Falls back to the test's saved preference,
      *  then the global default. */
     browser?: RunBrowser;
+    /** Pace THIS run only, overriding the test's own speed and the global
+     *  default. Nothing is written back to the record — "run this one slowly
+     *  while I watch it" is a decision about one run, and a caller that had to
+     *  edit the test to express it would leave the library changed behind it. */
+    speed?: TestSpeed;
     /** Re-execute the steps a PAST run recorded, instead of the test's current
      *  script. The new run is tagged with this id so the two can be compared. */
     replayOfRunId?: string;
@@ -1300,7 +1305,20 @@ export const playwrightRunner = {
       params.browser ?? rec.runBrowser ?? recorderSettingsStore.get().defaultRunBrowser;
     // Resolved out here rather than inside the run body because the RunRecord
     // is written from the `finally`, which cannot see into the `try`.
-    const speed: TestSpeed = rec.speed ?? "fast";
+    // THREE LAYERS, most specific first (R18):
+    //   • `params.speed` — this run only. "Run the suite fast, run this one
+    //     slow while I watch it" is a thing to want, and it used to require
+    //     editing the test and remembering to put it back.
+    //   • `rec.speed` — the test's own pin, set from the sidebar's speed menu.
+    //   • the setting — what an unpinned test inherits, so changing it moves
+    //     the library instead of only the next recording.
+    // "fast" remains the floor for a record with no setting to read, which is
+    // what the MCP and any pre-settings caller land on.
+    const speed: TestSpeed = resolveRunSpeed(
+      params.speed,
+      rec.speed,
+      recorderSettingsStore.get().defaultRunSpeed,
+    );
 
     // Re-running a past run replays THAT run's recorded steps — the test may
     // have been edited since, and the point is to reproduce what happened.
@@ -2027,10 +2045,14 @@ export const playwrightRunner = {
             logger.warn("runner", "Could not auto-categorize the failure", { err: String(err) });
           }
         }
-        // Sweep artifacts against retention after every run — including
-        // non-capture ones, so the rules apply even when this test isn't the
-        // one generating screenshots.
-        applyRetention();
+        // Retention, split by what a run can actually have made stale (R17).
+        // The run added artifacts to ONE test, so that test is pruned every
+        // time; the library-wide sweep is throttled, because it brackets itself
+        // with two full-tree `statSync` walks and used to run here after every
+        // single run — a hundred-test batch paid for it a hundred times, on the
+        // thread streaming this run's own output.
+        applyRetentionForTest(params.testId);
+        sweepRetentionIfDue();
         // Local desktop notification for a failure or a visual change, when the
         // user opted in. Never fires for a clean run, and never for a run
         // inside a batch — see shouldNotifyRun.

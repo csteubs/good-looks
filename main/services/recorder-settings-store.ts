@@ -1,6 +1,7 @@
 // Persists global trainer preferences (independent of any recording session)
 // to a small JSON file under userData, mirroring llm-config-store.ts.
 
+import * as os from "node:os";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -103,6 +104,25 @@ function clampRetained(n: number): number {
  *  Falls back rather than clamping for a non-number: a hand-edited `"4"` or a
  *  null is a corrupt file, not a request for one-at-a-time, and `Math.round`
  *  would happily turn `null` into 0 and then into the floor. */
+/** How many tests this machine should run at once before anyone touches the
+ *  picker. Returns 1 when the CPU count is unknown, which is exactly the old
+ *  shipped default — an unfamiliar environment gets the conservative answer
+ *  rather than a guess. */
+export function batchConcurrencyForCores(cores: number): number {
+  if (!Number.isFinite(cores) || cores <= 0) return 1;
+  return Math.min(MAX_BATCH_CONCURRENCY, Math.max(1, Math.floor(cores / 2)));
+}
+
+function defaultConcurrencyForMachine(): number {
+  try {
+    return batchConcurrencyForCores(os.cpus().length);
+  } catch {
+    // An environment that will not answer gets the conservative default rather
+    // than a guess — which is exactly what shipped before this was seeded.
+    return 1;
+  }
+}
+
 function clampBatchDefault(value: unknown, fallback: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
   return Math.min(MAX_BATCH_CONCURRENCY, Math.max(1, Math.round(value)));
@@ -192,7 +212,11 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   // the user asks for it. The in-window trainer is unchanged either way.
   trainerPanelEnabled: false,
   extraTestIdAttributes: [],
-  defaultRunSpeed: "slow",
+  // MEDIUM, not slow (R18). Slow is 1200ms before every action; medium is 400.
+  // A recorded test was stamped with this and then ran at it forever, so the
+  // shipped default was three times slower than the one most people would pick
+  // if they were asked twice. Watchable is the point, not slow.
+  defaultRunSpeed: "medium",
   defaultWindowSize: null,
   autoHealEnabled: true,
   autoHealRetries: 3,
@@ -224,10 +248,18 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   // its row from its own record and the defaults above until the user touches
   // a control. See BatchRowOptions.
   batchTestOptions: {},
-  // One at a time. Parallel batches are opt-in: they multiply CPU load and, run
-  // headed, open a browser window per test — neither is something to hand
-  // someone who never asked for it.
-  defaultBatchConcurrency: 1,
+  // SEEDED FROM THE MACHINE (R18). It was 1, on the reasoning that parallel
+  // batches multiply CPU load and, run headed, open a window per test. The
+  // second half of that is now answered by `defaultBatchHeadless` below, and
+  // the first was being paid by every user who never found the picker: ticking
+  // sixty tests ran them one at a time on a machine with eight idle cores.
+  //
+  // Half the cores, not all of them: a lane is a BROWSER, not a thread, and it
+  // wants a core for itself plus room for the app, the runner and the OS.
+  defaultBatchConcurrency: defaultConcurrencyForMachine(),
+  // Headless for a BATCH only — see the field's doc comment. A single run stays
+  // headed, because watching one is usually the reason for running it.
+  defaultBatchHeadless: true,
   artifactRetainedRuns: DEFAULT_RETAINED_RUNS,
   runLogRetainedRuns: DEFAULT_RUN_LOG_RETAINED_RUNS,
   artifactRetentionDays: 0,
@@ -369,6 +401,10 @@ function read(): RecorderSettings {
         typeof parsed.defaultRunHeadless === "boolean"
           ? parsed.defaultRunHeadless
           : DEFAULT_SETTINGS.defaultRunHeadless,
+      defaultBatchHeadless:
+        typeof parsed.defaultBatchHeadless === "boolean"
+          ? parsed.defaultBatchHeadless
+          : DEFAULT_SETTINGS.defaultBatchHeadless,
       // Validated rather than cast: an unknown engine name would be passed
       // straight to the Playwright CLI and fail the run.
       defaultRunBrowser: isRunBrowser(parsed.defaultRunBrowser)
@@ -593,6 +629,10 @@ export const recorderSettingsStore = {
         update.defaultRunHeadless !== undefined
           ? update.defaultRunHeadless
           : current.defaultRunHeadless,
+      defaultBatchHeadless:
+        update.defaultBatchHeadless !== undefined
+          ? update.defaultBatchHeadless
+          : current.defaultBatchHeadless,
       defaultRunBrowser: isRunBrowser(update.defaultRunBrowser)
         ? update.defaultRunBrowser
         : current.defaultRunBrowser,
@@ -776,6 +816,7 @@ export const recorderSettingsStore = {
       debugScreenshots: next.debugScreenshots,
       defaultCaptureArtifacts: next.defaultCaptureArtifacts,
       defaultRunHeadless: next.defaultRunHeadless,
+      defaultBatchHeadless: next.defaultBatchHeadless,
       defaultRunBrowser: next.defaultRunBrowser,
       defaultTestTimeoutMs: next.defaultTestTimeoutMs,
       alertWebhookEnabled: next.alertWebhookEnabled,

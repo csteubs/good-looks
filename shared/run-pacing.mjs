@@ -25,6 +25,34 @@
  *  original default (no artificial delay). "crawl" is roughly double "slow",
  *  and is the smaller half of what that speed does — the page-settling waits
  *  (see settle-fixture-source.ts) are the rest. */
+/**
+ * Which pace a run actually goes at, given the three places it can come from.
+ *
+ * Most specific first, and each layer means something different:
+ *   • `override` — this run only. Set from the detail view's Pace control or
+ *     over `runner:run`; never written back to the test, because "run this one
+ *     slowly while I watch it" is a decision about one run.
+ *   • `pinned` — the test's own `speed`, set from the sidebar's speed menu. A
+ *     test that has one keeps it whatever the setting later becomes.
+ *   • `fallback` — the global default, which is what an UNPINNED test inherits.
+ *     Recordings stopped stamping their speed for this reason (R18): stamping
+ *     froze every test at the default of the day it was recorded.
+ *
+ * `"fast"` is the floor for a caller with no setting to read at all — the MCP,
+ * and anything predating the setting. Anything unrecognised at any layer is
+ * ignored rather than passed on, since an unknown key reaching `SLOW_MO_MS`
+ * resolves to `undefined` and runs the test at full speed, which is the exact
+ * opposite of what someone asking for `crawl` wanted.
+ */
+export function resolveRunSpeed(override, pinned, fallback) {
+  for (const candidate of [override, pinned, fallback]) {
+    if (candidate && Object.prototype.hasOwnProperty.call(SLOW_MO_MS, candidate)) {
+      return candidate;
+    }
+  }
+  return "fast";
+}
+
 export const SLOW_MO_MS = {
   fast: 0,
   medium: 400,

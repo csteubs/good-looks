@@ -7,6 +7,12 @@ import * as path from "path";
 
 import { artifactStore, setPrunePreflight } from "../artifact-store.js";
 import { recorderSettingsStore } from "../recorder-settings-store.js";
+import {
+  SWEEP_INTERVAL_MS,
+  applyRetentionForTest,
+  resetSweepClock,
+  sweepRetentionIfDue,
+} from "../retention.js";
 
 // Both stores resolve `app.getPath("userData")` lazily per call (see
 // shell-backend-stub.ts), so pointing them at a throwaway dir here — after the
@@ -245,6 +251,77 @@ setPrunePreflight(() => {
 });
 artifactStore.pruneAllTests(10, 7 * DAY_MS);
 eq(artifactStore.listRuns(PREF), ["kept-run"], "a throwing preflight cannot stop the prune");
+
+// ── R17: what a RUN pays for ────────────────────────────────────────────
+//
+// `applyRetention` used to sit in every run's `finally`, and it is the
+// expensive one: `pruneAllTests` brackets itself with two `usage()` walks, each
+// a recursive `statSync` over the whole artifacts tree, so a hundred-test batch
+// paid for the entire library two hundred times on the thread streaming its own
+// output. The run path now prunes the ONE test that just ran and lets the
+// library-wide sweep be throttled.
+setPrunePreflight(() => {});
+
+const RAN = "test-just-ran";
+const OTHER = "test-untouched";
+for (const id of [RAN, OTHER]) {
+  for (const runId of ["old-run", "new-run"]) {
+    const dir = artifactStore.ensureRunDir(id, runId);
+    fs.writeFileSync(path.join(dir, "0.png"), Buffer.alloc(10));
+  }
+  const staleAt = new Date(Date.now() - 30 * DAY_MS);
+  fs.utimesSync(path.join(artifactStore.rootPath(), id, "old-run"), staleAt, staleAt);
+}
+recorderSettingsStore.set({ artifactRetainedRuns: 10, artifactRetentionDays: 7 });
+
+applyRetentionForTest(RAN);
+eq(artifactStore.listRuns(RAN), ["new-run"], "the run path prunes the test that just ran");
+eq(
+  artifactStore.listRuns(OTHER).sort(),
+  ["new-run", "old-run"],
+  "…and touches no other test — that is the library sweep's job, not a run's",
+);
+
+// The sweep still happens, but not once per run. `resetSweepClock` is the test
+// seam; a real session's first run after startup sweeps, and the next one
+// inside half an hour does not.
+resetSweepClock();
+const firstSweep = sweepRetentionIfDue();
+check(firstSweep !== null, "the first sweep after a reset is due");
+eq(artifactStore.listRuns(OTHER), ["new-run"], "the sweep is what ages out an idle test");
+
+const secondSweep = sweepRetentionIfDue();
+eq(secondSweep, null, "a second sweep moments later is declined, not repeated");
+
+const laterSweep = sweepRetentionIfDue(Date.now() + SWEEP_INTERVAL_MS + 1);
+check(laterSweep !== null, "…and is due again once the interval has passed");
+
+// The wiring, which no behavioural test can see. Reintroducing the expensive
+// call in the run path breaks nothing, fails nothing and returns the same
+// answers — it just costs the whole library two full-tree stat walks per run
+// again, which is only visible as "the app got slow during batches".
+{
+  const runnerSrc = fs.readFileSync(
+    path.join(process.cwd(), "main/services/playwright-runner.ts"),
+    "utf8",
+  );
+  const code = runnerSrc
+    .split("\n")
+    .map((l) => l.replace(/\/\/.*$/, ""))
+    .join("\n");
+  check(
+    /applyRetentionForTest\(/.test(code),
+    "the run path prunes the test that ran",
+  );
+  check(
+    /sweepRetentionIfDue\(/.test(code),
+    "the run path asks for the library sweep rather than performing one",
+  );
+  check(
+    !/\bapplyRetention\(/.test(code),
+    "the run path does not call the whole-library sweep directly (R17)",
+  );
+}
 
 fs.rmSync(userData, { recursive: true, force: true });
 console.log(failures === 0 ? "\nAll retention checks passed" : `\n${failures} check(s) FAILED`);

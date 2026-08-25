@@ -1197,6 +1197,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
           flakeRate: 0.45,
           verdict: "flaky",
           failingDatasets: [],
+          failingBrowsers: [],
           steps: [
             { stepId: "s-pay", label: "click Place order", failures: 4, heals: 1, failureRate: 0.33 },
           ],
@@ -1212,6 +1213,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
           flakeRate: 0.12,
           verdict: "changed-since",
           failingDatasets: [],
+          failingBrowsers: [],
           steps: [
             { stepId: "s-pw", label: "fill Password", failures: 4, heals: 0, failureRate: 0.44 },
           ],
@@ -1227,6 +1229,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
           flakeRate: 0,
           verdict: "stable",
           failingDatasets: [],
+          failingBrowsers: [],
           steps: [],
           healedRuns: 0,
         },

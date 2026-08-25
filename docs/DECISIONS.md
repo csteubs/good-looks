@@ -10,6 +10,114 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — The shipped run defaults, and the layer that was missing under them
+
+R18, the fourth Phase 0 item, and the only one that is not a defect: four
+choices that were each right when made and then never revisited, all paid for by
+whoever never found the picker.
+
+**Batch concurrency is seeded from the machine.** It was the constant 1, on the
+reasoning that parallel batches multiply CPU load and, run headed, open a window
+per test. The second half of that is answered below; the first was being paid by
+every user who ticked sixty tests and got them one at a time on an eight-core
+laptop. Half the cores, because a lane is a BROWSER rather than a thread — it
+wants a core to itself plus room for the app, the runner and the OS — and 1 when
+the CPU count cannot be read, which is exactly what shipped before.
+
+**A batch defaults to headless; a single run does not.** These are now two
+settings rather than one, and the split is the whole point: watching one run is
+usually the reason for starting it, while sixty windows opening in turn, each
+taking focus as it launches, is not something a tick box should hand anyone. One
+switch driving both is how it did.
+
+**A recording no longer stamps its speed.** `speed` was seeded from
+`defaultRunSpeed` onto every new record, so each test was pinned to whatever the
+default was on the day it was recorded — and a user who changed the setting
+later found their library unmoved. Absent now means INHERIT, the same asymmetry
+`runBrowser` has used since the browser picker, for the same reason. The sidebar's
+"Adjust Test Speed" menu is what PINS one test.
+
+That change required the layer under it. `playwright-runner` resolved
+`rec.speed ?? "fast"`, so an unstamped test would have run at full speed and the
+New recording dialog's Run speed picker would have become a control that does
+nothing. `resolveRunSpeed(override, pinned, fallback)` in `shared/run-pacing.mjs`
+is the three-layer rule, and it SKIPS an unrecognised value at any layer rather
+than passing it on — an unknown key reaching `SLOW_MO_MS` resolves to `undefined`
+and runs at full speed, which is the opposite of what asking for `crawl` meant.
+
+**And the shipped default became `medium`.** Slow is 1200ms before every action;
+medium is 400. Stamping plus a `slow` default is what made "record a test" mean
+"record a test that takes four minutes forever". Watchable was the intent, not
+slow.
+
+**A run can now be paced without editing the test.** The detail view's Pace
+control and `runner:run`'s `speed` are the override layer: "run the suite fast,
+run this one slowly while I watch it" was previously expressible only by editing
+the test and remembering to put it back. It is deliberately not persisted and
+deliberately reads "Inherit" rather than the test's own speed, so that it reads
+as an override rather than as a second place the test's speed is stored.
+
+**What is guarded, and why source-level.** `run-pacing.test.ts` pins both
+decisions as pure functions — the resolution order and the concurrency
+arithmetic, the latter as a function of a core count so it does not have to
+guess the test machine's. `check:run-defaults` pins the wiring, because every
+one of these is invisible when broken: re-seeding the speed fails nothing, it
+just quietly pins each new test again; pointing a batch row back at
+`defaultRunHeadless` fails nothing, it just opens sixty windows.
+
+### 2026-08-25 — Three defects from the runner plan's Phase 0
+
+`docs/plans/test-runner-improvements.md` §10 names five small defects to clear
+before the CLI work; R19 landed on 2026-08-21 and these are three of the
+remaining four. They share a shape worth naming: each is a number or a count
+that was *computed correctly* and then read by something that meant a different
+question.
+
+**R47 — the strongest heal candidates were reported as `score 0.00`.** A
+candidate's score is a SUM of four contributions, so its ceiling is 2.45: 1.25
+from the locator or the fingerprint (they are max'd, not added), 1.0 of element
+identity, 0.2 of geometry. `normalizeStepStructures` drops a score outside 0–1
+to zero — deliberately, and it must, because that number is computed IN THE PAGE
+and a hostile one clamped to 1 would sort itself to the top of a list the model
+reads as ranked. So the only candidates that could exceed 1 were the best ones,
+and they were exactly the ones the AI-debug prompt printed as zero. The source
+now divides by the ceiling, which is order-preserving, so the ranking the sort
+already produced is untouched and only the printed number changes. The boundary
+keeps its distrust.
+
+**R17 — every run swept the whole library.** `applyRetention()` sat in the run's
+`finally` and called `pruneAllTests`, which brackets itself with two `usage()`
+walks so it can report what it freed; `usage()` recurses the artifacts tree with
+a synchronous `statSync` per file. At a hundred tests × ten retained runs × twenty
+screenshots that is forty thousand blocking stats per run, on the main process —
+the same thread streaming `runner:output` to the window — and a hundred-test
+batch paid it a hundred times.
+
+The split is by what a run can actually have made stale: a run adds artifacts to
+ONE test, so the run path prunes that test and measures nothing, and the
+library-wide sweep is throttled to once every thirty minutes. Time-based rather
+than run-counted, because what makes a sweep worth doing is elapsed time (the age
+rule) and a count would fire hardest exactly when the machine is busiest. The
+wiring is pinned in `check:retention` as well as the behaviour: putting the
+expensive call back breaks nothing, fails nothing and returns identical answers —
+it just makes batches slow again, which no functional test can see.
+
+**R20 — three engines made the stability signal worse.** `analyseFlake` counted
+transitions across the interleaved sequence, so a test that passes on Chromium
+and Firefox and fails EVERY time on WebKit read as P, P, F, P, P, F: four state
+changes and a confident "flaky", for a test that has never once changed its mind.
+The cross-browser matrix degraded the verdict the more it was used.
+
+Transitions are now counted within each engine and summed, and the flake rate
+divides by the pairs they were counted over — three engines of four runs offer
+nine adjacent pairs, not eleven. The segmentation follows `analyseDatasets`
+exactly, including both of its guards (at least two engines, and no runs missing
+one), and it earns the same kind of verdict: **`browser-dependent`**, ranked
+beside `data-dependent` because both name a CAUSE rather than a mood. An engine
+that flips is still flake, a history with no engine recorded is still one
+sequence, and `FlakeRun` gained `runBrowser` without a migration — both callers
+already passed whole `RunRecord`s, which have carried it since the picker.
+
 ### 2026-08-25 — A dialog keyed on a caller's object is a dialog that resets
 
 `IssueComposeDialog` blanked its form and re-fetched whenever a run finished in

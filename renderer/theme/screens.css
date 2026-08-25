@@ -3496,6 +3496,15 @@
   min-width: 40px;
 }
 
+/* The per-run pace override. A floor for the same reason its neighbours have
+   one: every field in this row inherits `min-width: 0` from `.gl-input`, so
+   under the proportional shrink the wrapping row applies, "Inherit" becomes
+   "Inh…" — a control whose whole job is to say which of two things is in
+   force. */
+.gl-detail-pace {
+  min-width: 84px;
+}
+
 /* `Run test` and `Stop` are the same box.
  *
  * They are not the same WORD, and `Stop` is 31px narrower — so with the group

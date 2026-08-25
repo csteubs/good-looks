@@ -25,6 +25,7 @@ import type {
   RecorderState,
   ReplayLogEvent,
   RunBrowser,
+  TestSpeed,
   Step,
   VariableKind,
   VerifiedStepsResult,
@@ -283,7 +284,15 @@ interface RecorderContextValue {
    *  The trainer opens the Add-step dialog from this; null when idle. */
   contextAction: ContextAction | null;
   clearContextAction: () => void;
-  run: (id: string, captureArtifacts?: boolean, headless?: boolean, browser?: RunBrowser) => void;
+  /** `speed` paces THIS run only and is never written back to the test — see
+   *  `playwrightRunner.start`. */
+  run: (
+    id: string,
+    captureArtifacts?: boolean,
+    headless?: boolean,
+    browser?: RunBrowser,
+    speed?: TestSpeed,
+  ) => void;
   stopRun: (id: string) => void;
   /** Counts calls to `run`. The "the AI added these" glow lasts until the next
    *  test run, not on a timer — views holding their own new-step sets watch
@@ -971,7 +980,7 @@ export function RecorderProvider({
     void api.recorder.endRefine();
   }, []);
   const clearPicked = React.useCallback(() => setPicked(null), []);
-  const run = React.useCallback((id: string, captureArtifacts?: boolean, headless?: boolean, browser?: RunBrowser) => {
+  const run = React.useCallback((id: string, captureArtifacts?: boolean, headless?: boolean, browser?: RunBrowser, speed?: TestSpeed) => {
     // The run is the natural end of the "look what the AI changed" moment:
     // whatever glows now gets judged by the run's result instead.
     clearNewSteps();
@@ -981,7 +990,7 @@ export function RecorderProvider({
       [id]: { lines: [], running: true, code: null, stepStatus: {}, startedAt: Date.now() },
     }));
     // headed = not headless — the trainer path is unaffected (separate channel).
-    api.runner.run(id, !headless, captureArtifacts, headless, browser).catch(() => {});
+    api.runner.run(id, !headless, captureArtifacts, headless, browser, speed).catch(() => {});
   }, [clearNewSteps]);
   const stopRun = React.useCallback((id: string) => void api.runner.stop(id), []);
 

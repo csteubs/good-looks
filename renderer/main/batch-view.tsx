@@ -373,7 +373,10 @@ export function BatchView() {
   const rowDefaults = React.useMemo(
     () => ({
       defaultRunBrowser: settingsQuery.data?.defaultRunBrowser,
-      defaultRunHeadless: settingsQuery.data?.defaultRunHeadless,
+      // THE BATCH'S default, not the single run's (R18). Sixty ticked tests
+      // used to open sixty windows, each stealing focus as it launched, because
+      // a batch row inherited the toggle that exists for watching ONE run.
+      defaultRunHeadless: settingsQuery.data?.defaultBatchHeadless,
     }),
     [settingsQuery.data],
   );

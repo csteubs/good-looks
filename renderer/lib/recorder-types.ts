@@ -1432,6 +1432,11 @@ export interface RecorderSettings {
   keepRunningAiDebugJobs: boolean;
   /** default value of the per-test "Run headless" toggle (default false). */
   defaultRunHeadless: boolean;
+  /** Default for a BATCH's rows, separately from a single run (default true).
+   *  A batch of sixty headed tests opens sixty windows that each steal focus,
+   *  which is not a thing to hand someone who ticked a box; a single run is the
+   *  case where watching it is the point, so that one stays headed. */
+  defaultBatchHeadless: boolean;
   /** default browser engine for tests with no preference (default "chromium"). */
   defaultRunBrowser: RunBrowser;
   /** default Playwright per-test timeout in ms (default 60000 = 1 minute). */

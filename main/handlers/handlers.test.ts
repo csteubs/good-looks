@@ -21,7 +21,9 @@ import {
   registeredChannels,
   setEncryptionAvailable,
 } from "../services/__tests__/shell-backend-stub.js";
-import { MAX_GROUP_LENGTH } from "../recorder/types.js";
+import { MAX_GROUP_LENGTH,
+  MAX_BATCH_CONCURRENCY,
+} from "../recorder/types.js";
 import { registerHandlers } from "./index.js";
 import { testStore } from "../services/test-store.js";
 import { recorderService } from "../services/recorder-service.js";
@@ -655,13 +657,52 @@ describe("recorder:setSettings — persistence and validation", () => {
     expect(s.batchOrder).toEqual(["a", "b"]);
   });
 
-  it("defaults batch concurrency to one at a time", async () => {
-    // Parallel batches multiply CPU load and, run headed, open a browser window
-    // per test. Nobody gets that without asking for it.
+  it("seeds batch concurrency from the machine rather than from 1", async () => {
+    // R18. It WAS 1, on the reasoning that parallel batches multiply CPU load
+    // and, run headed, open a window per test. The second half is now answered
+    // by `defaultBatchHeadless`, and the first was being paid by everyone who
+    // never found the picker: sixty ticked tests ran one at a time on a machine
+    // with eight idle cores.
+    //
+    // Asserted as a RANGE against this machine's own core count, not as a
+    // number: the value is deliberately a function of the hardware, and a test
+    // that hard-coded 4 would pass on the author's laptop and fail on CI. The
+    // exact arithmetic is pinned in `run-pacing.test.ts`, where it is a pure
+    // function of a core count this test does not have to guess.
+    const { cpus } = await import("node:os");
+    const cores = cpus().length;
     const initial = await invokeHandler<{ defaultBatchConcurrency: number }>(
       "recorder:getSettings",
     );
-    expect(initial.defaultBatchConcurrency).toBe(1);
+    expect(initial.defaultBatchConcurrency).toBe(
+      Math.min(MAX_BATCH_CONCURRENCY, Math.max(1, Math.floor(cores / 2))),
+    );
+    expect(initial.defaultBatchConcurrency).toBeGreaterThanOrEqual(1);
+  });
+
+  it("keeps a batch's headless default independent of a single run's", async () => {
+    // R18, and the property rather than the shipped values: these tests share
+    // one store and run in order, so asserting "the default is false" here
+    // would be asserting that no earlier test touched it. What has to hold is
+    // that the two settings are SEPARATE — watching one run is usually why it
+    // was started, while sixty windows opening in turn is not something a tick
+    // box should hand anyone, and one switch driving both is how that happened.
+    const read = async () =>
+      await invokeHandler<{ defaultRunHeadless: boolean; defaultBatchHeadless: boolean }>(
+        "recorder:getSettings",
+      );
+
+    await invokeHandler("recorder:setSettings", {
+      defaultRunHeadless: false,
+      defaultBatchHeadless: true,
+    });
+    expect(await read()).toMatchObject({ defaultRunHeadless: false, defaultBatchHeadless: true });
+
+    await invokeHandler("recorder:setSettings", { defaultRunHeadless: true });
+    expect((await read()).defaultBatchHeadless).toBe(true);
+
+    await invokeHandler("recorder:setSettings", { defaultBatchHeadless: false });
+    expect((await read()).defaultRunHeadless).toBe(true);
   });
 
   it("clamps batch concurrency into range and ignores nonsense", async () => {

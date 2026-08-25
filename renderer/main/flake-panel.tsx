@@ -62,6 +62,12 @@ export const VERDICT_COPY: Record<
     hint: "Fails consistently on particular dataset rows and passes on the rest — reliable, and telling you something true about that data.",
     rule: "Every dataset row is consistent with itself: some always pass, others always fail.",
   },
+  "browser-dependent": {
+    label: "Engine-dependent",
+    tone: "amber",
+    hint: "Fails consistently on some engines and passes on the others — a real difference between browsers, not instability.",
+    rule: "Every engine is consistent with itself: some always pass, others always fail.",
+  },
   "changed-since": {
     label: "Broke recently",
     tone: "red",
