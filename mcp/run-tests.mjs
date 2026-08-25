@@ -49,6 +49,15 @@ import {
   playwrightConfigSource,
 } from "../shared/playwright-config-source.mjs";
 import { resolveRunSpeed, resolveTestTimeoutMs } from "../shared/run-pacing.mjs";
+// What gets written beside a spec, and what an unattended run turns on — one
+// table both runners read, so they cannot disagree about WHICH files exist.
+// A missing one is an import error at run time, not a diff. See R8.
+import {
+  ALWAYS_WRITTEN,
+  CAPABILITY_FIXTURES,
+  redirectToCaptureFixture,
+} from "../shared/run-fixtures.mjs";
+import { userPageEnv } from "../shared/user-page-fixture-source.mjs";
 
 const MCP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(MCP_DIR, "..");
@@ -197,6 +206,41 @@ export function createRunner({ dataDir, store }) {
     });
   }
 
+  /** Write-if-different through an atomic rename, mirroring the app's
+   *  `writeIfChanged`. Both matter with several tests in flight: rewriting
+   *  unconditionally means one run can be truncating a fixture while another's
+   *  Playwright process is reading it, and a plain write is not atomic. */
+  function writeIfChanged(filePath, content) {
+    try {
+      if (fs.readFileSync(filePath, "utf-8") === content) return;
+    } catch {
+      // Missing or unreadable — fall through and write it.
+    }
+    const tmp = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
+    fs.writeFileSync(tmp, content, "utf-8");
+    fs.renameSync(tmp, filePath);
+  }
+
+  /**
+   * The files a spec needs beside it. `ALWAYS_WRITTEN` really is always: the
+   * spec runtime is IMPORTED by any generated spec that uses a helper, so it is
+   * a dependency rather than a feature — and it was written only by the app
+   * until now, which meant an MCP or CLI run worked exactly when the app had
+   * happened to run that test on the same machine first.
+   */
+  function ensureRunFixtures(scriptsDir, { capabilities = false } = {}) {
+    for (const { file, source } of ALWAYS_WRITTEN) {
+      writeIfChanged(path.join(scriptsDir, file), source);
+    }
+    if (!capabilities) return;
+    // Written as a SET: the capture fixture imports the others, so writing it
+    // without them beside it is an import error rather than a disabled feature.
+    // What each one DOES is decided by the environment, not by its existence.
+    for (const { file, source } of CAPABILITY_FIXTURES) {
+      writeIfChanged(path.join(scriptsDir, file), source);
+    }
+  }
+
   function ensureModuleResolution(scriptsDir, nodeModules) {
     const link = path.join(scriptsDir, "node_modules");
     if (fs.existsSync(link)) return;
@@ -235,7 +279,7 @@ export function createRunner({ dataDir, store }) {
    * Shared by run_test and run_batch so the two can't drift in how they invoke
    * Playwright or what they record.
    *
-   * @returns {{ runId, status, exitCode, startedAt, finishedAt, durationMs, output, timeoutMs, timeoutRaised, speed }}
+   * @returns {{ runId, status, exitCode, startedAt, finishedAt, durationMs, output, timeoutMs, timeoutRaised, speed, ran }}
    */
   async function executeTest(
     test,
@@ -314,10 +358,95 @@ export function createRunner({ dataDir, store }) {
       // which is most libraries.
       settings,
     });
+
+    // ── The fixture gates (R8) ─────────────────────────────────────────────
+    //
+    // Set AFTER runEnv rather than inside it, because runEnv is shared with the
+    // app's runner, which computes these from Electron-side state this process
+    // does not have. The names are the fixtures' own — they are read by source
+    // that Playwright loads, so a rename here is a feature that silently stops
+    // firing, which is why `check:ci-fixtures` pins each one.
+    const artifactDir = path.join(dataDir, "recorder", "artifacts", test.id, runId);
+    if (anyCapability) {
+      env.GLAZE_TEST_ID = test.id;
+      env.GLAZE_RUN_ID = runId;
+      env.GLAZE_CAPTURE_ARTIFACTS = wantsScreenshots ? "1" : "0";
+      env.GLAZE_A11Y = wantsA11y ? "1" : "0";
+      env.GLAZE_RECORD_LOGS = wantsLogs ? "1" : "0";
+      env.GLAZE_SETTLE = wantsSettle ? "1" : "0";
+      env.GLAZE_HEAL = wantsHeal ? "1" : "0";
+      if (wantsScreenshots || wantsA11y || wantsLogs || wantsHeal) {
+        fs.mkdirSync(artifactDir, { recursive: true });
+        env.GLAZE_ARTIFACT_DIR = artifactDir;
+      }
+      if (wantsHeal) {
+        // The heal fixture writes what it did into this directory. Nothing here
+        // reads it back into the test — that is the "suggest, never apply"
+        // half of the policy, and it holds by construction rather than by a
+        // flag: there is no writeback code in this process, and a writeback
+        // would edit a tests.json that dies with the container.
+        env.GLAZE_HEAL_DIR = artifactDir;
+        env.GLAZE_HEAL_MAP = path.join(scriptsDir, `${test.id}.heal.json`);
+      }
+      if (wantsUserPage) {
+        Object.assign(env, userPageEnv(settings));
+      }
+    }
+    // ── What this run turns on (R8) ────────────────────────────────────
+    //
+    // The policy is stated in shared/run-fixtures.mjs; this is it applied. Each
+    // gate reads the TEST's own preference where it has one, exactly as the app
+    // reads it — an unattended run is not a different product.
+    //
+    // An IMPORTED spec gets none of it: `sourceDir` means someone else's
+    // Playwright project, where redirecting the `@playwright/test` import would
+    // rewrite their code rather than instrument ours. Same rule the app applies.
+    const imported = Boolean(test.sourceDir);
+    const wantsScreenshots =
+      !imported && Boolean(test.captureArtifacts ?? settings.defaultCaptureArtifacts);
+    const wantsA11y = !imported && Boolean(test.a11yChecks ?? settings.defaultA11yChecks);
+    const wantsLogs = !imported && Boolean(test.recordLogs ?? settings.defaultRecordLogs);
+    const wantsSettle = !imported && speed === "crawl";
+    // Run-time healing, ON. Without it a run fails on a stale locator the app
+    // would have healed past — the false red that teaches a team to distrust
+    // CI. The WRITEBACK is what stays off, and it stays off by construction:
+    // nothing in this process reads heals.json back into a test, and it could
+    // not usefully, since that tests.json dies with the container.
+    const wantsHeal =
+      !imported && Boolean(settings.autoHealEnabled) && (test.steps ?? []).some((st) => st?.locator);
+    const wantsUserPage =
+      !imported && Boolean(settings.userStylesheet || settings.userInitScript);
+    const anyCapability =
+      wantsScreenshots || wantsA11y || wantsLogs || wantsSettle || wantsHeal || wantsUserPage;
+
+    // ALWAYS, capabilities or not: a generated spec importing a helper needs
+    // glaze-runtime.mjs on disk to load at all.
+    ensureRunFixtures(scriptsDir, { capabilities: anyCapability });
+
     // Relative to the scripts root, so a sandboxed spec resolves as
     // `imported/<id>/tests/foo.spec.ts` rather than a bare basename that only
     // matches when the spec sits flat.
-    const specFile = path.relative(scriptsDir, test.scriptPath);
+    let specFile = path.relative(scriptsDir, test.scriptPath);
+
+    // The capture fixture reaches a spec by REDIRECTING its `@playwright/test`
+    // import in a temp copy — the stored spec stays pristine, and only the
+    // module specifier changes, so line numbers (and therefore every step's
+    // screenshot attribution) survive.
+    let tempSpecPath = null;
+    if (anyCapability) {
+      let original = null;
+      try {
+        original = fs.readFileSync(test.scriptPath, "utf-8");
+      } catch {
+        // Unreadable — run the original path and let Playwright report it.
+      }
+      const redirected = original === null ? null : redirectToCaptureFixture(original);
+      if (redirected !== null) {
+        tempSpecPath = path.join(scriptsDir, `${runId}.capture.spec.ts`);
+        fs.writeFileSync(tempSpecPath, redirected, "utf-8");
+        specFile = path.relative(scriptsDir, tempSpecPath);
+      }
+    }
 
     const startedAt = Date.now();
     const { exitCode, output } = await new Promise((resolve) => {
@@ -356,6 +485,15 @@ export function createRunner({ dataDir, store }) {
       fs.rmSync(outputDir, { recursive: true, force: true });
     } catch {
       // ignore
+    }
+    // The redirected copy, if this run made one. Named by the run id, so a
+    // concurrent run of the same spec is never the one being deleted.
+    if (tempSpecPath) {
+      try {
+        fs.rmSync(tempSpecPath, { force: true });
+      } catch {
+        // ignore
+      }
     }
     const logFile = path.join(dataDir, "recorder", "logs", `${runId}.log`);
     const record = {
@@ -432,6 +570,17 @@ export function createRunner({ dataDir, store }) {
       output: safeOutput,
       timeoutMs: testTimeoutMs,
       timeoutRaised,
+      // What this run ACTUALLY got (R8), so `describeRun` reports the run that
+      // happened rather than the one this server used to be unable to do.
+      // Reported off the run for the same reason `speed` is: a caller deriving
+      // it a second time is a second chance to derive it differently.
+      ran: {
+        screenshots: wantsScreenshots,
+        accessibility: wantsA11y,
+        consoleAndNetwork: wantsLogs,
+        autoHeal: wantsHeal,
+        pageSettling: wantsSettle,
+      },
       // REPORTED, not re-derived by the caller. run_test describes the run it
       // just did (`describeRun` prints the pace and the step delay, and gates
       // `pageSettling` on crawl), and a caller resolving the speed a second time
@@ -673,6 +822,22 @@ export function createRunner({ dataDir, store }) {
               // not settling while the run it describes actually does. Same rule
               // as executeTest, for the same reason.
               speed: resolveRunSpeed(speed, t.speed, settings.defaultRunSpeed),
+              // What the batch's runs got. Keyed off the same conditions
+              // `executeTest` applies, and an IMPORTED spec gets none of it —
+              // redirecting someone else's `@playwright/test` import would
+              // rewrite their project rather than instrument ours.
+              ran: t.sourceDir
+                ? {}
+                : {
+                    screenshots: Boolean(t.captureArtifacts ?? settings.defaultCaptureArtifacts),
+                    accessibility: Boolean(t.a11yChecks ?? settings.defaultA11yChecks),
+                    consoleAndNetwork: Boolean(t.recordLogs ?? settings.defaultRecordLogs),
+                    autoHeal:
+                      Boolean(settings.autoHealEnabled) &&
+                      (t.steps ?? []).some((st) => st?.locator),
+                    pageSettling:
+                      resolveRunSpeed(speed, t.speed, settings.defaultRunSpeed) === "crawl",
+                  },
               timeoutMs: 0,
               timeoutRaised: false,
               signatures,
