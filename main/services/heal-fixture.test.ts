@@ -24,7 +24,7 @@ import * as path from "path";
 import { pathToFileURL } from "url";
 
 import { healFixtureSource } from "../../shared/heal-fixture-source.mjs";
-import { healKeyFor } from "./playwright-runner.js";
+import { healKeyFor } from "../../shared/heal-key.mjs";
 import { healKeyOperatorSource } from "../../shared/heal-key.mjs";
 import { testIdSelector } from "../../shared/testid-attr.mjs";
 import type { Locator } from "../recorder/types.js";

@@ -92,8 +92,14 @@ const TEST = {
     /Object\.assign\(env, secrets\.env\)/.test(runner),
     "the runner injects the resolved secrets into the child env",
   );
+  // Matches whatever is handed in as the first argument, not the bare
+  // identifier: the run's output gained an appended Auto-Heal summary (R49),
+  // added INSIDE the choke point. Anchoring on `output` alone would have gone
+  // red for text being routed through redaction correctly, which teaches the
+  // next person to loosen the assertion rather than keep the coupling. What is
+  // still pinned is the one that matters — the values.
   assert(
-    /sanitizeOutput\(output, secrets\.values\)/.test(runner),
+    /sanitizeOutput\([^,]*\boutput\b[^,]*, secrets\.values\)/.test(runner),
     "…and redacts the run's output with the SAME resolved values",
   );
   // Both come off ONE `resolveCiSecrets` call INSIDE executeTest, so they
@@ -112,7 +118,7 @@ const TEST = {
   );
   assert(
     /Object\.assign\(env, secrets\.env\)/.test(executeBody) &&
-      /sanitizeOutput\(output, secrets\.values\)/.test(executeBody),
+      /sanitizeOutput\([^,]*\boutput\b[^,]*, secrets\.values\)/.test(executeBody),
     "…and both halves are inside it, reading that one object",
   );
 }

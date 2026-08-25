@@ -35,6 +35,8 @@
 // Pure (see the admission rule in run-pacing.mjs): no fs, no IPC, no process,
 // no DOM.
 
+import { testIdOverride, testIdSelector } from "./testid-attr.mjs";
+
 /**
  * The key for a target locator scoped inside a container.
  *
@@ -117,4 +119,77 @@ export function healKeyOperatorSource() {
     "var healKeyAnd = " + healKeyAnd.toString() + ";",
     "var healKeyText = " + healKeyText.toString() + ";",
   ].join("\n");
+}
+
+// ── The key for a whole locator ───────────────────────────────────────────
+//
+// The operators above are the GRAMMAR; these two apply it to the app's Locator
+// model. They were in `main/services/playwright-runner.ts` until 2026-08-25,
+// which was fine while only the app wrote a heal map — and stopped being fine
+// the moment the MCP and CLI had to write one too (R49). Two builders composing
+// a key from one grammar is the shape this file already exists to prevent; two
+// builders each with their own grammar would be that failure twice.
+//
+// They are NOT embedded into the fixture. The fixture builds its side of the
+// key from the ARGUMENTS a Playwright factory was called with, which is a
+// different input to the same grammar — that asymmetry is the whole point, and
+// it is why `healKeyOperatorSource` stringifies only the four operators above.
+
+/** One factory call's key. MUST match the `FACTORIES` table in
+ *  heal-fixture-source.mjs — if the two spellings drift, every lookup misses and
+ *  healing silently stops happening with no error. */
+function healKeyBase(loc) {
+  switch (loc.k) {
+    case "testid": {
+      // A testid on a non-default attribute is EMITTED as `locator("[…]")`,
+      // so at run time the fixture tags it through the `locator` factory —
+      // the key must therefore be the css key of that exact selector string,
+      // or every lookup for such a step misses.
+      const attr = testIdOverride(loc.attr);
+      return attr ? `css|${testIdSelector(attr, loc.v ?? "")}` : `testid|${loc.v ?? ""}`;
+    }
+    case "label":
+      return `label|${loc.v ?? ""}`;
+    case "placeholder":
+      return `placeholder|${loc.v ?? ""}`;
+    case "text":
+      return healKeyText(loc.v ?? "", loc.exact === true);
+    case "role":
+      return `role|${loc.role ?? ""}|${loc.name ?? ""}`;
+    case "xpath":
+      return `css|xpath=${loc.v ?? ""}`;
+    case "css":
+    default:
+      return `css|${loc.v ?? ""}`;
+  }
+}
+
+/**
+ * The canonical key the heal fixture tags a locator with.
+ *
+ * A context-carrying locator is a CHAIN, so its key is composed — in the same
+ * order the generator emits the chain and therefore the order the fixture
+ * observes it: the container, then its `hasText` filter, then the target, then
+ * each `and` predicate. The three operators come from `shared/heal-key.mjs`
+ * rather than being spelled here, because the fixture builds the identical key
+ * from factory ARGUMENTS at run time and the two must agree exactly. See that
+ * file for why a transcribed copy is not good enough.
+ *
+ * `nth` is deliberately absent, here and in the fixture: `.nth()` is a REFINER
+ * that propagates the tag it was given (see `REFINERS`), so an indexed step
+ * shares its key with the unindexed one it narrows — which is what makes a
+ * `.nth()` step healable at all.
+ */
+export function healKeyFor(loc) {
+  let key = healKeyBase(loc);
+  const ctx = loc.ctx;
+  if (ctx?.within) {
+    let container = healKeyBase(ctx.within);
+    if (ctx.withinHasText !== undefined) container = healKeyHasText(container, ctx.withinHasText);
+    key = healKeyWithin(container, key);
+  }
+  if (ctx?.and) {
+    for (const pred of ctx.and) key = healKeyAnd(key, healKeyBase(pred));
+  }
+  return key;
 }

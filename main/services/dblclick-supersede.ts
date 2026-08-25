@@ -5,7 +5,7 @@
 // deliberate single click quietly eaten — and neither should need an Electron
 // window to exercise.
 
-import { healKeyFor } from "./playwright-runner.js";
+import { healKeyFor } from "../../shared/heal-key.mjs";
 import type { Locator, Step } from "../recorder/types.js";
 
 /** How long after a click a `dblclick` may still claim it. Generous: a browser
