@@ -25,6 +25,7 @@
 // subject, not something to half-answer now.
 
 import process from "node:process";
+import { readFileSync } from "node:fs";
 
 import { resolveDataDir } from "../mcp/data-dir.mjs";
 import { createStore } from "../mcp/store.mjs";
@@ -186,6 +187,8 @@ export async function installCommand({ browser, withDeps }, { out, err, env = pr
     return EXIT.CANNOT_START;
   }
 
+  // No secrets: installing a browser runs no test, so there is nothing to
+  // supply and nothing to redact.
   const { isBrowserInstalled, installBrowser } = createRunner({
     dataDir,
     store: createStore(dataDir),
@@ -255,7 +258,30 @@ export async function runCommand(options, { out, err, env = process.env } = {}) 
   }
 
   const store = createStore(dataDir);
-  const { runSelection } = createRunner({ dataDir, store });
+
+  // The secrets file, read HERE rather than in the parser or the runner: the
+  // parser stays pure and testable, and the runner should be handed values
+  // rather than a path it has to trust. A read failure is a refusal, never a
+  // silent empty map — running a suite with no credentials because a path was
+  // mistyped is the shape of failure R7 exists to end.
+  let secretFile = {};
+  if (options.secretsFile) {
+    try {
+      const parsed = JSON.parse(readFileSync(options.secretsFile, "utf-8"));
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        err(`--secrets-file must contain a JSON object, got ${Array.isArray(parsed) ? "an array" : typeof parsed}.`);
+        return EXIT.CANNOT_START;
+      }
+      secretFile = parsed;
+    } catch (error) {
+      // The path and the reason, never the contents — this is a credential
+      // file, and an error that quotes what it could not parse is a leak.
+      err(`Could not read --secrets-file ${options.secretsFile}: ${error.code ?? "unreadable"}`);
+      return EXIT.CANNOT_START;
+    }
+  }
+
+  const { runSelection } = createRunner({ dataDir, store, secretEnv: env, secretFile });
 
   const outcome = await runSelection({
     testIds: options.testIds,

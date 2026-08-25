@@ -20,6 +20,10 @@ import { normalizeSignatureHost, signatureState } from "../shared/shopify-signat
 import { manualProxyFor, playwrightProxyEnv, proxySettingsFrom } from "../shared/proxy-config.mjs";
 import { slowMoFor } from "../shared/run-pacing.mjs";
 import { stripAnsi } from "../shared/strip-ansi.mjs";
+// The SAME redaction the app applies — R7 requires that whatever supplies a
+// secret to a run also feeds the redaction, and two spellings of it is a
+// second chance to get the longest-first rule wrong.
+import { redact } from "../shared/secret-redaction.mjs";
 
 /**
  * Names of the secret variables a test declares.
@@ -170,8 +174,21 @@ export function runArgs({ cliPath, specFile, configPath, browser, testTimeoutMs 
  *  those bytes are meaningless outside a terminal, and this log is read back by
  *  `get_run_log` straight into an agent's context, where they are budget spent
  *  on cursor movements. */
-export function sanitizeOutput(output) {
-  return stripAnsi(output);
+export function sanitizeOutput(output, secrets = []) {
+  // REDACTION FIRST, then the escape stripping. A credential split across an
+  // ANSI colour boundary would survive a redaction that ran after stripping
+  // only if the escape sat inside the value, which it cannot — but running it
+  // first also means a value is gone before anything downstream can hold a
+  // partially-processed copy, and ordering a security step last is how one
+  // eventually gets skipped.
+  //
+  // `secrets` defaults to none, so every caller predating R7 behaves exactly as
+  // it did. What must never happen is a caller that SUPPLIES a secret to a run
+  // and then omits it here: the value is typed into the page, so it comes back
+  // out in a Playwright error, an assertion diff or a content dump, and this is
+  // the single choke point everything written or returned passes through.
+  // `check:ci-secrets` pins that the two travel together.
+  return stripAnsi(redact(output, secrets));
 }
 
 /**

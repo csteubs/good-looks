@@ -51,7 +51,12 @@ export declare function runArgs(params: {
   testTimeoutMs: number;
 }): string[];
 
-export declare function sanitizeOutput(output: string): string;
+/** The single choke point everything written or returned passes through.
+ *  `secrets` are THIS run's resolved secret values (R7) — supplying a secret to
+ *  a run without passing it here turns the run log into a credential store,
+ *  which is what `check:ci-secrets` pins. Defaults to none, so every caller
+ *  predating R7 behaves exactly as it did. */
+export declare function sanitizeOutput(output: string, secrets?: readonly string[]): string;
 
 export interface RunFixtureReport {
   speed: TestSpeed | string | undefined;

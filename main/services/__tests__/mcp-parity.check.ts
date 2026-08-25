@@ -219,15 +219,27 @@ function codeOnly(source: string): string {
     testTimeoutMs: 60_000,
     vars: { user: "alice" },
   });
+  // NARROWED BY R7, not dropped. A secret CAN now reach an unattended run — from
+  // the environment or a --secrets-file — but never from `runEnv`, which is
+  // shared with the app's runner and whose caller there reads an encrypted store
+  // this process cannot. The injection belongs to `executeTest`, because that is
+  // the one place that also holds the values for redaction, and supplying a
+  // secret without redacting it turns a run log into a credential store.
+  //
+  // `check:ci-secrets` is where that pairing is pinned. This stays because it is
+  // the half that belongs to the SHARED function.
   assert(
     Object.keys(env).every((k) => !k.startsWith("GLAZE_SECRET_")),
-    "mcp: the run env carries no GLAZE_SECRET_* key (it cannot — see run-plan.mjs)",
+    "mcp: runEnv itself mints no GLAZE_SECRET_* key — the injection is the caller's",
   );
-  // The env cannot satisfy the spec, so the ONLY thing that keeps this honest
-  // is refusing the run. Without this pairing the test runs with empty strings.
+  // Still the honest answer when nothing supplies the value: the generated spec
+  // resolves `process.env.GLAZE_SECRET_<NAME> ?? ""`, so a run that proceeds
+  // anyway types EMPTY STRINGS into the login form and fails several steps
+  // later with nothing connecting the two. R7 changed who can supply it, not
+  // what happens when nobody does.
   assert(
     secretVariableNames(testWith({ variables: withSecret })).includes("password"),
-    "mcp: a test declaring a secret is identified as unrunnable from here",
+    "mcp: a test declaring a secret is identified, so an unsupplied one is refused by name",
   );
   assert(
     secretVariableNames(testWith({ variables: [{ name: "user", kind: "plain" }] })).length === 0,
