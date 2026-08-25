@@ -116,13 +116,16 @@ export const CI_FIXTURE_POLICY = [
   },
   {
     capability: "Auto-Heal",
-    onInCi: "suggest only",
+    onInCi: false,
     why:
-      "Run-time healing is ON: without it a run fails on a stale locator the app would have " +
-      "healed past, which is precisely the false red that makes a team distrust CI. Writing " +
-      "the heal BACK to the test is not, and cannot be — that would edit a tests.json which " +
-      "dies with the container, so the fix would be lost and the run would still report a " +
-      "heal it did not keep.",
+      "The heal fixture does nothing without a heal MAP, and the map holds a probe script per " +
+      "step built from the recorder's locator engine — TypeScript the app compiles, which a " +
+      "plain-.mjs server cannot import. R8 set the switch anyway and pointed the map at a file " +
+      "nothing writes, so every unattended run installed healing and healed nothing (R49). Off " +
+      "is the honest state, and the run says so. Turning it on needs the same locator-engine " +
+      "extraction overlay dismissal waits on (R51); the WRITEBACK stays off regardless — that would " +
+      "edit a tests.json which dies with the container, so the fix would be lost and the run " +
+      "would still report a heal it did not keep.",
   },
   {
     capability: "user stylesheet / init script",
@@ -144,7 +147,8 @@ export const CI_FIXTURE_POLICY = [
     why:
       "Its source embeds the recorder's locator engine, which deliberately did not move to " +
       "shared/ — see the 2026-08-25 DECISIONS entry. Turning it on needs that extraction " +
-      "first, and this is a constraint rather than a preference.",
+      "(R51) first, the same one Auto-Heal above waits on, and this is a constraint rather " +
+      "than a preference.",
   },
 ];
 

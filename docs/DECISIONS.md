@@ -10,6 +10,65 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — Auto-Heal for CI runs is now OFF, and the gate can see it
+
+The fix for the entry below, and it lands in the order that entry argued for:
+the guard first, the feature second.
+
+**The check asserts the implication, in both arms.** The plan's wording was
+"assert that `GLAZE_HEAL="1"` implies a non-empty map file". Written only that
+way it would be a guard that goes quiet the moment somebody disables the
+feature — an implication with a false antecedent is satisfied by doing nothing,
+which is the same "confident signal about nothing" one layer up again. So the
+"off" arm has its own thing to prove: that the map and the heal directory are
+absent TOO, and that the run reports `ran.autoHeal: false` so `describeRun`
+prints the sentence it already had for it. Both arms were revert-tested, and the
+"on" arm was verified against the R49 code exactly as it shipped.
+
+**Healing is off on the MCP/CLI path, wholly, and that is the honest state.**
+The heal fixture does nothing for a locator it has no map entry for —
+`if (!entry || !entry.probe …) throw err` is the first line of every patched
+action — and the map holds a probe script per step, built by
+`buildHealProbeScript`, which embeds the recorder's locator engine out of
+`main/recorder/capture-script.ts`. That is TypeScript the app compiles; a
+plain-`.mjs` server cannot import it. There was never a version of this that
+worked, so nothing is being taken away.
+
+What IS gained is that the run now says so. `describeRun` has carried the
+sentence all along — "a step whose locator has gone stale fails here rather than
+being healed past, so this run can fail where an app run of the same test
+passes" — and it was suppressed by a `ran.autoHeal` reporting a capability the
+run did not have. A caveat the user reads beats a switch that heals nothing.
+
+**The switch is set as one decision, not three.** `GLAZE_HEAL = "0"` and no
+`GLAZE_HEAL_MAP`, no `GLAZE_HEAL_DIR`. Leaving the map assignment behind a
+switched-off flag is exactly what invites the next person to re-enable half of
+it, which is the state R49 already was.
+
+**`shared/heal-artifacts.mjs` is the durable half.** R49 was a filename
+disagreement and nothing else, so the fix that outlives this instance is making
+a second spelling impossible rather than detectable: one module names the map
+and the heal directory, the app writes through it, and the check asserts no
+other name for either exists outside tests. This is the third file admitted to
+`shared/` by the Auto-Heal feature alone — the key, the testid attribute inside
+it, and now the file the map arrives in. That the same feature keeps producing
+them is the argument for the rule, not against it.
+
+**Two assertions in the same file were found vacuous while doing this**, both
+the shape this repo keeps hitting. `const wants[A-Za-z]+ = !imported` cannot
+match `wantsA11y` — there is a digit in it — so a `>= 5` gate count was proving
+four gates and passing at exactly its threshold; it is enumerated by name now,
+with a companion assertion that the enumeration is the whole list.
+And `!/autoHeal:\s*(?!false)/` can never fire: `\s*` backtracks to zero width
+and the lookahead then passes on the space. A negative assertion that cannot
+fail is worse than no assertion, because it reads as coverage.
+
+**Not done here, and deliberately.** The locator-engine extraction — ~600 lines
+of `DOM_HELPERS`/`UNIQUENESS_HELPERS`/`CONTEXT_HELPERS` out of
+`capture-script.ts` — is its own change, and it unblocks two capabilities rather
+than one (standing overlay rules wait on the same move). The policy table now
+names it from both rows, so the two blocked features read as one job.
+
 ### 2026-08-25 — Auto-Heal is ON for CI runs and heals nothing
 
 Found re-verifying the backlog after #263, and worth recording as a shape rather

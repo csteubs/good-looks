@@ -15,7 +15,7 @@
 //
 // Run with: npm run check:ci-fixtures
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -142,31 +142,170 @@ const appRunner = code("main/services/playwright-runner.ts");
     /const imported = Boolean\(test\.sourceDir\)/.test(runner),
     "the MCP runner asks whether the spec is an imported project",
   );
-  const gates = runner.match(/const wants[A-Za-z]+ =\s*\n?\s*!imported/g) ?? [];
+  // Enumerated by NAME rather than counted. The counted version asserted
+  // `>= 5` against a `const wants[A-Za-z]+` pattern that cannot match
+  // `wantsA11y` — there is a digit in it — so it was silently proving four
+  // gates while reading as five, and passed at exactly its threshold. A count
+  // is a check you cannot tell has stopped covering something.
+  const GATES = ["wantsScreenshots", "wantsA11y", "wantsLogs", "wantsSettle", "wantsUserPage"];
+  for (const gate of GATES) {
+    assert(
+      new RegExp(`const ${gate} =\\s*!imported`).test(runner),
+      `${gate} is guarded by !imported`,
+    );
+  }
+  // And the list is the whole list: a gate added without a row here would be
+  // unguarded and unnoticed, which is the failure the enumeration replaces.
+  const declared = (runner.match(/const (wants[A-Za-z0-9]+) =/g) ?? []).map((m) =>
+    m.slice("const ".length, -" =".length),
+  );
+  const unlisted = declared.filter((d) => !GATES.includes(d));
   assert(
-    gates.length >= 5,
-    `every capability gate is guarded by !imported (${gates.length} found)`,
+    unlisted.length === 0,
+    `every capability gate in the runner is listed here (${unlisted.join(", ") || "none"})`,
   );
 }
 
-// ── 5. Auto-Heal suggests; it never applies ──────────────────────────────
+// ── 5. Auto-Heal's SWITCH, its MAP and the WRITER are one decision ───────
 //
-// The plan's one explicit prohibition. Applying would edit a tests.json that
-// dies with the container — so the run would report a heal it did not keep, and
-// the next run would fail the same way.
+// R49, and the reason this section was rewritten. Healing needs three things
+// that live in three places: the switch (`GLAZE_HEAL`), the map file
+// (`GLAZE_HEAL_MAP`), and something that actually WRITES that file. The fixture
+// does nothing whatsoever without all three — `if (!entry || !entry.probe ||
+// …) throw err` is the first line of every patched action, so a missing map is
+// not a degraded heal, it is no heal.
+//
+// R8 set the switch, pointed the map at `<testId>.heal.json`, and shipped no
+// writer. That filename's only occurrence in the repository was the assignment
+// itself. Every unattended run therefore installed healing, patched every
+// locator factory, healed nothing, and recorded no evidence of having tried —
+// while `ran.autoHeal` reported the capability as present. Nothing failed. The
+// old assertion here pinned the switch and never the map, so the gate was green
+// throughout.
+//
+// So this asserts the IMPLICATION, in both arms, rather than the state. The
+// "off" arm is not a skip: it has its own thing to prove — that the other two
+// halves are absent too, because a `GLAZE_HEAL_MAP` left sitting beside a
+// switched-off gate is precisely what the next person re-enables in isolation.
 {
+  const policy = CI_FIXTURE_POLICY.find((p) => p.capability === "Auto-Heal");
+  // Anything but the literal "0". A ternary counts as on: `wantsHeal ? "1" :
+  // "0"` is exactly what shipped, and reading it as off is how this was missed.
+  const switchOn = /env\.GLAZE_HEAL = (?!"0";)/.test(runner);
   assert(
-    /env\.GLAZE_HEAL = wantsHeal \? "1" : "0";/.test(runner),
-    "run-time healing is ON for an unattended run",
+    switchOn === (policy?.onInCi !== false),
+    `the written policy and the runner agree about healing (policy ${String(policy?.onInCi)}, ` +
+      `switch ${switchOn ? "on" : "off"})`,
   );
-  // The writeback is what must be absent, and it is absent by construction
-  // rather than by a flag: this process has no code that reads heals back.
+
+  if (switchOn) {
+    // THE ARM THAT WOULD HAVE CAUGHT R49. A switch without a map is a run that
+    // reports healing and does none.
+    assert(
+      /GLAZE_HEAL_MAP/.test(runner),
+      "healing is on, so the runner points the fixture at a map file",
+    );
+    assert(
+      /healMapFileName\(/.test(runner),
+      "…named through shared/heal-artifacts.mjs, so it cannot be a second spelling",
+    );
+    // And the file has to EXIST, which means this process builds one. The map
+    // is per-step and carries a probe script; nothing else can stand in for it.
+    assert(
+      /buildHealMap|healMap[A-Za-z]*\s*=\s*[^;]*\n?[\s\S]{0,400}?writeFileSync/.test(runner),
+      "…and writes it, rather than naming a file nothing produces",
+    );
+  } else {
+    // Off, wholly. Each of these being absent is what makes turning it back on
+    // a decision someone has to make on purpose.
+    assert(
+      !/GLAZE_HEAL_MAP/.test(runner),
+      "healing is off, so the runner names no map file for the fixture to miss",
+    );
+    assert(
+      !/GLAZE_HEAL_DIR/.test(runner),
+      "…and no heal directory either — a half-set gate is what R49 was",
+    );
+    // And the run has to SAY so. `describeRun` carries the sentence; a
+    // `ran.autoHeal` that is anything but false suppresses it, which is how a
+    // capability nobody had got reported as one everybody did.
+    // EVERY occurrence, enumerated. `!/autoHeal:\s*(?!false)/` was the first
+    // draft and it can never fire: `\s*` backtracks to zero width and the
+    // lookahead then passes on the space. A negative assertion that cannot fail
+    // is the shape this whole section exists to stop.
+    const reported = runner.match(/autoHeal:\s*[^,\n]*/g) ?? [];
+    assert(
+      reported.length > 0 && reported.every((r) => /autoHeal:\s*false/.test(r)),
+      `every \`ran.autoHeal\` this runner reports is false, so describeRun says it was skipped ` +
+        `(${reported.join(" | ") || "none reported at all"})`,
+    );
+    assert(
+      /Run-time Auto-Heal/.test(code("mcp/run-plan.mjs")),
+      "…and describeRun has the sentence to say it with",
+    );
+  }
+
+  // True under both arms. Applying is the plan's one explicit prohibition: it
+  // would edit a tests.json that dies with the container, so the run would
+  // report a heal it did not keep and the next run would fail the same way. It
+  // holds by construction rather than by a flag — this process has no code that
+  // reads heals back.
   assert(
     !/writeScript|updateSteps|applyHeal|healJournal/.test(runner),
-    "…and nothing in the MCP runner writes a heal back to the test",
+    "nothing in the MCP runner writes a heal back to the test",
   );
-  const policy = CI_FIXTURE_POLICY.find((p) => p.capability === "Auto-Heal");
-  assert(policy?.onInCi === "suggest only", "the written policy says suggest only");
+}
+
+// ── 5b. A heal artifact is named in exactly one place ────────────────────
+//
+// The defect above was a FILENAME disagreement and nothing more: two writers,
+// two spellings, no error. `shared/heal-artifacts.mjs` is the single spelling,
+// and this is what stops a third appearing — a check on the map's *content*
+// would not have caught R49, because there was no content, and no file.
+//
+// Tests are excluded on purpose: `heal-fixture.test.ts` builds its own map in a
+// temp directory to feed the fixture, which is a fixture input rather than a
+// second name for the run's artifact.
+{
+  const SPELLING = /\.heal-map\.json|\.heal\.json|\$\{[^}]+\}\.heal\b/;
+  const roots = ["main", "mcp", "cli", "shared", "renderer", "bin", "scripts"];
+  const offenders: string[] = [];
+  const walk = (dir: string): void => {
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = readdirSync(join(root, dir), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) {
+        if (e.name === "node_modules" || e.name === "__tests__") continue;
+        walk(rel);
+        continue;
+      }
+      if (!/\.(ts|tsx|mjs|mts)$/.test(e.name)) continue;
+      if (/\.test\.(ts|tsx)$/.test(e.name)) continue;
+      if (rel === "shared/heal-artifacts.mjs" || rel === "shared/heal-artifacts.d.mts") continue;
+      if (SPELLING.test(code(rel))) offenders.push(rel);
+    }
+  };
+  for (const r of roots) walk(r);
+  assert(
+    offenders.length === 0,
+    `a heal artifact is named only in shared/heal-artifacts.mjs (${offenders.join(", ") || "none"})`,
+  );
+  // The other half: the app, which is the process that DOES write one, reaches
+  // it through that module. Without this the assertion above passes on an app
+  // runner that has stopped naming a heal map at all.
+  assert(
+    /healMapFileName\(recordId\)/.test(appRunner) && /healDirName\(recordId\)/.test(appRunner),
+    "the app runner names both heal artifacts through shared/heal-artifacts.mjs",
+  );
+  assert(
+    /shared\/heal-artifacts\.mjs/.test(appRunner),
+    "…and imports them rather than redeclaring the shape",
+  );
 }
 
 // ── 6. What is OFF is off for a stated reason ────────────────────────────
@@ -175,7 +314,7 @@ const appRunner = code("main/services/playwright-runner.ts");
 // them — which is the difference between a decision and an omission.
 {
   const off = CI_FIXTURE_POLICY.filter((p) => p.onInCi === false);
-  assert(off.length === 2, `exactly two capabilities are off in CI (${off.length})`);
+  assert(off.length === 3, `exactly three capabilities are off in CI (${off.length})`);
   for (const p of off) {
     assert(
       p.why.length > 40,
@@ -189,6 +328,18 @@ const appRunner = code("main/services/playwright-runner.ts");
   assert(
     off.some((p) => p.capability === "overlay dismissal" && /locator engine/.test(p.why)),
     "overlay dismissal names the locator-engine extraction as its blocker",
+  );
+  // The third joined them through R49, and it names the same blocker — which is
+  // the useful part of writing the reason down: two capabilities waiting on one
+  // extraction is an argument for doing that extraction, and two unexplained
+  // `false`s are not.
+  assert(
+    off.some((p) => p.capability === "Auto-Heal" && /locator-engine extraction/.test(p.why)),
+    "Auto-Heal names the same extraction, so the two blocked capabilities are visibly one job",
+  );
+  assert(
+    off.some((p) => p.capability === "Auto-Heal" && /R49/.test(p.why)),
+    "…and names the defect it was turned off by, so nobody re-enables it as an oversight",
   );
 }
 

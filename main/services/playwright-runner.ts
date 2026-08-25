@@ -10,6 +10,7 @@ import { fileURLToPath } from "url";
 
 import { app, logger } from "@shell/backend";
 
+import { healDirName, healMapFileName } from "../../shared/heal-artifacts.mjs";
 import { healKeyAnd, healKeyHasText, healKeyText, healKeyWithin } from "../../shared/heal-key.mjs";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 
@@ -1509,8 +1510,13 @@ export const playwrightRunner = {
         });
         if (healing) {
           ensureHealFixture(scriptsDir);
-          healDir = path.join(getScriptsDir(), `${recordId}.heal`);
-          healMapPath = path.join(scriptsDir, `${recordId}.heal-map.json`);
+          // Both names come from shared/heal-artifacts.mjs rather than being
+          // spelled here. The map is a filename and nothing else — it is how
+          // this writer and the fixture that reads it find each other — so a
+          // second process naming it itself is a run that installs healing and
+          // heals nothing, with no error anywhere. That is R49, and it shipped.
+          healDir = path.join(getScriptsDir(), healDirName(recordId));
+          healMapPath = path.join(scriptsDir, healMapFileName(recordId));
           try {
             fs.writeFileSync(healMapPath, JSON.stringify(buildHealMap(runSteps)), "utf-8");
           } catch (err) {

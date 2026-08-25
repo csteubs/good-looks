@@ -163,8 +163,9 @@ row is only moved here with a file and a symbol behind it.
 | R46 | Lean diagnostics mode for the app | Perf | partial | M |
 | R47 | Fix heal candidate scores above 1 being reported as 0 | Stab | **done 2026-08-25** | S |
 | R48 | Finish the Batch-to-Routine rename in UI copy | UX | partial | S |
-| R49 | Run the heal fixture for MCP-driven runs | Stab | **defect — on but inert, see §2a** | M |
+| R49 | Run the heal fixture for MCP-driven runs | Stab | **guard done 2026-08-25; feature blocked on R51** | M |
 | R50 | Export a run as a shareable PDF | UX | missing | M |
+| R51 | Move the recorder's locator engine into `shared/` | Stab | missing — blocks R49 and CI overlay rules | L |
 | N1 | A bounded site sweep (link crawler) | New | missing | L |
 | N2 | Report which pages the suite never touches | New | missing | M |
 | N3 | Mobile-web device emulation | New | missing | M |
@@ -212,6 +213,19 @@ lines behind it.
 
 This is the failure mode §3.3a names, one layer down: not a wrong answer, a
 confident one about nothing.
+
+**Done, 2026-08-25.** The guard landed, and with it the honest state.
+`check:ci-fixtures` now asserts the implication in BOTH arms — written only for
+the "on" arm it would be satisfied by disabling the feature, which is the same
+shape again — so "off" has to prove the map and the heal directory are absent
+too, and that every `ran.autoHeal` is false so `describeRun` prints the caveat
+it already carried. `shared/heal-artifacts.mjs` is now the only place either
+artifact is named, which makes a third spelling impossible rather than merely
+detectable. Healing is `"0"` on this path until **R51**: the map holds a probe
+script per step from `buildHealProbeScript`, which embeds the recorder's locator
+engine, and a plain-`.mjs` server cannot import compiled TypeScript. Both
+capabilities blocked on that extraction now name it from the policy table, so
+they read as one job rather than two omissions.
 
 ---
 
