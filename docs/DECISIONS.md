@@ -10,6 +10,64 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — Secrets reach a CI run, and the rule that makes that safe
+
+R7, the last Phase C1 item. Until now an unattended run could not supply a
+secret at all: the value is encrypted through the OS keychain and only the app
+can decrypt it, so every secret-bearing test was skipped with a note. That is
+correct and useless — a login is the first step of most real suites.
+
+**The rule this turns on is one sentence in the plan**, and it is the whole
+reason the change is safe: *"The same values must feed the redaction snapshot,
+or the CLI's own log output and any emitted report will contain the
+credential."* A secret is typed INTO the page, so it comes back out — a
+Playwright error, a failing assertion's diff, a page-content dump — and the run
+log is written to disk and served back by `get_run_log`.
+
+So the resolver returns `values` alongside `env`, and `executeTest` calls it
+**once**: `Object.assign(env, secrets.env)` injects, `sanitizeOutput(output,
+secrets.values)` redacts, and both read the same object. Two calls would be two
+chances to resolve differently. `check:ci-secrets` pins the pairing, scoped to
+`executeTest`'s own body — the first draft counted file-wide and reported
+correct code as broken, because `runSelection` legitimately resolves too.
+
+**`redact` moved to `shared/`** so both processes strip credentials by the same
+rule. Its longest-first ordering is the part worth having exactly once: with
+`hunter2` and `hunter2!`, replacing the short one first leaves the tail of the
+long one sitting beside a `[redacted]` label — a partial leak that reads as a
+complete redaction.
+
+**The env name carries the test id.** Two tests can each declare `PASSWORD` and
+mean different credentials, and a library-wide `GOOD_LOOKS_SECRET_PASSWORD`
+would hand one test's staging password to another test's production login. That
+failure has no error message at all: the run succeeds, against the wrong
+account.
+
+**An empty value is MISSING, not supplied.** The generated spec resolves
+`process.env.GLAZE_SECRET_<NAME> ?? ""`, which is exactly how the old failure
+looked — empty strings typed into a login form and an assertion failing several
+steps later with nothing connecting the two. An operator who exports the
+variable and leaves it blank must not get that back.
+
+**The refusal names variables, never values.** `describeMissingSecrets` prints
+the variables to set, derived from what `list_tests` already shows; `missing` is
+a list of declared names, so a name that resolved cannot appear in it. The
+`--secrets-file` read failure reports the path and an error code and never the
+contents, because an error that quotes what it could not parse is a leak.
+
+**The old guard was narrowed rather than deleted.** `mcp/run-plan.mjs` said
+there could never be a `GLAZE_SECRET_*` key, "so a future edit that starts
+injecting secrets has to confront the redaction question rather than quietly
+creating a plaintext-credentials path in a file `get_run_log` serves back."
+This is that edit. `runEnv` still mints nothing — it is shared with the app's
+runner, whose secrets come from a store this process cannot read — and the
+stronger property replaced the blanket one.
+
+**The dry run had to move with it.** It reported "would skip" for any test
+declaring a secret; now it resolves through the same function, because a dry run
+that says a test will be skipped while the real run executes it is worse than
+one that says nothing.
+
 ### 2026-08-25 — A CI run gets the fixtures, and the dependency that was never written
 
 R8's second half. Part 1 moved the fixture sources into `shared/`; this is the

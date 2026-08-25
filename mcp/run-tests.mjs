@@ -40,7 +40,6 @@ import {
   runArgs,
   runEnv,
   sanitizeOutput,
-  secretVariableNames,
 } from "./run-plan.mjs";
 import { buildQueue } from "../shared/batch-queue.mjs";
 import { browserInstalledIn, expectedBrowserDirs } from "../shared/browser-install.mjs";
@@ -58,6 +57,9 @@ import {
   redirectToCaptureFixture,
 } from "../shared/run-fixtures.mjs";
 import { userPageEnv } from "../shared/user-page-fixture-source.mjs";
+// The CI secret contract — where a secret comes from without the app, and
+// the refusal when it comes from nowhere.
+import { describeMissingSecrets, resolveCiSecrets } from "../shared/ci-secrets.mjs";
 
 const MCP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(MCP_DIR, "..");
@@ -81,7 +83,7 @@ export const RUN_BROWSERS = ["chromium", "firefox", "webkit"];
  *
  * @param {{ dataDir: string, store: ReturnType<import("./store.mjs").createStore> }} deps
  */
-export function createRunner({ dataDir, store }) {
+export function createRunner({ dataDir, store, secretEnv = process.env, secretFile = {} }) {
   const { listTests, readSettings, readSignatures, readOverlayRules, saveRunRecord, saveBatchRecord } =
     store;
 
@@ -190,7 +192,7 @@ export function createRunner({ dataDir, store }) {
         },
         stdio: ["ignore", "pipe", "pipe"],
       });
-      const emit = (buf) => onOutput?.(sanitizeOutput(String(buf)));
+      const emit = (buf) => onOutput?.(sanitizeOutput(String(buf)));  // install: no test, no secrets
       child.stdout.on("data", emit);
       child.stderr.on("data", emit);
       child.on("error", (error) => {
@@ -342,6 +344,16 @@ export function createRunner({ dataDir, store }) {
     // test is killed here before Playwright can report a clean timeout failure.
     const processTimeoutMs = Math.max(RUN_TIMEOUT_MS, testTimeoutMs + PROCESS_TIMEOUT_BUFFER_MS);
 
+    // ── Secrets (R7) ───────────────────────────────────────────────────
+    //
+    // Resolved from the environment or a --secrets-file, never from the app's
+    // encrypted store: this is plain Node, where that API does not exist.
+    // `values` is what must be redacted out of everything this run produces,
+    // and it is carried alongside the env rather than re-derived from it,
+    // because a supplied secret that is not also a redacted one turns a run log
+    // into a credential store — the failure R7's own wording warns about.
+    const secrets = resolveCiSecrets(test, { env: secretEnv, fileValues: secretFile });
+
     const env = runEnv({
       base: process.env,
       browsersPath: browsersDir(),
@@ -358,6 +370,13 @@ export function createRunner({ dataDir, store }) {
       // which is most libraries.
       settings,
     });
+
+    // Merged AFTER runEnv rather than passed into it: runEnv is shared with the
+    // app's runner, whose secrets come from a store this process cannot read,
+    // and `check:mcp-parity` pins that runEnv itself never mints a
+    // GLAZE_SECRET_* key. The injection belongs to the caller that also holds
+    // the values for redaction.
+    Object.assign(env, secrets.env);
 
     // ── The fixture gates (R8) ─────────────────────────────────────────────
     //
@@ -542,7 +561,8 @@ export function createRunner({ dataDir, store }) {
 
     // ONE choke point for everything written or returned, mirroring the app's
     // `emitOutput`.
-    const safeOutput = sanitizeOutput(output);
+    // With THIS run's secret values — see sanitizeOutput.
+    const safeOutput = sanitizeOutput(output, secrets.values);
 
     saveRunRecord(
       { ...record, logBytes: Buffer.byteLength(safeOutput, "utf-8") },
@@ -679,9 +699,19 @@ export function createRunner({ dataDir, store }) {
             // What a run of this test would REFUSE to do. Surfacing it in the
             // dry run is the point: finding out a suite skips half its tests
             // for secrets should not require running it.
-            ...(t && secretVariableNames(t).length > 0
-              ? { wouldSkip: `declares secret variable(s): ${secretVariableNames(t).join(", ")}` }
-              : {}),
+            //
+            // Resolved through the SAME function the run uses (R7), not the
+            // blanket "declares a secret" rule it replaced — otherwise a dry
+            // run tells a pipeline that a test will be skipped and then the
+            // real run executes it, which is worse than saying nothing.
+            ...(() => {
+              const unresolved = t
+                ? resolveCiSecrets(t, { env: secretEnv, fileValues: secretFile }).missing
+                : [];
+              return unresolved.length > 0
+                ? { wouldSkip: `no value here for secret variable(s): ${unresolved.join(", ")}` }
+                : {};
+            })(),
           };
         }),
       };
@@ -749,15 +779,24 @@ export function createRunner({ dataDir, store }) {
     const limit = clampParallel(parallel, queue.length);
     await runPool(queue, limit, async (entry, i) => {
       const test = byId.get(entry.testId);
-      // Skipped, not failed, and the batch carries on. A suite that aborts —
-      // or reports red — because one of its tests happens to log in would make
-      // run_batch useless against any real library.
-      const secrets = test ? secretVariableNames(test) : [];
-      if (secrets.length > 0) {
+      // Skipped, not failed, and the batch carries on — a suite that aborts, or
+      // reports red, because one of its tests happens to log in would make this
+      // useless against any real library.
+      //
+      // R7 narrowed WHEN this fires. It used to fire for any test declaring a
+      // secret, because there was no way to supply one. Now it fires only for
+      // the names that actually resolved to nothing, so a pipeline that sets
+      // its credentials runs the test — and one that sets some of them is told
+      // exactly which are missing rather than that "secrets are unavailable".
+      const unresolved = test
+        ? resolveCiSecrets(test, { env: secretEnv, fileValues: secretFile }).missing
+        : [];
+      if (unresolved.length > 0) {
         results[i].status = "skipped";
-        results[i].note =
-          `Declares secret variable${secrets.length === 1 ? "" : "s"} (${secrets.join(", ")}), ` +
-          "which are encrypted to the app and unreadable from here. Run it from the app.";
+        // The message names the variables to SET. It never echoes a value, and
+        // it cannot: `missing` is a list of declared names, and a name that
+        // resolved is not in it.
+        results[i].note = describeMissingSecrets(test, unresolved);
         results[i].finishedAt = Date.now();
         results[i].durationMs = 0;
         persist(true);

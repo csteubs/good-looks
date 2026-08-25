@@ -9,6 +9,9 @@ export interface RunOptions {
   allDatasets?: true;
   /** Report what WOULD run and stop — same selection, same queue expansion. */
   dryRun: boolean;
+  /** Path to a JSON object of secret values. The PATH only — the parser never
+   *  reads it. */
+  secretsFile?: string;
   json: boolean;
 }
 

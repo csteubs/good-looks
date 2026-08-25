@@ -24,7 +24,15 @@ const SPEEDS = Object.keys(SLOW_MO_MS);
 
 /** Flags that take a value. Anything else beginning with `-` is a boolean, and
  *  anything not in either set is an error. */
-const VALUE_FLAGS = new Set(["--id", "--tag", "--group", "--browser", "--speed", "--parallel"]);
+const VALUE_FLAGS = new Set([
+  "--id",
+  "--tag",
+  "--group",
+  "--browser",
+  "--speed",
+  "--parallel",
+  "--secrets-file",
+]);
 const BOOL_FLAGS = new Set(["--all", "--json", "--all-datasets", "--dry-run", "--help", "-h"]);
 
 /** The selectors, in the precedence `selectTests` resolves them. Named here so
@@ -64,6 +72,7 @@ export function parseRunArgs(argv) {
   let json = false;
   let allDatasets = false;
   let dryRun = false;
+  let secretsFile;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -89,6 +98,12 @@ export function parseRunArgs(argv) {
           break;
         case "--group":
           group = value;
+          break;
+        case "--secrets-file":
+          // The PATH only. Nothing here reads it — a parser that touched the
+          // filesystem could not be unit-tested, and a credential file is the
+          // last thing to read somewhere incidental.
+          secretsFile = value;
           break;
         case "--browser":
           if (!RUN_BROWSERS.includes(value)) {
@@ -174,6 +189,7 @@ export function parseRunArgs(argv) {
       parallel,
       allDatasets: allDatasets || undefined,
       dryRun,
+      secretsFile,
       json,
     },
   };
@@ -252,6 +268,10 @@ Options:
                      this run only, and is never written back to the test
   --parallel <n>     run n tests at once, 1-${MAX_PARALLEL} (default: 1)
   --all-datasets     run each selected test once per dataset row it declares
+  --secrets-file <f> JSON object of secret values for tests that declare them,
+                     keyed "<testId>.<name>" or "<name>". An environment
+                     variable of the same meaning wins over it — run without
+                     this and the CLI names the variables to set
   --dry-run          print what WOULD run and stop. Same selection and the same
                      queue expansion as a real run, so the answer is the plan
                      rather than a description of it. Still exits 2 when the

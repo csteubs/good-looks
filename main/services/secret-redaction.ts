@@ -18,51 +18,12 @@ import { logger } from "@shell/backend";
 
 import { shopifySignatureStore } from "./shopify-signature-store.js";
 import { testSecretsStore } from "./test-secrets-store.js";
+// The pure half. Shared so the CLI redacts with the SAME rule — R7 requires
+// that whatever supplies a secret to a run also feeds the redaction.
+// Re-exported, so this module stays the one import site for its callers.
+import { MASKED, redact, REDACTED } from "../../shared/secret-redaction.mjs";
 
-export const REDACTED = "[redacted]";
-
-/** What a variable's value looks like in trainer-visible output.
- *
- *  Distinct from `REDACTED` because it answers a different question. That one
- *  says "something was removed from this log for your safety"; this one says
- *  "the step used the variable you gave it, and the trainer is not going to
- *  print it back at you". Same machinery, because the ordering rule below is
- *  the part that is easy to get wrong. */
-export const MASKED = "****";
-
-/**
- * Replace every occurrence of every secret value with a placeholder.
- *
- * Longest-first, which matters: if one secret is a prefix of another
- * ("hunter2" and "hunter2!"), replacing the short one first would leave the
- * tail of the long one ("!") sitting in the output next to a [redacted] label
- * — a partial leak that reads as if it were fully redacted.
- *
- * Values shorter than 4 characters are skipped. A one- or two-character secret
- * would match constantly and turn the log into noise, and a log full of
- * [redacted] is a log nobody reads — which costs more than that secret's
- * exposure in a local file.
- *
- * `placeholder` exists for the trainer, which masks every VARIABLE value out of
- * its replay logs rather than only the secret ones — see `MASKED`. It shares
- * this function rather than reimplementing it because the longest-first pass
- * above is the part worth having exactly once.
- */
-export function redact(
-  text: string,
-  secrets: readonly string[],
-  placeholder: string = REDACTED,
-): string {
-  if (!text || secrets.length === 0) return text;
-  let out = text;
-  const ordered = [...new Set(secrets.filter((s) => s.length >= 4))].sort(
-    (a, b) => b.length - a.length,
-  );
-  for (const secret of ordered) {
-    out = out.split(secret).join(placeholder);
-  }
-  return out;
-}
+export { MASKED, redact, REDACTED };
 
 // Snapshot of every stored secret value, for the synchronous call sites.
 // Empty until refreshed — which is the safe direction to fail only because
