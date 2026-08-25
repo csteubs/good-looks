@@ -10,6 +10,59 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — Three defects from the runner plan's Phase 0
+
+`docs/plans/test-runner-improvements.md` §10 names five small defects to clear
+before the CLI work; R19 landed on 2026-08-21 and these are three of the
+remaining four. They share a shape worth naming: each is a number or a count
+that was *computed correctly* and then read by something that meant a different
+question.
+
+**R47 — the strongest heal candidates were reported as `score 0.00`.** A
+candidate's score is a SUM of four contributions, so its ceiling is 2.45: 1.25
+from the locator or the fingerprint (they are max'd, not added), 1.0 of element
+identity, 0.2 of geometry. `normalizeStepStructures` drops a score outside 0–1
+to zero — deliberately, and it must, because that number is computed IN THE PAGE
+and a hostile one clamped to 1 would sort itself to the top of a list the model
+reads as ranked. So the only candidates that could exceed 1 were the best ones,
+and they were exactly the ones the AI-debug prompt printed as zero. The source
+now divides by the ceiling, which is order-preserving, so the ranking the sort
+already produced is untouched and only the printed number changes. The boundary
+keeps its distrust.
+
+**R17 — every run swept the whole library.** `applyRetention()` sat in the run's
+`finally` and called `pruneAllTests`, which brackets itself with two `usage()`
+walks so it can report what it freed; `usage()` recurses the artifacts tree with
+a synchronous `statSync` per file. At a hundred tests × ten retained runs × twenty
+screenshots that is forty thousand blocking stats per run, on the main process —
+the same thread streaming `runner:output` to the window — and a hundred-test
+batch paid it a hundred times.
+
+The split is by what a run can actually have made stale: a run adds artifacts to
+ONE test, so the run path prunes that test and measures nothing, and the
+library-wide sweep is throttled to once every thirty minutes. Time-based rather
+than run-counted, because what makes a sweep worth doing is elapsed time (the age
+rule) and a count would fire hardest exactly when the machine is busiest. The
+wiring is pinned in `check:retention` as well as the behaviour: putting the
+expensive call back breaks nothing, fails nothing and returns identical answers —
+it just makes batches slow again, which no functional test can see.
+
+**R20 — three engines made the stability signal worse.** `analyseFlake` counted
+transitions across the interleaved sequence, so a test that passes on Chromium
+and Firefox and fails EVERY time on WebKit read as P, P, F, P, P, F: four state
+changes and a confident "flaky", for a test that has never once changed its mind.
+The cross-browser matrix degraded the verdict the more it was used.
+
+Transitions are now counted within each engine and summed, and the flake rate
+divides by the pairs they were counted over — three engines of four runs offer
+nine adjacent pairs, not eleven. The segmentation follows `analyseDatasets`
+exactly, including both of its guards (at least two engines, and no runs missing
+one), and it earns the same kind of verdict: **`browser-dependent`**, ranked
+beside `data-dependent` because both name a CAUSE rather than a mood. An engine
+that flips is still flake, a history with no engine recorded is still one
+sequence, and `FlakeRun` gained `runBrowser` without a migration — both callers
+already passed whole `RunRecord`s, which have carried it since the picker.
+
 ### 2026-08-25 — A dialog keyed on a caller's object is a dialog that resets
 
 `IssueComposeDialog` blanked its form and re-fetched whenever a run finished in

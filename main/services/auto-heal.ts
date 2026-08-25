@@ -180,6 +180,31 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
   // Higher = better. Exact kind+value match is best (the original locator may
   // have been slightly off, e.g. a stale testid); same kind partial-value match
   // is next; same role/text is a fuzzy signal.
+  // THE CEILING OF THIS SCORING SCHEME, and why the scores are divided by it.
+  //
+  // A candidate's score is a SUM of independent contributions, so it runs well
+  // past 1: the best possible is 1.25 from the locator (1.0 for a same-kind
+  // exact value, plus 0.25 for a past-run hint) or the same 1.25 from the
+  // fingerprint — they are max'd, not added — then 1.0 of element identity
+  // (0.15 tag + 0.35 attributes + 0.3 own text + 0.2 neighbouring label) and
+  // 0.2 of geometry.
+  //
+  // Nothing downstream expected that. normalizeStepStructures drops a score
+  // outside 0-1 to zero — deliberately, and it must keep doing so, because this
+  // number is computed IN THE PAGE and a hostile one clamped to 1 would sort
+  // itself to the top of a list the model reads as ranked (see the capture
+  // boundary in CLAUDE.md). The result was that the STRONGEST candidates, the
+  // only ones that could exceed 1, were the ones reported as "score 0.00", and
+  // the AI-debug prompt printed its list looking ranked worst-first.
+  //
+  // So the source emits a real 0-1 score instead. Dividing by the ceiling is
+  // order-preserving — every candidate is scaled by the same constant — so the
+  // ranking the sort produces is untouched and only the printed number changes.
+  var MAX_LOCATOR_SCORE = 1.25;
+  var MAX_IDENTITY_SCORE = 1.0;
+  var MAX_GEOMETRY_SCORE = 0.2;
+  var MAX_SCORE = MAX_LOCATOR_SCORE + MAX_IDENTITY_SCORE + MAX_GEOMETRY_SCORE;
+
   function scoreLocator(cand, orig) {
     var s = 0;
     if (!orig) return 0.3;
@@ -389,7 +414,14 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
           matchedPast = true; break;
         }
       }
-      all.push({ locator: c, description: desc, score: score, matchedPastRun: matchedPast });
+      // Normalised here, at the source — see MAX_SCORE. Clamped as well as
+      // divided, because the ceiling is an argument about the weights above and
+      // a weight raised without raising it would otherwise ship a score of 1.03
+      // that the boundary silently turns back into a zero.
+      var norm = score / MAX_SCORE;
+      if (norm > 1) norm = 1;
+      if (norm < 0) norm = 0;
+      all.push({ locator: c, description: desc, score: norm, matchedPastRun: matchedPast });
     }
   }
   // Sort best-first; cap to MAX_CANDIDATES.

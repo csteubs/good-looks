@@ -25,6 +25,10 @@ export interface FlakeRun {
   endedBy?: "user" | "process-timeout";
   datasetId?: string;
   datasetName?: string;
+  /** Which engine the run used. Segments the transition count: a test that
+   *  fails every time on one engine and passes on the others has changed its
+   *  mind zero times, and counting the interleaved sequence said otherwise. */
+  runBrowser?: string;
 }
 
 /** Reuses run-comparison's vocabulary rather than inventing a second one for
@@ -37,6 +41,8 @@ export type StabilityVerdict =
   | "fixed"
   | "flaky"
   | "data-dependent"
+  /** Fails on some engines and passes on others, consistently on each. */
+  | "browser-dependent"
   | "unknown";
 
 export declare const MIN_RUNS_FOR_VERDICT: number;
@@ -72,14 +78,22 @@ export interface TestFlake {
   runs: number;
   passed: number;
   failed: number;
-  /** consecutive-run disagreements */
+  /** Consecutive-run disagreements, counted WITHIN each engine and summed —
+   *  a chromium pass followed by a webkit failure is not the test changing its
+   *  mind. */
   transitions: number;
-  /** transitions / (runs - 1): 0 = never changed its mind, 1 = alternates */
+  /** transitions / adjacent same-engine pairs: 0 = never changed its mind,
+   *  1 = alternates. The denominator follows the segmentation, or three engines
+   *  would report a third of the real rate. */
   flakeRate: number;
   verdict: StabilityVerdict;
   /** dataset rows that failed at least once, when the failures are confined to
    *  specific rows — the evidence behind a "data-dependent" verdict */
   failingDatasets: { id: string; name: string; failed: number; runs: number }[];
+  /** Engines this test has failed on, with how often — the evidence behind a
+   *  "browser-dependent" verdict, and worth showing on its own when the pattern
+   *  is not clean enough to earn one. */
+  failingBrowsers: { browser: string; failed: number; runs: number }[];
   /** steps that failed or needed healing, worst first */
   steps: StepFlake[];
   /** runs where Auto-Heal substituted a locator */

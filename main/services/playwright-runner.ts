@@ -37,7 +37,7 @@ import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { resolveTestTimeoutMs, SLOW_MO_MS } from "./run-pacing.js";
 import { notifyRunOutcome, shouldNotifyRun } from "./run-notifier.js";
 import { sendAlert } from "./alert-service.js";
-import { applyRetention } from "./retention.js";
+import { applyRetentionForTest, sweepRetentionIfDue } from "./retention.js";
 import { buildReplay, enrichWithA11y, enrichWithVisualDiffs } from "./replay-builder.js";
 import { describeA11yOutcome } from "./a11y-diff.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
@@ -2027,10 +2027,14 @@ export const playwrightRunner = {
             logger.warn("runner", "Could not auto-categorize the failure", { err: String(err) });
           }
         }
-        // Sweep artifacts against retention after every run — including
-        // non-capture ones, so the rules apply even when this test isn't the
-        // one generating screenshots.
-        applyRetention();
+        // Retention, split by what a run can actually have made stale (R17).
+        // The run added artifacts to ONE test, so that test is pruned every
+        // time; the library-wide sweep is throttled, because it brackets itself
+        // with two full-tree `statSync` walks and used to run here after every
+        // single run — a hundred-test batch paid for it a hundred times, on the
+        // thread streaming this run's own output.
+        applyRetentionForTest(params.testId);
+        sweepRetentionIfDue();
         // Local desktop notification for a failure or a visual change, when the
         // user opted in. Never fires for a clean run, and never for a run
         // inside a batch — see shouldNotifyRun.

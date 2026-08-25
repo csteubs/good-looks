@@ -24,6 +24,7 @@ function test_(partial: Partial<TestFlake> = {}): TestFlake {
     flakeRate: 1,
     verdict: "flaky",
     failingDatasets: [],
+    failingBrowsers: [],
     steps: [],
     healedRuns: 0,
     ...partial,

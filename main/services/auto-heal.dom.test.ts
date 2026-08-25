@@ -205,6 +205,71 @@ describe("ranking", () => {
   });
 });
 
+describe("the score the rest of the app is allowed to read", () => {
+  // R47. The score is a SUM — locator match, fingerprint match, element
+  // identity, geometry — so it reaches ~2.45, and `normalizeStepStructures`
+  // drops anything outside 0-1 to zero. That rule is deliberate and stays: the
+  // number is computed in the page, and clamping a hostile 999 to 1 would sort
+  // it to the top of a list the model reads as ranked. The consequence was that
+  // only the STRONGEST candidates could exceed 1, so they were the ones the
+  // AI-debug prompt printed as `score 0.00` — a list that looked ranked
+  // worst-first. The source emits a real 0-1 score now.
+
+  /** The boundary's own rule, so this test asserts what the app will actually
+   *  keep rather than what the probe happens to return. */
+  const survivesTheBoundary = (n: number | undefined) =>
+    typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
+
+  it("keeps the strongest candidate inside 0-1", async () => {
+    // Everything scoring at once: the fingerprint names the exact locator that
+    // still resolves, the element's tag, attributes, own text and neighbouring
+    // label all match, geometry matches, and a past-run hint names it. Before
+    // the fix this is precisely the candidate that came back as zero.
+    document.body.innerHTML = `
+      <label>Email</label>
+      <input data-testid="email" name="email" value="" />`;
+    const cands = probe(
+      step({
+        type: "fill",
+        locator: { k: "testid", v: "email-old" },
+        fingerprint: {
+          tag: "input",
+          description: "input",
+          candidates: [{ k: "testid", v: "email" }],
+          attributes: { name: "email" },
+          text: "",
+          neighborText: "Email",
+          rect: { x: 0, y: 0, w: 0.05, h: 0.02 },
+          depth: 3,
+        } as Step["fingerprint"],
+      }),
+      ["email"],
+    );
+
+    expect(cands.length).toBeGreaterThan(0);
+    for (const c of cands) {
+      expect(survivesTheBoundary(c.score), `score ${c.score} would be zeroed`).toBe(true);
+    }
+    // …and the top one is not merely inside the range by being tiny: the point
+    // is that a strong candidate reads as strong.
+    expect(cands[0].score ?? 0).toBeGreaterThan(0.3);
+  });
+
+  it("scales without reordering", async () => {
+    // Dividing by a constant is order-preserving, and that is the whole reason
+    // it is safe: the sort already ran on the raw sums, so a normalisation that
+    // changed the ranking would trade a wrong number for a wrong answer.
+    document.body.innerHTML = `
+      <button data-testid="a">Cancel</button>
+      <button data-testid="b">Submit</button>`;
+    const cands = probe(step({ type: "click", locator: { k: "testid", v: "submit-button" } }));
+
+    expect(resolve(cands[0].locator)?.textContent?.trim()).toBe("Submit");
+    const scores = cands.map((c) => c.score ?? 0);
+    expect(scores).toEqual([...scores].sort((a, b) => b - a));
+  });
+});
+
 describe("step kinds", () => {
   it("proposes candidates for a fill step against an input", () => {
     document.body.innerHTML = `
