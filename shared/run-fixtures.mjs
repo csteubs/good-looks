@@ -23,6 +23,10 @@
 // silently — a missing file is an import error at run time, not a diff.
 
 import { captureFixtureSource } from "./capture-fixture-source.mjs";
+import {
+  DISMISS_FIXTURE_FILE,
+  dismissFixtureSource,
+} from "./dismiss-fixture-source.mjs";
 import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "./glaze-runtime-source.mjs";
 import { HEAL_FIXTURE_FILE, healFixtureSource } from "./heal-fixture-source.mjs";
 import { SETTLE_FIXTURE_FILE, settleFixtureSource } from "./settle-fixture-source.mjs";
@@ -70,6 +74,19 @@ export const CAPABILITY_FIXTURES = [
   { file: SETTLE_FIXTURE_FILE, source: settleFixtureSource },
   { file: SIGNATURE_FIXTURE_FILE, source: signatureFixtureSource },
   { file: USER_PAGE_FIXTURE_FILE, source: userPageFixtureSource },
+  // The FIFTH, and it was missing. `glaze-capture.mjs` imports this one exactly
+  // as unconditionally as the other four, so an unattended run that wrote the
+  // set without it wrote a capture fixture whose imports could not resolve —
+  // the spec did not load, and Playwright reported "no tests found" rather than
+  // a missing file. It worked on a machine where the app had run, because the
+  // app writes it; it failed on every fresh CI container. That is the R8 failure
+  // this table was created to end, arriving inside the table.
+  //
+  // It could not be here before R51: this module is imported by the MCP, and
+  // the dismissal fixture embeds the recorder's locator engine, which was
+  // compiled TypeScript until then. `check:ci-fixtures` now derives the list
+  // from the capture fixture's own imports rather than transcribing it.
+  { file: DISMISS_FIXTURE_FILE, source: dismissFixtureSource },
 ];
 
 /**
@@ -144,12 +161,13 @@ export const CI_FIXTURE_POLICY = [
   },
   {
     capability: "overlay dismissal",
-    onInCi: false,
+    onInCi: "when a rule is armed for the host",
     why:
-      "Its source embeds the recorder's locator engine, which lives in shared/locator-engine.mjs " +
-      "as of R51 — so this is no longer blocked, it is unbuilt. dismiss-fixture-source.ts is " +
-      "still main/-side TypeScript and has to be reachable from this process before a run can " +
-      "install the watcher. Same next change as Auto-Heal above.",
+      "ON as of R51 + this change. A rule is armed by HOST from the test's own starting URL, so a " +
+      "run against a host with no rules installs nothing and pays nothing — there is no setting " +
+      "to forget. The fixture itself is now written on EVERY capability run whether or not a rule " +
+      "fires, because the capture fixture imports it unconditionally: it is a dependency, not a " +
+      "capability, and leaving it out was breaking the load.",
   },
 ];
 

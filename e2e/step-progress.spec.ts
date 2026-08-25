@@ -41,7 +41,7 @@ import { captureFixtureSource } from "../shared/capture-fixture-source.mjs";
 import { glazeRuntimeSource, GLAZE_RUNTIME_FILE } from "../shared/glaze-runtime-source.mjs";
 import { healFixtureSource, HEAL_FIXTURE_FILE } from "../shared/heal-fixture-source.mjs";
 import { generateSpecDetailed, type FlowSource } from "../main/services/script-generator.js";
-import { dismissFixtureSource, DISMISS_FIXTURE_FILE } from "../main/services/dismiss-fixture-source.js";
+import { dismissFixtureSource, DISMISS_FIXTURE_FILE } from "../shared/dismiss-fixture-source.mjs";
 import { userPageFixtureSource, USER_PAGE_FIXTURE_FILE } from "../shared/user-page-fixture-source.mjs";
 import { settleFixtureSource, SETTLE_FIXTURE_FILE } from "../shared/settle-fixture-source.mjs";
 import {

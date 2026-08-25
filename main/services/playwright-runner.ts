@@ -48,11 +48,10 @@ import { ensureSessionsDir, freshSessionState, sessionStatePath } from "./sessio
 import { evaluateAiChecks } from "./ai-check.js";
 import { HEAL_FIXTURE_FILE, healFixtureSource } from "../../shared/heal-fixture-source.mjs";
 import {
-  DISMISS_COUNT_ENV,
   DISMISS_FIXTURE_FILE,
-  dismissEnvNames,
+  dismissEnv,
   dismissFixtureSource,
-} from "./dismiss-fixture-source.js";
+} from "../../shared/dismiss-fixture-source.mjs";
 import { USER_PAGE_FIXTURE_FILE, userPageEnv, userPageFixtureSource } from "../../shared/user-page-fixture-source.mjs";
 import { SETTLE_FIXTURE_FILE, settleFixtureSource } from "../../shared/settle-fixture-source.mjs";
 import { buildHealProbeScript } from "./auto-heal.js";
@@ -76,7 +75,6 @@ import type {
   HealApplyMode,
   HealCandidate,
   Locator,
-  OverlayRule,
   RunBrowser,
   Step,
   TestRecord,
@@ -443,22 +441,11 @@ function ensureUserPageFixture(scriptsDir: string): void {
   writeIfChanged(path.join(scriptsDir, USER_PAGE_FIXTURE_FILE), userPageFixtureSource);
 }
 
-/**
- * The env carrying this run's overlay rules — one pair of variables per rule.
- *
- * Same rule as `signatureEnv`: never a JSON blob for the whole set. The TARGET
- * is itself JSON because a locator is structured, but it is one rule's locator
- * per variable, which is what keeps a crash dump from carrying the lot.
- */
-function dismissEnv(rules: readonly OverlayRule[]): Record<string, string> {
-  const out: Record<string, string> = { [DISMISS_COUNT_ENV]: String(rules.length) };
-  rules.forEach((rule, index) => {
-    const names = dismissEnvNames(index);
-    out[names.label] = rule.label || rule.host;
-    out[names.target] = JSON.stringify(rule.target);
-  });
-  return out;
-}
+// `dismissEnv` lives in shared/dismiss-fixture-names.mjs (re-exported through
+// dismiss-fixture-source.mjs, this file's one import site for it). It moved
+// there when the MCP and CLI runner started writing this env too: three
+// processes now agree on how a rule reaches the fixture, and a transcribed
+// copy would be a rule that arms in one and not the other, silently.
 
 /**
  * The env carrying this run's signatures — one variable per value.

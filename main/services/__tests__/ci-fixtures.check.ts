@@ -18,6 +18,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { captureFixtureSource } from "../../../shared/capture-fixture-source.mjs";
 import {
   ALWAYS_WRITTEN,
   CAPABILITY_FIXTURES,
@@ -147,19 +148,29 @@ const appRunner = code("main/services/playwright-runner.ts");
   // `wantsA11y` — there is a digit in it — so it was silently proving four
   // gates while reading as five, and passed at exactly its threshold. A count
   // is a check you cannot tell has stopped covering something.
-  const GATES = ["wantsScreenshots", "wantsA11y", "wantsLogs", "wantsSettle", "wantsUserPage"];
-  for (const gate of GATES) {
-    assert(
-      new RegExp(`const ${gate} =\\s*!imported`).test(runner),
-      `${gate} is guarded by !imported`,
-    );
+  //
+  // Each row carries the SHAPE its guard takes, because they are not all the
+  // same shape and asserting one pattern would quietly stop covering the odd
+  // one out. `wantsDismiss` is the odd one: the rules are armed first and the
+  // gate is "did any arm", so the `!imported` decision is one line up.
+  const GATES: [string, RegExp][] = [
+    ["wantsScreenshots", /const wantsScreenshots =\s*!imported/],
+    ["wantsA11y", /const wantsA11y =\s*!imported/],
+    ["wantsLogs", /const wantsLogs =\s*!imported/],
+    ["wantsSettle", /const wantsSettle =\s*!imported/],
+    ["wantsUserPage", /const wantsUserPage =\s*!imported/],
+    ["wantsDismiss", /const armedRules = imported \? \[\] :[\s\S]{0,200}?const wantsDismiss =/],
+  ];
+  for (const [gate, shape] of GATES) {
+    assert(shape.test(runner), `${gate} is guarded by !imported`);
   }
   // And the list is the whole list: a gate added without a row here would be
   // unguarded and unnoticed, which is the failure the enumeration replaces.
   const declared = (runner.match(/const (wants[A-Za-z0-9]+) =/g) ?? []).map((m) =>
     m.slice("const ".length, -" =".length),
   );
-  const unlisted = declared.filter((d) => !GATES.includes(d));
+  const listed = GATES.map(([name]) => name);
+  const unlisted = declared.filter((d) => !listed.includes(d));
   assert(
     unlisted.length === 0,
     `every capability gate in the runner is listed here (${unlisted.join(", ") || "none"})`,
@@ -314,7 +325,7 @@ const appRunner = code("main/services/playwright-runner.ts");
 // them — which is the difference between a decision and an omission.
 {
   const off = CI_FIXTURE_POLICY.filter((p) => p.onInCi === false);
-  assert(off.length === 3, `exactly three capabilities are off in CI (${off.length})`);
+  assert(off.length === 2, `exactly two capabilities are off in CI (${off.length})`);
   for (const p of off) {
     assert(
       p.why.length > 40,
@@ -325,18 +336,14 @@ const appRunner = code("main/services/playwright-runner.ts");
     off.some((p) => p.capability === "signature headers" && /R7/.test(p.why)),
     "signature headers name R7 as what would turn them on",
   );
-  assert(
-    off.some((p) => p.capability === "overlay dismissal" && /locator engine/.test(p.why)),
-    "overlay dismissal names the locator-engine extraction as its blocker",
-  );
-  // The third joined them through R49, and both name the SAME piece of work —
-  // which is the useful part of writing the reason down: two capabilities
-  // waiting on one extraction is an argument for doing that extraction, and two
-  // unexplained `false`s are not. Asserted on the row id rather than on the
-  // phrase "extraction", so it keeps holding once that work has LANDED and the
-  // reason changes from "blocked on R51" to "R51 is in, this is unbuilt" — a
-  // check that goes red for being satisfied teaches people to edit the check.
-  const waited = off.filter(
+  // Overlay dismissal WAS the third and is ON now — R51 put the locator engine
+  // where this process can reach it, and the dismissal fixture followed. Both
+  // capabilities that waited on that extraction still name it, whichever side of
+  // the line they now sit on, which is the useful part of writing the reason
+  // down. Asserted on the row id rather than on the word "blocked", so it keeps
+  // holding once the work has LANDED — a check that goes red for being satisfied
+  // teaches people to edit the check.
+  const waited = CI_FIXTURE_POLICY.filter(
     (p) => p.capability === "Auto-Heal" || p.capability === "overlay dismissal",
   );
   assert(waited.length === 2, `both locator-engine capabilities are listed (${waited.length})`);
@@ -347,6 +354,66 @@ const appRunner = code("main/services/playwright-runner.ts");
   assert(
     off.some((p) => p.capability === "Auto-Heal" && /R49/.test(p.why)),
     "…and names the defect it was turned off by, so nobody re-enables it as an oversight",
+  );
+  const dismissal = CI_FIXTURE_POLICY.find((p) => p.capability === "overlay dismissal");
+  assert(
+    dismissal?.onInCi !== false,
+    "overlay dismissal is ON — R51 landed and the fixture is written from shared/",
+  );
+  // Anchored on the ASSIGNMENT, not on the symbol appearing somewhere in the
+  // file: `armedRulesFor` is also imported and also used on the batch-reporting
+  // path, so a bare `/armedRulesFor\(/` stays green while the run itself arms
+  // every rule in the library against every host. Caught by breaking exactly
+  // that and watching nothing happen.
+  assert(
+    /const armedRules = imported \? \[\] : armedRulesFor\(overlayRules, test\.url/.test(runner),
+    "…armed by HOST from the test's own URL, through the shared `armedRulesFor`",
+  );
+  assert(
+    /dismissEnv\(armedRules\)/.test(runner),
+    "…and the rules reach the fixture through the shared `dismissEnv`, count included",
+  );
+  // ONE resolver. That is the whole argument for R51: a rule taught in the
+  // trainer and a rule enforced in a run resolve through the same `matchesFor`,
+  // so this process must not have grown its own.
+  assert(
+    !/function matchesFor|matchesFor\s*=/.test(runner),
+    "…and this process has no resolver of its own — the fixture carries the shared engine",
+  );
+}
+
+// ── 6b. Every file the capture fixture IMPORTS is a file this writes ─────
+//
+// THE ASSERTION THAT WOULD HAVE CAUGHT IT. `glaze-capture.mjs` imports its
+// siblings unconditionally, so from the loader's point of view they are not
+// capabilities at all — they are dependencies, exactly as `glaze-runtime.mjs`
+// is a dependency of a spec that uses a helper.
+//
+// `glaze-dismiss.mjs` was one of those imports and was NOT in the written set,
+// because the set was transcribed by hand and the transcription named four
+// siblings where the source imports five. Every unattended run with any
+// capability on therefore wrote a capture fixture whose first imports could not
+// resolve: the spec did not load, and Playwright reported "no tests found"
+// rather than a missing file. On a machine where the app had run it worked,
+// because the app writes that file — which is the R8 failure verbatim, inside
+// the change that fixed R8.
+//
+// So the list is DERIVED from the fixture's own source now. A hand-written list
+// of what a file imports is a second copy of that file's import statements, and
+// it goes stale the first time someone adds one.
+{
+  const written = new Set([...ALWAYS_WRITTEN, ...CAPABILITY_FIXTURES].map((f) => f.file));
+  const imported = [
+    ...new Set([...captureFixtureSource.matchAll(/from\s+"\.\/([^"]+)"/g)].map((m) => m[1])),
+  ];
+  assert(
+    imported.length >= 5,
+    `the capture fixture's sibling imports were found (${imported.length})`,
+  );
+  const missing = imported.filter((f) => !written.has(f));
+  assert(
+    missing.length === 0,
+    `every file the capture fixture imports is written beside it (missing: ${missing.join(", ") || "none"})`,
   );
 }
 

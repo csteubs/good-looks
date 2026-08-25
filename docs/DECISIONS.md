@@ -10,6 +10,60 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-25 — The capture fixture imported a file no CI run wrote
+
+Found while wiring overlay dismissal onto the unattended path, which is a
+feature; this is a live breakage that was sitting under it.
+
+`glaze-capture.mjs` imports `./glaze-dismiss.mjs` **unconditionally**, along
+with its four other siblings. From the module loader's point of view that makes
+it a DEPENDENCY, not a capability — the same relationship `glaze-runtime.mjs`
+has to a spec that uses a helper. `CAPABILITY_FIXTURES` listed four of the five.
+
+So every MCP or CLI run with any capability enabled — screenshots, a11y, log
+recording, crawl, a user stylesheet — wrote a capture fixture whose very first
+imports could not resolve. The spec did not load and Playwright reported **"no
+tests found"** rather than a missing file. On a machine where the app had run it
+worked perfectly, because the app writes that file unconditionally; on a fresh CI
+container it failed every time. That is the R8 failure verbatim, shipped inside
+the change that fixed R8, in the same table.
+
+**Why the guard did not see it.** `check:ci-fixtures` asserted the capture
+fixture "imports the other four" against a hand-written list of three names. A
+transcription of another file's import statements is a second copy of them, and
+it goes stale the first time somebody adds one — which is precisely what
+happened. The list is DERIVED from `captureFixtureSource` now: every relative
+import it contains must be a file the runner writes. Revert-tested by removing
+the dismissal row again, and the failure names the file.
+
+**The fix needed R51 first.** `dismiss-fixture-source` embeds the recorder's
+locator engine, so it could not live anywhere the MCP could import it until that
+engine did. Moving it is therefore both the bug fix and the feature: standing
+overlay rules now run on an unattended run, armed by HOST from the test's own
+starting URL through the same `armedRulesFor` the app uses. There is no setting —
+a run against a host with no rules arms nothing and pays nothing, which is what
+made this safe to have on by default rather than behind a flag someone forgets.
+
+**One resolver, and that is the whole argument for R51.** A rule taught in the
+trainer and a rule enforced in a run resolve through the same `matchesFor`,
+shadow-piercing included. A second implementation of "does this rule match"
+agrees right up until the page it does not, and the symptom there is a run
+clicking something nobody chose. `check:ci-fixtures` asserts this process has
+grown no resolver of its own.
+
+**`dismissEnv` moved to `shared/` with it**, for the reason that module exists:
+three processes now touch that environment — the app's runner writes it, the
+MCP/CLI runner writes it, and the fixture reads it back inside a Playwright
+worker. A transcribed copy would be a rule that arms in one and not the other,
+silently, because a rule that never fires looks exactly like a page with no
+banner.
+
+**And the caveat that goes with it.** `describeRun` said "this server writes no
+fixtures, so the banner they dismiss is left on the page". It gates on what the
+run REPORTED arming now (`ran.overlayRules`), not on re-deciding it here — the
+same rule every other note in that function follows, and the one `ran.autoHeal`
+broke by claiming a capability the run did not have.
+
 ### 2026-08-25 — The locator engine moved to `shared/` (R51)
 
 Not tidying. Two features were blocked on exactly this, and neither could say

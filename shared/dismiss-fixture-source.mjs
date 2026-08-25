@@ -49,25 +49,46 @@
 // highlighting for the whole run.
 //
 // Plain JavaScript (no TypeScript) because Playwright loads it through its own
-// Babel transform.
+// Babel transform — and now plain .mjs on the outside too, for a second
+// reason: THE MCP AND CLI HAVE TO WRITE THIS FILE.
+//
+// The capture fixture imports `./glaze-dismiss.mjs` UNCONDITIONALLY, so this is
+// not a capability from the loader's point of view — it is a dependency, the
+// same way `glaze-runtime.mjs` is a dependency of a spec that uses a helper.
+// While it lived in main/services/ only the app could write it, and an
+// unattended run with any capability on wrote a capture fixture whose very
+// first imports could not resolve. On a machine where the app had run, the
+// file was already on disk and everything worked; on a fresh CI container the
+// spec did not load and Playwright reported "no tests found". That is the R8
+// failure, exactly, in the change that fixed R8.
+//
+// It could only move once the locator engine did (R51) — the resolver below
+// embeds it.
 
 import {
   DOM_HELPERS,
   MAX_UNIQUENESS_SCAN,
   UNCAPPED_SCAN,
   UNIQUENESS_HELPERS,
-} from "../../shared/locator-engine.mjs";
-import { overlayVisibleSource, watcherSource } from "../../shared/overlay-rules.mjs";
+} from "./locator-engine.mjs";
+import { overlayVisibleSource, watcherSource } from "./overlay-rules.mjs";
 // The pure half — see shared/dismiss-fixture-names.mjs for why it is split.
 // Re-exported so this module stays the one import site for its callers.
 import {
   DISMISS_COUNT_ENV,
   DISMISS_ENV_PREFIX,
   DISMISS_FIXTURE_FILE,
+  dismissEnv,
   dismissEnvNames,
-} from "../../shared/dismiss-fixture-names.mjs";
+} from "./dismiss-fixture-names.mjs";
 
-export { DISMISS_COUNT_ENV, DISMISS_ENV_PREFIX, DISMISS_FIXTURE_FILE, dismissEnvNames };
+export {
+  DISMISS_COUNT_ENV,
+  DISMISS_ENV_PREFIX,
+  DISMISS_FIXTURE_FILE,
+  dismissEnv,
+  dismissEnvNames,
+};
 
 /** The locator engine, with the click-path cap lifted. */
 const resolverSource = `

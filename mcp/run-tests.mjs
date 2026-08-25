@@ -56,6 +56,8 @@ import {
   CAPABILITY_FIXTURES,
   redirectToCaptureFixture,
 } from "../shared/run-fixtures.mjs";
+import { dismissEnv } from "../shared/dismiss-fixture-names.mjs";
+import { armedRulesFor } from "../shared/overlay-rules.mjs";
 import { userPageEnv } from "../shared/user-page-fixture-source.mjs";
 // The CI secret contract — where a secret comes from without the app, and
 // the refusal when it comes from nowhere.
@@ -307,6 +309,10 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     // if the app writes between them, and the pace a run went at would then
     // disagree with the proxy it went through.
     const settings = readSettings();
+    // Read once beside the settings, and for the same reason: two reads are two
+    // answers if the app writes between them, and a rule armed by one and not
+    // the other is a run that dismisses a banner it did not report arming.
+    const overlayRules = readOverlayRules();
 
     // The same three-layer rule the app resolves, through the same function:
     // no override (that is the CLI's `--speed`, not the MCP's), then the test's
@@ -406,6 +412,12 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
       if (wantsUserPage) {
         Object.assign(env, userPageEnv(settings));
       }
+      // ALWAYS, armed or not: `dismissEnv([])` sets the count to 0, and the
+      // capture fixture reads that count to decide whether to install anything.
+      // Assigning it only when armed would leave the variable absent, which the
+      // fixture reads the same way — but "absent" and "zero" being the same
+      // answer by luck is how the heal gate came to be half-set (R49).
+      Object.assign(env, dismissEnv(armedRules));
     }
     // ── What this run turns on (R8) ────────────────────────────────────
     //
@@ -450,8 +462,22 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     // container.
     const wantsUserPage =
       !imported && Boolean(settings.userStylesheet || settings.userInitScript);
+    // Standing overlay rules, armed by HOST from the test's own starting URL —
+    // the same rule the app applies, through the same `armedRulesFor`. There is
+    // no setting: a run against a host with no rules arms nothing and pays
+    // nothing, which is what makes this safe to have on by default.
+    //
+    // It could not be on before R51. The fixture's watcher embeds the recorder's
+    // locator engine, so a rule taught in the trainer and a rule enforced in a
+    // run resolve through ONE `matchesFor` — and until that engine reached
+    // shared/, this process could not hold it. A second resolver would have been
+    // the worse answer: two implementations of "does this rule match" agree
+    // right up until the page they disagree on, and the symptom is a run
+    // clicking something nobody chose.
+    const armedRules = imported ? [] : armedRulesFor(overlayRules, test.url ?? "");
+    const wantsDismiss = armedRules.length > 0;
     const anyCapability =
-      wantsScreenshots || wantsA11y || wantsLogs || wantsSettle || wantsUserPage;
+      wantsScreenshots || wantsA11y || wantsLogs || wantsSettle || wantsUserPage || wantsDismiss;
 
     // ALWAYS, capabilities or not: a generated spec importing a helper needs
     // glaze-runtime.mjs on disk to load at all.
@@ -617,6 +643,11 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
         // omitted so `describeRun` can say what this run did NOT get.
         autoHeal: false,
         pageSettling: wantsSettle,
+        // The rules this run actually armed, by label — not a boolean. A caveat
+        // that says "overlay rules did not run" when they did is the same lie as
+        // `ran.autoHeal` was, and the labels are what let `describeRun` say
+        // WHICH rules instead of whether.
+        overlayRules: armedRules.map((r) => r.label || r.host),
       },
       // REPORTED, not re-derived by the caller. run_test describes the run it
       // just did (`describeRun` prints the pace and the step delay, and gates
@@ -868,6 +899,9 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     // that wanted none of it is told nothing.
     const settings = readSettings();
     const signatures = readSignatures();
+    // One read for the whole batch, threaded into both the `ran` below and
+    // `describeRun`'s own `overlayRules`. Reading it twice is two answers.
+    const allOverlayRules = readOverlayRules();
     const fixturesSkipped = [
       ...new Set(
         [...byId.values()].flatMap(
@@ -894,11 +928,15 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
                     autoHeal: false,
                     pageSettling:
                       resolveRunSpeed(speed, t.speed, settings.defaultRunSpeed) === "crawl",
+                    // Armed per test by host, exactly as executeTest arms them.
+                    overlayRules: armedRulesFor(allOverlayRules, t.url ?? "").map(
+                      (r) => r.label || r.host,
+                    ),
                   },
               timeoutMs: 0,
               timeoutRaised: false,
               signatures,
-              overlayRules: readOverlayRules(),
+              overlayRules: allOverlayRules,
             }).skipped ?? [],
         ),
       ),

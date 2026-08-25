@@ -25,7 +25,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -79,6 +79,7 @@ describe("the locator engine is spelled once", () => {
   });
 
   it("is imported from shared/ by every consumer", () => {
+    const engineAbs = join(ROOT, ENGINE);
     const offenders: string[] = [];
     for (const file of sourceFiles()) {
       if (file === ENGINE) continue;
@@ -89,7 +90,14 @@ describe("the locator engine is spelled once", () => {
       for (const [, names, spec] of imports) {
         const list = names.split(",").map((n) => n.trim().split(/\s+as\s+/)[0]);
         if (!list.some((n) => OWNED.includes(n))) continue;
-        if (!/shared\/locator-engine\.mjs$/.test(spec)) offenders.push(`${file} → ${spec}`);
+        // RESOLVED against the importing file, not pattern-matched on the text.
+        // The first draft required the specifier to contain "shared/", which is
+        // true of every consumer outside that directory and false of every one
+        // inside it — so `shared/dismiss-fixture-source.mjs`, importing its
+        // neighbour as `./locator-engine.mjs`, was reported as a second engine.
+        // A specifier is a path, so compare it as one.
+        const resolved = resolve(dirname(join(ROOT, file)), spec);
+        if (resolved !== engineAbs) offenders.push(`${file} → ${spec}`);
       }
     }
     expect(offenders).toEqual([]);

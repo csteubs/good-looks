@@ -96,13 +96,18 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      step reporter, page-actions and step-marker. They are strings, so
                      they were always pure; what forced the move is that a CI runner has
                      no app, and a CLI that runs fixture-free reports failures the app
-                     would have healed. `dismiss-fixture-source.ts` stays under
-                     main/services/, but its blocker is gone: locator-engine.mjs
-                     (R51, 2026-08-25) is the ~700 lines of capture-script.ts it
-                     embeds, moved here so a process with no build step can hold
-                     them. Its four pure NAMES are still split out as
-                     shared/dismiss-fixture-names.mjs, which is all the capture
-                     fixture needed.
+                     would have healed. `dismiss-fixture-source.mjs` is HERE now
+                     (2026-08-25), after locator-engine.mjs made it possible — and
+                     it had to be: the capture fixture imports `./glaze-dismiss.mjs`
+                     UNCONDITIONALLY, so it is a DEPENDENCY, not a capability.
+                     While only the app could write it, every unattended run with
+                     any capability on wrote a capture fixture whose imports could
+                     not resolve — working on a machine where the app had run and
+                     failing on every fresh CI container, which is the R8 failure
+                     verbatim. `check:ci-fixtures` DERIVES the written set from
+                     the fixture's own imports now; the hand-written list is what
+                     missed it. dismiss-fixture-names.mjs keeps the pure names and
+                     gained `dismissEnv`, because three processes write it.
                      locator-engine.mjs is THE DOM WALK every locator question is
                      answered by — DOM_HELPERS (what an element IS), CONTEXT_HELPERS
                      (ctxFilter), UNIQUENESS_HELPERS (matchesFor) and the scan caps —

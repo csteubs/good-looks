@@ -166,6 +166,7 @@ row is only moved here with a file and a symbol behind it.
 | R49 | Run the heal fixture for MCP-driven runs | Stab | **guard done; R51 landed, feature is next** | M |
 | R50 | Export a run as a shareable PDF | UX | missing | M |
 | R51 | Move the recorder's locator engine into `shared/` | Stab | **done 2026-08-25** — R49 and CI overlay rules unblocked | L |
+| R52 | Write `glaze-dismiss.mjs` on an unattended run, and arm the rules | Stab | **done 2026-08-25** — was also a load failure, see DECISIONS | M |
 | N1 | A bounded site sweep (link crawler) | New | missing | L |
 | N2 | Report which pages the suite never touches | New | missing | M |
 | N3 | Mobile-web device emulation | New | missing | M |
