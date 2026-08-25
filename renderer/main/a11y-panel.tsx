@@ -93,7 +93,22 @@ export function A11yPanel({ test }: { test: TestRecord }) {
   // Which violation the compose dialog is open for. One at a time: each
   // violation becomes its own issue, so they are independently assignable and
   // closable, which is what a11y work actually looks like.
-  const [sending, setSending] = React.useState<{ stepId: string; ruleId: string } | null>(null);
+  /** The occurrence being filed, ANCHORED AT CLICK TIME — including the run.
+   *
+   *  It used to carry only the step and the rule, and the dialog read `runId`
+   *  from `latest`, which moves whenever a new a11y-checked run of this test
+   *  lands. That made the compose dialog's source change under an open form: it
+   *  keys its load effect on the defect's identity and blanks the form before
+   *  re-fetching, so a background run discarded a half-typed report — #121's
+   *  symptom surviving at this one call site. `a11y-view` already captures the
+   *  whole anchor this way (`ruleAnchor`); this is the same rule.
+   *
+   *  The run matters beyond the key, too: the draft's screenshots are read from
+   *  the run the source names, so the evidence attached to the report is the
+   *  one the user was looking at when they pressed send. */
+  const [sending, setSending] = React.useState<
+    { stepId: string; ruleId: string; runId: string } | null
+  >(null);
   // Shares the ["runs"] key with Stats, so opening this tab usually costs no
   // round trip at all.
   const runsQuery = useQuery({ queryKey: ["runs"], queryFn: api.runs.list });
@@ -122,6 +137,20 @@ export function A11yPanel({ test }: { test: TestRecord }) {
     queryKey: ["replay", test.id, latest?.id],
     queryFn: () => api.artifacts.getReplay(test.id, latest?.id as string),
     enabled: Boolean(latest),
+    // KEEP THE PREVIOUS RUN'S DATA WHILE THE NEW ONE LOADS, so a new run does
+    // not take the whole panel down.
+    //
+    // The key includes `latest.id`, so a finished run makes this query pending
+    // with no cached data — `isLoading` goes true, the early return below fires,
+    // and everything under it UNMOUNTS. Including the compose dialog, which
+    // takes a half-typed bug report with it. Fixing the dialog's own keying
+    // (above) is not enough on its own: an unmount destroys the form before the
+    // key is ever consulted.
+    //
+    // Showing the previous run's findings for the moment it takes to fetch the
+    // new ones is also simply better than a "Loading…" flash on a screen the
+    // user is already reading.
+    placeholderData: (prev) => prev,
   });
 
   const patch = (next: RunReplay | null) => {
@@ -309,7 +338,7 @@ export function A11yPanel({ test }: { test: TestRecord }) {
             busy={busy}
             onAccept={() => acceptStep.mutate(s.stepId)}
             onSend={
-              latest ? (stepId, ruleId) => setSending({ stepId, ruleId }) : undefined
+              latest ? (stepId, ruleId) => setSending({ stepId, ruleId, runId: latest.id }) : undefined
             }
             filed={filedByStep.get(s.stepId)}
           />
@@ -318,11 +347,13 @@ export function A11yPanel({ test }: { test: TestRecord }) {
 
       <IssueComposeDialog
         source={
-          sending && latest
+          sending
             ? {
                 kind: "a11y",
                 testId: test.id,
-                runId: latest.id,
+                // The run captured when they clicked — NOT `latest`, which
+                // moves under the open form. See `sending`.
+                runId: sending.runId,
                 stepId: sending.stepId,
                 ruleId: sending.ruleId,
               }
