@@ -214,6 +214,19 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      never changed; the set of callers did, which is why
                      check:cli-exit now does one REAL run and reads the record
                      back rather than reading source
+                     run-ingest.mjs is the GATE A FOREIGN RUN RECORD CROSSES
+                     (R12) — `good-looks ingest` carries a CI job's runs back,
+                     because a container's library dies with it. Built the
+                     obvious way it is a READ PRIMITIVE: `logFile` is an
+                     absolute path from the other machine, and the app's
+                     readLog reads it unbounded while searchLogs reads every
+                     live record's and returns excerpts — so a stored foreign
+                     path is any file on disk, through a search box. The gate
+                     returns NO logFile; cli/ingest.mjs derives it from a
+                     validated id, the same rule script-path.mjs applies. A
+                     required field missing refuses the record, an optional one
+                     refuses only itself. check:run-ingest also pins that the
+                     gate and RunRecord still agree in BOTH directions
                      a11y-rollup.mjs is that shape a third time, and it retired two
                      hand-copies rather than adding a third: violationKey/keysOf lived
                      in main/services/a11y-diff.ts AND renderer/lib/a11y-format.ts,
@@ -275,10 +288,14 @@ cli/                 what the CLI decides, kept out of bin/ so it can be tested.
                      an app run's secrets live in a store this process cannot open and
                      could not be redacted out. `check:emit-redaction` covers cli/ and
                      mcp/ as of R1, per plan §3.5.
-                     Its unit tests live in main/services/cli-exit.test.ts and
-                     cli-junit.test.ts, because vitest's node project takes main/**,
-                     mcp/** and renderer/lib/** and a test file here would match
-                     NEITHER project
+                     ingest.mjs is R12's disk half — locate the artifact
+                     (either level), plan, copy each log BY ID, stamp
+                     ingestedAt, write through saveRunRecords so the cap and
+                     pruned tally stay one implementation.
+                     Its unit tests live in main/services/cli-exit.test.ts,
+                     cli-junit.test.ts and cli-ingest.test.ts, because vitest's
+                     node project takes main/**, mcp/** and renderer/lib/** and
+                     a test file here would match NEITHER project
 mcp/                 standalone MCP server exposing the test library to external MCP clients.
                      `data-dir.mjs` finds the app's store; it reaches the SAME answer the
                      app does because BOTH PROCESSES WRITE, and the rules they share live
@@ -437,6 +454,7 @@ the parser's `frameLocator` reader? Add a row.**
 - `renderer/__tests__/setup.ts` stubs what jsdom lacks: `matchMedia`, `IntersectionObserver`, `ResizeObserver`, `scrollTo`/`scrollIntoView`. A missing one surfaces as a bare `ReferenceError` from inside the SDK bundle and reads like a component bug.
 - **Radix `TabsTrigger` activates on pointer-down/focus, not a bare `click`** — `fireEvent.click` leaves the tab unchanged and assertions silently run against the previous tab.
 - **`SidebarListItem` activates on `mouseDown`**, same idiom, same silent failure: `fireEvent.click` doesn't fire its `onClick`, and the assertion then reports "0 calls", which reads as a broken handler rather than the wrong event. Use `fireEvent.mouseDown`.
+- **`check:repo-hygiene` scans `git ls-files` — the TRACKED set — so running it on a new file before `git add` proves nothing.** It passes, because the file is not in the set yet, and then fails in CI on the commit that adds it. Cost a CI round trip on #284, where a comment quoting a `/Users/…` path as an example of what NOT to store tripped the hardcoded-home-directory rule. `git add -A` first, or run it after committing.
 - **A fresh worktree needs `npm run bootstrap` before anything else.** Without it there is no `node_modules`, and the first `vitest` run CREATES an empty one for its own cache (`node_modules/.vite`) — which then makes `bootstrap` report "already present — nothing to do" and leaves you permanently broken. `vitest.config.ts` then points every React alias into a tree with no React, and every component test fails at import reading like a missing dependency; `type-check` degrades separately, reporting `Property 'children' does not exist` on SDK components across files you never touched. Fix: `rm -rf node_modules && npm run bootstrap`.
 - **`npm run package` needs a REAL install in the worktree — a bootstrapped symlink is not enough, and this is true even when the dependencies are identical.** Everything that resolves modules the way Node does is happy with the link (lint, type-check, `test:all`, `build`, `dev`); electron-builder is the one thing that reads `node_modules` itself, and through a symlink it finds the direct dependencies and nothing below them. It prints `cannot find path for dependency` for ~80 transitive packages and **exits 0**. The bundle then carries `@playwright/test` without `playwright`/`playwright-core`, so the app launches perfectly and **every test run fails** — the runner spawns the Playwright CLI out of the bundled tree. Fix: `rm node_modules && npm install --include=dev` (that removes the link, not the tree it points at). `npm run package` now refuses up front and re-checks the finished bundle; see `scripts/verify-package.mjs` and `check:package-integrity`.
 - **Radix-backed `Tooltip` cannot be opened in jsdom.** Its trigger tracks pointers with APIs jsdom doesn't implement, so `pointerEnter`/`pointerMove`/`focus` all leave the content unmounted and the assertion reports as "unable to find the text" — which reads as wrong copy rather than an undrivable control. Same shape as the `Select` below: export the copy and assert it directly, and make sure the same string is reachable without hover (Stability puts it in the expanded row).

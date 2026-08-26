@@ -217,3 +217,35 @@ for a different commit, while an absent one is honestly unknown. The four fields
 are judged independently, so a branch name your fork's contributor chose cannot
 cost the run its revision. Outside CI, where nothing answers, there is no
 `provenance` at all rather than a guess.
+
+## Getting the results back
+
+The runner's library is deleted with the container, so every run it recorded is
+gone unless you take it with you. Upload it, then ingest it locally:
+
+```yaml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: good-looks-runs
+          path: test-library/recorder/run-history.json
+          # add test-library/recorder/logs/ to carry the raw logs too
+```
+
+```bash
+good-looks ingest ./good-looks-runs      # after unzipping the artifact
+```
+
+Runs are matched by id, so ingesting the same directory twice is safe and
+ingests nothing the second time. `--dry-run` reports without writing.
+
+Ingested runs count towards Stability, the flake verdict and step health, which
+is the point — those surfaces are useless if they only see the runs somebody
+started by hand. They are marked `ingestedAt`, so the cost and duration readouts
+can leave them out: those numbers only mean something relative to the hardware
+that produced them.
+
+Two things do not travel. Playwright **traces** are not carried, so an ingested
+run offers no Open Trace. And a run's **log** is only carried if you uploaded
+`recorder/logs/` as well; without it the run still lands, since its outcome and
+timing are what the flake verdict reads.

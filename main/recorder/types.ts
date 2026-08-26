@@ -2680,6 +2680,33 @@ export interface RunRecord {
    */
   provenance?: RunProvenance;
   /**
+   * This run happened somewhere else and was COPIED IN (`good-looks ingest`).
+   * Epoch ms of when it arrived, not of the run.
+   *
+   * `provenance` says which commit a run tested; this says the run was not
+   * performed by this machine. They are close enough to look redundant and are
+   * not, and the difference has a concrete failure attached.
+   *
+   * THE COST AND DURATION READOUTS ARE THE REASON. Stats answers "what does
+   * capture cost?" and "how long does this suite take?" from `captureOverheadMs`
+   * and `durationMs` across the history — numbers that only mean something
+   * relative to the hardware that produced them. A container's timings averaged
+   * silently into a laptop's give a confident answer to a question nobody asked.
+   * Pass rate and the flake verdict genuinely SHOULD count ingested runs, which
+   * is the whole point of carrying them; the timing aggregates should be able to
+   * tell them apart, and cannot without a field that says so.
+   *
+   * Inferring it from `provenance` was the alternative and is the same mistake
+   * `trigger` exists to avoid: a run recorded inside CI by that container's own
+   * CLI has provenance too. That library dies with the container, so in practice
+   * anything you see locally WITH provenance arrived by ingest — but "in
+   * practice" is an inference, and this file's other fields are here because
+   * inferences of exactly that shape were wrong.
+   *
+   * Absent on every run this machine performed, which is almost all of them.
+   */
+  ingestedAt?: number;
+  /**
    * Label of the step this run failed at, when it is known.
    *
    * PERSISTED SO IT OUTLIVES THE PROCESS THAT COMPUTED IT. The runner has
