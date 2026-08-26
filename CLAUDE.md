@@ -341,11 +341,20 @@ mcp/                 standalone MCP server exposing the test library to external
                       get_step_matches, capture_app, get_screenshot)
                      — see mcp/README.md
 docs/                ARCHITECTURE.md (per-file map) + DECISIONS.md (dated rationale) +
-                     MCP-GUIDE.md, which is ALSO THE APP'S IN-APP MANUAL — Settings →
-                     Documentation renders this file (renderer/lib/doc-blocks.ts parses a
-                     subset of markdown and THROWS on the rest; check:docs-blocks runs it
-                     in the gate). Edit it as prose, not as UI copy, but expect the gate
-                     to refuse an ordered list or a nested bullet
+                     MCP-GUIDE.md and CI-GUIDE.md, which are ALSO THE APP'S IN-APP MANUAL
+                     — Settings → Documentation renders BOTH (renderer/lib/doc-blocks.ts
+                     parses a subset of markdown and THROWS on the rest; check:docs-blocks
+                     runs it in the gate over every doc in APP_DOCS). Edit them as prose,
+                     not as UI copy, but expect the gate to refuse an ordered list or a
+                     nested bullet. TOPIC SLUGS ARE UNIQUE ACROSS THE TWO, not within
+                     one: a slug is the row id the settings search indexes a topic under,
+                     the key the topic list renders it with, and the segment
+                     /settings/documentation/$topic carries — none of the three is scoped
+                     by document, so two files both ending in "See also" collide in all
+                     three and the symptom is a Help item opening the wrong document.
+                     check:docs-blocks asserts it, and asserts REQUIRED_TOPIC_SLUGS over
+                     the UNION rather than per file — asking each doc for every linked
+                     slug fails the moment there are two
 .github/             PR template, hygiene workflow, and the script it runs.
                      action-selftest.yml drives action.yml the way a stranger
                      would (`uses: ./`) against a library built from nothing —
@@ -401,11 +410,11 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 - `npm run dev:web` — **the browser preview**: the whole renderer in an ordinary tab at `http://localhost:5199`, against fixtures, with no native shell. The fastest way to see a UI change, and the only one an agent can drive. Open one view directly with `?view=stats|visual|batch|heals|settings` or `?test=<id>` — the router uses memory history, so a URL PATH cannot select a view. **`?view=specimen`** mounts `renderer/dev/specimen.tsx` INSTEAD of the app: every redesign primitive in every state, which is the only place they can be seen rendered (jsdom has no layout engine and the dom project runs with `css: false`). **`?view=settings`** opens the Settings board and **`?view=settings&pane=cost`** one section — ordinary navigations since Settings became a route rather than a window, where this used to mount a second application root because `window:openSettings` did nothing in a tab. **`?view=recorder`** reports a live recording session, because `RootShell` swaps the outlet for `RecordingView` only while `state.recording` and nothing in a tab can make that true; **`?view=recorder-editing`** is the same screen for a session CONTINUING an existing test, which is where the insert cursor sits mid-list and is the only way to see the labelled cursor. **Runs finish here as of B5a**: the bridge pushes `runner:output`/`step`/`done` on a timer, and the outcome comes from the fixture's own history — so `?test=t-login` reliably shows the FAILED console path and `?test=t-checkout` a pass. `npm run build:preview` emits a static bundle to `build-preview/`. It does not replace running the real app: a preview has no backend, so it cannot catch a broken IPC handler, a window that fails to open, or native menu behaviour.
 - `npm test` (Vitest, one pass) / `npm run test:watch` / `npm run test:coverage`
 - `npm run test:checks` — the standalone `check:*` scripts; `npm run test:all` runs those **and** Vitest
-- `npm run check:repo-hygiene` — repo-level checks (no generated files committed, no absolute paths, no secrets, lockfile in sync). This is the only part of the gate CI can run.
+- `npm run check:repo-hygiene` — repo-level checks (no generated files committed, no absolute paths, no secrets, lockfile in sync). Its own cheap workflow, separate from `gate.yml`, which runs the rest (see CI below — it stopped being true that hygiene was all CI could run when the SDK left).
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 5803 Vitest tests across 317 files and 90 checks in the chain as of 2026-08-25 (92 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 6081 Vitest tests across 335 files and 93 checks in the chain as of 2026-08-26 (95 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
 
 **A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS — or a real navigation — gets checked: `click-navigation.spec.ts` (a click that changes route is recorded, including one a client-side router intercepts; the failure it was written against loses six clicks out of six and jsdom cannot host it, because nothing there has a navigation that destroys the document mid-read), `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `dialog-lifecycle.spec.ts` (whether the dialog that started a recording is still on top of the app afterwards — the existing recording spec invokes `recorder:start` over IPC, so it opens no dialog and could never see one left behind), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app), `verified-steps.spec.ts` (that an AI-proposed step is actually TRIED on the live page before it is inserted, that the first failure stops the rest, and that capture does not record the try a second time — a live session acting on a real page, which nothing in jsdom can host), `ts-service.spec.ts` (that the app forks the TypeScript service through a real `utilityProcess` and it answers — the child path, the node_modules resolution and `process.parentPort` exist nowhere else; `check:ts-service` boots the same built file under plain Node). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
 

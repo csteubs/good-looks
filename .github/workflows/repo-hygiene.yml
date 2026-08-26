@@ -1,9 +1,15 @@
 name: Repo hygiene
 
-# The full gate (lint, type-check, test:all, build) cannot run here: `@glaze/core`
-# resolves to the Glaze.app SDK install outside the repo, which does not exist on
-# a hosted runner. This workflow checks only what is verifiable without the SDK.
-# The real suite is a local pre-push gate — see the pull request template.
+# The cheap half of CI: repo-level facts checkable with git and node builtins,
+# with no `npm install` at all — so this answers in seconds while `gate.yml`
+# is still installing.
+#
+# It used to say the full gate COULD NOT run in CI, because `@glaze/core`
+# resolved to a Glaze.app SDK install outside the repo that no hosted runner
+# has. That stopped being true when the SDK left: every dependency now comes
+# from `npm install`, and `gate.yml` runs lint, type-check, test:all, build,
+# the e2e suite and a package on a stock runner. This workflow is kept for
+# what it is fast at, not for what the other one cannot do.
 
 on:
   push:

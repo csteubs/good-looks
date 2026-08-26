@@ -25,7 +25,7 @@ import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 import { renderPane } from "../__tests__/harness";
 import { DocumentationPane } from "./documentation-pane";
-import { MCP_GUIDE, docRowId } from "../../lib/docs";
+import { APP_DOCS, CI_GUIDE, MCP_GUIDE, docRowId } from "../../lib/docs";
 import { REQUIRED_TOPIC_SLUGS } from "../../lib/doc-blocks";
 
 const mcpServer = vi.fn(async () => ({
@@ -64,18 +64,55 @@ function iconOf(button: HTMLElement): string {
   return cls.replace(/^lucide-/, "");
 }
 
+/** A topic's heading, from any shipped document.
+ *
+ *  Across `APP_DOCS` rather than the MCP guide alone: the pane shows every
+ *  document it ships, and `REQUIRED_TOPIC_SLUGS` names topics in more than one
+ *  of them. Looking only in the first would throw on a slug that is present and
+ *  rendering perfectly well. */
 function titleOf(slug: string): string {
-  const topic = MCP_GUIDE.topics.filter((t) => t.slug === slug)[0];
-  if (!topic) throw new Error(`no topic ${slug} — the guide's headings changed`);
-  return topic.title;
+  for (const doc of APP_DOCS) {
+    const topic = doc.page.topics.filter((t) => t.slug === slug)[0];
+    if (topic) return topic.title;
+  }
+  throw new Error(`no topic ${slug} — a document's headings changed`);
 }
 
 describe("topics", () => {
-  it("offers every topic in the guide", () => {
+  it("offers every topic in every shipped document", () => {
+    // Every document, not just the first. The pane listed a flat set of topics
+    // under one document's heading while there was only one to list, and the
+    // failure a second introduces is invisible from inside one guide: the CI
+    // topics render, and read as sections of the MCP guide.
     renderPane(<DocumentationPane />);
-    for (const topic of MCP_GUIDE.topics) {
-      expect(screen.getByRole("button", { name: topic.title })).toBeTruthy();
+    for (const doc of APP_DOCS) {
+      for (const topic of doc.page.topics) {
+        expect(screen.getByRole("button", { name: topic.title })).toBeTruthy();
+      }
     }
+  });
+
+  it("groups the topic lists by document, under each document's own name", () => {
+    renderPane(<DocumentationPane />);
+    for (const doc of APP_DOCS) {
+      const nav = screen.getByRole("navigation", { name: `${doc.label} topics` });
+      // The document's own topics, and none of any other's.
+      for (const topic of doc.page.topics) {
+        expect(within(nav).getByRole("button", { name: topic.title })).toBeTruthy();
+      }
+      const foreign = APP_DOCS.filter((d) => d.id !== doc.id).flatMap((d) => d.page.topics);
+      for (const topic of foreign) {
+        expect(within(nav).queryByRole("button", { name: topic.title })).toBeNull();
+      }
+    }
+  });
+
+  it("titles a topic with the document it is actually in", () => {
+    // The eyebrow above the heading was `APP_DOCS[0].page.title` — correct with
+    // one document and silently wrong with two, labelling every CI topic as the
+    // MCP guide. Nothing else on screen names the document a topic belongs to.
+    const { container } = renderPane(<DocumentationPane topic="the-command-line" />);
+    expect(container.querySelector(".gl-doc-eyebrow")?.textContent).toBe(CI_GUIDE.title);
   });
 
   it("opens on the first topic when nothing asked for one", () => {

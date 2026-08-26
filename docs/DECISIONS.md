@@ -69,6 +69,80 @@ fields whether or not anything asked for a retry. Routines still has no policy;
 `stopRoutine`/`skipGroup` key on "a step failed", which a retried pass escapes,
 and that wants deciding before a field exists rather than after.
 
+### 2026-08-26 — A second in-app document, and the three things that were only correct because there was one
+
+The Documentation pane shipped one document, `docs/MCP-GUIDE.md`, and
+`renderer/lib/docs.ts` said as much in a comment: "One today; the pane is a
+list, not a special case, so a second costs a line here and nothing in the UI."
+Adding `docs/CI-GUIDE.md` cost three more things than that, and each was a
+correct-with-one, silently-wrong-with-two shape rather than a bug anyone had
+written.
+
+**Why a second document at all.** The CLI (R3), the Action (R14) and `ingest`
+(R12) all shipped with no user-facing home inside the app. A user who installed
+Good Looks! could not discover from the app that their recorded tests run on a
+build server — the whole outbound CI story lived in `docs/GITHUB-ACTION.md`, in
+a repository they may never have cloned. Folding it into the MCP guide was the
+alternative, and it was rejected because the guide would then be about two
+unrelated ways of not clicking Run, with a title naming one of them.
+
+**One: topic slugs became a shared namespace.** A slug is three things at once —
+the row id `docRowId` indexes a topic under for the settings search, the React
+key the topic list renders it with, and the segment
+`/settings/documentation/$topic` carries. None is scoped by document. Both files
+were written ending in a "See also" section, which is the natural way to end a
+document and which collides in all three places; the visible symptom is a Help
+menu item opening the wrong document. `check:docs-blocks` now asserts
+uniqueness across the shipped set, and that assertion was verified to fail by
+re-introducing the collision.
+
+**Two: `REQUIRED_TOPIC_SLUGS` was checked per document.** The loop asked *every*
+shipped doc for *every* linked slug, which is the same statement while there is
+one document and an immediate failure when there are two. It is a union check
+now. The Help-menu block had the same shape one level along — it parsed
+`docs/MCP-GUIDE.md` by name to decide whether a linked slug existed, so a menu
+item pointing into the new document would have read as broken.
+
+**Three: the pane titled every topic with `APP_DOCS[0].page.title`.** The
+eyebrow above each heading is the only thing on screen naming the document a
+topic belongs to, so with two documents every CI topic announced itself as the
+MCP guide. The topic list had the matching problem: it rendered one flat set of
+buttons under a single `PaneSection` headed by one document's label, so the CI
+topics read as sections of the MCP guide. Both are fixed — an entry carries its
+own document's title, and the list is grouped per document — and both are
+covered by tests verified to fail against the previous behaviour.
+
+**What the audit that prompted this found in the guide itself.** `MCP-GUIDE.md`
+still told users that a run started from MCP "is not identical to a run started
+in the app" and skipped screenshots, accessibility checks, console and network
+recording, run-time Auto-Heal and page-settling. R8 made that false, and R49/R51
+made the Auto-Heal half false a second time — the fixtures moved to `shared/`
+precisely so an unattended run gets them, each gated on the test's own setting.
+The guide had it exactly backwards, and its troubleshooting table sent anyone
+whose test failed from MCP but passed in the app to Auto-Heal, which is now the
+one thing it cannot be. The corrected text names what genuinely cannot cross —
+secret variables, the Shopify signature, a proxy password, all encrypted to the
+app — and points at the run's own `fixtures` field rather than at a list in a
+document that can go stale the same way.
+
+**And the audit found its own recurrence before the branch had landed.** R24
+merged while this was open and added a `retries` input to the Action. Neither
+`docs/GITHUB-ACTION.md` — the reference — nor `docs/CI-GUIDE.md` — the in-app
+manual added by this branch — gained a row for it, so the app shipped a
+description of an Action it no longer had. Nothing failed, because both tables
+are prose and prose that has stopped being true reads exactly like prose that
+has not. That is the same shape as the guide this branch is correcting, one
+release later, which is the argument for a guard rather than for another
+careful read.
+
+`check:github-action` now derives the input list from `action.yml` and requires
+a table ROW in both documents for each. Derived rather than listed, for the
+same reason its flag check already reads `cli/args.mjs`: a hand-written list is
+one that stops covering the input added next week. A row rather than a mention,
+because a sentence elsewhere in the file is not what a reader looking up an
+input finds. Verified by deleting both rows and watching it name `retries`
+twice.
+
 ### 2026-08-26 — The passing attempt destroyed the failing one (R24a)
 
 Retries are not on in this app. `--retries` is R24, unbuilt. So the obvious

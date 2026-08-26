@@ -34,13 +34,20 @@ import { api } from "../../lib/api";
 import { PaneSection } from "../pane-section";
 import { useMatchedIds } from "../setting-row";
 
-/** Every topic across every shipped document, flattened — the pane navigates
- *  topics, and which document one came from is a label, not a level. */
-const TOPICS: readonly { docLabel: string; topic: DocTopic }[] = APP_DOCS.flatMap((doc) =>
-  doc.page.topics.map((topic) => ({ docLabel: doc.label, topic })),
+/** Every topic across every shipped document, flattened.
+ *
+ *  Flat for SELECTION — a slug arrives from the router or from the search with
+ *  no idea which document it belongs to, and resolving it should not care. The
+ *  RENDER is grouped (see the sections below), because a single list headed by
+ *  one document's name while holding another's is how a reader concludes the CI
+ *  topics are part of the MCP guide.
+ *
+ *  Each entry carries its own document's title, so the eyebrow names the
+ *  document the topic is actually in. That was `APP_DOCS[0].page.title` while
+ *  there was only one, which is correct exactly until there are two. */
+const TOPICS: readonly { docLabel: string; docTitle: string; topic: DocTopic }[] = APP_DOCS.flatMap(
+  (doc) => doc.page.topics.map((topic) => ({ docLabel: doc.label, docTitle: doc.page.title, topic })),
 );
-
-const DOC_TITLE = APP_DOCS[0].page.title;
 
 function isOpenableLink(href: string | undefined): href is string {
   return href !== undefined && /^https:\/\/([a-z0-9-]+\.)*github\.com(\/|$)/i.test(href);
@@ -302,30 +309,40 @@ export function DocumentationPane({ topic, onSelectTopic }: DocumentationPanePro
 
   return (
     <div className="gl-doc">
-      <PaneSection title={current.docLabel}>
-        {/* Not `role="tab"`. These pick which section of a document is shown,
-            which is what a rail of links does — and tabs come with a keyboard
-            contract (arrow keys move selection) that plain buttons do not
-            honour. `aria-current` is the same announcement `RailRow` makes. */}
-        <nav className="gl-doc-toc" aria-label="Topics">
-          {visible.map(({ topic: t }) => (
-            <button
-              key={t.slug}
-              type="button"
-              id={docRowId(t.slug)}
-              aria-current={t.slug === current.topic.slug ? "true" : undefined}
-              data-current={t.slug === current.topic.slug ? "" : undefined}
-              className="gl-doc-tab"
-              onClick={() => (onSelectTopic ? onSelectTopic(t.slug) : setLocal(t.slug))}
-            >
-              {t.title}
-            </button>
-          ))}
-        </nav>
-      </PaneSection>
+      {/* One section per document, in `APP_DOCS` order, and a document whose
+          topics a search filtered away entirely drops out rather than leaving a
+          heading over nothing — the same rule the pane list follows. */}
+      {APP_DOCS.map((doc) => {
+        const rows = visible.filter(({ docLabel }) => docLabel === doc.label);
+        if (rows.length === 0) return null;
+        return (
+          <PaneSection key={doc.id} title={doc.label}>
+            {/* Not `role="tab"`. These pick which section of a document is
+                shown, which is what a rail of links does — and tabs come with a
+                keyboard contract (arrow keys move selection) that plain buttons
+                do not honour. `aria-current` is the same announcement `RailRow`
+                makes. */}
+            <nav className="gl-doc-toc" aria-label={`${doc.label} topics`}>
+              {rows.map(({ topic: t }) => (
+                <button
+                  key={t.slug}
+                  type="button"
+                  id={docRowId(t.slug)}
+                  aria-current={t.slug === current.topic.slug ? "true" : undefined}
+                  data-current={t.slug === current.topic.slug ? "" : undefined}
+                  className="gl-doc-tab"
+                  onClick={() => (onSelectTopic ? onSelectTopic(t.slug) : setLocal(t.slug))}
+                >
+                  {t.title}
+                </button>
+              ))}
+            </nav>
+          </PaneSection>
+        );
+      })}
 
       <article className="gl-doc-body">
-        <p className="gl-doc-eyebrow">{DOC_TITLE}</p>
+        <p className="gl-doc-eyebrow">{current.docTitle}</p>
         <h2 className="gl-doc-title">{current.topic.title}</h2>
         {current.topic.blocks.map((block, i) => (
           <Block key={i} block={block} />

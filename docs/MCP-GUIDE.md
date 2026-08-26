@@ -1,16 +1,15 @@
 # Using Good Looks! from an AI assistant (MCP)
 
-A user's guide to the Good Looks MCP server: what it is, how to switch it on,
-what you can ask for, and — the question this guide exists to answer — where
-Linear, GitHub and Slack actually fit, because none of them are part of it.
+A guide to the Good Looks MCP server: what it is, how to switch it on, what you
+can ask for, and — the question this guide exists to answer — where Linear,
+GitHub and Slack fit, because none of them are part of it.
 
-`mcp/README.md` is the exhaustive per-tool reference. This is the shorter,
-task-shaped version.
+`mcp/README.md` is the full per-tool reference. This is the shorter version,
+organised by what you are trying to do.
 
-**This file is also the app's in-app manual.** Settings → Documentation renders
-it, and the Help menu opens it at a section — so it is written for someone
-reading it on screen, and it is held to a markdown subset the pane can draw
-(`check:docs-blocks` fails the build on anything else).
+**This file is also part of the app's manual.** Settings → Documentation renders
+it, and the Help menu opens it at a section, so it is written to be read on
+screen.
 
 ---
 
@@ -24,22 +23,26 @@ registered, you stop clicking and start asking:
 
 > "That checkout run failed — was it the site or our test?"
 
-Three things follow from how it is built, and they shape everything below:
+Three things follow from how it is built.
 
 - **It is local.** It runs on your Mac, reads the same files the app reads
   (`tests.json`, `run-history.json`, the generated specs and run artifacts), and
   talks to nothing on the internet.
 - **It works whether or not the app is open.** The app is not a server; the MCP
-  reads the same folder. Two exceptions — screenshots of the app's own windows,
-  and Routine *schedules* — need the app running.
+  reads the same folder. Two things do need the app running: screenshots of the
+  app's own windows, and Routine *schedules*.
 - **It is read-mostly.** It can list, read, diagnose and *run* tests. It cannot
-  edit a test, accept a visual baseline, change a setting, or delete anything.
+  edit a test, accept a visual baseline, change a setting or delete anything.
   Those stay in the app on purpose, so two processes can never disagree about
   what they mean.
 
 **There is no MCP screen in the app.** Nothing in Settings switches it on, and
 the only setting that changes its behaviour at all is *Diagnostics → Debug
 screenshots* (see §6). You set it up in your assistant's config, once.
+
+If what you actually want is tests running on a build server rather than through
+an assistant, that is the command line instead — see the CI topics beside this
+one.
 
 ---
 
@@ -49,8 +52,8 @@ screenshots* (see §6). You set it up in your assistant's config, once.
 
 The app carries the MCP server inside it, so there is nothing to clone or build.
 Settings → Documentation shows the exact path on **your** machine, with a Copy
-button for the command below — that is worth using, because it answers from disk
-rather than from this page.
+button for the command below. Use it — it answers from disk rather than from
+this page.
 
 For an app installed in `/Applications`, the two paths are:
 
@@ -60,8 +63,8 @@ For an app installed in `/Applications`, the two paths are:
 ```
 
 The first is the app's own binary, and it runs the server for you. That is why
-the commands below set `ELECTRON_RUN_AS_NODE=1` and do not mention `node`: you
-do not need Node installed.
+the commands below set `ELECTRON_RUN_AS_NODE=1` and never mention `node`: you do
+not need Node installed.
 
 Quote these paths with **single** quotes. The app's name ends in an exclamation
 mark, and inside double quotes a shell reads that as history expansion and
@@ -82,7 +85,8 @@ claude mcp list
 
 ### Claude Desktop and other MCP clients
 
-Add to the client's MCP config (for Claude Desktop, `claude_desktop_config.json`):
+Add this to the client's MCP config. For Claude Desktop that is
+`claude_desktop_config.json`:
 
 ```json
 {
@@ -98,7 +102,7 @@ Add to the client's MCP config (for Claude Desktop, `claude_desktop_config.json`
 
 ### Codex CLI
 
-Add to `~/.codex/config.toml`:
+Add this to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.good-looks]
@@ -123,7 +127,7 @@ Nothing else is needed — no port, no login, no token. If your client lists
 ## 3. What you can ask for
 
 You do not call tools by name; you describe what you want and the assistant
-picks. Grouped by the job you are actually doing:
+picks. Grouped by the job you are actually doing.
 
 ### Looking at the library
 
@@ -141,12 +145,13 @@ picks. Grouped by the job you are actually doing:
 | --- | --- |
 | "Run the signup test on WebKit." | `run_test` |
 | "Run everything tagged smoke, four at a time." | `run_batch` |
+| "Run every test in my Checkout folder." | `run_group` |
 | "Sweep the checkout test over every dataset row and tell me which rows fail." | `run_batch` with datasets |
 | "Run the Nightly regression routine." | `run_routine` |
 
 Runs started here are **always headless** — nothing appears on screen — and they
 are written to the app's own history, so they show up in Stats, and batches show
-up in the Batch view, exactly as if you had started them from the UI.
+up in the Batch view, exactly as if you had started them from the app.
 
 ### Working out why something failed
 
@@ -159,10 +164,10 @@ up in the Batch view, exactly as if you had started them from the UI.
 | "Compare the last two runs of the checkout test." | `compare_runs` |
 
 `triage_run` is the one worth knowing by name. It reads the evidence already on
-disk and attributes a failure to the **site** or to the **test/runner**, and it
-reports what it *couldn't* see alongside what it could. Ask for the evidence, not
-just the verdict. It also suggests the failure-reason label the evidence argues
-for, and `list_runs` shows the label each failed run already carries — assigning
+disk and says whether a failure was the **site** or the **test**, and it reports
+what it *could not* see alongside what it could. Ask for the evidence, not just
+the verdict. It also suggests the failure-reason label the evidence argues for,
+and `list_runs` shows the label each failed run already carries — but assigning
 or changing one is done in the app's run panel, not from here.
 
 ### Health of the suite over time
@@ -189,80 +194,92 @@ These picture **Good Looks!'s own windows**, not the sites under test. See §6.
 
 ---
 
-## 4. What it deliberately will not do
+## 4. What it can and cannot do
 
 Worth reading once, because each of these is invisible until it bites.
 
-**A run started from MCP is not identical to a run started in the app.** The app
-injects Playwright fixtures that this server does not, so an MCP run skips:
-screenshot capture (so it never appears in the Visual tab and never seeds a
-baseline), accessibility checks, console/network recording, **run-time
-Auto-Heal**, and crawl page-settling. That fourth one is the one that surprises
-people: *a step whose locator has gone stale fails here but would pass in the
-app.* Every `run_test` response carries a `fixtures` field naming exactly what
-was skipped — the assistant should read it before drawing a conclusion from a
-failure.
+### A run from here does the same work as a run in the app
 
-**A run started from here is marked as such in the app.** Its record carries
-`trigger: "mcp"`, and Stats draws a small marker on the row. This is deliberate
-and it is not about blame: an MCP run skips the fixtures listed above, so
-knowing which runs came from an assistant is what stops a fixture-free failure
-being read as a regression in the site. Runs recorded before this existed carry
-no marker — absent means unknown, never "somebody ran it by hand".
+Screenshot capture, accessibility checks, console and network recording,
+run-time Auto-Heal, crawl page-settling and standing overlay rules all work in
+an MCP run. Each one follows the setting the test already carries, exactly as
+the app reads it. You do not get a lesser run for asking an assistant to start
+it.
 
-**Tests with secret variables can't run from here.** Secret values are encrypted
-through the OS keychain and only the app can decrypt them. `run_test` refuses
-such a test and says so; `run_batch` and `run_routine` skip it with a note rather
-than failing the whole suite. Everything else about those tests — steps, script,
-past runs, logs — stays readable. Run them from the app.
+Every run reports what it did and did not do in a `fixtures` field. Read that
+before drawing a conclusion from a failure — it is where the exceptions below
+are named for the specific run in front of you.
 
-**A test against a store with a Shopify crawler signature runs unsigned from
-here.** The signature's three header values are encrypted to the app in the same
-way secret variables are, so this server cannot present them. It can see which
-domains have one registered, so a run against one of those says so in its
-`fixtures` field — and that note matters more than it looks. An unsigned run
-against a store with crawler protection does not fail somewhere obvious; the
-store throttles or blocks it and the test fails further down as a timeout or a
-missing element, which reads as flakiness. A failure here can be a pass from the
-app. Run it from the app.
+**An imported spec is the exception.** A test imported from someone else's
+Playwright project gets none of this, because instrumenting it would mean
+rewriting their code rather than ours. The app applies the same rule.
 
-**Console and network logs are withheld library-wide if *any* test declares a
-secret.** The app redacts secrets when it reads those files; this server can't,
-and any run's log can contain any test's secret.
+### A run from here is marked as such
 
-**A proxy configured in Settings → Proxy applies to runs started from here too
-— minus its password.** The server reads the same settings and hands a run the
-same proxy the app would, so both take the same network path. The password is
-encrypted to the app in the same way secret values are, so a proxy that
-requires the login refuses the run at the tunnel — deliberately, rather than
-the run silently going direct and passing on a path the settings forbid. The
-run's `fixtures` field says so. Run it from the app.
+Its record says an MCP client started it, and Stats draws a small marker on the
+row. Runs also record when they were started by the app, by the Routine
+scheduler, or by the command line, so "who ran this" is always answerable.
 
-**Nothing here edits anything.** No tool changes a test, accepts a baseline,
-edits a Routine (not even its schedule), changes a setting, or prunes anything.
+Runs recorded before this existed carry no marker. Absent means unknown, never
+"somebody ran it by hand".
 
-**A Routine's schedule only fires while the app is open.** The MCP can run a
-routine on demand, but it cannot schedule one, and running it here does not
-satisfy that day's schedule.
+### Three values cannot leave the app
 
-**A Routine can pause mid-run, so `run_routine` can take much longer than the
-tests in it.** A `wait` step is a barrier: everything before it finishes, the
-run holds for up to an hour, then the rest starts. `list_routines` does not
-report the pauses, so a call that seems to hang may simply be sitting in one.
+Each is encrypted through the OS keychain, and only the app can decrypt them.
 
-**Reports need a captured run.** Visual, a11y, console and network reports read
-artifacts that only a captured run produces, and the app prunes old run
-directories per your retention setting. "No artifacts" is an ordinary answer, and
-the tools distinguish it from "nothing changed".
+- **Secret variables.** `run_test` refuses a test that declares one and says so.
+  `run_batch` and `run_routine` skip it with a note rather than failing the whole
+  suite. Everything else about those tests — steps, script, past runs, logs —
+  stays readable. Run them from the app.
+- **A Shopify crawler signature.** The server can see which domains have one
+  registered, so a run against one of those says it went unsigned. That note
+  matters more than it looks: an unsigned run against a store with crawler
+  protection does not fail somewhere obvious, it gets throttled or blocked and
+  fails further down as a timeout or a missing element. That reads like
+  flakiness. A failure here can be a pass from the app.
+- **A proxy password.** A proxy set in Settings → Proxy does apply to runs
+  started here, so both take the same network path — but without its password, a
+  proxy that requires a login refuses the run at the tunnel. That is deliberate:
+  going direct instead could succeed, and a run that quietly took a network path
+  your settings forbid is worse than one that stops.
+
+### Console and network logs are withheld if any test declares a secret
+
+The rule is library-wide, not per test. The app redacts secrets when it reads
+those files; this server cannot, and any run's log can contain any test's
+secret.
+
+### Nothing here edits anything
+
+No tool changes a test, accepts a baseline, edits a Routine (not even its
+schedule), changes a setting or prunes anything.
+
+### Routines have two limits worth knowing
+
+**A schedule only fires while the app is open.** The MCP can run a routine on
+demand, but it cannot schedule one, and running it here does not satisfy that
+day's schedule.
+
+**A routine can pause mid-run, so `run_routine` can take much longer than the
+tests in it.** A `wait` step is a barrier: everything before it finishes, the run
+holds for up to an hour, then the rest starts. `list_routines` does not report
+the pauses, so a call that seems to hang may simply be sitting in one.
+
+### Reports need a captured run
+
+Visual, a11y, console and network reports read artifacts that only a captured
+run produces, and the app prunes old run directories according to your retention
+setting. "No artifacts" is an ordinary answer, and the tools tell it apart from
+"nothing changed".
 
 ---
 
 ## 5. Linear, GitHub and Slack
 
 **The MCP server does not connect to any of them.** There is no tool that files
-an issue, opens a pull request, or posts a message, and the server contacts no
-network host at all. If you have been looking for the MCP's Linear settings, that
-is why you couldn't find them.
+an issue, opens a pull request or posts a message, and the server contacts no
+network host at all. If you have been looking for the MCP's Linear settings,
+that is why you could not find them.
 
 Good Looks! *does* talk to those three services — from the app, through its own
 integrations, configured in **Settings → Integrations** (⌘, then *Integrations*).
@@ -271,33 +288,33 @@ Here is each one, and how it relates to the MCP.
 ### Linear or GitHub — filing a failure as an issue
 
 **Where:** Settings → Integrations. The **Issue tracker** row at the top of the
-pane is where you choose between *Linear* and *GitHub*; everything below it then
+pane is where you choose between *Linear* and *GitHub*. Everything below it then
 speaks that tracker's language — Linear has teams and projects, GitHub has
 repositories and milestones.
 
 Paste the key for whichever you picked: a Linear API key (`lin_api_…`) or a
 GitHub token with Issues write access (`ghp_…` or `github_pat_…`). The pane
 reports "saved" and "works" as two separate claims, so a revoked key stops
-reading as Connected. Optionally set a default destination, which prefills the
+reading as connected. You can also set a default destination, which prefills the
 compose dialog.
 
 Each tracker keeps its own key, its own default destination and its own record
-of what has already been filed, so switching is reversible and switching back
+of what has already been filed. Switching is reversible, and switching back
 finds everything where you left it.
 
-**The GitHub token here is not the one in the branch switcher row further down**,
-even if it is the same string. They are separate on purpose: disconnecting the
-issue tracker clears its key, and sharing one would silently stop pull requests
-listing in the branch switcher.
+**The GitHub token here is not the one in the branch switcher row further
+down**, even if it is the same string. They are separate on purpose:
+disconnecting the issue tracker clears its key, and sharing one would silently
+stop pull requests listing in the branch switcher.
 
-**How you use it:** on a failed run, click the **Send to issue tracker** button
-(the paper-plane icon in the run output header). A compose dialog opens with a
-title and body already assembled from the failure — the failing step, the error
+**How you use it:** on a failed run, click the **Send to issue tracker** button —
+the paper-plane icon in the run output header. A compose dialog opens with a
+title and body already assembled from the failure: the failing step, the error
 line, and screenshots or diffs as attachments you can drop before sending. The
 same button appears on visual diffs and on individual accessibility violations
 in a test's Accessibility tab, so each violation can become its own assignable
-issue — and the Accessibility view's Triage board can send one issue per *rule*
-that lists every place it fires across the suite.
+issue. The Accessibility view's Triage board can also send one issue per *rule*,
+listing every place it fires across the suite.
 
 If that same defect already has an issue, the dialog offers to **comment the
 recurrence** on it instead of filing a duplicate.
@@ -331,7 +348,7 @@ counts, duration, browser. Run logs are never included, because they routinely
 contain page content and values typed during recording. Use the *Send a test
 alert* button to see exactly what lands in your channel before trusting it.
 
-The URL itself is stored as a secret, encrypted and never shown back; the pane
+The URL itself is stored as a secret, encrypted and never shown back. The pane
 tells you the host it posts to, not the token.
 
 **With MCP:** the alert is fired by the **app**, on the app's own runs. Runs you
@@ -346,8 +363,8 @@ check out and build another branch of this app. That is its entire job. A token
 buys you private repos and the authenticated rate limit; without one, public
 repos still work at GitHub's unauthenticated limit.
 
-It does **not** post test results to a PR, open issues, or run anything in CI.
-Nothing about your test library is sent to GitHub.
+It does **not** post test results to a pull request, open issues, or run anything
+in CI. Nothing about your test library is sent to GitHub.
 
 ### Chaining Good Looks with your other MCP connectors
 
@@ -365,18 +382,19 @@ own connectors — and the interesting work happens when it combines them:
 
 The division of labour is worth keeping in your head: **Good Looks supplies the
 facts; the other connector does the writing.** The write side runs under that
-connector's own credentials and permissions, not this app's — an issue filed that
+connector's own credentials and permissions, not this app's. An issue filed that
 way is filed by your assistant, and it will not appear in Good Looks' own
-"already has an issue" list the way one filed from the compose dialog does. So
-for defects you want the app to track, prefer the in-app **Send to issue tracker**
-button; for ad-hoc reporting and cross-tool summaries, chaining is the better
-tool.
+"already has an issue" list the way one filed from the compose dialog does.
+
+So for defects you want the app to track, prefer the in-app **Send to issue
+tracker** button. For ad-hoc reporting and cross-tool summaries, chaining is the
+better tool.
 
 ---
 
 ## 6. Screenshots of the app
 
-Two tools, for the case where you are asking an assistant about the app's own UI.
+Two tools, for when you are asking an assistant about the app's own UI.
 
 - **`get_screenshot`** returns the most recent debug screenshot, including ones
   you took yourself with the in-app shortcut (**⌘⌥⇧S** by default; Settings →
@@ -384,13 +402,13 @@ Two tools, for the case where you are asking an assistant about the app's own UI
   Press the shortcut, then say "grab that screenshot". The reply says how old the
   capture is — a stale screenshot presented as current is how you end up
   debugging a UI state that stopped existing ten minutes ago.
-- **`capture_app`** lets the assistant ask for a *fresh* shot of every open window
-  without you pressing anything. This needs the app running with **Settings →
-  Diagnostics → Debug screenshots** turned on. It is off by default because it
-  keeps a small directory watcher running, and a debugging aid has no business
-  running for people who aren't debugging.
+- **`capture_app`** lets the assistant ask for a *fresh* shot of every open
+  window without you pressing anything. This needs the app running with
+  **Settings → Diagnostics → Debug screenshots** turned on. It is off by default
+  because it keeps a small directory watcher running, and a debugging aid has no
+  business running for people who are not debugging.
 
-Captures are downscaled and pruned to the newest ten.
+Captures are downscaled, and only the newest ten are kept.
 
 ---
 
@@ -398,20 +416,20 @@ Captures are downscaled and pruned to the newest ten.
 
 | Symptom | What it means |
 | --- | --- |
-| The client lists no `good-looks` tools | Registration didn't take. Re-run the setup command and check the path to `server.mjs` exists. |
-| "Requires the chosen browser to be installed" | Open that test in the app once and run it there on that browser — the first run installs it — then retry from MCP. |
-| A test "was skipped: declares a secret variable" | Expected. Run it from the app; see §4. |
-| Console/network logs come back withheld | Some test in your library declares a secret, so the rule applies library-wide. See §4. |
-| A report says "no artifacts" | That run wasn't captured, or retention has pruned its directory. Re-run with capture on. |
-| `triage_run` or step-health tools say the metrics database is missing | The app builds it. Open Good Looks! once. |
-| A test fails from MCP but passes in the app | Most likely run-time Auto-Heal, which MCP runs don't load. Check the `fixtures` field. |
-| `capture_app` fails | The app isn't running, or *Debug screenshots* is off. Use the shortcut plus `get_screenshot` instead. |
+| The client lists no `good-looks` tools | Registration did not take. Re-run the setup command and check the path to `server.mjs` exists |
+| "Requires the chosen browser to be installed" | Open that test in the app once and run it there on that browser — the first run installs it — then retry from MCP |
+| A test "was skipped: declares a secret variable" | Expected. Run it from the app. See §4 |
+| Console/network logs come back withheld | Some test in your library declares a secret, so the rule applies library-wide. See §4 |
+| A report says "no artifacts" | That run was not captured, or retention has pruned its directory. Re-run with capture on |
+| `triage_run` or the step-health tools say the metrics database is missing | The app builds it. Open Good Looks! once |
+| A test fails from MCP but passes in the app | Read the run's `fixtures` field. The usual causes are a missing crawler signature or an unauthenticated proxy, both of which fail further down as a timeout |
+| `capture_app` fails | The app is not running, or *Debug screenshots* is off. Use the shortcut plus `get_screenshot` instead |
 
 ---
 
 ## See also
 
-- [`mcp/README.md`](../mcp/README.md) — full per-tool reference: every argument,
-  every field, and the reasoning behind each tool's shape.
+- [`mcp/README.md`](../mcp/README.md) — the full per-tool reference: every
+  argument, every field, and the reasoning behind each tool's shape.
 - [`docs/ROUTINES.md`](ROUTINES.md) — what a Routine is, which `list_routines`
   and `run_routine` operate on.
