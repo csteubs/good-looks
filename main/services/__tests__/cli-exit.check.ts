@@ -372,6 +372,52 @@ try {
     }
   }
 
+  // ── A run with a browser present REACHES the runner ────────────────────
+  //
+  // THE GAP THIS FILE'S OWN HEADER NAMED, and the bug that lived in it. Every
+  // other `run` case here has NO browser, so `runSelection` refuses before
+  // `executeTest` is ever entered — which is why nothing noticed when the
+  // fixture gates were declared BELOW the block that reads them. `const` is in
+  // its temporal dead zone until the declaration executes, so from R8 until
+  // 2026-08-26 every unattended run threw
+  //
+  //   ReferenceError: Cannot access 'anyCapability' before initialization
+  //
+  // before doing anything at all — the MCP's `run_test` included. 5800 unit
+  // tests and 89 checks were green throughout, because none of them executes
+  // that function.
+  //
+  // The browser directories are PLANTED, not downloaded, so this needs no
+  // network: it gets past the gate, spawns Playwright, and fails to launch an
+  // engine that is not really there. What is asserted is the SHAPE of that
+  // failure — a browser problem, never a JavaScript one.
+  {
+    const revisions = expectedRevisions("chromium");
+    if (revisions.length === 0) {
+      assert(false, "could not read the bundled Playwright's chromium revision to plant it");
+    } else {
+      const planted = makeStore(ONE_TEST);
+      try {
+        for (const dir of revisions) mkdirSync(join(planted, "recorder", "browsers", dir));
+        const r = runCli(["run", "--tag", "smoke"], planted);
+        const all = `${r.stdout}\n${r.stderr}`;
+        assert(
+          !/ReferenceError|is not defined|before initialization/.test(all),
+          `a run that gets past the gate fails on the BROWSER, not on JavaScript (got: ${
+            /(?:ReferenceError|is not defined|before initialization)[^\n]*/.exec(all)?.[0] ?? "—"
+          })`,
+        );
+        // And it did get past it: a refusal would never have spawned anything.
+        assert(
+          r.code === EXIT.FAILED || r.code === EXIT.CANNOT_START,
+          `…and reports a run that could not complete (exit ${r.code})`,
+        );
+      } finally {
+        rmSync(planted, { recursive: true, force: true });
+      }
+    }
+  }
+
   // ── `run` now points at a command that exists ──────────────────────────
   //
   // The whole reason R11 shipped with the CLI rather than after it. The MCP's

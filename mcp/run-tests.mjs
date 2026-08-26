@@ -474,9 +474,10 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     // These are `const`, so the `if (anyCapability)` below sits in their
     // TEMPORAL DEAD ZONE if they are declared after it — every run threw
     // `ReferenceError: Cannot access 'anyCapability' before initialization`
-    // before it did anything at all. Ported from #276, which carries the
-    // guard and the DECISIONS entry; it no-ops once that lands. Without it
-    // this branch's own feature is unreachable — the throw is above it.
+    // before it did anything at all. Nothing in the suite executed this
+    // function against a real spawn, so 5800 tests and 89 checks were green
+    // throughout — see the DECISIONS entry, and `check:cli-exit`, which now
+    // reaches it with a planted browser precisely so this cannot recur.
     // ── What this run turns on (R8) ────────────────────────────────────
     //
     // The policy is stated in shared/run-fixtures.mjs; this is it applied. Each
