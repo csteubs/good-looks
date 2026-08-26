@@ -214,6 +214,19 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      never changed; the set of callers did, which is why
                      check:cli-exit now does one REAL run and reads the record
                      back rather than reading source
+                     run-ingest.mjs is the GATE A FOREIGN RUN RECORD CROSSES
+                     (R12) — `good-looks ingest` carries a CI job's runs back,
+                     because a container's library dies with it. Built the
+                     obvious way it is a READ PRIMITIVE: `logFile` is an
+                     absolute path from the other machine, and the app's
+                     readLog reads it unbounded while searchLogs reads every
+                     live record's and returns excerpts — so a stored foreign
+                     path is any file on disk, through a search box. The gate
+                     returns NO logFile; cli/ingest.mjs derives it from a
+                     validated id, the same rule script-path.mjs applies. A
+                     required field missing refuses the record, an optional one
+                     refuses only itself. check:run-ingest also pins that the
+                     gate and RunRecord still agree in BOTH directions
                      a11y-rollup.mjs is that shape a third time, and it retired two
                      hand-copies rather than adding a third: violationKey/keysOf lived
                      in main/services/a11y-diff.ts AND renderer/lib/a11y-format.ts,
@@ -275,10 +288,14 @@ cli/                 what the CLI decides, kept out of bin/ so it can be tested.
                      an app run's secrets live in a store this process cannot open and
                      could not be redacted out. `check:emit-redaction` covers cli/ and
                      mcp/ as of R1, per plan §3.5.
-                     Its unit tests live in main/services/cli-exit.test.ts and
-                     cli-junit.test.ts, because vitest's node project takes main/**,
-                     mcp/** and renderer/lib/** and a test file here would match
-                     NEITHER project
+                     ingest.mjs is R12's disk half — locate the artifact
+                     (either level), plan, copy each log BY ID, stamp
+                     ingestedAt, write through saveRunRecords so the cap and
+                     pruned tally stay one implementation.
+                     Its unit tests live in main/services/cli-exit.test.ts,
+                     cli-junit.test.ts and cli-ingest.test.ts, because vitest's
+                     node project takes main/**, mcp/** and renderer/lib/** and
+                     a test file here would match NEITHER project
 mcp/                 standalone MCP server exposing the test library to external MCP clients.
                      `data-dir.mjs` finds the app's store; it reaches the SAME answer the
                      app does because BOTH PROCESSES WRITE, and the rules they share live

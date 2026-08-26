@@ -61,11 +61,40 @@ export function listRuns(dataDir) {
  * @param {string} logText
  */
 export function saveRunRecord(dataDir, record, logText) {
-  fs.mkdirSync(path.dirname(record.logFile), { recursive: true });
-  fs.writeFileSync(record.logFile, logText, "utf-8");
+  saveRunRecords(dataDir, [{ record, logText }]);
+}
+
+/**
+ * Append MANY runs in one pass — `ingest`'s writer (R12).
+ *
+ * Not an optimisation for its own sake, and not a second prune implementation:
+ * `saveRunRecord` above is now one call into this, so the cap, the tally and the
+ * ordering still have exactly one spelling on this side of the boundary.
+ *
+ * What the batch buys is that the store is read, sorted and written ONCE. The
+ * per-record loop it replaces is O(n) full rewrites of a file whose cap is
+ * fifty thousand records — ingesting a week of CI would have re-serialised
+ * tens of megabytes per run, which is slow enough to read as a hang on the one
+ * command whose whole job is to move a lot of rows at once.
+ *
+ * Every log is written BEFORE the index, in both paths. The order matters after
+ * a crash: an index naming a log that is not there degrades to "the raw log for
+ * this run is no longer available", while a log with no index entry is an
+ * orphaned file nothing looks at. The first is a worse thing to leave behind.
+ *
+ * @param {string} dataDir
+ * @param {{record: {logFile: string, startedAt: number, status: string, kind?: string}, logText: string}[]} entries
+ */
+export function saveRunRecords(dataDir, entries) {
+  if (entries.length === 0) return;
+
+  for (const { record, logText } of entries) {
+    fs.mkdirSync(path.dirname(record.logFile), { recursive: true });
+    fs.writeFileSync(record.logFile, logText, "utf-8");
+  }
 
   const runs = listRuns(dataDir);
-  runs.push(record);
+  for (const { record } of entries) runs.push(record);
   runs.sort((a, b) => a.startedAt - b.startedAt);
 
   if (runs.length > RUN_HISTORY_CAP) {

@@ -17,6 +17,7 @@ import process from "node:process";
 
 import { INSTALL_USAGE, parseInstallArgs, parseRunArgs, RUN_USAGE } from "../cli/args.mjs";
 import { EXIT, EXIT_MEANINGS } from "../cli/exit.mjs";
+import { INGEST_USAGE, ingestCommand, parseIngestArgs } from "../cli/ingest.mjs";
 import { installCommand, runCommand } from "../cli/run.mjs";
 import { resolveDataDir } from "../mcp/data-dir.mjs";
 
@@ -27,6 +28,7 @@ Usage: good-looks <command> [options]
 Commands:
   run        run recorded tests and exit on their result
   install    download a browser engine into this library's browsers directory
+  ingest     carry a CI job's run results back into this library
   data-dir   print the library directory this CLI reads
   help       show this
 
@@ -86,6 +88,31 @@ async function main(argv) {
       return EXIT.CANNOT_START;
     }
     return installCommand(parsed.options, { out, err });
+  }
+
+  if (command === "ingest") {
+    const parsed = parseIngestArgs(rest);
+    if (parsed.ok === "help") {
+      out(INGEST_USAGE);
+      return EXIT.PASSED;
+    }
+    if (!parsed.ok) {
+      err(parsed.error);
+      err("");
+      err(INGEST_USAGE);
+      return EXIT.CANNOT_START;
+    }
+    // Resolved HERE rather than inside the command, so a library this CLI
+    // cannot find is the same refusal it is for `run` — with the same sentence
+    // naming the override — instead of a second way to say "no store".
+    let dataDir;
+    try {
+      dataDir = resolveDataDir();
+    } catch (error) {
+      err(String(error.message ?? error));
+      return EXIT.CANNOT_START;
+    }
+    return ingestCommand(parsed.options, { out, err, dataDir });
   }
 
   if (command === "run") {

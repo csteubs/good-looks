@@ -10,6 +10,83 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-26 — Ingesting a CI run, and the field that made it a read primitive (R12)
+
+`good-looks ingest DIR` carries the runs a CI job recorded into the local
+library. Without it a container's history dies with the container, so a suite
+running forty times a week in CI leaves no trace in the app at all, and
+Stability, the flake verdict and step health keep answering from the handful of
+runs someone triggered by hand.
+
+**The interesting part is that this is a read primitive if you build it the
+obvious way.**
+
+A `RunRecord` carries `logFile`, an absolute path written by the machine that
+produced the run. Copy the record in and you have stored that path. The app then
+does two things with it, neither of which bounds it:
+
+- `runHistoryStore.readLog` does `readFileSync(rec.logFile)` — no containment
+  check at all;
+- `searchLogs` reads EVERY live record's `logFile` and returns an excerpt around
+  each match.
+
+So a record saying `logFile: "/Users/someone/.ssh/id_rsa"` makes the app's log
+search a way to read any file on the disk, a search box at a time. Nothing about
+the ingest looks wrong while it happens.
+
+**The fix is the one `shared/script-path.mjs` already made for `scriptPath`:** a
+path is only meaningful on the machine that wrote it, so re-derive it on the
+machine reading. `normalizeIngestedRun` returns **no `logFile` field at all** —
+absent from the type, so a caller that forgets does not compile — and
+`cli/ingest.mjs` derives both the source and the destination from the id.
+
+`id` needed the same treatment for the same reason: the log is written to
+`<logs>/<id>.log`, so `../../../../tmp/x` is a write outside the store. It is
+validated as a plain token where the record is narrowed, not escaped at the call
+site, because an escape is something one of several call sites can forget.
+
+**Required fields refuse the record; optional fields refuse only themselves.**
+There is no honest value to invent for a status or a start time, so a record
+missing one is skipped and counted rather than stored with a number nobody
+supplied. An optional field is different: a record whose `note` is a payload
+still has a real outcome and a real timestamp, and those are what the flake
+verdict reads. Dropping the row would be the guard destroying the evidence it
+exists to carry.
+
+**`ingestedAt`, and why `provenance` was not enough.** Pass rate and the flake
+verdict *should* count ingested runs — that is the point. The cost and duration
+readouts should not: `captureOverheadMs` and `durationMs` only mean something
+relative to the hardware that produced them, and averaging a container's numbers
+into a laptop's gives a confident answer to a question nobody asked. Inferring
+"this came from elsewhere" from `provenance` would work in practice, because a
+container's own library dies with it — but that is an inference, and R6 one entry
+below is what happens when a value is correct by inference until the set of
+callers changes.
+
+**Three fields are deliberately not carried.** `hasTrace`, because the trace does
+not travel and a carried `true` lights up an Open Trace button pointing at
+nothing. `failedStepIndex` and `stepCount`, because `mcp/run-tests.mjs` writes
+them, `RunRecord` declares neither, and nothing app-side reads them off a run —
+storing undeclared keys is the rebuild-never-filter rule broken quietly. The
+flake verdict reads `id`, `testId`, `status`, `startedAt`, `kind`, `endedBy`,
+`runBrowser`, `datasetId` and `datasetName`, and that is the whole list, so
+dropping them costs the surface R12 exists to feed nothing.
+
+**`saveRunRecords` is a batch writer, not a second one.** `saveRunRecord` is now
+one call into it, so the cap, the pruned tally and the ordering keep one spelling
+on the MCP side. The batch exists because the per-record loop is O(n) full
+rewrites of a file capped at fifty thousand records: ingesting a week of CI would
+re-serialise tens of megabytes per run, slow enough to read as a hang on the one
+command whose job is to move many rows at once.
+
+**`check:run-ingest` asserts the gate and `RunRecord` still agree**, in both
+directions — a field the gate copies that `RunRecord` does not declare, and a
+required `RunRecord` field the gate never produces. Its first run reported seven
+required fields missing, which was a bug in the check: half the literal uses
+shorthand properties and the regex anchored on a colon. Worth recording because
+it failed in the safe direction, and a source-reading check that can only fail
+loudly is the kind worth having.
+
 ### 2026-08-26 — Where a run came from, and the literal that had quietly become a lie (R6)
 
 `RunRecord` has said WHO started a run since R33. It could not say WHAT WAS
