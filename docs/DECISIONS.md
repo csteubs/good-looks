@@ -10,6 +10,61 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-26 — Every unattended run threw before it did anything
+
+Found by running the CLI, which nothing in this repository had ever done
+end-to-end. Nine seconds in:
+
+    ReferenceError: Cannot access 'anyCapability' before initialization
+
+`executeTest` sets the fixture gates from `anyCapability` at the top and
+DECLARES it seventy lines further down. `const` is in its temporal dead zone
+until the declaration executes, so the read throws unconditionally. Every MCP
+`run_test`, every `run_batch`, every `good-looks run` — since R8 landed it, on
+2026-08-25.
+
+**5800 unit tests and 89 checks were green throughout**, and so was CI. Nothing
+in the suite executes that function: the pure modules are imported and tested,
+the source is read and asserted about, and the one check that spawns the real
+binary — `check:cli-exit` — only ever ran it WITHOUT a browser, where
+`runSelection` refuses before `executeTest` is entered. That file's own header
+says so: *"Codes 0 and 1 need a browser and a real run, which no check in this
+chain does."* The gap was written down, and the bug moved into it.
+
+**What found it was a run, not a reading.** I built a library in a temp
+directory shaped like a copied one — an index whose `scriptPath` values point at
+another machine's home, specs beside it, no app ever opened — pointed
+`GOOD_LOOKS_USERDATA` at it, and ran. That is the whole of the diagnosis.
+
+**The guard is the same shape as the bug.** `check:cli-exit` now PLANTS the
+browser directories `isBrowserInstalled` looks for — no network, no download —
+so the run gets past the gate, spawns Playwright, and fails to launch an engine
+that is not really there. What it asserts is the SHAPE of that failure: a
+browser problem, never a JavaScript one. Revert-tested by moving the
+declarations back and watching it name the ReferenceError.
+
+**And with the fix, the contract holds end to end.** Against real Playwright,
+with a real browser, on a library whose paths belong to someone else:
+
+| | |
+| --- | --- |
+| `run --id t-pass` | exit **0** |
+| `run --id t-fail` | exit **1** |
+| `run --tag nosuchtag` | exit **2** |
+| `run --tag smoke --browser nosuch` | exit **3** |
+
+That run also exercised R10's path resolution (the library's stored paths are
+another machine's and it found the specs anyway) and R8's fixtures, together,
+for the first time.
+
+**Two of my own measurements were wrong on the way, both the same shape.**
+`cmd | head; echo $?` reads HEAD's status, not the command's — it briefly looked
+like the exit contract was broken. And `expectedBrowserDirs(browser, parsed)`
+returned null because the signature is `(browsersJson, browser)` and takes the
+JSON as text; that briefly looked like a bug in the detector. Both were caught
+by re-measuring rather than reporting, which is the only reason they are a
+footnote instead of two false findings.
+
 ### 2026-08-26 — The settings search index and the settings panes disagreed
 
 Found finishing the Batch → Routine rename (R48), and it is the more useful half
