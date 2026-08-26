@@ -20,9 +20,10 @@
 //     run. `runHistoryStore.readLog` does `readFileSync(rec.logFile)` with no
 //     check at all, and `searchLogs` reads EVERY live record's `logFile` and
 //     returns an excerpt around each match. So a record carrying
-//     `logFile: "/Users/someone/.ssh/id_rsa"` turns the app's log search into
-//     an arbitrary-file-read oracle over the whole disk, and the run panel's
-//     "view log" into a viewer for it. This module therefore NEVER carries the
+//     `logFile: "/etc/shadow"` would let the app's log search read arbitrary
+//     files on disk, and the run panel's "view log" display them. (A home
+//     directory path is the realistic case; it is not written here because
+//     `check:repo-hygiene` refuses one, correctly.) This module NEVER carries the
 //     incoming value: the field is absent from what it returns, and the caller
 //     — which is the half that knows where logs live here — supplies a local
 //     path it derived itself.

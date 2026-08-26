@@ -79,6 +79,13 @@ rewrites of a file capped at fifty thousand records: ingesting a week of CI woul
 re-serialise tens of megabytes per run, slow enough to read as a hang on the one
 command whose job is to move many rows at once.
 
+**`check:repo-hygiene` passes on a file git does not track yet.** It reads
+`git ls-files`, so running it three times against an uncommitted
+`shared/run-ingest.mjs` proved nothing, and CI failed on the commit that added
+the file — a comment quoting a `/Users/…` path as an example of what must not be
+stored trips the hardcoded-home-directory rule. Recorded in CLAUDE.md's gotchas:
+run it after `git add`, not before.
+
 **`check:run-ingest` asserts the gate and `RunRecord` still agree**, in both
 directions — a field the gate copies that `RunRecord` does not declare, and a
 required `RunRecord` field the gate never produces. Its first run reported seven
