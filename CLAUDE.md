@@ -282,7 +282,23 @@ docs/                ARCHITECTURE.md (per-file map) + DECISIONS.md (dated ration
                      subset of markdown and THROWS on the rest; check:docs-blocks runs it
                      in the gate). Edit it as prose, not as UI copy, but expect the gate
                      to refuse an ordered list or a nested bullet
-.github/             PR template, hygiene workflow, and the script it runs
+.github/             PR template, hygiene workflow, and the script it runs.
+                     action-selftest.yml drives action.yml the way a stranger
+                     would (`uses: ./`) against a library built from nothing —
+                     the one configuration no local check can stand up
+action.yml           the `good-looks` GitHub Action (R14). A COMPOSITE action,
+                     because that is the only way the CLI reaches a runner:
+                     package.json is private with no `files` field, and GitHub
+                     checks this repo out at ${{ github.action_path }}, which is
+                     exactly the PROJECT_ROOT mcp/run-tests.mjs resolves
+                     node_modules from. Every input reaches bash as an ENV VAR,
+                     never spliced through ${{ }} — an action input is
+                     attacker-controlled the moment a workflow passes it a PR
+                     title, and `${{ }}` is substituted before bash parses the
+                     line. check:github-action pins that, the read-not-written
+                     Playwright pin, and that every flag it emits is one
+                     cli/args.mjs accepts (an unknown flag is a REFUSAL, so a
+                     rename would turn every run through the action into exit 3)
 vite.config.ts       renderer build (two windows + the training browser's URL strip).
                      `--mode preview` builds the browser
                      preview instead — preview.html + renderer/dev/, into build-preview/

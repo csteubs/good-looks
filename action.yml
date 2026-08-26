@@ -1,0 +1,230 @@
+# The `good-looks` GitHub Action (R14).
+#
+# ── Why a COMPOSITE action shipped from this repo ────────────────────────
+# There is no other way to get the CLI onto a runner. `package.json` is
+# `private: true` with no `files` field, so `npm install good-looks` does not
+# exist and should not: publishing an Electron app's whole dependency closure —
+# React, CodeMirror, Radix — to run a Node CLI would be thirty packages a run
+# never loads.
+#
+# A composite action solves it by construction. GitHub checks THIS repository
+# out at `${{ github.action_path }}` before the first step, so `bin/`, `cli/`,
+# `mcp/` and `shared/` are already on disk. What is missing is Playwright, and
+# `mcp/run-tests.mjs` resolves that from `PROJECT_ROOT/node_modules` where
+# PROJECT_ROOT is `mcp/..` — the action path. So one targeted install there is
+# the whole bootstrap.
+#
+# MEASURED, not assumed: bin+cli+mcp+shared plus `@playwright/test` is three
+# packages and 19 MB, against the app's thirty-odd. The lean tree is a real
+# configuration, not a hoped-for one.
+#
+# ── The version is READ, never written here ──────────────────────────────
+# `PLAYWRIGHT_VERSION` below would be a second spelling of a pin that already
+# exists in `package.json`, and a second spelling drifts. The bootstrap reads
+# it out of this repo's own manifest, so an upgrade there is an upgrade here on
+# the same commit. `check:github-action` fails if a literal version appears.
+#
+# It matters more than reproducibility. `shared/browser-install.mjs` decides
+# whether a browser is present by reading the INSTALLED Playwright's
+# `browsers.json` — a name-prefix rule said yes to the previous build after the
+# 1.62 upgrade — so the CLI, the installer and the detector must all be looking
+# at one tree.
+#
+# ── What this action does NOT do ─────────────────────────────────────────
+# It does not fetch, build or export a library. `library` is a path the caller
+# already has: a directory committed to their repo, restored from a cache, or
+# downloaded as an artifact. How a library gets to a runner is R10's export
+# command and a separate decision; an action that guessed would be an action
+# that guessed wrong.
+
+name: "Good Looks"
+description: "Run a recorded Good Looks test library headlessly and report the result"
+author: "Good Looks"
+
+branding:
+  icon: "check-circle"
+  color: "purple"
+
+inputs:
+  library:
+    description: >
+      Path to the test library — the directory holding `recorder/`. Becomes
+      GOOD_LOOKS_USERDATA for the run, which is the same override the CLI and
+      the MCP server already honour.
+    required: true
+  id:
+    description: "Run one test by id. Repeat with newlines to run several, in order."
+    required: false
+  tag:
+    description: "Run every visible test carrying this tag."
+    required: false
+  group:
+    description: "Run every visible test in this library folder."
+    required: false
+  all:
+    description: "Run every visible test. Set to 'true'."
+    required: false
+    default: "false"
+  browser:
+    description: "chromium | firefox | webkit"
+    required: false
+    default: "chromium"
+  speed:
+    description: "fast | medium | slow | crawl — overrides each test's own pace for this run only."
+    required: false
+  parallel:
+    description: "How many tests to run at once."
+    required: false
+  junit:
+    description: >
+      Write a JUnit XML report of THIS run to this path. Scoped to the runs this
+      invocation produced; see cli/junit.mjs for why that scope is a security
+      boundary and not a convenience.
+    required: false
+  secrets-file:
+    description: >
+      Path to a JSON object of secret values for tests that declare them, keyed
+      "<testId>.<name>" or "<name>". An environment variable of the same meaning
+      wins over it. Prefer the environment — a file on a runner is a file in a
+      workspace.
+    required: false
+  install-deps:
+    description: >
+      Pass --with-deps when installing the browser. A Linux runner usually needs
+      it; macOS has no concept of it.
+    required: false
+    default: "true"
+  working-directory:
+    description: "Where to resolve a relative `library` or `junit` path from."
+    required: false
+    default: "."
+
+outputs:
+  exit-code:
+    description: >
+      The run's own exit code, on the documented contract: 0 passed, 1 failed,
+      2 the selector matched nothing, 3 could not start. Reported even when the
+      step fails, so a caller can branch on WHICH failure.
+    value: ${{ steps.run.outputs.exit-code }}
+  junit:
+    description: "Absolute path of the JUnit report, when one was asked for."
+    value: ${{ steps.run.outputs.junit }}
+
+runs:
+  using: composite
+  steps:
+    # ── Bootstrap ──────────────────────────────────────────────────────
+    #
+    # Into the ACTION's own directory, never the caller's workspace: a caller
+    # with their own node_modules must not have this land in it, and
+    # PROJECT_ROOT is the action path regardless of where the job runs.
+    #
+    # `--no-save` because there is no manifest here to record it in, and
+    # `--no-audit --no-fund` because neither says anything a test run cares
+    # about and both cost seconds on every job.
+    - name: Install the pinned Playwright for the runner
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        version="$(node -p "require('./package.json').dependencies['@playwright/test']")"
+        if [ -z "$version" ] || [ "$version" = "undefined" ]; then
+          echo "::error::Could not read the pinned @playwright/test version from the action's package.json." >&2
+          exit 1
+        fi
+        echo "Installing @playwright/test@${version} for the CLI"
+        npm install --no-save --no-audit --no-fund --loglevel=error "@playwright/test@${version}"
+
+    # ── Browser ────────────────────────────────────────────────────────
+    #
+    # Through `good-looks install` rather than `npx playwright install`, and
+    # that is not a preference. This product keeps its browsers under the
+    # LIBRARY's own directory, so Playwright's machine-wide cache is somewhere
+    # no run looks. The command is a no-op when the engine is already there,
+    # which is what makes caching the library directory worthwhile.
+    - name: Install the browser into the library
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        # EVERY input reaches bash as an environment variable, never as `${{ }}`
+        # spliced into the script. An action input is attacker-controlled the
+        # moment a workflow passes something from a pull request title, a branch
+        # name or an issue body, and `${{ }}` interpolation is substituted BEFORE
+        # bash parses the line — so a value containing `; rm -rf …` is not a
+        # string argument, it is the next command. This repository already draws
+        # that boundary for a branch name (shared/branch-paths.mjs) and for an
+        # imported project; a workflow input is the same class of input.
+        GOOD_LOOKS_USERDATA: ${{ inputs.library }}
+        GL_BROWSER: ${{ inputs.browser }}
+        GL_INSTALL_DEPS: ${{ inputs.install-deps }}
+        GL_ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        args=("$GL_BROWSER")
+        if [ "$GL_INSTALL_DEPS" = "true" ]; then args+=(--with-deps); fi
+        node "$GL_ACTION_PATH/bin/good-looks.mjs" install "${args[@]}"
+
+    # ── Run ────────────────────────────────────────────────────────────
+    #
+    # `set +e` around the invocation on purpose. The exit code IS the result
+    # here — 2 (nothing matched) and 3 (could not start) are different failures
+    # from 1 (tests failed), and a caller that wants to tell them apart needs
+    # the number, not just a red step. It is published as an output and THEN
+    # re-raised, so the step still fails.
+    - name: Run
+      id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GOOD_LOOKS_USERDATA: ${{ inputs.library }}
+        GL_IDS: ${{ inputs.id }}
+        GL_TAG: ${{ inputs.tag }}
+        GL_GROUP: ${{ inputs.group }}
+        GL_ALL: ${{ inputs.all }}
+        GL_BROWSER: ${{ inputs.browser }}
+        GL_SPEED: ${{ inputs.speed }}
+        GL_PARALLEL: ${{ inputs.parallel }}
+        GL_JUNIT: ${{ inputs.junit }}
+        GL_SECRETS_FILE: ${{ inputs.secrets-file }}
+        GL_ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -uo pipefail
+        args=(run)
+        # Repeatable, and order matters: `selectTests` runs explicit ids in the
+        # order given, so the order they are listed in is meaningful.
+        while IFS= read -r one; do
+          [ -n "$one" ] && args+=(--id "$one")
+        done <<< "$GL_IDS"
+        [ -n "$GL_TAG" ] && args+=(--tag "$GL_TAG")
+        [ -n "$GL_GROUP" ] && args+=(--group "$GL_GROUP")
+        [ "$GL_ALL" = "true" ] && args+=(--all)
+        [ -n "$GL_BROWSER" ] && args+=(--browser "$GL_BROWSER")
+        [ -n "$GL_SPEED" ] && args+=(--speed "$GL_SPEED")
+        [ -n "$GL_PARALLEL" ] && args+=(--parallel "$GL_PARALLEL")
+        [ -n "$GL_SECRETS_FILE" ] && args+=(--secrets-file "$GL_SECRETS_FILE")
+        report=""
+        if [ -n "$GL_JUNIT" ]; then
+          report="$(node -e 'process.stdout.write(require("path").resolve(process.argv[1]))' "$GL_JUNIT")"
+          args+=(--junit "$report")
+        fi
+
+        set +e
+        node "$GL_ACTION_PATH/bin/good-looks.mjs" "${args[@]}"
+        code=$?
+        set -e
+
+        echo "exit-code=${code}" >> "$GITHUB_OUTPUT"
+        echo "junit=${report}" >> "$GITHUB_OUTPUT"
+
+        # Named rather than left as a bare number. A CI operator reading a red
+        # step should not have to find the exit contract to learn that 2 means
+        # their selector stopped matching — which is the failure this whole
+        # contract exists to make visible.
+        case "$code" in
+          0) echo "::notice::Every selected test passed." ;;
+          1) echo "::error::A test failed." ;;
+          2) echo "::error::The selector matched no tests. A suite of zero is shaped exactly like a clean pass, which is why it has its own code." ;;
+          3) echo "::error::The run could not start — see the message above." ;;
+          *) echo "::error::The run exited ${code}." ;;
+        esac
+        exit "$code"

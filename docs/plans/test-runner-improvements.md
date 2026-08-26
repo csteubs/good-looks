@@ -127,7 +127,7 @@ row is only moved here with a file and a symbol behind it.
 | R11 | Install browsers from the CI entry point | CI | **done 2026-08-25** | S |
 | R12 | Ingest CI run results back into the local library | CI | missing | L |
 | R13 | Put the failing step in the JUnit message and make annotations point somewhere | CI | **done 2026-08-26** — app runs by label, CI runs by index | S |
-| R14 | Ship a GitHub Action and workflow templates | CI | missing | S |
+| R14 | Ship a GitHub Action and workflow templates | CI | **done 2026-08-26** | S |
 | R15 | Ship the MCP server inside the packaged app | CI | **done 2026-08-22** | S |
 | R16 | Add an Environment record and store | Env | missing | L |
 | R17 | Stop sweeping every test's artifacts after every run | Perf | **done 2026-08-25** | S |
