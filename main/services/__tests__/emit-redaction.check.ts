@@ -212,6 +212,126 @@ assert(
   "renderer/lib/api.ts has no report: call typed to return a string — the renderer never holds the emitted text",
 );
 
+// ── 4. The UNATTENDED side: cli/ and mcp/ ────────────────────────────
+//
+// Sections 1-2c watch `main/`, which was the whole egress surface while the
+// only way to obtain bytes was through a process that can read the encrypted
+// secrets store. R1's `--junit` is the first emit path OUTSIDE it: plain `.mjs`
+// under Node, where `redactWithSnapshot` does not exist and cannot.
+//
+// §3.5 of docs/plans/test-runner-improvements.md is the rule being satisfied —
+// "each new egress path must extend that check's scan set in the same commit
+// that adds it". This is that extension.
+//
+// What it pins is the same shape as `main/`'s, translated to what this side
+// HAS. There is no snapshot to require, so the requirement is instead:
+//
+//   a. exactly one file out here calls an emitter, so a second one cannot
+//      quietly inherit nothing;
+//   b. it passes a `redact:` and never `NO_REDACTION`;
+//   c. it takes secret VALUES from its caller and never a redactor — the same
+//      rule as `emitReportTo`, and for the same reason: a caller that could
+//      pass a redactor could pass an identity function, and the file would look
+//      identical;
+//   d. it never reads run history. The scope is a security boundary: a run the
+//      APP produced took its secrets from a store this process cannot open, so
+//      those values are not in hand and could not be redacted out. Building
+//      from one invocation's own results is what makes that structural.
+
+/** Every `.mjs` under a directory, minus tests. */
+function unattendedSources(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      unattendedSources(full, out);
+    } else if (entry.name.endsWith(".mjs") && !/\.test\.mjs$/.test(entry.name)) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
+const UNATTENDED_EMIT_PATH = "cli/junit.mjs";
+const unattendedCallers: string[] = [];
+for (const dir of ["cli", "mcp"]) {
+  for (const file of unattendedSources(resolve(root, dir))) {
+    const rel = file.slice(root.length + 1);
+    const source = withoutComments(read(rel));
+    if (!/from\s+["'][^"']*shared\/emitters\.mjs["']/.test(source)) continue;
+    if (emitterFns.some((fn) => new RegExp(String.raw`\b${fn}\s*\(`).test(source))) {
+      unattendedCallers.push(rel);
+    }
+  }
+}
+
+assert(
+  unattendedCallers.length === 1 && unattendedCallers[0] === UNATTENDED_EMIT_PATH,
+  `exactly one file outside main/ calls an emitter, and it is ${UNATTENDED_EMIT_PATH} — ` +
+    "a second caller out here has no redactor to inherit and would write a valid " +
+    `file with a live credential in it. Found: ${unattendedCallers.join(", ") || "none"}`,
+);
+
+const unattended = withoutComments(read(UNATTENDED_EMIT_PATH));
+
+assert(
+  /redact:\s*\(text\)\s*=>\s*redact\(text, values\)/.test(unattended),
+  `${UNATTENDED_EMIT_PATH} passes a redactor built from the resolved secret values`,
+);
+assert(
+  !/NO_REDACTION/.test(unattended),
+  `${UNATTENDED_EMIT_PATH} does not reach for NO_REDACTION`,
+);
+
+// (c) — VALUES in, never a redactor. Checked on the exported signatures rather
+// than the body, because that is where a caller's reach would have to appear.
+const exportedSignatures = [...unattended.matchAll(/export function \w+\(([\s\S]*?)\)\s*\{/g)].map(
+  (m) => m[1],
+);
+assert(
+  exportedSignatures.length >= 2,
+  `${UNATTENDED_EMIT_PATH} exports the build and the write (found ${exportedSignatures.length})`,
+);
+assert(
+  exportedSignatures.every((sig) => !/redact/i.test(sig)),
+  `${UNATTENDED_EMIT_PATH} takes secret VALUES from its caller, never a redactor — ` +
+    "one that could be handed a redactor could be handed an identity function",
+);
+
+// (c2) — the builder NAMES the fields it forwards, never spreads the result.
+// A unit test cannot reach this: `junitXml` reads a fixed set, so a spread
+// produces byte-identical output today. It stops being identical the day an
+// emitter reads a field a result happens to carry — and a run result carries
+// `vars`, a dataset row's VALUES, on the dataset paths. A spread is how the
+// capture boundary keeps being re-opened one field at a time; the same shape
+// applies to a file that leaves the machine.
+assert(
+  !/\.\.\.r\b/.test(unattended),
+  `${UNATTENDED_EMIT_PATH} names each field it forwards instead of spreading the ` +
+    "result — a spread carries every field added upstream into a file that leaves the machine",
+);
+
+// (d) — the scope. No store, no history read: the report is built from the
+// results of one invocation, which is the only set whose secrets this process
+// resolved and can therefore redact.
+assert(
+  !/runHistory|listRuns|run-history|createStore|readJsonFile/.test(unattended),
+  `${UNATTENDED_EMIT_PATH} reads no run history — a report scoped wider than this ` +
+    "invocation could include an app run whose secret values are unreadable here",
+);
+assert(
+  /import \{ resolveCiSecrets \} from "\.\.\/shared\/ci-secrets\.mjs"/.test(
+    withoutComments(read("cli/run.mjs")),
+  ),
+  "cli/run.mjs resolves the secret values through resolveCiSecrets — R7's rule that " +
+    "whatever supplies a secret to a run also feeds the redaction",
+);
+assert(
+  /writeJunitReport\(options\.junit, outcome\.results, \{ secretValues \}\)/.test(
+    withoutComments(read("cli/run.mjs")),
+  ),
+  "…and hands them to the writer along with THIS invocation's results",
+);
+
 // ── Result ───────────────────────────────────────────────────────────
 
 if (failures > 0) {

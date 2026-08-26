@@ -32,6 +32,7 @@ const VALUE_FLAGS = new Set([
   "--speed",
   "--parallel",
   "--secrets-file",
+  "--junit",
 ]);
 const BOOL_FLAGS = new Set(["--all", "--json", "--all-datasets", "--dry-run", "--help", "-h"]);
 
@@ -73,6 +74,7 @@ export function parseRunArgs(argv) {
   let allDatasets = false;
   let dryRun = false;
   let secretsFile;
+  let junit;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -98,6 +100,14 @@ export function parseRunArgs(argv) {
           break;
         case "--group":
           group = value;
+          break;
+        case "--junit":
+          // The PATH only, for the same reason `--secrets-file` is: the parser
+          // stays pure and testable, and nothing here touches the filesystem.
+          // Not validated as absolute — unlike the app's `emitReportTo`, a
+          // CLI's cwd is the shell the operator typed in, and `--junit
+          // results.xml` in a workspace is the normal spelling.
+          junit = value;
           break;
         case "--secrets-file":
           // The PATH only. Nothing here reads it — a parser that touched the
@@ -177,6 +187,14 @@ export function parseRunArgs(argv) {
   if (given.length > 1) {
     return fail(`Use one selector at a time — got ${given.join(" and ")}.`);
   }
+  // Refused rather than ignored. A dry run produces no runs, so there is
+  // nothing for the report to describe — and writing an empty one, or quietly
+  // writing none, both end with a pipeline configured to read a file that
+  // never says anything. The flag combination is the question; the answer
+  // belongs to whoever typed it.
+  if (dryRun && junit !== undefined) {
+    return fail("--junit reports runs, and --dry-run performs none. Use one or the other.");
+  }
 
   return {
     ok: true,
@@ -190,6 +208,7 @@ export function parseRunArgs(argv) {
       allDatasets: allDatasets || undefined,
       dryRun,
       secretsFile,
+      junit,
       json,
     },
   };
@@ -272,6 +291,10 @@ Options:
                      keyed "<testId>.<name>" or "<name>". An environment
                      variable of the same meaning wins over it — run without
                      this and the CLI names the variables to set
+  --junit <path>     also write a JUnit XML report of THIS invocation's runs.
+                     Scoped to them and nothing else: a wider report could
+                     include a run this process has no secret values for, and
+                     could not redact
   --dry-run          print what WOULD run and stop. Same selection and the same
                      queue expansion as a real run, so the answer is the plan
                      rather than a description of it. Still exits 2 when the

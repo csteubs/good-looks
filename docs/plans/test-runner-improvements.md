@@ -114,7 +114,7 @@ row is only moved here with a file and a symbol behind it.
 
 | # | Item | Area | Verdict | Effort |
 |---|---|---|---|---|
-| R1 | Give `report:emit` a non-interactive destination, scoped to a run or batch | CI | **built — no caller yet, see §2a** | S |
+| R1 | Give `report:emit` a non-interactive destination, scoped to a run or batch | CI | **done 2026-08-26** — `--junit` on the CLI | S |
 | R2 | Exit non-zero when a run fails, on a documented contract | CI | **done 2026-08-25** | S |
 | R3 | Add a `bin` and a headless `run` command | CI | **done 2026-08-25** | L |
 | R4 | Make the runner reachable without Electron and without `safeStorage` | CI | **mostly built — see §3.3a** | S |
@@ -187,7 +187,7 @@ was first committed.
 | R30 | missing | **done** | The run alert carries the deep link, built by the same `n` the issue-tracker path uses ([alert-service.ts](../../main/services/alert-service.ts)); pinned by `check:alerts`. `fa497be` (#221), 2026-08-21 |
 | R33 | missing | **done** | `trigger?: RunTrigger` at [types.ts:2585](../../main/recorder/types.ts:2585), one spelling in `shared/run-trigger.mjs`, all four writers wired, pinned by `check:mcp-parity`. `0801e3f` (#224), 2026-08-22 |
 | R35 | missing | **done** | `shared/basic-auth.mjs` scopes the credential by origin; emitted as `test.use({ httpCredentials, origin })` at [script-generator.ts:2189](../../main/services/script-generator.ts:2189); trainer and live-page handled too; `check:basic-auth` + `e2e/basic-auth.spec.ts`. `f1eb226` (#244), 2026-08-23 |
-| R1 | partial | **built, uncalled** | `emitReportTo` and the full `EmitScope` — `{testId?, batchId?, since?, until?, runIds?}` — exist at [report-emitter.ts:146](../../main/services/report-emitter.ts:146) and `:63`. What is missing is a CALLER: `report:emit` still narrows to `{testId}`, and the CLI has no `--junit` |
+| R1 | partial | **built, uncalled** | `emitReportTo` and the full `EmitScope` — `{testId?, batchId?, since?, until?, runIds?}` — exist at [report-emitter.ts:146](../../main/services/report-emitter.ts:146) and `:63`. What is missing is a CALLER: `report:emit` still narrows to `{testId}`, and the CLI has no `--junit`. **Closed 2026-08-26** — the CLI's `--junit` is `cli/junit.mjs`, which could not reuse `emitReportTo` at all (it is main-process code) and so is a second emit path with its own redaction budget; `report:emit`'s narrowing is untouched |
 | R13 | partial | **done 2026-08-26** | `failedStepLabel` was persisted for app runs only. The CI residue turned out to have a cause: the step reporter was WRITTEN on every unattended run and never LOADED, so no marker was emitted and no run could say which step failed. Loading it, stripping its markers and mapping the reported line to a step index closes it — by index, because `describeStep` is app-side and a second phrasing is the drift this plan keeps naming |
 | R38 | missing | blocker cleared | [types.ts:3419](../../main/recorder/types.ts:3419) defers the `parallel` flag pending "the same barrier machinery `wait` does". That machinery shipped 2026-08-13 (`shared/routine-plan.mjs`). Re-rank it |
 | R49 | missing | **a defect** | See below — this one is not a missing feature |
