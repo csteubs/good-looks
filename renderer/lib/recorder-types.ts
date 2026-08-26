@@ -103,7 +103,11 @@ export type StepType =
   // only step that points at TWO elements — see Step.toLocator in main types.
   | "dblclick"
   | "rightclick"
-  | "drag";
+  | "drag"
+  // Read the one-time code a site EMAILED into a variable. Mirror of the
+  // main-process type; see the note there for why Shopify leaves no
+  // alternative.
+  | "emailCode";
 
 /** Predicate for an `if` step. Element conditions use `Step.locator`; page
  *  conditions (urlContains/titleContains) use `Step.value` as the substring. */
@@ -343,6 +347,11 @@ export interface Step {
   apiBody?: string;
   expectStatus?: number;
   capturePath?: string;
+  /** `emailCode` step: the mailbox address polled, the code's length, and
+   *  optional plain text the code must follow. */
+  mailboxAddress?: string;
+  codeDigits?: number;
+  codeLabel?: string;
   dialogAction?: DialogAction;
   text?: string;
   soft?: boolean;
@@ -447,6 +456,11 @@ export interface RawStep {
   apiBody?: string;
   expectStatus?: number;
   capturePath?: string;
+  /** `emailCode` step: the mailbox address polled, the code's length, and
+   *  optional plain text the code must follow. */
+  mailboxAddress?: string;
+  codeDigits?: number;
+  codeLabel?: string;
   dialogAction?: DialogAction;
   text?: string;
   soft?: boolean;

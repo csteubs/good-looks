@@ -1027,6 +1027,26 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
       }
       return "await glazeApiRequest(page, V, { " + parts.join(", ") + " });";
     }
+    case "emailCode": {
+      // Every field re-checked at EMISSION, not merely at ingest. Tests
+      // recorded before a boundary fix are already on disk and are
+      // regenerated from their stored steps, so the generator needs its own
+      // guard regardless (CLAUDE.md, the capture boundary).
+      if (!isValidVariableName(step.captureVar)) return null;
+      const parts: string[] = [
+        "address: " + valueExpr(step.mailboxAddress ?? "", vars),
+        "captureVar: " + q(step.captureVar),
+      ];
+      // A BARE NUMERAL goes through num(). A page that forged `codeDigits` as
+      // a string would otherwise get it into executed source verbatim.
+      if (typeof step.codeDigits === "number" && step.codeDigits >= 4 && step.codeDigits <= 10) {
+        parts.push("digits: " + num(step.codeDigits, 6));
+      }
+      if (typeof step.codeLabel === "string" && step.codeLabel !== "") {
+        parts.push("label: " + q(step.codeLabel));
+      }
+      return "await glazeEmailCode(page, V, { " + parts.join(", ") + " });";
+    }
     case "scroll":
       // Element mode wins when both are present: `scrollIntoViewIfNeeded` is
       // native, self-correcting, and reports through the step reporter (a
@@ -1191,6 +1211,13 @@ export function describeStep(step: Step): string {
   // Kept in sync with the mirror in renderer/lib/describe-step.ts.
   if (step.type === "assert" && step.assert === "variable") return describeVariableCheck(step);
   if (step.type === "echo") return "echo " + JSON.stringify(step.text ?? step.value ?? "");
+  if (step.type === "emailCode") {
+    // A PHRASE, not the helper line: glazeEmailCode(...) names the mechanism,
+    // and what the user did was "wait for the code they email me".
+    const where = step.mailboxAddress ? ` for ${JSON.stringify(step.mailboxAddress)}` : "";
+    const into = step.captureVar ? ` into \${${step.captureVar}}` : "";
+    return `read the emailed sign-in code${where}${into}`;
+  }
   if (step.type === "group") return "group: " + (step.label ?? "");
   if (step.type === "endGroup") return "end group";
   if (step.type === "teardown") return "teardown — everything below always runs";
@@ -1723,6 +1750,12 @@ export function generateSpecDetailed(
   const needsA11y = expanded.some((e) => !e.problem && e.step.type === "a11y");
   const needsGenerate = variables.some((v) => v.kind === "generated");
   const needsApi = expanded.some((e) => !e.problem && e.step.type === "api");
+  // The same guard the emission case applies. Without the captureVar clause a
+  // step that emits NOTHING still adds the import, and the generator's own
+  // rule is that a spurious import is as wrong as a missing one.
+  const needsEmailCode = expanded.some(
+    (e) => !e.problem && e.step.type === "emailCode" && isValidVariableName(e.step.captureVar),
+  );
   const needsTotp = variables.some((v) => v.kind === "secret" && v.totp);
   const needsAiCheck = expanded.some((e) => !e.problem && e.step.type === "aiCheck");
   const needsDialog = expanded.some((e) => !e.problem && e.step.type === "dialog");
@@ -2141,6 +2174,7 @@ export function generateSpecDetailed(
     ...(needsA11y ? ["glazeA11yGate"] : []),
     ...(needsGenerate ? ["glazeGenerate"] : []),
     ...(needsApi ? ["glazeApiRequest"] : []),
+    ...(needsEmailCode ? ["glazeEmailCode"] : []),
     ...(needsTotp ? ["glazeTotp"] : []),
     ...(needsAiCheck ? ["glazeAiCheck"] : []),
     ...(needsDialog ? ["glazeArmDialog"] : []),
@@ -2205,6 +2239,9 @@ export function generateSpecDetailed(
   const needsVarObject =
     needsCapture ||
     needsApi ||
+    // An emailCode step writes the code into V, so it forces the header for
+    // the same reason an api capture does.
+    needsEmailCode ||
     expanded.some(
       (e) =>
         !e.problem && e.step.type === "download" && isValidVariableName(e.step.captureVar),

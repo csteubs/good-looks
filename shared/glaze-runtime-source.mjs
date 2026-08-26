@@ -18,6 +18,8 @@
 // Plain JavaScript (no TypeScript) because Playwright loads it through its own
 // Babel transform, which does not understand `import type`.
 //
+//  • glazeEmailCode: polling a mailbox is a LOOP with a budget, and the
+//    natural spelling of the step (`V.code = await …`) starts with `V.`.
 //  • glazeA11yGate: the a11y GATE step — axe at this point in the test, FAIL
 //    on new violations at/above the impact floor. Its decision logic is NOT
 //    written here: `gateFailures` is imported from shared/a11y-rollup.mjs and
@@ -28,6 +30,12 @@ import { gateFailures } from "./a11y-rollup.mjs";
 import { compareValues, reEscape, urlPathPattern } from "./step-semantics.mjs";
 
 import { totpCode } from "./totp.mjs";
+import {
+  POLL_BUDGET_MS,
+  POLL_INTERVAL_MS,
+  codeFromMessage,
+  codeWatermark,
+} from "./email-code.mjs";
 
 export const GLAZE_RUNTIME_FILE = "glaze-runtime.mjs";
 
@@ -388,5 +396,128 @@ export const glazeCompare = ${compareValues.toString()};
  *  IS this variable here" without making the run depend on the answer. */
 export async function glazeEcho(message) {
   process.stdout.write("[echo] " + String(message == null ? "" : message) + "\\n");
+}
+
+/** The moment this worker started.
+ *
+ *  Module scope, so it is stamped once when Playwright loads the runtime — and
+ *  that is exactly the anchor an emailed code needs. A code minted before this
+ *  run existed can never be typed, which is the difference between a login
+ *  that works and one that spends the customer's five attempts on codes
+ *  Shopify has already retired. */
+const glazeRunStartedAt = Date.now();
+
+/** The last code CONSUMED, per address, within this worker.
+ *
+ *  The second half of the watermark. Without it a spec that signs in twice
+ *  reads the first code again — it is still the newest message in the
+ *  mailbox — and burns an attempt on a code it already used. */
+const glazeLastCode = {};
+
+/** The code inside one message, embedded from shared/email-code.mjs — do not
+ *  edit here. The trainer's preview resolves a code with the SAME function,
+ *  and two spellings of "which six digits did it mean" is how a step that
+ *  previews correctly types the wrong number in the run. */
+const glazeCodeFromMessage = ${codeFromMessage.toString()};
+
+/** The instant a message must beat, embedded from shared/email-code.mjs — do
+ *  not edit here. */
+const glazeCodeWatermark = ${codeWatermark.toString()};
+
+/**
+ * Read the one-time code a site emailed, out of the configured mailbox, into
+ * the run's variable scope.
+ *
+ * Shopify's new customer accounts have no password: the account experience is
+ * behind a six-digit code sent to the customer, and nothing on Shopify's side
+ * substitutes for it. This is how a run gets in. See
+ * docs/plans/shopify-account-auth.md and workers/mailbox/README.md.
+ *
+ * Through \`page.request.fetch\` rather than \`fetch\`: it needs no dependency the
+ * CLI might not have, and it honours the run's own proxy configuration, which
+ * a bare fetch would bypass — on a runner that only egresses through the proxy
+ * that is the difference between a login and a timeout.
+ *
+ * The failure is named. A login that never receives a code fails HERE, saying
+ * which address it watched and for how long, rather than three steps later as
+ * a Playwright timeout on a fill — which names a selector and nothing about
+ * the mailbox.
+ */
+export async function glazeEmailCode(page, vars, opts) {
+  const endpoint = process.env.GLAZE_MAILBOX_URL || "";
+  const token = process.env.GLAZE_MAILBOX_TOKEN || "";
+  const address = String(opts.address || "").trim().toLowerCase();
+  if (!endpoint || !token) {
+    throw new Error(
+      "Email code: no test mailbox is configured. In the app, Settings > Integrations > Test mailbox; " +
+        "outside it, set GLAZE_MAILBOX_URL and GLAZE_MAILBOX_TOKEN.",
+    );
+  }
+  if (!address) {
+    throw new Error("Email code: the step names no mailbox address.");
+  }
+  const budget = Number(opts.budgetMs) > 0 ? Number(opts.budgetMs) : ${POLL_BUDGET_MS};
+  const interval = ${POLL_INTERVAL_MS};
+  const scan = { digits: opts.digits, label: opts.label };
+  const watermark = glazeCodeWatermark(glazeRunStartedAt, glazeLastCode[address] || 0);
+  const started = Date.now();
+  let lastError = "";
+
+  while (Date.now() - started < budget) {
+    try {
+      const url = new URL(endpoint);
+      url.searchParams.set("address", address);
+      url.searchParams.set("since", String(watermark));
+      const res = await page.request.fetch(url.toString(), {
+        headers: { authorization: "Bearer " + token },
+        timeout: 10000,
+      });
+      if (res.status() === 401 || res.status() === 403) {
+        // Never retried and never waited out: a wrong token is wrong for the
+        // whole budget, and burning sixty seconds on it hides the one error
+        // the user can act on.
+        throw new Error("Email code: the mailbox rejected the token (" + res.status() + ").");
+      }
+      if (res.ok()) {
+        const payload = await res.json();
+        const list = Array.isArray(payload) ? payload : (payload && payload.messages) || [];
+        // Newest first: when two codes are in flight the later one is what the
+        // screen is waiting for, and the earlier is already spent.
+        const fresh = list
+          .filter((m) => m && Number(m.receivedAt) > watermark)
+          .sort((a, b) => Number(b.receivedAt) - Number(a.receivedAt));
+        for (const message of fresh) {
+          const code = glazeCodeFromMessage(message, scan);
+          if (code) {
+            glazeLastCode[address] = Number(message.receivedAt);
+            vars[opts.captureVar] = code;
+            process.stdout.write(
+              "[glaze-email-code] code for " + address + " after " + (Date.now() - started) + "ms\\n",
+            );
+            return;
+          }
+        }
+      } else {
+        lastError = "the mailbox answered " + res.status();
+      }
+    } catch (err) {
+      const text = String((err && err.message) || err);
+      if (text.indexOf("rejected the token") >= 0) throw err;
+      // Anything else is retried inside the budget: a mailbox that is briefly
+      // unreachable is not a failed login, and the deadline is what decides.
+      lastError = text;
+    }
+    await page.waitForTimeout(interval);
+  }
+
+  throw new Error(
+    "Email code: nothing arrived at " +
+      address +
+      " within " +
+      Math.round(budget / 1000) +
+      "s" +
+      (lastError ? " (last: " + lastError + ")" : "") +
+      ". Only mail received AFTER this run started counts, so an older code in the mailbox is ignored on purpose.",
+  );
 }
 `;

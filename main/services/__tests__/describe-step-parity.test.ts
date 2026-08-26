@@ -41,6 +41,15 @@ const cases: { label: string; step: Step }[] = [
   { label: "press without locator", step: step({ type: "press", value: "Escape" }) },
   { label: "reload", step: step({ type: "reload" }) },
   { label: "echo", step: step({ type: "echo", text: "order is ${orderId}" }) },
+  {
+    label: "emailCode",
+    step: step({
+      type: "emailCode",
+      mailboxAddress: "shopper@mail.example.com",
+      captureVar: "loginCode",
+    }),
+  },
+  { label: "emailCode with nothing configured", step: step({ type: "emailCode" }) },
   { label: "dblclick", step: step({ type: "dblclick", locator: LOCATOR }) },
   { label: "dblclick with a timeout", step: step({ type: "dblclick", locator: LOCATOR, timeoutMs: 9000 }) },
   { label: "rightclick", step: step({ type: "rightclick", locator: LOCATOR }) },
