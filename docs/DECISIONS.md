@@ -10,6 +10,54 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-26 — A relative library path failed every test, and blamed nothing
+
+The GitHub Action's self-test found this on its FIRST real run, which is the
+entire argument for having written it.
+
+Both tests failed, in 0.6 seconds each, and the JUnit report said
+
+    <testsuite tests="2" failures="2" …>
+      <testcase classname="t-pass" …><failure message="exit 1"/>
+
+— a test named "a passing test", failing, with no step and no reason. Nothing
+in the CLI's own output said more.
+
+**The cause is one word: `fixture-library`.** A workflow naturally passes a path
+relative to the workspace, so `GOOD_LOOKS_USERDATA` was relative. Every path a
+run uses is joined onto that root, and one of them is handed to the Playwright
+CLI as `--reporter <scriptsDir>/step-reporter.mjs`. Playwright resolves it with
+`require.resolve`, **which reads a specifier that does not begin with `./` as a
+PACKAGE NAME**:
+
+    Cannot find module 'fixture-library/recorder/scripts/step-reporter.mjs'
+
+The run died before any test body, and the CLI reported what it saw: two tests,
+both failed, exit 1.
+
+**Fixed at the root, not at the reporter.** `resolveDataDir` now returns an
+absolute path. The two derived branches always were; the OVERRIDE is whatever
+the caller typed, and `--library ./tests` in a workflow or
+`GOOD_LOOKS_USERDATA=fixture-library` in a shell is the ordinary spelling rather
+than an exotic one. The reporter is simply where it surfaced first — the output
+directory, the artifact directory and the heal map are all joined onto the same
+root, and each would have been its own version of this.
+
+**It was reachable long before the action existed.** Nothing had ever run the
+CLI with a relative override, so nothing had met it. `check:cli-exit` builds its
+throwaway stores with `mkdtemp`, which returns an absolute path; every manual
+run in this session used an absolute one too. The action is the first caller for
+which relative is the NATURAL spelling, which is why it is the first thing to
+fail.
+
+**A second lesson, and the workflow now carries the fix for it.** Diagnosing
+this cost a CI round trip, because the reason was in a run log inside the
+library and nothing surfaced it — the job printed the report, which said `exit
+1`, and stopped. A self-test that fails without saying why is the same
+confident-signal-about-nothing shape as everything else in this arc. It now
+dumps the run logs and the library layout on failure, and uploads the logs
+beside the report.
+
 ### 2026-08-26 — The GitHub Action, and the question that had no answer (R14)
 
 R14 is ranked S, and the plan warns in the same paragraph what shipping it

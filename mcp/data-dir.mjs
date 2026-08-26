@@ -142,16 +142,36 @@ export function resolveDataDirChoice(env = process.env, platform = process.platf
  */
 export function resolveDataDir(env = process.env, platform = process.platform) {
   const choice = resolveDataDirChoice(env, platform);
-  if (choice.reason === "default" && !hasRecorderStore(choice.dir)) {
+  // ABSOLUTE, always. The two derived branches already are; the OVERRIDE is
+  // whatever the caller typed, and `--library ./tests` in a workflow or
+  // `GOOD_LOOKS_USERDATA=fixture-library` in a shell is the ordinary spelling.
+  //
+  // Every path a run uses hangs off this one, and a relative root is not merely
+  // fragile — it is silently wrong the moment a path leaves this process. The
+  // reporter is where it surfaced: `--reporter <scriptsDir>/step-reporter.mjs`
+  // is handed to the Playwright CLI, which resolves it with `require.resolve`,
+  // and a specifier that does not begin with `./` is read as a PACKAGE NAME.
+  // So the run died with `Cannot find module
+  // 'fixture-library/recorder/scripts/step-reporter.mjs'` before any test body
+  // ran, and reported every test as failed with `exit 1` and no step.
+  //
+  // Fixed at the root rather than at the reporter, because the reporter is one
+  // of several — the output directory, the artifact directory and the heal map
+  // are all joined onto this too, and each would be its own version of this bug.
+  //
+  // Found by the GitHub Action's self-test on its first real run (R14): a
+  // workflow naturally passes a path relative to the workspace.
+  const dir = choice.dir ? path.resolve(choice.dir) : choice.dir;
+  if (choice.reason === "default" && !hasRecorderStore(dir)) {
     throw new Error(
       `No data directory found for "${appName()}".\n` +
-        `  Looked for a recorder store in: ${choice.dir}\n` +
-        `  …and for a Glaze-era one beside it in: ${path.dirname(choice.dir)}\n` +
+        `  Looked for a recorder store in: ${dir}\n` +
+        `  …and for a Glaze-era one beside it in: ${path.dirname(dir)}\n` +
         `  Launch the app once so it creates its store, or set ` +
         `${USERDATA_OVERRIDE_ENV} to point here explicitly.`,
     );
   }
-  return choice.dir;
+  return dir;
 }
 
 export function readJsonFile(dataDir, fileName, fallback) {

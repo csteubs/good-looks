@@ -162,9 +162,37 @@ jobs:
           [ "$code" = "0" ] || { echo "::error::expected exit 0, got '${code}'"; exit 1; }
           echo "ok — exit 0"
 
+      # WHY THIS EXISTS. The first real run of this workflow failed with
+      # `failures="2"` where it expected 1, and the report said only
+      # `message="exit 1"` — which is the CLI's summary, not the reason. The
+      # reason was in the run log, inside the library, which nothing surfaced;
+      # diagnosing it cost a round trip. A self-test that fails without saying
+      # why is the same "confident signal about nothing" this whole arc keeps
+      # meeting.
+      #
+      # (It was a relative GOOD_LOOKS_USERDATA: `--reporter` became a relative
+      # specifier, and Playwright's require.resolve reads one that does not
+      # begin with `./` as a PACKAGE NAME. Every test died before its body.)
+      - name: Say what actually happened
+        if: failure()
+        run: |
+          set -uo pipefail
+          echo "::group::run logs"
+          for log in fixture-library/recorder/logs/*.log; do
+            [ -f "$log" ] || continue
+            echo "--- $log ---"
+            head -40 "$log"
+          done
+          echo "::endgroup::"
+          echo "::group::library layout"
+          find fixture-library -maxdepth 3 | head -40
+          echo "::endgroup::"
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: selftest-junit
-          path: results.xml
+          path: |
+            results.xml
+            fixture-library/recorder/logs/
           if-no-files-found: warn
