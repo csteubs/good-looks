@@ -118,7 +118,7 @@ row is only moved here with a file and a symbol behind it.
 | R2 | Exit non-zero when a run fails, on a documented contract | CI | **done 2026-08-25** | S |
 | R3 | Add a `bin` and a headless `run` command | CI | **done 2026-08-25** | L |
 | R4 | Make the runner reachable without Electron and without `safeStorage` | CI | **mostly built — see §3.3a** | S |
-| R5 | Add a per-run base-URL override | CI / Env | missing | M |
+| R5 | Add a per-run base-URL override | CI / Env | **superseded, then closed 2026-08-26** — its premise was refuted 2026-08-22 (see DECISIONS); `--base-url` ships for IMPORTED suites, and `--var` makes the real remedy reachable from CI | M |
 | R6 | Record commit, branch and job provenance on each run | CI | missing | M |
 | R7 | Provision secrets from the environment for CI runs | CI | **done 2026-08-25** | M |
 | R8 | Ship the run fixtures with the CI runner | CI | **done 2026-08-25** | M |

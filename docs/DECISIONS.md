@@ -10,6 +10,73 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-26 — R5's remaining half, and the entry that already refuted the other
+
+I set out to build R5 as the plan specifies it and found, on the way, that
+**this repository had already disproved its premise and shipped the answer**.
+The 2026-08-22 entry below measured it against two real servers: `use.baseURL`
+resolves RELATIVE navigations only, a recorded `goto` is the absolute URL the
+recorder watched, so *"a per-run `PW_BASE_URL` moves imported suites and nothing
+else"* — and on that library, *"R5 as specified would have changed the behaviour
+of zero tests."* What moves a recorded test is `${name}` interpolation, and
+`origin-variable.ts` shipped the edit that declares a test's site address as one.
+
+I found that because pushing hit a branch name already taken. That is luck, not
+method, and it is the third time tonight that work which exists was nearly
+duplicated or missed. The method that would have found it is reading DECISIONS
+for the item before starting it, which is what the file is for.
+
+So this is not R5 as ranked. It is the part that survives that refutation, plus
+the part that was missing from the part that didn't.
+
+**`--base-url` is real for an IMPORTED spec**, which is precisely the case the
+2026-08-22 measurement leaves standing: a hand-written suite navigates
+relatively (`page.goto("/")`) and today can only use the base URL stored on its
+record. A CI run against a PR preview needs to override it, and nothing could.
+
+**The gate had to move to `shared/`.** `normalizeBaseUrl` lived in
+`main/services/imported-config.ts`, right while both ways in were main-process.
+A CLI flag is a third, in plain `.mjs`. A transcribed copy fails in one
+direction — the CLI accepting a URL the app refuses, where `file://` points a
+run at the local disk and an un-interpolated `${…}` resolves as a literal
+hostname. `imported-config.ts` IMPORTS and re-exports it; a bare `export … from`
+forwards the name without binding it, and the functions in that file call it.
+`type-check` caught that immediately, which is what the hand-written `.d.mts` is
+for.
+
+**The override is RECORDED on the RunRecord.** Without it two runs of one test
+against two environments are indistinguishable afterwards, and the failing one
+reads as a regression rather than as a different target.
+
+**And the flag says when it does nothing.** A recorded test gets no benefit, so
+a run reports it — on the same channel the fixtures use, whose label is already
+exactly this. A flag that changes nothing is not a bug; a flag that changes
+nothing WITHOUT SAYING SO is how an operator points a pipeline at a preview,
+watches it go green, and reads production.
+
+**The message names the remedy, and `--var` is what made the remedy reachable.**
+"Nothing resolves against it" is a diagnosis with no treatment. The treatment
+ships already — declare the site address as a variable — but on the unattended
+path a declared variable's value could come from ONE place: a dataset row. So
+the app's own answer was unreachable from CI, and a caveat pointing at it would
+have been advice you cannot take. `--var name=value` closes that, and it is the
+plan's own §3.3 command shape. Verified end to end: a recorded test reads
+`https://production.example.com` with no flag and
+`https://pr-42.preview.example.com` with one.
+
+**An undeclared `--var` is reported too**, for the same reason as everything
+else here. The generator substitutes declared names only, so `--var sight=…` is
+inert — the suite runs against production and exits 0, and nothing in the output
+looks wrong.
+
+**Two footnotes on method.** The first draft of the caveat named `--var` before
+`--var` existed, which would have been a message pointing at a flag that is not
+there. And reading the base-URL result with
+`grep -h RESOLVED_AGAINST logs/*.log | tail -1` showed the OLD value, because a
+glob is in filename order and not chronological — the same wrong-artifact
+mistake as the copied library's run history earlier tonight, caught by
+re-measuring per run id.
+
 ### 2026-08-26 — A relative library path failed every test, and blamed nothing
 
 The GitHub Action's self-test found this on its FIRST real run, which is the

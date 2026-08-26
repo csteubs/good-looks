@@ -14,6 +14,7 @@
 // not get. The same goes for a flag that needs a value and was given none —
 // `--tag --json` must not silently select the tag "--json".
 
+import { normalizeBaseUrl } from "../shared/base-url.mjs";
 import { RUN_BROWSERS } from "../mcp/run-tests.mjs";
 import { SLOW_MO_MS } from "../shared/run-pacing.mjs";
 import { MAX_PARALLEL } from "../mcp/run-pool.mjs";
@@ -33,6 +34,8 @@ const VALUE_FLAGS = new Set([
   "--parallel",
   "--secrets-file",
   "--junit",
+  "--base-url",
+  "--var",
 ]);
 const BOOL_FLAGS = new Set(["--all", "--json", "--all-datasets", "--dry-run", "--help", "-h"]);
 
@@ -75,6 +78,9 @@ export function parseRunArgs(argv) {
   let dryRun = false;
   let secretsFile;
   let junit;
+  let baseUrl;
+  /** @type {Record<string,string>} */
+  const vars = {};
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -109,6 +115,41 @@ export function parseRunArgs(argv) {
           // results.xml` in a workspace is the normal spelling.
           junit = value;
           break;
+        case "--base-url": {
+          // Refused rather than ignored, like `--speed` and `--browser`. It
+          // goes through the SAME `normalizeBaseUrl` every other way in uses —
+          // the imported project's config and the app's own field — so the CLI
+          // cannot accept a URL the app would refuse. A `file://` here would
+          // point a run at the local disk.
+          //
+          // The NORMALIZED value is kept, not the typed one: `HTTPS://Shop.EXAMPLE.com`
+          // and `https://shop.example.com/` are one base URL and must not be
+          // recorded on two runs as two.
+          const normalized = normalizeBaseUrl(value);
+          if (!normalized) {
+            return fail(
+              `--base-url must be an http(s) URL, got "${value}".`,
+            );
+          }
+          baseUrl = normalized;
+          break;
+        }
+        case "--var": {
+          // `name=value`, repeatable. Split on the FIRST `=` only: a value may
+          // legitimately contain one (a URL with a query string is the obvious
+          // case), and splitting on every `=` would truncate it silently.
+          const eq = value.indexOf("=");
+          if (eq < 1) {
+            return fail(`--var needs name=value, got "${value}".`);
+          }
+          const name = value.slice(0, eq);
+          // The generator substitutes DECLARED names only, so an undeclared one
+          // is not dangerous — but it is almost always a typo, and a run that
+          // silently ignores it is a run against the wrong environment. The
+          // parser cannot know what a test declares; `runSelection` reports it.
+          vars[name] = value.slice(eq + 1);
+          break;
+        }
         case "--secrets-file":
           // The PATH only. Nothing here reads it — a parser that touched the
           // filesystem could not be unit-tested, and a credential file is the
@@ -209,6 +250,8 @@ export function parseRunArgs(argv) {
       dryRun,
       secretsFile,
       junit,
+      baseUrl,
+      vars: Object.keys(vars).length > 0 ? vars : undefined,
       json,
     },
   };

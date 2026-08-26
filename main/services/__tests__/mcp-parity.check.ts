@@ -1341,6 +1341,98 @@ function codeOnly(source: string): string {
   }
 }
 
+// ── 17. ONE base-URL gate, and the run records where it pointed ────────
+//
+// R5 adds a third way a base URL gets in — `--base-url` on the CLI — beside a
+// parsed `playwright.config` and the app's own field. The plan asks for it to be
+// "validated through the same `normalizeBaseUrl` gate every other path uses",
+// and the direction a transcribed copy fails is the CLI accepting a URL the app
+// refuses: `file://` points a run at the local disk, and an un-interpolated
+// `${…}` resolves as a literal hostname.
+//
+// The gate could not stay in `main/services/imported-config.ts`, which is
+// compiled TypeScript no `.mjs` process can import — so it moved to
+// `shared/base-url.mjs` and that file re-exports it. This asserts the move held
+// rather than growing a second copy.
+{
+  const sharedGate = readFileSync(resolve(process.cwd(), "shared/base-url.mjs"), "utf8");
+  const importedConfig = readFileSync(
+    resolve(process.cwd(), "main/services/imported-config.ts"),
+    "utf8",
+  );
+  const args = readFileSync(resolve(process.cwd(), "cli/args.mjs"), "utf8");
+  const mcpSrc = codeOnly(mcpRunSource());
+
+  assert(
+    /export function normalizeBaseUrl/.test(sharedGate),
+    "shared: normalizeBaseUrl is defined in shared/base-url.mjs",
+  );
+  // The refusals, asserted individually. A gate that stopped refusing one of
+  // these would still export the right name and still pass a "is it imported"
+  // check — and each of these is a way a run reaches somewhere nobody chose.
+  assert(/raw\.includes\("\$\{"\)/.test(sharedGate), "…and refuses an un-interpolated ${…}");
+  assert(
+    /url\.protocol !== "http:" && url\.protocol !== "https:"/.test(sharedGate),
+    "…and refuses any scheme but http(s)",
+  );
+  assert(/return url\.href/.test(sharedGate), "…and returns the parsed href, so one URL has one spelling");
+
+  // NOT a second definition anywhere. `imported-config.ts` imports and
+  // re-exports (a bare `export … from` would forward the name without binding
+  // it, and the functions in that file call it).
+  assert(
+    !/function normalizeBaseUrl/.test(importedConfig),
+    "app: imported-config.ts does not define its own normalizeBaseUrl",
+  );
+  assert(
+    /from "\.\.\/\.\.\/shared\/base-url\.mjs"/.test(importedConfig),
+    "…it imports the shared one",
+  );
+  assert(
+    /from "\.\.\/shared\/base-url\.mjs"/.test(args),
+    "cli: args.mjs validates --base-url through the shared gate rather than its own rule",
+  );
+
+  // Both halves of the run: the override RESOLVES against the record, and the
+  // result is RECORDED. An override that is not recorded makes the history
+  // misleading — two runs of one test against two environments are
+  // indistinguishable afterwards, and the failing one reads as a regression.
+  assert(
+    /normalizeBaseUrl\(baseUrlOverride\) \?\? test\.baseUrl/.test(mcpSrc),
+    "mcp: the override resolves against the test's own record, through the same gate",
+  );
+  assert(
+    /\{ baseUrl: resolvedBaseUrl \}/.test(mcpSrc),
+    "…and the run RECORDS where it pointed",
+  );
+  // And the run says when the override could not apply. A recorded test
+  // navigates absolutely, so `use.baseURL` is read by nothing — a flag that
+  // changes nothing without saying so is how an operator points a pipeline at a
+  // PR preview, watches it go green, and reads results from production.
+  assert(
+    /Base URL override on \$\{unaffected\} recorded test/.test(mcpSrc),
+    "…and REPORTS an override that reached tests it cannot affect",
+  );
+  // The message NAMES the remedy. "Nothing resolves against it" is a diagnosis
+  // with no treatment, and the treatment already ships — declaring the site
+  // address as a variable (origin-variable.ts) is what moves a recorded test.
+  assert(
+    /make its site address a variable/.test(mcpSrc),
+    "…and names what DOES re-point a recorded test, rather than only what does not",
+  );
+
+  // `--var` is the half that makes that remedy reachable from CI at all: before
+  // it, a declared variable's value could only come from a dataset row.
+  assert(
+    /\{ \.\.\.entry\.vars, \.\.\.varOverrides \}/.test(mcpSrc),
+    "mcp: an explicit --var layers OVER a dataset row's value for the same name",
+  );
+  assert(
+    /no selected test declares/.test(mcpSrc),
+    "…and a --var name nobody declares is reported, because it is inert and almost always a typo",
+  );
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);
