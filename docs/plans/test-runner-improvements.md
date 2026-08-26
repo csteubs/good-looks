@@ -123,7 +123,7 @@ row is only moved here with a file and a symbol behind it.
 | R7 | Provision secrets from the environment for CI runs | CI | **done 2026-08-25** | M |
 | R8 | Ship the run fixtures with the CI runner | CI | **done 2026-08-25** | M |
 | R9 | Selector-based selection with a dry run, and a distinct empty-match outcome | CI | **done 2026-08-25** | M |
-| R10 | Export the library as a portable bundle; stop storing absolute script paths | CI | missing | L |
+| R10 | Export the library as a portable bundle; stop storing absolute script paths | CI | **resolution done 2026-08-25**; the export command remains | L |
 | R11 | Install browsers from the CI entry point | CI | **done 2026-08-25** | S |
 | R12 | Ingest CI run results back into the local library | CI | missing | L |
 | R13 | Put the failing step in the JUnit message and make annotations point somewhere | CI | **built for app runs — see §2a** | S |
@@ -163,7 +163,7 @@ row is only moved here with a file and a symbol behind it.
 | R46 | Lean diagnostics mode for the app | Perf | partial | M |
 | R47 | Fix heal candidate scores above 1 being reported as 0 | Stab | **done 2026-08-25** | S |
 | R48 | Finish the Batch-to-Routine rename in UI copy | UX | partial | S |
-| R49 | Run the heal fixture for MCP-driven runs | Stab | **guard done; R51 landed, feature is next** | M |
+| R49 | Run the heal fixture for MCP-driven runs | Stab | **done 2026-08-25** — guard, then feature | M |
 | R50 | Export a run as a shareable PDF | UX | missing | M |
 | R51 | Move the recorder's locator engine into `shared/` | Stab | **done 2026-08-25** — R49 and CI overlay rules unblocked | L |
 | R52 | Write `glaze-dismiss.mjs` on an unattended run, and arm the rules | Stab | **done 2026-08-25** — was also a load failure, see DECISIONS | M |
@@ -215,7 +215,17 @@ lines behind it.
 This is the failure mode §3.3a names, one layer down: not a wrong answer, a
 confident one about nothing.
 
-**Done, 2026-08-25.** The guard landed, and with it the honest state.
+**Done, 2026-08-25 — both halves.** The FEATURE followed R51: the probe builder
+and the map builder are in `shared/`, the unattended runner writes the map under
+`healMapFileName(runId)`, and the check's "on" arm — a switch that is not `"0"`
+implies a map named through `shared/heal-artifacts.mjs` AND a writer for it — is
+the arm that now runs. Its evidence is converted into `step-matches.json` and
+`heal-failures.json` like an app run's, because "healed nothing and recorded no
+evidence of having tried" is two failures and fixing one would have left the
+other. The only difference from an app run is `stepLabel`, which is empty
+because `describeStep` is still app-side; the fixture falls back to the step id.
+
+**The guard, earlier the same day.**
 `check:ci-fixtures` now asserts the implication in BOTH arms — written only for
 the "on" arm it would be satisfied by disabling the feature, which is the same
 shape again — so "off" has to prove the map and the heal directory are absent
@@ -408,6 +418,14 @@ resolves through `path.relative` to a spec seven directories above the runner's
 scripts dir. Playwright finds no tests. Shipping a GitHub Action (R14, ranked S)
 before the portable bundle (R10, ranked L) means shipping a workflow template
 that cannot work.
+
+**That half of R10 landed 2026-08-25.** `shared/script-path.mjs` resolves a
+record's spec against the scripts dir of whichever machine is reading, so a
+copied library finds its own specs — recorded and imported alike — and the spec
+argument the runner builds no longer escapes. Nothing changes on the authoring
+machine and there is no migration. **R14 is unblocked on this point**; what
+remains of R10 is the export COMMAND that packages a library into something you
+can hand a runner, which is a feature rather than a fix.
 
 *That dependency had a bug underneath it.* Until #261, a run in which every test
 was skipped exited 0 — so the copied-library case above would have reported a

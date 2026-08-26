@@ -92,6 +92,120 @@ all.
 Plan: [plans/shopify-account-auth.md](plans/shopify-account-auth.md). Deploy:
 [../workers/mailbox/README.md](../workers/mailbox/README.md).
 
+### 2026-08-25 — Auto-Heal runs on an unattended run, for the first time
+
+The feature half of R49, and the thing R51 was done for. The guard landed
+first, off, and it is what this had to satisfy: `check:ci-fixtures` demanded
+that a `GLAZE_HEAL` which is not `"0"` implies a map named through
+`shared/heal-artifacts.mjs` **and** a writer for it. That assertion had been
+sitting there, in its unreachable arm, waiting for the engine.
+
+**What moved, and why each piece had to.** `buildHealProbeScript` →
+`shared/heal-probe.mjs`; `healKeyFor`/`healKeyBase` → `shared/heal-key.mjs`
+beside the grammar they apply; `buildHealMap` → `shared/heal-map.mjs`. None of
+this is tidying either: the map IS the feature, because the fixture rethrows
+untouched for a key it cannot find, and a runner that cannot build a probe
+cannot heal however loudly its environment says otherwise.
+
+**The extraction changed no key, no probe and no map entry** — measured the way
+R51's was, by running the identical comparison through the identical bundler on
+both sides. The first attempt compared a `tsx` run against an `esbuild` run and
+showed a difference; that was the pipeline, not the code, and it is worth
+recording because a hash comparison across two toolchains is a confident signal
+about nothing.
+
+**`stepLabel` is injected, and that is the one visible gap.** It comes from
+`describeStep`, which lives in `script-generator.ts` next to its own mirror in
+`renderer/lib/describe-step.ts` — a duplication with a parity test over it and
+its own extraction to do. Transcribing a third copy to serve a heal artifact
+would be the exact mistake this file keeps recording, so the label is a
+parameter: the app passes its own, an unattended run passes none, and the
+fixture falls back to the step id it already falls back to. The difference shows
+up in an artifact, where somebody can see it, rather than in the ranking, where
+they could not.
+
+**Evidence, or this would be the other half of R49's own sentence.** "Healed
+nothing, and recorded no evidence of having tried" is two failures, and shipping
+only the first fix would leave the second. The fixture writes `heals.json` and
+`matches.json` into a scratch directory; every reader — `get_step_matches`, the
+failure view, the app's own store — asks for `step-matches.json` and
+`heal-failures.json` in the run's artifact directory. So the unattended runner
+converts them and removes the scratch on every path out, including the common
+one where nothing healed. The envelope and the heal/failure discriminator moved
+to `shared/heal-artifacts.mjs` with it: two writers of one artifact format is a
+run whose evidence is simply not found. The app's `isHeal`/`isHealFailure` stay
+as one-line delegating wrappers, because a `.d.mts` cannot express a type
+predicate and re-deciding the rule is what we were avoiding.
+
+**A summary line, inside the choke point.** The counts go through
+`sanitizeOutput` with everything else — not because they carry a secret today
+(they are counts) but so the function keeps exactly one exit. A string appended
+after redaction is safe until somebody makes the summary name the steps, which
+is the obvious next edit.
+
+**Three assertions were wrong on the way, all the same shape.** The check's own
+`…and writes it, rather than naming a file nothing produces` was
+`/buildHealMap|…writeFileSync/` — an alternation satisfied by the IMPORT of
+`buildHealMap` alone, so it passed against a runner with the call deleted, which
+is R49's exact root cause. The assertion whose entire purpose was to catch that
+bug could not. It is anchored on the write of `env.GLAZE_HEAL_MAP` now. Two
+`check:ci-secrets` assertions matched `sanitizeOutput(output, …)` literally and
+went red for text being routed through redaction correctly — a check that fails
+on being satisfied teaches people to loosen it, so they match the argument
+rather than the identifier while still pinning the values.
+
+### 2026-08-25 — A copied library could not find its own specs (R10)
+
+Phase C2's blocker, and the plan named it before I started: *"a test's
+`scriptPath` is an ABSOLUTE path from the authoring machine, so a library copied
+to a CI runner resolves through `path.relative` to a spec seven directories
+above the runner's scripts dir. Playwright finds no tests."* Reproduced exactly
+that before writing anything, which is worth doing when the plan is this
+specific — it is also how the imported case turned out to need its own answer.
+
+**The rule already existed on the write side.** `testStore.writeScript` has
+always refused a `scriptPath` outside the scripts dir — *"only an existing path
+INSIDE the scripts dir is honoured"* — and falls back to the default. Every
+READER trusted it. So the fix is not new policy; it is the same sentence applied
+in the direction it was missing, moved to `shared/` because three processes read
+it.
+
+**No migration, and nothing changes on the authoring machine.** A stored path
+inside this scripts dir is returned untouched, which is every run on the machine
+that recorded the test. A record that resolves wrongly is re-derived rather than
+rewritten, so there is no upgrade step to get wrong and no half-migrated
+library.
+
+**An imported test keeps its position, and that is not cosmetic.** Its spec
+relative-imports its siblings, so flattening it to `<id>.spec.ts` would resolve
+to a file that exists and then fail on its own imports — a worse failure than
+not resolving, because it looks like the test is broken. The position is
+recoverable from the stored path without knowing the old root: everything after
+the `imported/<id>/` segment was always relative.
+
+**A bundle's `tests.json` is untrusted input.** This is the half that is easy to
+miss, and it is the same argument the import sandbox makes: a bundle is a folder
+somebody hands you, and its index is a file they wrote. The derived path is
+joined onto the LOCAL scripts dir and then read and executed as a Playwright
+spec — so an id that is a path, or a `..` tail after the sandbox segment, walks
+straight out of the directory. Both are refused, and with both defences removed
+a `..` tail resolves outside the scripts directory entirely, which the test
+measures rather than asserts.
+
+**Three of my own test cases were vacuous, and the revert-test found all
+three.** Splitting stored paths on `\\` as well as `/` mattered for exactly one
+case I had not written — a Windows-authored IMPORTED test — because a flat
+record resolves the same either way. And two hostile cases were built with
+`path.join`, which NORMALISES `..` away: the hostile path arrived already
+harmless, so removing the segment validation broke nothing. A hostile
+`tests.json` contains the literal segments, because nothing normalised it on the
+way in; the cases use raw strings now.
+
+**Scoped deliberately.** R10 is "export the library as a portable bundle; stop
+storing absolute script paths". This is the second half — the correctness bug
+and R14's actual blocker. The export COMMAND (packaging a library into something
+you can hand to a runner) is the remaining half and is a feature rather than a
+fix.
 ### 2026-08-25 — The capture fixture imported a file no CI run wrote
 
 Found while wiring overlay dismissal onto the unattended path, which is a

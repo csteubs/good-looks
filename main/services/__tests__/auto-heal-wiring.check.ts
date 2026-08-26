@@ -103,23 +103,41 @@ for (const name of ["replayFromStart", "replayAll"]) {
 // locator change vanishes from the only place it can be reviewed or undone.
 {
   const runner = readFileSync(resolve(here, "../playwright-runner.ts"), "utf8");
+  // The RULES live in shared/heal-artifacts.mjs as of R49's feature half: an
+  // unattended run classifies the same events, and two classifications of one
+  // file is how a heal becomes a failure in one report and a heal in the other.
+  const shared = readFileSync(resolve(here, "../../../shared/heal-artifacts.mjs"), "utf8");
 
   assert(
     /function isHeal\(/.test(runner) && /function isHealFailure\(/.test(runner),
     "the runner sorts heals.json with typed guards, not an inline filter",
   );
+  // …and those guards DELEGATE. They exist to carry a type predicate a `.d.mts`
+  // cannot express, not to hold a second copy of the rule — which is exactly
+  // the drift the shared module was created to stop.
+  assert(
+    /return isHealEvent\(e\);/.test(runner) && /return isHealFailureEvent\(e\);/.test(runner),
+    "…and they delegate to the shared rule rather than re-deciding it",
+  );
   // The backwards-compatibility direction. Every event written before
   // 2026-08-07 has no `outcome`, and every one of those was a heal — reading
   // them the other way would reclassify the whole existing journal as failures.
   assert(
-    /\(e\.outcome \?\? "healed"\) === "healed"/.test(runner),
+    /\(event\?\.outcome \?\? "healed"\) === "healed"/.test(shared),
     "an event with no outcome is read as a HEAL (that was the only kind written)",
   );
   // Keyed on the outcomes that exist rather than on "not a heal", so a value
   // this build doesn't recognise is dropped rather than counted as a failure.
   assert(
-    /e\.outcome === "exhausted" \|\| e\.outcome === "no-candidates"/.test(runner),
+    /event\?\.outcome === "exhausted" \|\| event\?\.outcome === "no-candidates"/.test(shared),
     "a failure is recognised by its own outcomes, not by NOT being a heal",
+  );
+  // And the unattended runner uses the same rule, which is the whole point of
+  // it having moved.
+  const mcp = readFileSync(resolve(here, "../../../mcp/run-tests.mjs"), "utf8");
+  assert(
+    /isHealFailure/.test(mcp) && /shared\/heal-artifacts\.mjs/.test(mcp),
+    "the MCP runner classifies its heals through the same shared rule",
   );
   assert(
     /artifactStore\.writeHealFailures\(/.test(runner),
