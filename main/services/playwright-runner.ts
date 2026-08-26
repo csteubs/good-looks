@@ -11,6 +11,7 @@ import { fileURLToPath } from "url";
 import { app, logger } from "@shell/backend";
 
 import { healDirName, healMapFileName } from "../../shared/heal-artifacts.mjs";
+import { resolveScriptPath } from "../../shared/script-path.mjs";
 import { healKeyAnd, healKeyHasText, healKeyText, healKeyWithin } from "../../shared/heal-key.mjs";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 
@@ -1375,7 +1376,12 @@ export const playwrightRunner = {
         // work so an off run (or an imported test) pays nothing. Imported specs
         // are their own source of truth and aren't guaranteed one-action-per-
         // line, so — like step highlighting — capture is app-generated only.
-        let specToRun = rec.scriptPath;
+        // Resolved, not trusted: `scriptPath` is absolute and from the machine
+        // that recorded the test, so a library restored from a backup or moved
+        // between machines names a spec that is not there. Falling back to the
+        // stored path keeps the failure identical to what it was for a record
+        // the resolver refuses — Playwright reports the missing file (R10).
+        let specToRun = resolveScriptPath(getScriptsDir(), rec) ?? rec.scriptPath;
         let capturing = false;
         let artifactDir = "";
 

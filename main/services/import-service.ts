@@ -17,6 +17,7 @@ import { branchNameProblem } from "../../shared/branch-paths.mjs";
 
 import type { RunBrowser, TestRecord } from "../recorder/types.js";
 import { getScriptsDir, testStore } from "./test-store.js";
+import { IMPORTED_SEGMENT } from "../../shared/script-path.mjs";
 import { parseSpec } from "./spec-parser.js";
 import {
   firstNavigationUrl,
@@ -111,7 +112,7 @@ export function resolveSibling(dir: string, spec: string): string | null {
  *  else. Named by test id, so two imports of the same project can't collide
  *  and deleting one can't take the other's files with it. */
 export function importedSandboxDir(id: string): string {
-  return path.join(getScriptsDir(), "imported", id);
+  return path.join(getScriptsDir(), IMPORTED_SEGMENT, id);
 }
 
 /** True when `child` is `parent` itself or sits underneath it.

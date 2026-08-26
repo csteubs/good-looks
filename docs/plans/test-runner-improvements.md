@@ -123,7 +123,7 @@ row is only moved here with a file and a symbol behind it.
 | R7 | Provision secrets from the environment for CI runs | CI | **done 2026-08-25** | M |
 | R8 | Ship the run fixtures with the CI runner | CI | **done 2026-08-25** | M |
 | R9 | Selector-based selection with a dry run, and a distinct empty-match outcome | CI | **done 2026-08-25** | M |
-| R10 | Export the library as a portable bundle; stop storing absolute script paths | CI | missing | L |
+| R10 | Export the library as a portable bundle; stop storing absolute script paths | CI | **resolution done 2026-08-25**; the export command remains | L |
 | R11 | Install browsers from the CI entry point | CI | **done 2026-08-25** | S |
 | R12 | Ingest CI run results back into the local library | CI | missing | L |
 | R13 | Put the failing step in the JUnit message and make annotations point somewhere | CI | **built for app runs — see §2a** | S |
@@ -408,6 +408,14 @@ resolves through `path.relative` to a spec seven directories above the runner's
 scripts dir. Playwright finds no tests. Shipping a GitHub Action (R14, ranked S)
 before the portable bundle (R10, ranked L) means shipping a workflow template
 that cannot work.
+
+**That half of R10 landed 2026-08-25.** `shared/script-path.mjs` resolves a
+record's spec against the scripts dir of whichever machine is reading, so a
+copied library finds its own specs — recorded and imported alike — and the spec
+argument the runner builds no longer escapes. Nothing changes on the authoring
+machine and there is no migration. **R14 is unblocked on this point**; what
+remains of R10 is the export COMMAND that packages a library into something you
+can hand a runner, which is a feature rather than a fix.
 
 *That dependency had a bug underneath it.* Until #261, a run in which every test
 was skipped exited 0 — so the copied-library case above would have reported a
