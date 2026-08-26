@@ -588,7 +588,7 @@ async function main(): Promise<void> {
     const done = fake.doneEvent();
     assert(done?.stoppedBy === "user", "a batch the user stopped says the USER stopped it");
     assert(
-      done?.results.find((r) => r.testId === "b")?.note === "Batch stopped",
+      done?.results.find((r) => r.testId === "b")?.note === "Routine stopped",
       "…and its skipped entries keep the wording that has always been right for it",
     );
   }
@@ -737,7 +737,7 @@ async function main(): Promise<void> {
 
   // The notification and the alert are where "who stopped it" actually pays
   // off: a scheduled routine's notification is often the ONLY thing seen of it,
-  // and "Batch stopped" for a run nobody touched reads as somebody having
+  // and "Routine stopped" for a run nobody touched reads as somebody having
   // intervened.
   {
     const byUser = buildBatchNotice({
@@ -747,7 +747,7 @@ async function main(): Promise<void> {
       skipped: 2,
       stopped: true,
     });
-    assert(byUser.title === "Batch stopped", "a user-stopped batch keeps its own wording");
+    assert(byUser.title === "Routine stopped", "a user-stopped routine keeps its own wording");
 
     const byPolicy = buildBatchNotice({
       total: 3,
@@ -759,7 +759,7 @@ async function main(): Promise<void> {
       stoppedByTest: "Seed data",
     });
     assert(
-      byPolicy.title !== "Batch stopped",
+      byPolicy.title !== "Routine stopped",
       "a policy-stopped routine does not claim the user stopped it",
     );
     assert(
@@ -1574,7 +1574,7 @@ async function main(): Promise<void> {
     assert(fake.notices[0].failed === 0 && fake.notices[0].passed === 2, "a clean batch notifies");
     assert(fake.notices[0].stopped === false, "a completed batch is not reported as stopped");
     assert(
-      buildBatchNotice(fake.notices[0]).title === "Batch passed",
+      buildBatchNotice(fake.notices[0]).title === "Routine passed",
       `a clean batch says so (got "${buildBatchNotice(fake.notices[0]).title}")`,
     );
   }
@@ -1591,7 +1591,7 @@ async function main(): Promise<void> {
 
     assert(fake.notices.length === 1, "a failing batch still notifies exactly once");
     assert(
-      buildBatchNotice(fake.notices[0]).title === "Batch finished — 1 failed",
+      buildBatchNotice(fake.notices[0]).title === "Routine finished — 1 failed",
       `a failing batch names the count (got "${buildBatchNotice(fake.notices[0]).title}")`,
     );
   }
@@ -1607,7 +1607,7 @@ async function main(): Promise<void> {
     assert(fake.notices.length === 1, "a stopped batch notifies rather than going silent");
     assert(fake.notices[0].stopped === true, "the notice knows it was stopped");
     assert(
-      buildBatchNotice(fake.notices[0]).title === "Batch stopped",
+      buildBatchNotice(fake.notices[0]).title === "Routine stopped",
       `a stopped batch says stopped, not failed (got "${buildBatchNotice(fake.notices[0]).title}")`,
     );
   }

@@ -103,9 +103,9 @@ export function AlertsPane() {
 
         <SettingRow
           id="notify-batch-done"
-          label="Notify when a batch finishes"
-          summary="Shows a macOS notification when a batch run ends, whether it passed or failed."
-          details="A batch is a job you start and walk away from, so this reports success too. While it's on, tests inside a batch don't each post their own notification — you get one for the suite. Local to this Mac."
+          label="Notify when a routine finishes"
+          summary="Shows a macOS notification when a routine run ends, whether it passed or failed."
+          details="A routine is a job you start and walk away from, so this reports success too. While it's on, tests inside a routine don't each post their own notification — you get one for the suite. Local to this Mac."
         >
           <Switch
             id="notify-batch-done"

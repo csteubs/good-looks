@@ -73,12 +73,12 @@ describe("browser", () => {
 });
 
 describe("headless", () => {
-  // Two switches say "headless" now — one for a run, one for a batch — so these
+  // Two switches say "headless" now — one for a run, one for a routine — so these
   // queries are exact. A regex that matched both is what turned this file red
   // the moment the second row landed, which is the query telling the truth: it
   // was never asserting WHICH switch it clicked.
   const runSwitch = () => screen.getByRole("switch", { name: "Run tests in headless mode" });
-  const batchSwitch = () => screen.getByRole("switch", { name: "Run batches in headless mode" });
+  const batchSwitch = () => screen.getByRole("switch", { name: "Run routines in headless mode" });
 
   it("saves being turned on", () => {
     const { controller } = renderPane(<TestDefaultsPane />);
@@ -95,8 +95,8 @@ describe("headless", () => {
     expect(savedPatch(controller)).toEqual({ defaultRunHeadless: false });
   });
 
-  it("keeps the batch's default separate from the single run's", () => {
-    // R18. The two are deliberately different settings: a batch ships headless
+  it("keeps the routine's default separate from the single run's", () => {
+    // R18. The two are deliberately different settings: a routine ships headless
     // and a single run ships headed. One switch driving both is how sixty
     // windows got opened by a tick box, and how someone who wants to WATCH one
     // run would have had to turn batches headed to get it.

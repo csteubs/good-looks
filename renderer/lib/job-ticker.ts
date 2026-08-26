@@ -105,7 +105,7 @@ export function summariseJobs(input: TickerInput): TickerReading | null {
     const done = passed + failed + skipped;
     return {
       kind: "batch",
-      label: `Batch ${done}/${total}`,
+      label: `Routine ${done}/${total}`,
       done,
       total,
       tone: "run",
@@ -143,7 +143,7 @@ export function summariseJobs(input: TickerInput): TickerReading | null {
       const { failed, total } = batch.summary;
       return {
         kind: "failed",
-        label: `Batch failed: ${failed} of ${total}`,
+        label: `Routine failed: ${failed} of ${total}`,
         testId: null,
         tone: "fail",
       };

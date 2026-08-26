@@ -91,7 +91,7 @@ export function buildBatchNotice(notice: BatchOutcomeNotice): { title: string; b
   const ran = notice.passed + notice.failed;
   if (notice.stopped) {
     // WHO stopped it, not just that it stopped. This notification is often the
-    // only thing seen of a scheduled routine, and "Batch stopped" for a run
+    // only thing seen of a scheduled routine, and "Routine stopped" for a run
     // nobody touched reads as somebody having intervened.
     const tail = `${notice.passed} passed, ${notice.failed} failed, ${notice.skipped} not run.`;
     if (notice.stoppedBy === "failure") {
@@ -100,18 +100,18 @@ export function buildBatchNotice(notice: BatchOutcomeNotice): { title: string; b
         body: notice.stoppedByTest ? `"${notice.stoppedByTest}" failed. ${tail}` : tail,
       };
     }
-    return { title: "Batch stopped", body: tail };
+    return { title: "Routine stopped", body: tail };
   }
   if (notice.failed > 0) {
     return {
-      title: `Batch finished — ${notice.failed} failed`,
+      title: `Routine finished — ${notice.failed} failed`,
       body: `${notice.failed} of ${ran} run${ran === 1 ? "" : "s"} failed.${
         notice.skipped > 0 ? ` ${notice.skipped} skipped.` : ""
       }`,
     };
   }
   return {
-    title: "Batch passed",
+    title: "Routine passed",
     body: `All ${notice.passed} run${notice.passed === 1 ? "" : "s"} passed.${
       notice.skipped > 0 ? ` ${notice.skipped} skipped.` : ""
     }`,
