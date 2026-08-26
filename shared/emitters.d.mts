@@ -21,6 +21,12 @@ export interface EmitRun {
   runBrowser?: string;
   /** Label of the step the run failed at, when the run wrote a replay. */
   failedStepLabel?: string;
+  /** 0-based index of the step the run failed at, when there is no label.
+   *  An unattended run reports a spec LINE and the reporter carries no title,
+   *  so it stores the fact and leaves the phrasing to whoever has the steps. */
+  failedStepIndex?: number;
+  /** How many steps the test has, so an index can be shown as "7 of 12". */
+  stepCount?: number;
   /** Resolved NAME of the run's failure reason, not its id — the emitters are
    *  pure and cannot reach the custom-reason store to look one up. */
   failureReason?: string;

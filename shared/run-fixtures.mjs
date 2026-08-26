@@ -107,7 +107,13 @@ export const CI_FIXTURE_POLICY = [
   {
     capability: "step reporter",
     onInCi: true,
-    why: "Costs nothing and is what makes per-step progress reportable at all.",
+    why:
+      "Costs nothing, and it is what lets a run say WHICH STEP failed. Written since R8 and " +
+      "LOADED since 2026-08-26 — `runArgs` passed no `--reporter`, so no marker was ever " +
+      "emitted and this row described the app rather than this path. Written-but-unwired is R49's " +
+      "shape without the switch: everything present, nothing connected, no error anywhere. The " +
+      "run records the failing step as an INDEX, not a label — the reporter reports a line and " +
+      "carries no title, and `describeStep` is app-side.",
   },
   {
     capability: "screenshots",

@@ -126,7 +126,7 @@ row is only moved here with a file and a symbol behind it.
 | R10 | Export the library as a portable bundle; stop storing absolute script paths | CI | **resolution done 2026-08-25**; the export command remains | L |
 | R11 | Install browsers from the CI entry point | CI | **done 2026-08-25** | S |
 | R12 | Ingest CI run results back into the local library | CI | missing | L |
-| R13 | Put the failing step in the JUnit message and make annotations point somewhere | CI | **built for app runs — see §2a** | S |
+| R13 | Put the failing step in the JUnit message and make annotations point somewhere | CI | **done 2026-08-26** — app runs by label, CI runs by index | S |
 | R14 | Ship a GitHub Action and workflow templates | CI | missing | S |
 | R15 | Ship the MCP server inside the packaged app | CI | **done 2026-08-22** | S |
 | R16 | Add an Environment record and store | Env | missing | L |
@@ -188,7 +188,7 @@ was first committed.
 | R33 | missing | **done** | `trigger?: RunTrigger` at [types.ts:2585](../../main/recorder/types.ts:2585), one spelling in `shared/run-trigger.mjs`, all four writers wired, pinned by `check:mcp-parity`. `0801e3f` (#224), 2026-08-22 |
 | R35 | missing | **done** | `shared/basic-auth.mjs` scopes the credential by origin; emitted as `test.use({ httpCredentials, origin })` at [script-generator.ts:2189](../../main/services/script-generator.ts:2189); trainer and live-page handled too; `check:basic-auth` + `e2e/basic-auth.spec.ts`. `f1eb226` (#244), 2026-08-23 |
 | R1 | partial | **built, uncalled** | `emitReportTo` and the full `EmitScope` — `{testId?, batchId?, since?, until?, runIds?}` — exist at [report-emitter.ts:146](../../main/services/report-emitter.ts:146) and `:63`. What is missing is a CALLER: `report:emit` still narrows to `{testId}`, and the CLI has no `--junit` |
-| R13 | partial | **built for app runs** | `failedStepLabel` IS persisted on `RunRecord` and read by `failureSummary` in `shared/emitters.mjs`. The residue is CI-side and belongs with C2: the MCP/CLI run path writes no label at all |
+| R13 | partial | **done 2026-08-26** | `failedStepLabel` was persisted for app runs only. The CI residue turned out to have a cause: the step reporter was WRITTEN on every unattended run and never LOADED, so no marker was emitted and no run could say which step failed. Loading it, stripping its markers and mapping the reported line to a step index closes it — by index, because `describeStep` is app-side and a second phrasing is the drift this plan keeps naming |
 | R38 | missing | blocker cleared | [types.ts:3419](../../main/recorder/types.ts:3419) defers the `parallel` flag pending "the same barrier machinery `wait` does". That machinery shipped 2026-08-13 (`shared/routine-plan.mjs`). Re-rank it |
 | R49 | missing | **a defect** | See below — this one is not a missing feature |
 
