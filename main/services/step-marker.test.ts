@@ -26,7 +26,7 @@ describe("splitStepMarkers", () => {
     const chunk = "before\n" + marker({ event: "begin", line: 5, title: "click" }) + "after\n";
     const { visible, markers } = splitStepMarkers("", chunk);
     expect(visible).toBe("before\nafter\n");
-    expect(markers).toEqual([{ event: "begin", line: 5, ok: true }]);
+    expect(markers).toEqual([{ event: "begin", line: 5, ok: true, attempt: 0 }]);
   });
 
   it("reads a marker that does not start its line", () => {
@@ -36,7 +36,7 @@ describe("splitStepMarkers", () => {
     // no progress, and a raw marker printed into the Output panel.
     const chunk = "[1A[2K" + marker({ event: "end", line: 9, ok: false });
     const { visible, markers } = splitStepMarkers("", chunk);
-    expect(markers).toEqual([{ event: "end", line: 9, ok: false }]);
+    expect(markers).toEqual([{ event: "end", line: 9, ok: false, attempt: 0 }]);
     expect(visible).toBe("[1A[2K");
     // No newline invented for a line that never had one.
     expect(visible.endsWith("\n")).toBe(false);
@@ -49,7 +49,7 @@ describe("splitStepMarkers", () => {
     expect(first.markers).toEqual([]);
     expect(first.visible).toBe("");
     const second = splitStepMarkers(first.rest, whole.slice(cut));
-    expect(second.markers).toEqual([{ event: "end", line: 4, ok: true }]);
+    expect(second.markers).toEqual([{ event: "end", line: 4, ok: true, attempt: 0 }]);
     expect(second.visible).toBe("");
   });
 
@@ -59,8 +59,8 @@ describe("splitStepMarkers", () => {
       marker({ event: "begin", line: 1 }) + marker({ event: "end", line: 1, ok: false }),
     );
     expect(markers).toEqual([
-      { event: "begin", line: 1, ok: true },
-      { event: "end", line: 1, ok: false },
+      { event: "begin", line: 1, ok: true, attempt: 0 },
+      { event: "end", line: 1, ok: false, attempt: 0 },
     ]);
   });
 
@@ -95,5 +95,43 @@ describe("splitStepMarkers", () => {
       marker({ event: "begin", line: 5 });
     const { markers } = splitStepMarkers("", chunk);
     expect(markers.map((m) => `${m.line}:${m.event}`)).toEqual(["4:begin", "4:end", "5:begin"]);
+  });
+  // ── The attempt dimension (R24a) ────────────────────────────────────────
+  //
+  // Playwright re-runs a test from the top on a retry, and the runner keys a
+  // run's per-step outcomes by attempt. Lose the field here and every attempt
+  // lands in one map, last write wins, and a test that failed and then passed
+  // reports that nothing failed.
+
+  it("carries the attempt a transition belongs to", () => {
+    const { markers } = splitStepMarkers(
+      "",
+      marker({ event: "end", line: 4, ok: false, attempt: 0 }) +
+        marker({ event: "end", line: 4, ok: true, attempt: 1 }),
+    );
+    expect(markers.map((m) => `${m.attempt}:${m.ok}`)).toEqual(["0:false", "1:true"]);
+  });
+
+  it("reads a marker with no attempt as attempt 0", () => {
+    // A writer that predates the field is still reporting a real step. Dropping
+    // it would put the progress bar back where it was before any of this was
+    // reported, which is a worse answer than "the only attempt there is".
+    const { markers } = splitStepMarkers("", marker({ event: "begin", line: 2 }));
+    expect(markers).toEqual([{ event: "begin", line: 2, ok: true, attempt: 0 }]);
+  });
+
+  it("normalizes an unusable attempt to 0 rather than dropping the step", () => {
+    // Same channel as Playwright's own output, which quotes page-controlled
+    // text — so the value is not trusted. But it is not load-bearing either:
+    // a bad attempt costs the run one attempt's separation, and refusing the
+    // marker costs it the step.
+    const chunk =
+      marker({ event: "begin", line: 1, attempt: -1 }) +
+      marker({ event: "begin", line: 1, attempt: 1.5 }) +
+      marker({ event: "begin", line: 1, attempt: "1" }) +
+      marker({ event: "begin", line: 1, attempt: null });
+    const { markers } = splitStepMarkers("", chunk);
+    expect(markers).toHaveLength(4);
+    expect(markers.map((m) => m.attempt)).toEqual([0, 0, 0, 0]);
   });
 });
