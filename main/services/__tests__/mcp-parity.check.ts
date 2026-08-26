@@ -1282,6 +1282,65 @@ function codeOnly(source: string): string {
   );
 }
 
+// ── 16. Both runners REPAIR the node_modules link, not just create it ──
+//
+// The drift this file exists for, in its purest form: the app's runner learned
+// this and the MCP's copy did not, so the fix lived in one of two
+// implementations for as long as nobody ran a copied library.
+//
+// A spec lives under userData and imports `@playwright/test`; the link beside it
+// is how Node resolves that. It is written with an ABSOLUTE path to the
+// node_modules of whichever install wrote it, and it outlives that install.
+// Two ways it goes wrong, and the unattended path meets both:
+//
+//   - the old tree is GONE (a library copied to a CI runner — R10's whole
+//     premise). `fs.existsSync` follows symlinks, so it answers false for a
+//     dangling one; a create-if-missing implementation then calls `symlinkSync`,
+//     gets EEXIST because the path is occupied, and carries on with the broken
+//     link in place.
+//   - the old tree is STILL THERE (a source checkout and a packaged app on one
+//     machine). The runner spawns OUR Playwright while the spec resolves a
+//     SECOND one through the link.
+//
+// Both die at collection with "Playwright Test did not expect test() to be
+// called here" and then "No tests found" — a message naming four causes, none of
+// them this one. Reproduced end to end against a library copied out of one tree
+// and run from another, in both directions, before this was written.
+{
+  const appSrc = readFileSync(resolve(process.cwd(), "main/services/playwright-runner.ts"), "utf8");
+  const mcpSrc = codeOnly(mcpRunSource());
+
+  for (const [label, src] of [
+    ["app", appSrc],
+    ["mcp", mcpSrc],
+  ] as const) {
+    // `lstat`, because the question is what the link IS and not what it points
+    // at. This is the whole difference between repairing and not.
+    assert(
+      /lstatSync\(link/.test(src),
+      `${label}: the node_modules link is inspected with lstat, so a DANGLING one is seen`,
+    );
+    assert(
+      /readlinkSync\(link\)/.test(src),
+      `${label}: …and its target is read, so a link to another install is seen`,
+    );
+    assert(
+      /unlinkSync\(link\)/.test(src),
+      `${label}: …and a stale one is removed rather than left in place`,
+    );
+    // A real directory is someone's own install. Deleting it would be this
+    // feature reaching outside its own artifacts.
+    assert(
+      /isSymbolicLink\(\)/.test(src),
+      `${label}: …while a real node_modules directory is left alone`,
+    );
+    assert(
+      !/if \(fs\.existsSync\(link\)\) return;/.test(src),
+      `${label}: does not short-circuit on existsSync, which is blind to a dangling link`,
+    );
+  }
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);

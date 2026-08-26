@@ -10,6 +10,65 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-26 — A copied library resolved a second Playwright, and blamed your package.json
+
+Found while measuring something else: whether the CLI can run from a lean tree
+— `bin/`, `cli/`, `mcp/`, `shared/` plus a targeted `@playwright/test` install —
+because R14 ships a GitHub Action and the package is `private: true` with no
+`files` field, so there is no supported way to get this onto a runner. The
+answer is yes, in **three packages and 19 MB**, which is the number that makes
+an Action viable at all.
+
+It also failed every test.
+
+**The `node_modules` link beside the specs is written once and never
+re-pointed.** A spec lives under userData and imports `@playwright/test`; that
+link is how Node resolves it. It is absolute, it names whichever install wrote
+it, and it outlives that install. Two ways it goes wrong:
+
+  - **The old tree is gone** — a library copied to a CI runner, which is R10's
+    entire premise. The link dangles. `fs.existsSync` FOLLOWS symlinks, so it
+    answers false for a dangling one; the code read that as "no link here",
+    called `symlinkSync`, got EEXIST because the path is occupied, swallowed it,
+    and ran with the broken link still there.
+  - **The old tree is still there** — a source checkout and a packaged app on
+    one machine, or the app and this CLI. The runner spawns OUR Playwright while
+    the spec resolves a SECOND one through the link.
+
+Both die at collection with
+
+    Error: Playwright Test did not expect test() to be called here.
+    …
+    - You have two different versions of @playwright/test. This usually happens
+      when one of the dependencies in your package.json depends on @playwright/test.
+
+followed by "No tests found". The message names four causes and none of them is
+this one; the nearest sends the reader to their own `package.json`, which is not
+where the problem is. Reproduced end to end in both directions before writing
+anything, and the fix takes each from `0 passed, 2 failed` to `1 passed,
+1 failed`.
+
+**THE APP ALREADY FIXED THIS.** `ensureModuleResolution` in
+`playwright-runner.ts` carries a thirty-line comment describing both failure
+modes in the same words, because it hit each in turn while adopting a legacy
+Glaze data directory. The MCP's copy is the pre-fix version. So the fix has
+lived in one of two implementations for as long as nobody ran a copied library —
+and the copy that missed it is the one on the path a copied library takes.
+
+That is the same shape as R49 (the heal map named a file nothing wrote), R13
+(the reporter was written and never loaded) and R8's dismissal fixture: a
+capability present in one implementation and absent in the other, with nothing
+comparing them. `check:mcp-parity` exists for exactly this and had no rule about
+module resolution. It has one now, asserted against BOTH sources so it cannot be
+satisfied by ignoring either, plus a behavioural half in `check:cli-exit` that
+plants a dangling link, drives the real binary, and reads the link back —
+because a source check would pass against a repair that is written and never
+reached.
+
+**`lstat`, not `existsSync`.** The question is what the link IS, not what it
+points at. A real directory is left alone: that is someone's own install, and
+deleting it would be this feature reaching outside its own artifacts.
+
 ### 2026-08-26 — The CLI's JUnit report, and why it is a second emit path (R1)
 
 R1 was ranked S and "built, no caller". The caller turned out not to be the

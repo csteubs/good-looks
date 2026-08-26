@@ -25,9 +25,17 @@
 // Run with: npm run check:cli-exit
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 import { EXIT } from "../../../cli/exit.mjs";
 import { USERDATA_OVERRIDE_ENV } from "../../../shared/user-data-rules.mjs";
@@ -508,6 +516,58 @@ try {
       assert(!wrote, "…and writes no file at all, rather than an empty report");
     } finally {
       rmSync(store, { recursive: true, force: true });
+    }
+  }
+
+
+  // ── A stale node_modules link beside the specs is REPAIRED ─────────────
+  //
+  // The behavioural half of parity section 16. That one reads source and would
+  // pass against a repair that is written but never reached; this drives the
+  // real binary and looks at the link afterwards.
+  //
+  // The link is absolute and points at whichever install wrote it, and it
+  // outlives that install — which is exactly what a library copied to a CI
+  // runner carries. Planted DANGLING here, the harder of the two cases:
+  // `fs.existsSync` follows symlinks and answers false for it, so a
+  // create-if-missing implementation calls `symlinkSync`, gets EEXIST because
+  // the path is occupied, and leaves the broken link behind.
+  //
+  // Browser directories are planted so the run reaches `executeTest`, where the
+  // repair lives. The run itself fails — there is no real browser behind them —
+  // and that is fine: the link is repaired before the spawn.
+  {
+    const revisions = expectedRevisions("chromium");
+    if (revisions.length === 0) {
+      assert(false, "could not read the bundled Playwright's chromium revision to plant it");
+    } else {
+      const planted = makeStore(ONE_TEST);
+      try {
+        for (const dir of revisions) mkdirSync(join(planted, "recorder", "browsers", dir));
+        const scripts = join(planted, "recorder", "scripts");
+        mkdirSync(scripts, { recursive: true });
+        const link = join(scripts, "node_modules");
+        const stale = "/nonexistent/authoring-machine/node_modules";
+        symlinkSync(stale, link, "dir");
+        runCli(["run", "--tag", "smoke"], planted);
+        let target = stale;
+        try {
+          target = readlinkSync(link);
+        } catch {
+          // Left as the stale value, and the assertion below names it.
+        }
+        assert(
+          target !== stale,
+          "a stale node_modules link beside the specs is repaired, not left in place " +
+            "(a copied library otherwise dies at collection with a message about package.json)",
+        );
+        assert(
+          target.endsWith(`${sep}node_modules`),
+          `…and repointed at a node_modules directory (got ${target})`,
+        );
+      } finally {
+        rmSync(planted, { recursive: true, force: true });
+      }
     }
   }
 
