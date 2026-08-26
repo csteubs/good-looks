@@ -123,7 +123,7 @@ row is only moved here with a file and a symbol behind it.
 | R7 | Provision secrets from the environment for CI runs | CI | **done 2026-08-25** | M |
 | R8 | Ship the run fixtures with the CI runner | CI | **done 2026-08-25** | M |
 | R9 | Selector-based selection with a dry run, and a distinct empty-match outcome | CI | **done 2026-08-25** | M |
-| R10 | Export the library as a portable bundle; stop storing absolute script paths | CI | **resolution done 2026-08-25**; the export command remains | L |
+| R10 | Export the library as a portable bundle; stop storing absolute script paths | CI | **done 2026-08-26** — resolution 2026-08-25, `good-looks export` 2026-08-26. `eject` and `--check` deferred | L |
 | R11 | Install browsers from the CI entry point | CI | **done 2026-08-25** | S |
 | R12 | Ingest CI run results back into the local library | CI | **done 2026-08-26** | L |
 | R13 | Put the failing step in the JUnit message and make annotations point somewhere | CI | **done 2026-08-26** — app runs by label, CI runs by index | S |
@@ -430,6 +430,14 @@ argument the runner builds no longer escapes. Nothing changes on the authoring
 machine and there is no migration. **R14 is unblocked on this point**; what
 remains of R10 is the export COMMAND that packages a library into something you
 can hand a runner, which is a feature rather than a fix.
+
+**And that landed 2026-08-26.** `good-looks export --out DIR` writes
+`recorder/tests.json` and `recorder/scripts/` and nothing else, through an
+allowlist in `shared/export-bundle.mjs` covering both the files and the record
+FIELDS. It turned out to be mostly a redaction: the hand-copy it replaces takes
+run history, logs, screenshots, `metrics.db`, saved sessions, an LLM key, a
+webhook URL and the encrypted secrets along with the tests. `eject` and the
+`--check` mode of §3 are deliberately still open — see DECISIONS.
 
 *That dependency had a bug underneath it.* Until #261, a run in which every test
 was skipped exited 0 — so the copied-library case above would have reported a

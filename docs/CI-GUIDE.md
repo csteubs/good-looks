@@ -29,9 +29,9 @@ Three things are worth knowing before you start.
   build server is not a lesser run.
 - **It cannot read your secrets.** Secret variables, the Shopify crawler
   signature and a proxy password are encrypted to the app on your Mac. Nothing
-  outside the app can decrypt them, so you supply secrets another way — see §5.
+  outside the app can decrypt them, so you supply secrets another way — see §6.
 - **Its results stay on the machine that ran them.** A build server throws its
-  disk away when the job ends. §7 covers carrying those runs back.
+  disk away when the job ends. §8 covers carrying those runs back.
 
 ---
 
@@ -92,7 +92,43 @@ the browser is already there, so it is safe to run every time.
 
 ---
 
-## 3. Choosing what to run
+## 3. Getting your tests onto the runner
+
+The command line reads a library — the folder holding `recorder/`. On your own
+machine that folder is the app's own store, and it holds far more than a run
+needs: every run's history and log, every screenshot, the metrics database, your
+saved login sessions, an LLM API key, an alerts webhook URL and the encrypted
+store your secret values live in.
+
+So do not copy it. `export` writes a bundle instead:
+
+```bash
+good-looks export --out ./test-library
+```
+
+That directory carries **`recorder/tests.json` and `recorder/scripts/`, and
+nothing else**. It is exactly what the Action's `library` input wants, and it is
+small enough and readable enough to commit.
+
+Four things worth knowing about what comes out:
+
+| | |
+| --- | --- |
+| Paths | No path from your machine travels. A test's spec is recorded at its position inside the bundle, so it resolves on whatever runner it lands on |
+| Secrets | Values never travel — they are encrypted to the app and cannot be read anywhere else. Tests that declare one are still exported, and the command names them and the variables they want |
+| Browsers | Not copied. They are hundreds of megabytes and platform-specific; run `good-looks install chromium` on the runner |
+| Imported tests | An imported spec's whole folder comes with it, so its relative imports still resolve. A symlink is skipped rather than followed, and the command says so |
+
+`--dry-run` reports what would be written without writing it. `--json` prints
+the same summary for a script to read. Writing into a directory that already has
+files in it needs `--force`.
+
+The bundle is **one-way**. The app exports it; the app never reads one back. To
+get a CI job's *results* into the app, see §8.
+
+---
+
+## 4. Choosing what to run
 
 You must say what to run. There is no default, on purpose: a command that ran
 your whole library because a flag was misspelt is worse than one that refuses.
@@ -113,7 +149,7 @@ Pick exactly one. The rest of the options are optional:
 | `--parallel <n>` | Run n tests at once |
 | `--retries <n>` | Re-run a failed test up to n times, 0 to 3. Defaults to 0 |
 | `--all-datasets` | Run each test once per dataset row it declares |
-| `--secrets-file <f>` | A JSON file of secret values. See §5 |
+| `--secrets-file <f>` | A JSON file of secret values. See §6 |
 | `--junit <path>` | Also write a JUnit XML report of this run |
 | `--dry-run` | Print what would run, and stop |
 | `--json` | Print the result as JSON instead of a summary |
@@ -138,7 +174,7 @@ good-looks run --tag smoke --browser firefox --parallel 2 --junit results.xml
 
 ---
 
-## 4. What the exit code means
+## 5. What the exit code means
 
 Your pipeline reads one number. There are four, and the difference between them
 is the difference between reading a log and not needing to.
@@ -162,7 +198,7 @@ which is why so much time gets spent reading logs to find out which happened.
 
 ---
 
-## 5. Secrets and other values CI cannot read
+## 6. Secrets and other values CI cannot read
 
 A test that uses secret variables needs their values supplied, because the ones
 you typed into the app are encrypted to the app and cannot be read anywhere
@@ -205,7 +241,7 @@ so in its output rather than quietly going without.
 
 ---
 
-## 6. GitHub Actions
+## 7. GitHub Actions
 
 The Action is the command line with a YAML wrapper. The shortest workflow that
 works:
@@ -245,9 +281,9 @@ The folder holding `recorder/`. Two things it must carry:
 
 - **`recorder/tests.json` and `recorder/scripts/`.** Nothing else is read. Run
   history, metrics and artifacts are things a run produces, not things it needs.
-- **Nothing else.** In particular, do not commit your settings file if it holds
-  a token, and do not expect secrets to travel — supply those through the
-  environment, as in §5.
+- **Nothing else.** Your app's own library folder holds a great deal more than
+  that — see §3, and use `good-looks export` to produce one rather than
+  copying it by hand.
 
 How the library reaches the runner is deliberately not the Action's business.
 Committing it, restoring it from a cache and downloading it as an artifact are
@@ -308,7 +344,7 @@ nothing when it is already there. That makes the directory worth caching:
 
 ---
 
-## 7. Bringing CI runs back into the app
+## 8. Bringing CI runs back into the app
 
 A build server throws its disk away when the job ends, and the run history goes
 with it. A suite running forty times a week can leave no trace in the app at
@@ -343,19 +379,19 @@ clean pass.
 
 ---
 
-## 8. When a CI run goes wrong
+## 9. When a CI run goes wrong
 
 | Symptom | What it means |
 | --- | --- |
 | Exit code 2 and no tests ran | The selector matched nothing. Check the tag or folder name, and try `--dry-run` |
 | Exit code 3 | Nothing ran, and the cause is the setup. Usually a missing browser — run `good-looks install <browser>` first |
 | "Requires the chosen browser to be installed" | Same thing. Install it into the library's own browsers directory, not with `npx playwright install` |
-| A test was skipped for a secret variable | Expected. Set the environment variable the output names. See §5 |
+| A test was skipped for a secret variable | Expected. Set the environment variable the output names. See §6 |
 | Everything skipped, exit code 3 | No secrets reached the run at all. Check the variables are set on the right step |
 | The run cannot find the library | Check `good-looks data-dir`, and set `GOOD_LOOKS_USERDATA` if it is pointing at the wrong place |
 | A test fails here but passes in the app | Check the run's own notes on what it could not do. A missing crawler signature or an unauthenticated proxy both fail further down as a timeout, which reads like flakiness |
-| A test that passed is called flaky | It passed on a retry. That is the rule rather than a fault — see §3 |
-| Runs never appear in Stats | They are still on the build server. See §7 |
+| A test that passed is called flaky | It passed on a retry. That is the rule rather than a fault — see §4 |
+| Runs never appear in Stats | They are still on the build server. See §8 |
 
 ---
 
