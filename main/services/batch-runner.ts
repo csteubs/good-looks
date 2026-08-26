@@ -495,12 +495,12 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
           if (entry.status === "skipped") return;
           if (cancelled) {
             entry.status = "skipped";
-            // Says WHO stopped it. "Batch stopped" beside a run nobody touched
+            // Says WHO stopped it. "Routine stopped" beside a run nobody touched
             // sends someone looking for the person who pressed the button.
             entry.note =
               s.stoppedBy === "failure"
                 ? `Stopped — "${s.stoppedByTest ?? "a test"}" failed`
-                : "Batch stopped";
+                : "Routine stopped";
             return;
           }
           // A test deleted after the batch was queued is skipped, not fatal —

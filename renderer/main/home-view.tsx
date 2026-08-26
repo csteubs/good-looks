@@ -75,7 +75,7 @@ const STAT_DESTINATIONS = {
   // Tests → Batch, not the library: the rail already lists every test one click
   // away, so "22 tests" is only interesting as something to DO — and running
   // them together is the one action the count itself suggests.
-  tests: { to: "/batch", view: "Batch" },
+  tests: { to: "/batch", view: "Routines" },
   green: { to: "/stats", view: "Stats" },
   heals: { to: "/heals", view: "Heals" },
 } as const;

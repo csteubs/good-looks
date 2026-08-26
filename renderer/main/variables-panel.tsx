@@ -428,7 +428,7 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
 
   const runSweep = useMutation({
     mutationFn: () => api.batch.run([test.id], { allDatasets: true }),
-    onSuccess: () => toast.success("Sweep started — watch it in the Batch view"),
+    onSuccess: () => toast.success("Sweep started — watch it in the Routines view"),
     onError: (err: unknown) => toast.error(String(err)),
   });
 

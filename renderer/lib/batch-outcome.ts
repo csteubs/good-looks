@@ -66,10 +66,10 @@ export function batchOutcomeTone(outcome: BatchOutcome): ToneName | null {
 
 /** The heading over a finished batch. */
 const OUTCOME_TITLE: Record<BatchOutcome, string> = {
-  stopped: "Batch stopped",
-  passed: "Batch passed",
-  mixed: "Batch finished with failures",
-  failed: "Batch failed",
+  stopped: "Routine stopped",
+  passed: "Routine passed",
+  mixed: "Routine finished with failures",
+  failed: "Routine failed",
 };
 
 export function batchOutcomeTitle(outcome: BatchOutcome): string {

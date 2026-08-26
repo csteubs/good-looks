@@ -80,7 +80,7 @@ export function MissedRunsDialog(): React.ReactElement | null {
         api.routines
           .runMissed(routine.id)
           .then((res) => {
-            if (res.outcome === "alreadyRunning") toast.info("A batch is already running.");
+            if (res.outcome === "alreadyRunning") toast.info("A routine is already running.");
             else if (res.outcome === "blocked") toast.error(res.reason ?? "Nothing to run.");
           })
           .catch(() => toast.error("Could not start that routine."))

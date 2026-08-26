@@ -70,12 +70,12 @@ describe("local notifications", () => {
     expect(screen.getByText(/local to this Mac/i)).toBeTruthy();
   });
 
-  it("offers a separate batch notification, on by default", () => {
-    // A batch is a job you walk away from, so unlike the per-run notice this
-    // one reports success too — and it's the reason a failing batch no longer
+  it("offers a separate routine notification, on by default", () => {
+    // A routine is a job you walk away from, so unlike the per-run notice this
+    // one reports success too — and it's the reason a failing routine no longer
     // fires one notification per failed test.
     renderPane(<AlertsPane />);
-    const toggle = screen.getByRole("switch", { name: /notify when a batch finishes/i });
+    const toggle = screen.getByRole("switch", { name: /notify when a routine finishes/i });
     expect(toggle.getAttribute("data-state")).toBe("checked");
     fireEvent.click(moreFor("notify-batch-done"));
     expect(screen.getByText(/one for the suite/i)).toBeTruthy();
@@ -192,7 +192,7 @@ describe("search filtering", () => {
   it("hides the rows that did not match", () => {
     renderPane(<AlertsPane />, { matchedIds: ["notify-run-issues"] });
     expect(screen.getByRole("switch", { name: /notify when a run has problems/i })).toBeTruthy();
-    expect(screen.queryByRole("switch", { name: /notify when a batch finishes/i })).toBeNull();
+    expect(screen.queryByRole("switch", { name: /notify when a routine finishes/i })).toBeNull();
   });
 
   it("hides the insights rows the same way", () => {

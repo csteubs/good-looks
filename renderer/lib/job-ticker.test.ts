@@ -98,7 +98,7 @@ describe("a batch", () => {
     const runs = { a: run({}), b: run({}), c: run({}) };
     expect(read(runs, { batch: batch() })).toMatchObject({
       kind: "batch",
-      label: "Batch 2/8",
+      label: "Routine 2/8",
     });
   });
 
@@ -107,7 +107,7 @@ describe("a batch", () => {
     // failed reads as hung.
     expect(
       read({}, { batch: batch({ summary: { total: 8, passed: 2, failed: 3, skipped: 1 } }) }),
-    ).toMatchObject({ label: "Batch 6/8" });
+    ).toMatchObject({ label: "Routine 6/8" });
   });
 
   it("reports its OWN failure, not its last test's", () => {
@@ -124,7 +124,7 @@ describe("a batch", () => {
         names: { a: "Checkout" },
       },
     );
-    expect(reading).toMatchObject({ kind: "failed", label: "Batch failed: 3 of 8", testId: null });
+    expect(reading).toMatchObject({ kind: "failed", label: "Routine failed: 3 of 8", testId: null });
   });
 
   it("says nothing about a batch the user stopped", () => {

@@ -426,8 +426,8 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
   {
     id: "default-batch-concurrency",
     pane: "test-defaults",
-    label: "Batch tests at once",
-    keywords: "parallel concurrent simultaneous suite batch workers speed",
+    label: "Tests at once",
+    keywords: "parallel concurrent simultaneous suite batch routine workers speed",
     key: "defaultBatchConcurrency",
   },
   {
@@ -682,8 +682,8 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
   {
     id: "notify-batch-done",
     pane: "alerts",
-    label: "Notify when a batch finishes",
-    keywords: "notification macos banner batch suite finished local",
+    label: "Notify when a routine finishes",
+    keywords: "notification macos banner batch routine suite finished local",
     key: "notifyOnBatchDone",
   },
   {
@@ -786,7 +786,7 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
   {
     id: "github-token",
     pane: "integrations",
-    label: "GitHub token",
+    label: "GitHub token (branch switcher)",
     keywords: "branch switcher pull request private repository rate limit credential",
   },
   {

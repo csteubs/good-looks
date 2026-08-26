@@ -465,7 +465,7 @@ describe("BatchView per-row headless", () => {
     await rowNames();
     setSettings.mockClear();
 
-    fireEvent.click(screen.getByLabelText(/run every test in this batch headless/i));
+    fireEvent.click(screen.getByLabelText(/run every test in this routine headless/i));
 
     await waitFor(() =>
       expect(screen.getByLabelText("Run Alpha headless").getAttribute("aria-pressed")).toBe("true"),
@@ -1444,7 +1444,7 @@ describe("BatchView run options", () => {
     renderView();
     await rowNames();
 
-    fireEvent.click(screen.getByLabelText(/run every test in this batch headless/i));
+    fireEvent.click(screen.getByLabelText(/run every test in this routine headless/i));
     const capture = screen.getByLabelText(/capture screenshots/i);
     expect(capture.getAttribute("data-disabled") ?? capture.getAttribute("disabled")).toBeNull();
     fireEvent.click(capture);
@@ -1681,7 +1681,7 @@ describe("BatchView finished-batch verdict", () => {
     await rowNames();
     emit("batch:done", done(1, 2));
 
-    const chip = await waitFor(() => verdictChip("Batch finished with failures"));
+    const chip = await waitFor(() => verdictChip("Routine finished with failures"));
     expect(chip.getAttribute("data-tone")).toBe("amber");
     expect(chip.textContent).toBe("2 failed");
   });
@@ -1693,7 +1693,7 @@ describe("BatchView finished-batch verdict", () => {
     await rowNames();
     emit("batch:done", done(0, 3));
 
-    const chip = await waitFor(() => verdictChip("Batch failed"));
+    const chip = await waitFor(() => verdictChip("Routine failed"));
     expect(chip.getAttribute("data-tone")).toBe("red");
   });
 
@@ -1702,7 +1702,7 @@ describe("BatchView finished-batch verdict", () => {
     await rowNames();
     emit("batch:done", done(3, 0));
 
-    const chip = await waitFor(() => verdictChip("Batch passed"));
+    const chip = await waitFor(() => verdictChip("Routine passed"));
     expect(chip.getAttribute("data-tone")).toBe("phos");
     expect(chip.textContent).toBe("3 passed");
   });
@@ -1714,7 +1714,7 @@ describe("BatchView finished-batch verdict", () => {
     await rowNames();
     emit("batch:done", done(1, 2, true));
 
-    const chip = await waitFor(() => verdictChip("Batch stopped"));
+    const chip = await waitFor(() => verdictChip("Routine stopped"));
     expect(chip.getAttribute("data-tone")).toBe("neutral");
     expect(chip.textContent).toBe("Stopped");
   });
@@ -1885,7 +1885,7 @@ describe("BatchView headed parallel warning", () => {
   it("never asks for a headless batch, however wide", async () => {
     renderView();
     await rowNames();
-    fireEvent.click(screen.getByLabelText(/run every test in this batch headless/i));
+    fireEvent.click(screen.getByLabelText(/run every test in this routine headless/i));
 
     fireEvent.click(runButton());
 
@@ -2102,8 +2102,8 @@ describe("BatchView as a Routine editor", () => {
     renderView();
     await rowNames();
 
-    await waitFor(() => expect(screen.getByText(/Previous batches/)).toBeTruthy());
-    const panel = screen.getByText(/Previous batches/).closest("section");
+    await waitFor(() => expect(screen.getByText(/Previous runs/)).toBeTruthy());
+    const panel = screen.getByText(/Previous runs/).closest("section");
     expect(within(panel as HTMLElement).getAllByRole("button", { name: /^Aug|^\w+ \d/ }).length)
       .toBeLessThanOrEqual(2);
     // One row, not two: the other routine's batch is not this routine's history.
@@ -2123,7 +2123,7 @@ describe("BatchView as a Routine editor", () => {
     renderView();
     await rowNames();
 
-    const panel = () => screen.getByText(/Previous batches/).closest("section") as HTMLElement;
+    const panel = () => screen.getByText(/Previous runs/).closest("section") as HTMLElement;
     await waitFor(() => expect(within(panel()).queryAllByText(/3 tests/)).toHaveLength(1));
 
     fireEvent.click(screen.getByRole("button", { name: /which routine to edit/i }));
@@ -2131,7 +2131,7 @@ describe("BatchView as a Routine editor", () => {
 
     // …and NOT to any other routine.
     await waitFor(() =>
-      expect(screen.queryByText(/Previous batches/)).toBeNull(),
+      expect(screen.queryByText(/Previous runs/)).toBeNull(),
     );
   });
 

@@ -142,7 +142,7 @@ describe("a batch", () => {
     };
     renderTicker();
     await waitFor(() => {
-      expect(screen.getByRole("button").textContent).toContain("Batch 3/8");
+      expect(screen.getByRole("button").textContent).toContain("Routine 3/8");
     });
     fireEvent.click(screen.getByRole("button"));
     expect(navigate).toHaveBeenCalledWith({ to: "/batch" });
