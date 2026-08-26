@@ -14,3 +14,17 @@ export declare function healKeyAnd(baseKey: string, predicateKey: string): strin
 export declare function healKeyText(value: string, exact: boolean): string;
 
 export declare function healKeyOperatorSource(): string;
+
+/** The canonical key the heal fixture tags one locator with, composed from the
+ *  app's `Locator` model: the base key, then the container/`hasText`/`and`
+ *  operators in the order the generator emits the chain. The fixture builds the
+ *  identical key from factory ARGUMENTS at run time. */
+export declare function healKeyFor(loc: {
+  k?: string;
+  v?: string;
+  attr?: string;
+  exact?: boolean;
+  role?: string;
+  name?: string;
+  ctx?: unknown;
+}): string;

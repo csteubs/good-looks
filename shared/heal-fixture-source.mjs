@@ -37,6 +37,7 @@
 // Babel transform.
 
 import { healKeyOperatorSource } from "./heal-key.mjs";
+import { HEAL_EVENTS_FILE, HEAL_MATCHES_FILE } from "./heal-artifacts.mjs";
 import { testIdSelectorSource } from "./testid-attr.mjs";
 
 export const HEAL_FIXTURE_FILE = "glaze-heal.mjs";
@@ -175,7 +176,7 @@ function flush() {
   if (!HEAL_DIR || events.length === 0) return;
   try {
     fs.mkdirSync(HEAL_DIR, { recursive: true });
-    fs.writeFileSync(path.join(HEAL_DIR, "heals.json"), JSON.stringify(events, null, 2));
+    fs.writeFileSync(path.join(HEAL_DIR, "${HEAL_EVENTS_FILE}"), JSON.stringify(events, null, 2));
   } catch (err) {
     process.stderr.write("[glaze-heal] could not write heals.json: " + String(err) + "\\n");
   }
@@ -188,7 +189,7 @@ function flushMatches() {
   if (!HEAL_DIR || matchSets.length === 0) return;
   try {
     fs.mkdirSync(HEAL_DIR, { recursive: true });
-    fs.writeFileSync(path.join(HEAL_DIR, "matches.json"), JSON.stringify(matchSets, null, 2));
+    fs.writeFileSync(path.join(HEAL_DIR, "${HEAL_MATCHES_FILE}"), JSON.stringify(matchSets, null, 2));
   } catch (err) {
     process.stderr.write("[glaze-heal] could not write matches.json: " + String(err) + "\\n");
   }
