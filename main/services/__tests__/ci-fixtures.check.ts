@@ -443,6 +443,76 @@ const appRunner = code("main/services/playwright-runner.ts");
   );
 }
 
+// ── 6c. A fixture that is WRITTEN is a fixture that is WIRED ─────────────
+//
+// The step reporter was in the always-written set from R8 and `runArgs` passed
+// no `--reporter`, so it sat beside every spec on every unattended run and was
+// loaded by nothing. No marker was ever emitted; no run could say which step it
+// failed on; the policy row claiming it "makes per-step progress reportable at
+// all" was describing the app.
+//
+// That is R49's shape with the switch removed — everything present, nothing
+// connected, and no error anywhere — and it is the second time a fixture in this
+// table has been present-but-inert. So the table's own claim is checked against
+// the wiring rather than against the file's existence.
+{
+  const plan = code("mcp/run-plan.mjs");
+  assert(
+    /"--reporter",\s*`\$\{reporterPath\},line`/.test(plan),
+    "the runner LOADS the step reporter it writes",
+  );
+  // `,line` matters as much as the reporter: a reporter list REPLACES the
+  // default, so naming only ours leaves the run with no readable output.
+  assert(
+    /reporterPath\},line`/.test(plan),
+    "…alongside `line`, or the run has no human-readable output at all",
+  );
+  assert(
+    /reporterPath: path\.join\(scriptsDir, STEP_REPORTER_FILE\)/.test(runner),
+    "…named through the same constant the writer uses",
+  );
+  // And the markers it now emits are taken back OUT. Turning the reporter on
+  // without this sprays `__GLAZE_STEP__:` lines into get_run_log, which reads
+  // them straight into an agent's context — strictly worse than leaving it off,
+  // which is why the two halves are one change.
+  //
+  // Anchored on the two lines that DO the stripping, not on the symbol: the
+  // splitter is called twice (the stream and the trailing partial line), so a
+  // bare `/splitStepMarkers\(/` stayed green with the stream's call replaced by
+  // a passthrough. Caught by doing exactly that and watching nothing happen.
+  assert(
+    /child\.stdout\.on\("data", \(d\) => take\(d\.toString\(\)\)\)/.test(runner),
+    "…and stdout goes through the splitter rather than being appended raw",
+  );
+  assert(
+    /out \+= split\.visible;/.test(runner),
+    "…so what the run stores and returns is the output WITHOUT the markers",
+  );
+  // Anchored on the WRITE, not the identifier. `/failedStepIndex/` was what
+  // this said, and `let failedStepIndex = null;` satisfies it — deleting the
+  // line that puts the field on the record left it green. Same shape as the
+  // heal-map assertion that missed R49: an alternation or a bare identifier
+  // matches the declaration and reports the feature as present.
+  assert(
+    /\{ failedStepIndex, stepCount: failedStepCount \}/.test(runner),
+    "…and read, so a failed run records which step it failed on",
+  );
+  // The COUNT comes from the same map as the index. A disabled step is emitted
+  // as a comment, so it is not one of the spec's `await` lines and the map does
+  // not count it — pairing a map index with `test.steps.length` reports two
+  // scales as one and produces "step 10 of 12" for a failure at the last step.
+  assert(
+    /failedStepCount = map\.size;/.test(runner),
+    "…counted from the same line map, so the index and the count are one scale",
+  );
+  assert(
+    !/stepCount: \(test\.steps \?\? \[\]\)\.length/.test(runner),
+    "…and never from the step list, which counts steps the spec does not contain",
+  );
+  const policy = CI_FIXTURE_POLICY.find((p) => p.capability === "step reporter");
+  assert(policy?.onInCi === true, "the written policy says the reporter is on");
+}
+
 // ── 7. The run reports what it actually did ──────────────────────────────
 //
 // `describeRun` used to say every capability was skipped, because it always

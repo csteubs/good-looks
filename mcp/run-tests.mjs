@@ -33,6 +33,8 @@ import { fileURLToPath } from "node:url";
 
 import { readJsonFile } from "./data-dir.mjs";
 import { resolveScriptPath, scriptsDirFor } from "../shared/script-path.mjs";
+import { splitStepMarkers } from "../shared/step-marker.mjs";
+import { buildStepLineMapFromSource } from "../shared/step-line-map.mjs";
 import { recordRun } from "./metrics.mjs";
 import { clampParallel, runPool } from "./run-pool.mjs";
 import { selectTests, summarizeResults, UNGROUPED } from "./select-tests.mjs";
@@ -55,6 +57,7 @@ import { resolveRunSpeed, resolveTestTimeoutMs } from "../shared/run-pacing.mjs"
 import {
   ALWAYS_WRITTEN,
   CAPABILITY_FIXTURES,
+  STEP_REPORTER_FILE,
   redirectToCaptureFixture,
 } from "../shared/run-fixtures.mjs";
 import {
@@ -467,6 +470,77 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     // the values for redaction.
     Object.assign(env, secrets.env);
 
+    // MOVED ABOVE THE ENV BLOCK, and that is the whole point of the order.
+    // These are `const`, so the `if (anyCapability)` below sits in their
+    // TEMPORAL DEAD ZONE if they are declared after it — every run threw
+    // `ReferenceError: Cannot access 'anyCapability' before initialization`
+    // before it did anything at all. Ported from #276, which carries the
+    // guard and the DECISIONS entry; it no-ops once that lands. Without it
+    // this branch's own feature is unreachable — the throw is above it.
+    // ── What this run turns on (R8) ────────────────────────────────────
+    //
+    // The policy is stated in shared/run-fixtures.mjs; this is it applied. Each
+    // gate reads the TEST's own preference where it has one, exactly as the app
+    // reads it — an unattended run is not a different product.
+    //
+    // An IMPORTED spec gets none of it: `sourceDir` means someone else's
+    // Playwright project, where redirecting the `@playwright/test` import would
+    // rewrite their code rather than instrument ours. Same rule the app applies.
+    const imported = Boolean(test.sourceDir);
+    const wantsScreenshots =
+      !imported && Boolean(test.captureArtifacts ?? settings.defaultCaptureArtifacts);
+    const wantsA11y = !imported && Boolean(test.a11yChecks ?? settings.defaultA11yChecks);
+    const wantsLogs = !imported && Boolean(test.recordLogs ?? settings.defaultRecordLogs);
+    const wantsSettle = !imported && speed === "crawl";
+    // ── Run-time healing (R49) ──────────────────────────────────────────
+    //
+    // ON, and gated exactly as the app gates it: the user's setting, and a test
+    // with at least one locator to heal. Without it a run fails on a stale
+    // locator the app would have healed past, which is the false red that
+    // teaches a team to distrust CI.
+    //
+    // It was ON here once before and healed NOTHING — see the R49 entry in
+    // DECISIONS. The reason was never the switch: the heal fixture rethrows
+    // untouched for a locator it has no MAP ENTRY for, and the map holds a probe
+    // script per step built from the recorder's locator engine, which was
+    // compiled TypeScript this plain-.mjs server could not import. R51 moved the
+    // engine to shared/ and the probe builder followed it; the map is buildable
+    // here now, and `check:ci-fixtures` asserts a switch that is not "0" implies
+    // both a map named through shared/heal-artifacts.mjs AND a writer for it.
+    const wantsHeal =
+      !imported && Boolean(settings.autoHealEnabled) && (test.steps ?? []).some((st) => st?.locator);
+    // ── The WRITEBACK, which stays off ─────────────────────────────────
+    //
+    // "Suggest, never apply", and it holds by construction rather than by a
+    // flag: nothing in this process reads a heal back into a test. It could not
+    // usefully — the tests.json it would edit dies with the container, so the
+    // fix would be lost and the run would still report a heal it did not keep.
+    // `check:ci-fixtures` asserts the absence directly.
+    const wantsUserPage =
+      !imported && Boolean(settings.userStylesheet || settings.userInitScript);
+    // Standing overlay rules, armed by HOST from the test's own starting URL —
+    // the same rule the app applies, through the same `armedRulesFor`. There is
+    // no setting: a run against a host with no rules arms nothing and pays
+    // nothing, which is what makes this safe to have on by default.
+    //
+    // It could not be on before R51. The fixture's watcher embeds the recorder's
+    // locator engine, so a rule taught in the trainer and a rule enforced in a
+    // run resolve through ONE `matchesFor` — and until that engine reached
+    // shared/, this process could not hold it. A second resolver would have been
+    // the worse answer: two implementations of "does this rule match" agree
+    // right up until the page they disagree on, and the symptom is a run
+    // clicking something nobody chose.
+    const armedRules = imported ? [] : armedRulesFor(overlayRules, test.url ?? "");
+    const wantsDismiss = armedRules.length > 0;
+    const anyCapability =
+      wantsScreenshots ||
+      wantsA11y ||
+      wantsLogs ||
+      wantsSettle ||
+      wantsHeal ||
+      wantsUserPage ||
+      wantsDismiss;
+
     // ── The fixture gates (R8) ─────────────────────────────────────────────
     //
     // Set AFTER runEnv rather than inside it, because runEnv is shared with the
@@ -532,69 +606,6 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
       // answer by luck is how the heal gate came to be half-set (R49).
       Object.assign(env, dismissEnv(armedRules));
     }
-    // ── What this run turns on (R8) ────────────────────────────────────
-    //
-    // The policy is stated in shared/run-fixtures.mjs; this is it applied. Each
-    // gate reads the TEST's own preference where it has one, exactly as the app
-    // reads it — an unattended run is not a different product.
-    //
-    // An IMPORTED spec gets none of it: `sourceDir` means someone else's
-    // Playwright project, where redirecting the `@playwright/test` import would
-    // rewrite their code rather than instrument ours. Same rule the app applies.
-    const imported = Boolean(test.sourceDir);
-    const wantsScreenshots =
-      !imported && Boolean(test.captureArtifacts ?? settings.defaultCaptureArtifacts);
-    const wantsA11y = !imported && Boolean(test.a11yChecks ?? settings.defaultA11yChecks);
-    const wantsLogs = !imported && Boolean(test.recordLogs ?? settings.defaultRecordLogs);
-    const wantsSettle = !imported && speed === "crawl";
-    // ── Run-time healing (R49) ──────────────────────────────────────────
-    //
-    // ON, and gated exactly as the app gates it: the user's setting, and a test
-    // with at least one locator to heal. Without it a run fails on a stale
-    // locator the app would have healed past, which is the false red that
-    // teaches a team to distrust CI.
-    //
-    // It was ON here once before and healed NOTHING — see the R49 entry in
-    // DECISIONS. The reason was never the switch: the heal fixture rethrows
-    // untouched for a locator it has no MAP ENTRY for, and the map holds a probe
-    // script per step built from the recorder's locator engine, which was
-    // compiled TypeScript this plain-.mjs server could not import. R51 moved the
-    // engine to shared/ and the probe builder followed it; the map is buildable
-    // here now, and `check:ci-fixtures` asserts a switch that is not "0" implies
-    // both a map named through shared/heal-artifacts.mjs AND a writer for it.
-    const wantsHeal =
-      !imported && Boolean(settings.autoHealEnabled) && (test.steps ?? []).some((st) => st?.locator);
-    // ── The WRITEBACK, which stays off ─────────────────────────────────
-    //
-    // "Suggest, never apply", and it holds by construction rather than by a
-    // flag: nothing in this process reads a heal back into a test. It could not
-    // usefully — the tests.json it would edit dies with the container, so the
-    // fix would be lost and the run would still report a heal it did not keep.
-    // `check:ci-fixtures` asserts the absence directly.
-    const wantsUserPage =
-      !imported && Boolean(settings.userStylesheet || settings.userInitScript);
-    // Standing overlay rules, armed by HOST from the test's own starting URL —
-    // the same rule the app applies, through the same `armedRulesFor`. There is
-    // no setting: a run against a host with no rules arms nothing and pays
-    // nothing, which is what makes this safe to have on by default.
-    //
-    // It could not be on before R51. The fixture's watcher embeds the recorder's
-    // locator engine, so a rule taught in the trainer and a rule enforced in a
-    // run resolve through ONE `matchesFor` — and until that engine reached
-    // shared/, this process could not hold it. A second resolver would have been
-    // the worse answer: two implementations of "does this rule match" agree
-    // right up until the page they disagree on, and the symptom is a run
-    // clicking something nobody chose.
-    const armedRules = imported ? [] : armedRulesFor(overlayRules, test.url ?? "");
-    const wantsDismiss = armedRules.length > 0;
-    const anyCapability =
-      wantsScreenshots ||
-      wantsA11y ||
-      wantsLogs ||
-      wantsSettle ||
-      wantsHeal ||
-      wantsUserPage ||
-      wantsDismiss;
 
     // ALWAYS, capabilities or not: a generated spec importing a helper needs
     // glaze-runtime.mjs on disk to load at all.
@@ -655,7 +666,7 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     }
 
     const startedAt = Date.now();
-    const { exitCode, output } = await new Promise((resolve) => {
+    const { exitCode, output, failedLine } = await new Promise((resolve) => {
       const child = spawn(
         process.execPath,
         runArgs({
@@ -664,27 +675,98 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
           configPath,
           browser,
           testTimeoutMs,
+          // Written by `ensureRunFixtures` on every run, capabilities or not —
+          // and, until this change, loaded by nothing.
+          reporterPath: path.join(scriptsDir, STEP_REPORTER_FILE),
         }),
         { cwd: scriptsDir, env },
       );
       let out = "";
+      // The step reporter's markers, taken back out of the stream.
+      //
+      // Two things happen here and they are ONE change. The reporter is loaded
+      // now (`--reporter` in runArgs), so `__GLAZE_STEP__:` lines appear on
+      // stdout — and every one of them has to be removed before the output is
+      // stored or returned, or `get_run_log` reads them straight into an
+      // agent's context as junk. Turning the reporter on without stripping is
+      // strictly worse than leaving it off, which is why neither half of this
+      // ships alone.
+      //
+      // `buffered` carries the trailing partial line between chunks: a marker
+      // can straddle a chunk boundary, and half a marker is neither strippable
+      // nor parseable.
+      let buffered = "";
+      // The last step the reporter said BEGAN. When the run fails, this is the
+      // step it failed on — the reporter files a failure against the same line,
+      // and `ok: false` is the confirmation rather than the source.
+      let lastLine = null;
+      let failedLine = null;
+      const take = (chunk) => {
+        const split = splitStepMarkers(buffered, chunk);
+        buffered = split.rest;
+        for (const marker of split.markers) {
+          if (marker.event === "begin") lastLine = marker.line;
+          if (!marker.ok) failedLine = marker.line;
+        }
+        out += split.visible;
+      };
       const timer = setTimeout(() => {
         out += `\n[Timed out after ${Math.round(processTimeoutMs / 60000)} minutes — stopping.]\n`;
         child.kill("SIGKILL");
       }, processTimeoutMs);
-      child.stdout.on("data", (d) => {
-        out += d.toString();
-      });
+      child.stdout.on("data", (d) => take(d.toString()));
+      // stderr carries no markers — the reporter writes to stdout — but it is
+      // the same stream to the reader, so it is appended without being parsed.
       child.stderr.on("data", (d) => {
         out += d.toString();
       });
       child.on("close", (code) => {
         clearTimeout(timer);
-        resolve({ exitCode: code ?? 1, output: out });
+        // Whatever is left in `buffered` is a line with no newline yet. It is
+        // visible output unless it is a marker, and a truncated marker is junk
+        // either way — so it goes through the same split with a closing
+        // newline rather than being appended raw.
+        if (buffered) out += splitStepMarkers(buffered, "\n").visible;
+        resolve({ exitCode: code ?? 1, output: out, failedLine: failedLine ?? lastLine });
       });
     });
     const finishedAt = Date.now();
     const status = exitCode === 0 ? "passed" : "failed";
+    // A reported LINE becomes a step index through the same fallback scan the
+    // app uses for a hand-edited spec. Read off the spec this run ACTUALLY ran:
+    // a capture run executes a redirected copy, and only the module specifier
+    // changes, so the line numbers are the stored spec's — but reading the file
+    // that ran is what keeps that true if the redirect ever stops preserving
+    // them. Null on any failure, because "we could not say which step" is an
+    // honest answer and a wrong index is not.
+    let failedStepIndex = null;
+    // COUNTED FROM THE SAME MAP as the index, and that is the whole point of
+    // carrying it separately from `test.steps.length`. The index is a position
+    // among the spec's `await` lines; a disabled step is emitted as a COMMENT
+    // and so is not one of them. Pairing a map index with a step-list length
+    // therefore reports two different scales as one — a 12-step test with two
+    // disabled steps failing on its last emitted step reads "step 10 of 12",
+    // which is wrong, plausible, and points the reader at the wrong step. Both
+    // numbers come from the spec that actually ran.
+    let failedStepCount = null;
+    if (status === "failed" && failedLine !== null) {
+      try {
+        // `specPath`, not `test.scriptPath`: R10 exists because the stored path is
+        // the AUTHORING machine's and points nowhere on a runner. Reading the raw
+        // field here would throw on a copied library, leave `failedStepIndex` null,
+        // and lose the failing step again — silently, and only on the machines this
+        // whole feature is for.
+        const map = buildStepLineMapFromSource(fs.readFileSync(specPath, "utf-8"));
+        const index = map?.get(failedLine);
+        if (typeof index === "number") {
+          failedStepIndex = index;
+          failedStepCount = map.size;
+        }
+      } catch {
+        // Unreadable spec, or a line the map does not cover. Either way the run
+        // reports no step rather than a guessed one.
+      }
+    }
     // Per-run scratch (traces, failure shots). Nothing here reads it, and leaving
     // it would grow one directory per run forever.
     try {
@@ -719,6 +801,18 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
       durationMs: Math.max(0, finishedAt - startedAt),
       logFile,
       captureArtifacts: false,
+      // WHICH STEP FAILED, as an INDEX rather than a label.
+      //
+      // The reporter reports a spec LINE and carries no title, so a label would
+      // have to be built from the test's steps — and `describeStep` lives in
+      // main/services/script-generator.ts beside its own renderer mirror, which
+      // this process cannot import. A second phrasing of it here is the drift
+      // this codebase keeps paying for, so the run stores the FACT and each side
+      // renders it: `shared/emitters.mjs` falls back to the index, and the app
+      // can say the phrase because it has the steps.
+      ...(failedStepIndex !== null
+        ? { failedStepIndex, stepCount: failedStepCount }
+        : {}),
       // These runs are always headless — there's no user at a screen watching
       // an MCP-driven run.
       runHeadless: true,

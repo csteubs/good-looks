@@ -93,6 +93,18 @@ export const NO_REDACTION = (text) => text;
 function failureSummary(run) {
   const parts = [];
   if (run.failedStepLabel) parts.push(`Failed at: ${run.failedStepLabel}`);
+  // The INDEX, when there is no label. An unattended run reports a spec line
+  // and the reporter carries no title, so building a phrase there would mean a
+  // second `describeStep` — and two phrasings of the same step is the drift
+  // this codebase keeps paying for. "step 7 of 12" is a worse sentence than
+  // `click "Place order"` and a far better one than `exit 1`, which is all this
+  // said for a CI run before 2026-08-26.
+  //
+  // 1-based, because it is being read by a person counting down a step list.
+  else if (typeof run.failedStepIndex === "number") {
+    const of = typeof run.stepCount === "number" ? ` of ${run.stepCount}` : "";
+    parts.push(`Failed at step ${run.failedStepIndex + 1}${of}`);
+  }
   if (run.failureReason) parts.push(run.failureReason);
   parts.push(`exit ${run.exitCode ?? 1}`);
   return parts.join(" · ");
