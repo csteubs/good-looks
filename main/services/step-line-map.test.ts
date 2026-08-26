@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { buildStepLineMapFromSource } from "./playwright-runner.js";
+import { buildStepLineMapFromSource } from "../../shared/step-line-map.mjs";
 
 const PLAIN = [
   'import { test, expect } from "@playwright/test";',

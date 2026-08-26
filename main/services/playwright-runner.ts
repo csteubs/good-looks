@@ -20,6 +20,7 @@ import {
 } from "../../shared/heal-artifacts.mjs";
 import { buildHealMap } from "../../shared/heal-map.mjs";
 import { resolveScriptPath } from "../../shared/script-path.mjs";
+import { buildStepLineMapFromSource } from "../../shared/step-line-map.mjs";
 
 import { sendToMain } from "./app-window.js";
 import { getScriptsDir, testStore } from "./test-store.js";
@@ -609,43 +610,6 @@ function buildStepLineMap(scriptPath: string): Map<number, number> | null {
   return buildStepLineMapFromSource(src);
 }
 
-/** The scan behind `buildStepLineMap`, on text, so it can be tested without
- *  a file. A `test.step("…", async () => {` header is NOT a step — it is the
- *  wrapper the generator puts around one — and its `});` is not the end of
- *  the body: depth is counted, and the body ends at the `});` that closes
- *  the `test(` callback itself. Before 2026-08-22 the first wrapper header
- *  counted as step 0 and its closer ended the scan, so an edited spec in the
- *  new shape mapped one step and then nothing. */
-export function buildStepLineMapFromSource(src: string): Map<number, number> | null {
-  const lines = src.split("\n");
-  const map = new Map<number, number>();
-  let stepIndex = 0;
-  let inBody = false;
-  let depth = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    // The test body starts after the `test("...", async ({ page }) => {` line.
-    if (!inBody) {
-      if (/^\s*test\s*\(/.test(line) && line.includes("async")) inBody = true;
-      continue;
-    }
-    const opens = (line.match(/\{/g) ?? []).length;
-    const closes = (line.match(/\}/g) ?? []).length;
-    // Body ends at the `});` that brings the depth back below the callback.
-    if (/^\s*}\s*\)/.test(line) && depth + opens - closes < 0) break;
-    if (/^\s*await\s+test\.step\s*\(/.test(line)) {
-      depth += opens - closes;
-      continue;
-    }
-    // Each step is a single indented line starting with `await `.
-    if (/^\s+await /.test(line)) {
-      map.set(i + 1, stepIndex); // location.line is 1-based
-      stepIndex++;
-    }
-    depth += opens - closes;
-  }
-  return map.size > 0 ? map : null;
-}
 
 /** Playwright unpacks each engine into `<browsersPath>/<engine>-<revision>`,
  *  and the revision is the bundled CLI's — so the question is not "is there

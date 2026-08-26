@@ -49,6 +49,8 @@ export declare function runArgs(params: {
   configPath: string;
   browser: string;
   testTimeoutMs: number;
+  /** The step reporter to load, or undefined to run without one. */
+  reporterPath?: string;
 }): string[];
 
 /** The single choke point everything written or returned passes through.

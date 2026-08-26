@@ -137,6 +137,14 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      UNTRUSTED INPUT for the same reason an imported project is:
                      the derived path is joined onto the local scripts dir and
                      then executed as a spec.
+                     step-line-map.mjs is WHICH STEP A SPEC LINE IS — the
+                     fallback that turns the reporter's line number into a step
+                     index. Here because the unattended runner needs it: until
+                     2026-08-26 that path WROTE step-reporter.mjs on every run
+                     and passed no --reporter, so no marker was emitted and no
+                     run could say which step failed. Written-but-unwired is
+                     R49's shape without the switch; check:ci-fixtures now
+                     asserts a fixture this path writes is one it loads.
                      heal-key.mjs is the same shape again: how a chained locator's
                      heal-map key is SPELLED, built from a Locator model on one side
                      and from factory ARGUMENTS on the other.

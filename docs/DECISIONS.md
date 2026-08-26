@@ -10,6 +10,62 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-26 — The step reporter was written on every CI run and never loaded
+
+Found while sizing R1 (`--junit` for the CLI), which the plan ranks S and
+"built, no caller". The caller is indeed small. What it would have EMITTED is
+the problem: `failureSummary` reads `failedStepLabel`, an unattended run writes
+none, so every failure in that report would have read `exit 1` — precisely what
+the plan says JUnit replaced ("what was there before was an exit code and an
+absolute path to a file on a machine the reader does not have"). Shipping the
+caller alone would have shipped a report that looks like a report.
+
+**Then the cause turned out to be one layer down.** `step-reporter.mjs` has been
+in `ALWAYS_WRITTEN` since R8 — written beside every spec on every unattended run
+— and `runArgs` passes no `--reporter`. So Playwright never loaded it, no marker
+was ever emitted, and nothing on that path could say which step a run failed on.
+The file was pure weight, and the policy row said:
+
+> `step reporter` — *"Costs nothing and is what makes per-step progress
+> reportable at all."*
+
+which was describing the app. **Written-but-unwired is R49's shape with the
+switch taken out**: everything present, nothing connected, no error anywhere.
+Second time a row in that table has claimed a capability the run did not have,
+and both were mine.
+
+**Loading it and stripping it are one change.** The markers land on stdout, and
+`get_run_log` reads a run's output straight into an agent's context — so
+`__GLAZE_STEP__:{…}` lines there are budget spent on nothing. Turning the
+reporter on without stripping is strictly worse than leaving it off, which is why
+neither half ships alone. `,line` matters as much: a reporter list REPLACES the
+default, so naming only ours would leave the run with no readable output at all.
+
+**The failing step is recorded as an INDEX, not a label.** The reporter reports a
+line and carries no title, so a label would have to be built from the test's
+steps — and `describeStep` lives in `script-generator.ts` beside its own renderer
+mirror. A third phrasing of it is the drift this file keeps recording, so the run
+stores the FACT and each side renders it: `shared/emitters.mjs` falls back to
+"Failed at step 7 of 12", and the app can say the phrase because it has the
+steps. `buildStepLineMapFromSource` moved to `shared/` for the same reason — the
+app keeps the `fs` read on its own side and hands the source in.
+
+**Not extracting `describeStep` was checked, not assumed.** I had planned to, on
+the belief that its duplication was held only by comments. It is not:
+`main/services/__tests__/describe-step-parity.test.ts` is 465 lines with a case
+per branch and exhaustiveness over `STEP_TYPES`, `ASSERT_KINDS` and
+`ELEMENT_STATES`. Extracting would retire a working guard for cleanup, so the
+index is the right answer rather than the expedient one.
+
+**The check that would have caught this is a wiring check.** `check:step-progress`
+pins the reporter's categories and the fixture's wrapper — both WRITERS — and
+never asked whether anything loads them. It pinned the decision, not the effect,
+which is the same blind spot that produced `check:mcp-boot` and `check:cli-exit`.
+`check:ci-fixtures` now asserts a fixture this path writes is one it wires, and
+`ci-step-progress.test.ts` covers the behaviour a source check cannot: a
+substituted splitter still reads correctly, so the stripping is proven by running
+a stream through it rather than by matching a call.
+
 ### 2026-08-25 — Auto-Heal runs on an unattended run, for the first time
 
 The feature half of R49, and the thing R51 was done for. The guard landed

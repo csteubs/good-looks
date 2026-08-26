@@ -33,6 +33,8 @@ import { fileURLToPath } from "node:url";
 
 import { readJsonFile } from "./data-dir.mjs";
 import { resolveScriptPath, scriptsDirFor } from "../shared/script-path.mjs";
+import { splitStepMarkers } from "../shared/step-marker.mjs";
+import { buildStepLineMapFromSource } from "../shared/step-line-map.mjs";
 import { recordRun } from "./metrics.mjs";
 import { clampParallel, runPool } from "./run-pool.mjs";
 import { selectTests, summarizeResults, UNGROUPED } from "./select-tests.mjs";
@@ -55,6 +57,7 @@ import { resolveRunSpeed, resolveTestTimeoutMs } from "../shared/run-pacing.mjs"
 import {
   ALWAYS_WRITTEN,
   CAPABILITY_FIXTURES,
+  STEP_REPORTER_FILE,
   redirectToCaptureFixture,
 } from "../shared/run-fixtures.mjs";
 import {
@@ -655,7 +658,7 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     }
 
     const startedAt = Date.now();
-    const { exitCode, output } = await new Promise((resolve) => {
+    const { exitCode, output, failedLine } = await new Promise((resolve) => {
       const child = spawn(
         process.execPath,
         runArgs({
@@ -664,27 +667,86 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
           configPath,
           browser,
           testTimeoutMs,
+          // Written by `ensureRunFixtures` on every run, capabilities or not —
+          // and, until this change, loaded by nothing.
+          reporterPath: path.join(scriptsDir, STEP_REPORTER_FILE),
         }),
         { cwd: scriptsDir, env },
       );
       let out = "";
+      // The step reporter's markers, taken back out of the stream.
+      //
+      // Two things happen here and they are ONE change. The reporter is loaded
+      // now (`--reporter` in runArgs), so `__GLAZE_STEP__:` lines appear on
+      // stdout — and every one of them has to be removed before the output is
+      // stored or returned, or `get_run_log` reads them straight into an
+      // agent's context as junk. Turning the reporter on without stripping is
+      // strictly worse than leaving it off, which is why neither half of this
+      // ships alone.
+      //
+      // `buffered` carries the trailing partial line between chunks: a marker
+      // can straddle a chunk boundary, and half a marker is neither strippable
+      // nor parseable.
+      let buffered = "";
+      // The last step the reporter said BEGAN. When the run fails, this is the
+      // step it failed on — the reporter files a failure against the same line,
+      // and `ok: false` is the confirmation rather than the source.
+      let lastLine = null;
+      let failedLine = null;
+      const take = (chunk) => {
+        const split = splitStepMarkers(buffered, chunk);
+        buffered = split.rest;
+        for (const marker of split.markers) {
+          if (marker.event === "begin") lastLine = marker.line;
+          if (!marker.ok) failedLine = marker.line;
+        }
+        out += split.visible;
+      };
       const timer = setTimeout(() => {
         out += `\n[Timed out after ${Math.round(processTimeoutMs / 60000)} minutes — stopping.]\n`;
         child.kill("SIGKILL");
       }, processTimeoutMs);
-      child.stdout.on("data", (d) => {
-        out += d.toString();
-      });
+      child.stdout.on("data", (d) => take(d.toString()));
+      // stderr carries no markers — the reporter writes to stdout — but it is
+      // the same stream to the reader, so it is appended without being parsed.
       child.stderr.on("data", (d) => {
         out += d.toString();
       });
       child.on("close", (code) => {
         clearTimeout(timer);
-        resolve({ exitCode: code ?? 1, output: out });
+        // Whatever is left in `buffered` is a line with no newline yet. It is
+        // visible output unless it is a marker, and a truncated marker is junk
+        // either way — so it goes through the same split with a closing
+        // newline rather than being appended raw.
+        if (buffered) out += splitStepMarkers(buffered, "\n").visible;
+        resolve({ exitCode: code ?? 1, output: out, failedLine: failedLine ?? lastLine });
       });
     });
     const finishedAt = Date.now();
     const status = exitCode === 0 ? "passed" : "failed";
+    // A reported LINE becomes a step index through the same fallback scan the
+    // app uses for a hand-edited spec. Read off the spec this run ACTUALLY ran:
+    // a capture run executes a redirected copy, and only the module specifier
+    // changes, so the line numbers are the stored spec's — but reading the file
+    // that ran is what keeps that true if the redirect ever stops preserving
+    // them. Null on any failure, because "we could not say which step" is an
+    // honest answer and a wrong index is not.
+    let failedStepIndex = null;
+    if (status === "failed" && failedLine !== null) {
+      try {
+        // `specPath`, not `test.scriptPath`: R10 exists because the stored path is
+        // the AUTHORING machine's and points nowhere on a runner. Reading the raw
+        // field here would throw on a copied library, leave `failedStepIndex` null,
+        // and lose the failing step again — silently, and only on the machines this
+        // whole feature is for.
+        const map = buildStepLineMapFromSource(fs.readFileSync(specPath, "utf-8"));
+        const index = map?.get(failedLine);
+        if (typeof index === "number") failedStepIndex = index;
+      } catch {
+        // Unreadable spec, or a line the map does not cover. Either way the run
+        // reports no step rather than a guessed one.
+      }
+    }
     // Per-run scratch (traces, failure shots). Nothing here reads it, and leaving
     // it would grow one directory per run forever.
     try {
@@ -719,6 +781,18 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
       durationMs: Math.max(0, finishedAt - startedAt),
       logFile,
       captureArtifacts: false,
+      // WHICH STEP FAILED, as an INDEX rather than a label.
+      //
+      // The reporter reports a spec LINE and carries no title, so a label would
+      // have to be built from the test's steps — and `describeStep` lives in
+      // main/services/script-generator.ts beside its own renderer mirror, which
+      // this process cannot import. A second phrasing of it here is the drift
+      // this codebase keeps paying for, so the run stores the FACT and each side
+      // renders it: `shared/emitters.mjs` falls back to the index, and the app
+      // can say the phrase because it has the steps.
+      ...(failedStepIndex !== null
+        ? { failedStepIndex, stepCount: (test.steps ?? []).length }
+        : {}),
       // These runs are always headless — there's no user at a screen watching
       // an MCP-driven run.
       runHeadless: true,

@@ -156,13 +156,26 @@ export function runEnv({
 /** The Playwright CLI arguments for one run. `--timeout` is authoritative: it
  *  wins over whatever the config declares, matching the app. The env var above
  *  carries the same number for a config-only run. */
-export function runArgs({ cliPath, specFile, configPath, browser, testTimeoutMs }) {
+export function runArgs({ cliPath, specFile, configPath, browser, testTimeoutMs, reporterPath }) {
   return [
     cliPath,
     "test",
     specFile,
     "--config",
     configPath,
+    // THE REPORTER, which this path wrote on every run and never loaded.
+    //
+    // `step-reporter.mjs` has been in the always-written set since R8, and
+    // nothing passed `--reporter`, so no marker was ever emitted: no run could
+    // say which step it failed on, and the policy row claiming the reporter
+    // "makes per-step progress reportable at all" was describing the app.
+    // Written-but-unwired is the same failure as a switch with no map (R49) —
+    // everything present, nothing connected, and no error anywhere.
+    //
+    // `,line` after it for the same reason the app appends it: a reporter list
+    // REPLACES the default, so naming only ours leaves the run with no
+    // human-readable output at all.
+    ...(reporterPath ? ["--reporter", `${reporterPath},line`] : []),
     `--browser=${browser}`,
     `--timeout=${testTimeoutMs}`,
   ];
