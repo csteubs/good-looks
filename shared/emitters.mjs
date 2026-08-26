@@ -121,14 +121,23 @@ function failureSummary(run) {
  * A failed run's log is NOT inlined. It can be megabytes, JUnit consumers
  * truncate at wildly different lengths, and the useful part — which step failed
  * — is in the message. The file name is given so a human can go and read it.
+ *
+ * A SKIPPED run is `<skipped/>`, and this is the one branch that has to exist
+ * before there is a caller who can produce one. Everything that is not "failed"
+ * used to emit a bare `<testcase/>`, which every CI reads as a pass — so a test
+ * the CLI declined to run for want of a credential would have arrived in a
+ * dashboard as green. Every RunRecord is passed-or-failed, so no existing
+ * caller can reach this; the CLI builds its report from a run RESULT, which
+ * carries the third state.
  */
 export function junitXml(runs, { suiteName = "Good Looks", redact = NO_REDACTION } = {}) {
   const list = Array.isArray(runs) ? runs : [];
   const failures = list.filter((r) => r.status === "failed").length;
+  const skipped = list.filter((r) => r.status === "skipped").length;
   const totalMs = list.reduce((n, r) => n + (r.durationMs ?? 0), 0);
   const lines = [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    `<testsuite name="${xmlEscape(suiteName)}" tests="${list.length}" failures="${failures}" errors="0" skipped="0" time="${msToSeconds(totalMs)}">`,
+    `<testsuite name="${xmlEscape(suiteName)}" tests="${list.length}" failures="${failures}" errors="0" skipped="${skipped}" time="${msToSeconds(totalMs)}">`,
   ];
   for (const run of list) {
     const name = xmlEscape(xmlSafe(redact(run.testName ?? run.testId ?? "unnamed")));
@@ -141,6 +150,23 @@ export function junitXml(runs, { suiteName = "Good Looks", redact = NO_REDACTION
       const message = xmlEscape(xmlSafe(redact(failureSummary(run))));
       lines.push(`  <testcase classname="${cls}" name="${name}" time="${time}">`);
       lines.push(`    <failure message="${message}" type="failure"/>`);
+      lines.push("  </testcase>");
+    } else if (run.status === "skipped") {
+      // The REASON when there is one. A skip the runner explains — "declares 2
+      // secret variables with no value here" — is the whole content of the row,
+      // and the reader is looking at a CI log with nothing else in it. Redacted
+      // like every other free text, because `note` is assembled from the run
+      // and this file leaves the machine by definition.
+      // COLLAPSED to one line. An XML attribute value may legally contain a
+      // newline, and a conformant parser normalizes it to a space — so a
+      // multi-line skip note renders differently depending on whose parser the
+      // CI uses, and this note IS the whole content of the row. Collapsing here
+      // makes what the reader sees the same everywhere.
+      const why = run.note
+        ? ` message="${xmlEscape(xmlSafe(redact(run.note)).replace(/\s+/g, " ").trim())}"`
+        : "";
+      lines.push(`  <testcase classname="${cls}" name="${name}" time="${time}">`);
+      lines.push(`    <skipped${why}/>`);
       lines.push("  </testcase>");
     } else {
       lines.push(`  <testcase classname="${cls}" name="${name}" time="${time}"/>`);

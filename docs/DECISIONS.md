@@ -10,6 +10,77 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-26 — The CLI's JUnit report, and why it is a second emit path (R1)
+
+R1 was ranked S and "built, no caller". The caller turned out not to be the
+small part, and the reason is a boundary rather than an oversight.
+
+**`emitReportTo` cannot be reached from the CLI.** It has done exactly the right
+thing since it was written — writes to a named path, no dialog, redaction inside
+`buildReport` where no caller can opt out. It also imports `@shell/backend`, the
+metrics DB, the run-history store and `redactWithSnapshot`. The CLI is plain
+`.mjs` under Node with no Electron anywhere, so "add a caller" was never
+available: what was available was a SECOND emit path, calling the pure emitters
+directly and re-deriving everything the app does around them.
+
+That is the whole risk, and §3.5 of the plan names it in advance: *"For the two
+paths that cannot reach `redactWithSnapshot` at all … the honest answer is the
+one the MCP already gives for console logs: refuse when a secret exists rather
+than emit unredacted."*
+
+**This path does better than refuse, because R7 gave it values of its own.**
+`resolveCiSecrets` resolves each declared secret from the environment or
+`--secrets-file` and returns them — and R7's stated rule is that whatever
+supplies a secret to a run also feeds the redaction. So the CLI redacts with
+exactly the values it supplied. Verified rather than assumed: a secret planted
+in a test name emits as `name="checkout as [redacted]"`, and removing the
+plumbing puts `hunter2-SUPERSECRET` in the file.
+
+**Which makes the SCOPE a security boundary rather than a nicety.** A run the
+APP produced took its secrets from an encrypted store this process cannot open,
+so those values are not in hand and could not be redacted out. A report scoped
+to "every run of this test" would include one and would look exactly like a file
+that had been redacted. So the report is built from `outcome.results` — this
+invocation, in memory — and `cli/junit.mjs` takes no store and reads no history.
+It cannot be widened by a caller who means well, which is the only kind of
+guarantee worth having here. `check:emit-redaction` now covers `cli/` and
+`mcp/`, per §3.5's rule that every new egress path extends its scan set in the
+same commit.
+
+**A skipped test was going to arrive in CI as green.** `junitXml` emitted a bare
+`<testcase/>` for anything that was not `"failed"`, which every consumer reads
+as a pass. No RunRecord can be skipped — the type is passed-or-failed — so
+nothing on the app's side could reach it. The CLI builds from a run RESULT,
+which carries the third state, and a test declining to run for want of a
+credential is precisely the row an operator must not miss. It is `<skipped>`
+now, counted in the suite, carrying the reason. The reason is collapsed to one
+line: an XML attribute may legally hold a newline and a conformant parser
+normalizes it to a space, so a multi-line note renders differently depending on
+whose parser the CI uses — and that note is the entire content of the row.
+
+**Two of my own tests were vacuous and are recorded here rather than quietly
+fixed.** One claimed to prove the builder names its fields instead of spreading
+the result; a spread produces byte-identical output today, because `junitXml`
+reads a fixed set — so the test passed with the spread in place. The property is
+real (a result carries `vars`, a dataset row's VALUES) but it is a fact about
+source, and it is pinned in `check:emit-redaction` where it is checkable; the
+test now claims only what it checks. The other asserted that a blank in the
+value list does not redact everything — `redact` already skips values shorter
+than four characters, so it could not fail. The real hazard was next door:
+`redact` filters on `s.length`, so an `undefined` in the list THROWS, from
+inside the writer, after the run has finished — a passing suite and a stack
+trace where the report should be. That is what the filter is for and what the
+test now says.
+
+**`--junit` with `--dry-run` is a refusal.** A dry run performs none, so there
+is nothing to describe. An empty report and no report both end with a pipeline
+configured to read a file that never says anything.
+
+**The exit code does not move when the write fails.** R2's contract is about the
+RUN — `0` means the tests passed — and overloading it with "and the report
+wrote" makes the number ambiguous in the one place a pipeline reads it. The
+failure is loud on stderr, and a CI step that ingests the file fails on its own.
+
 ### 2026-08-26 — Every unattended run threw before it did anything
 
 Found by running the CLI, which nothing in this repository had ever done

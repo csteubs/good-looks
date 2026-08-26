@@ -441,6 +441,76 @@ try {
     );
   }
 
+  // ── `--junit` writes a real file, from a real run ──────────────────────
+  //
+  // R1's caller. The unit tests cover what the XML SAYS; this covers that the
+  // flag reaches the writer at all through the real binary — the same gap
+  // `check:mcp-boot` and this file's own existence are about, where every other
+  // layer is green and the entry point is wired to nothing.
+  //
+  // Driven with the browser directories planted, so the run gets past the gate
+  // and into `executeTest` without a network. The run itself FAILS — there is
+  // no real browser behind those directories — which is the point: the report
+  // has to be written for a failing run, since that is the run a CI operator
+  // cares about.
+  {
+    const revisions = expectedRevisions("chromium");
+    if (revisions.length === 0) {
+      assert(false, "could not read the bundled Playwright's chromium revision to plant it");
+    } else {
+      const planted = makeStore(ONE_TEST);
+      const report = join(planted, "results.xml");
+      try {
+        for (const dir of revisions) mkdirSync(join(planted, "recorder", "browsers", dir));
+        const r = runCli(["run", "--tag", "smoke", "--junit", report], planted);
+        let xml = "";
+        try {
+          xml = readFileSync(report, "utf8");
+        } catch {
+          // Left empty, and the assertion below names it.
+        }
+        assert(xml !== "", `--junit writes the report file (exit ${r.code}, stderr: ${r.stderr.trim().slice(0, 200)})`);
+        assert(
+          xml.includes("<testsuite") && xml.includes("</testsuite>"),
+          "…as a complete testsuite element, not a truncated one",
+        );
+        assert(
+          xml.includes('tests="1"'),
+          "…covering exactly the run this invocation produced, and no other",
+        );
+        assert(
+          r.stdout.includes("JUnit report:"),
+          "…and says where it put it, so a CI step can be pointed at the path",
+        );
+      } finally {
+        rmSync(planted, { recursive: true, force: true });
+      }
+    }
+  }
+
+  // ── …and never for a dry run ───────────────────────────────────────────
+  //
+  // A refusal rather than an empty file. Pinned here as well as in the parser's
+  // unit test because it is a CONTRACT question: a pipeline told to read a
+  // report must not be handed one describing nothing.
+  {
+    const store = makeStore(ONE_TEST);
+    const report = join(store, "dry.xml");
+    try {
+      const r = runCli(["run", "--tag", "smoke", "--dry-run", "--junit", report], store);
+      assert(r.code === EXIT.CANNOT_START, `--junit with --dry-run is a usage refusal (got ${r.code})`);
+      let wrote = true;
+      try {
+        readFileSync(report, "utf8");
+      } catch {
+        wrote = false;
+      }
+      assert(!wrote, "…and writes no file at all, rather than an empty report");
+    } finally {
+      rmSync(store, { recursive: true, force: true });
+    }
+  }
+
   // ── An override at an empty directory is 2, not 3 ──────────────────────
   //
   // Worth pinning because it is the boundary between the two refusals and it is

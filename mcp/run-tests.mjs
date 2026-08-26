@@ -914,6 +914,16 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
         // WHICH rules instead of whether.
         overlayRules: armedRules.map((r) => r.label || r.host),
       },
+      // CARRIED OUT of the run, not left only on the record. `--junit` builds
+      // its report from THIS INVOCATION'S results and never reads run history:
+      // a report scoped by anything wider could pull in a run the APP produced,
+      // whose secrets came from an encrypted store this process cannot read —
+      // so it could not be redacted, and would look exactly like a file that
+      // had been. Keeping the numbers on the result is what makes that scoping
+      // structural rather than a filter someone can widen.
+      ...(failedStepIndex !== null
+        ? { failedStepIndex, stepCount: failedStepCount }
+        : {}),
       // REPORTED, not re-derived by the caller. run_test describes the run it
       // just did (`describeRun` prints the pace and the step delay, and gates
       // `pageSettling` on crawl), and a caller resolving the speed a second time
@@ -1142,6 +1152,12 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
         results[i].runRecordId = r.runId;
         results[i].finishedAt = r.finishedAt;
         results[i].durationMs = r.durationMs;
+        // Only when the run said which step. `undefined` is what a reader turns
+        // into "no step recorded", and a zero would name the first one.
+        if (r.failedStepIndex !== undefined) {
+          results[i].failedStepIndex = r.failedStepIndex;
+          results[i].stepCount = r.stepCount;
+        }
       } catch (err) {
         results[i].status = "failed";
         results[i].note = String(err);

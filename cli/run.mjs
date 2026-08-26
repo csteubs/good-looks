@@ -17,9 +17,12 @@
 // useless advice on a CI runner, the entire audience of this binary.
 //
 // ── What is deliberately not here ────────────────────────────────────────
-// `--base-url` (R5), `--junit` and `--results-out` (R1/R13), `--retries`,
-// `--fail-fast`, and the `report`, `export`, `eject` and `ingest` subcommands
-// are each their own ranked item.
+// `--base-url` (R5) and `--results-out`, `--retries`, `--fail-fast`, and the
+// `report`, `export`, `eject` and `ingest` subcommands are each their own
+// ranked item.
+//
+// `--junit` IS here as of R1 — see `cli/junit.mjs`, which is where the reason
+// it could not simply call the app's `emitReportTo` is written down.
 //
 // ── What arrived since, and changed the paragraph above ──────────────────
 // `--secrets-file` IS here as of R7 (#260) — see `cli/args.mjs`. R7 narrowed
@@ -35,10 +38,12 @@
 import process from "node:process";
 import { readFileSync } from "node:fs";
 
+import { resolveCiSecrets } from "../shared/ci-secrets.mjs";
 import { resolveDataDir } from "../mcp/data-dir.mjs";
 import { createStore } from "../mcp/store.mjs";
 import { createRunner } from "../mcp/run-tests.mjs";
 import { EXIT, exitCodeFor } from "./exit.mjs";
+import { writeJunitReport } from "./junit.mjs";
 
 /**
  * The sentence for a refusal.
@@ -315,5 +320,36 @@ export async function runCommand(options, { out, err, env = process.env } = {}) 
   }
 
   out(options.json ? jsonReport(outcome) : humanReport(outcome));
+
+  if (options.junit) {
+    try {
+      // The values THIS PROCESS resolved, for the tests in this report, through
+      // the same `resolveCiSecrets` that supplied them to the runs — R7's rule
+      // that whatever feeds a secret to a run also feeds the redaction. Nothing
+      // else is readable here: an app run's secrets live in an encrypted store
+      // this process cannot open, which is exactly why the report is scoped to
+      // runs this invocation produced and is built from their results rather
+      // than from run history.
+      const byId = new Map(store.listTests().map((t) => [t.id, t]));
+      const secretValues = [
+        ...new Set(
+          outcome.results.flatMap((r) => {
+            const test = byId.get(r.testId);
+            return test ? resolveCiSecrets(test, { env, fileValues: secretFile }).values : [];
+          }),
+        ),
+      ];
+      const written = writeJunitReport(options.junit, outcome.results, { secretValues });
+      out(`JUnit report: ${written.path} (${written.count} test${written.count === 1 ? "" : "s"})`);
+    } catch (error) {
+      // Loud, and it does NOT change the exit code. R2's contract is about the
+      // RUN — 0 means the tests passed — and overloading it with "and the
+      // report wrote" makes the number ambiguous in the one place a pipeline
+      // reads it. A CI step that ingests the file fails on its own when it is
+      // missing, which is the honest place for that failure to land.
+      err(String(error.message ?? error));
+    }
+  }
+
   return exitCodeFor(outcome);
 }

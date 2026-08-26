@@ -12,7 +12,10 @@ export interface EmitRun {
   testId?: string;
   testName?: string;
   url?: string;
-  status?: "passed" | "failed";
+  /** "skipped" is reachable only from a run RESULT, never a RunRecord: the
+   *  record is passed-or-failed, and the CLI is the caller that can decline to
+   *  run a test at all. */
+  status?: "passed" | "failed" | "skipped";
   exitCode?: number;
   startedAt?: number;
   finishedAt?: number;
@@ -27,6 +30,8 @@ export interface EmitRun {
   failedStepIndex?: number;
   /** How many steps the test has, so an index can be shown as "7 of 12". */
   stepCount?: number;
+  /** Why a run was skipped, when it was. Emitted as the `<skipped>` message. */
+  note?: string;
   /** Resolved NAME of the run's failure reason, not its id — the emitters are
    *  pure and cannot reach the custom-reason store to look one up. */
   failureReason?: string;

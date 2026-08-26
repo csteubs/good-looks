@@ -236,9 +236,18 @@ cli/                 what the CLI decides, kept out of bin/ so it can be tested.
                      THIRD CALLER of mcp/run-tests.mjs — never a third runner — plus
                      `install`, which exists mostly so the missing-browser refusal can
                      name a command rather than telling a CI runner to open the app).
-                     Its unit tests live in main/services/cli-exit.test.ts, because
-                     vitest's node project takes main/**, mcp/** and renderer/lib/**
-                     and a test file here would match NEITHER project
+                     junit.mjs is R1's caller and the FIRST emit path outside main/:
+                     the app's report-emitter cannot be reached from plain .mjs, so
+                     the pure emitters are called directly and everything around them
+                     done again here. Its scope is a SECURITY boundary — the report is
+                     built from ONE INVOCATION'S results, never run history, because
+                     an app run's secrets live in a store this process cannot open and
+                     could not be redacted out. `check:emit-redaction` covers cli/ and
+                     mcp/ as of R1, per plan §3.5.
+                     Its unit tests live in main/services/cli-exit.test.ts and
+                     cli-junit.test.ts, because vitest's node project takes main/**,
+                     mcp/** and renderer/lib/** and a test file here would match
+                     NEITHER project
 mcp/                 standalone MCP server exposing the test library to external MCP clients.
                      `data-dir.mjs` finds the app's store; it reaches the SAME answer the
                      app does because BOTH PROCESSES WRITE, and the rules they share live

@@ -232,6 +232,41 @@ describe("parseRunArgs", () => {
     expect(parseRunArgs(["--all", "--browser", "safari"])).toMatchObject({ ok: false });
   });
 
+  it("takes --junit as a path, and refuses it without one", () => {
+    expect(parseRunArgs(["--all", "--junit", "results.xml"])).toMatchObject({
+      ok: true,
+      options: { junit: "results.xml" },
+    });
+    // The `--tag --json` rule, applied to this flag: a following flag standing
+    // in for the value would write the report to a file called "--json".
+    expect(parseRunArgs(["--all", "--junit", "--json"])).toEqual({
+      ok: false,
+      error: "--junit needs a value.",
+    });
+  });
+
+  it("does not require the path to be absolute", () => {
+    // Unlike the app's `emitReportTo`, which does. The difference is what
+    // "here" means: under Electron the cwd is wherever the bundle was launched
+    // from, and for a CLI it is the shell the operator typed in.
+    expect(parseRunArgs(["--all", "--junit", "./out/results.xml"])).toMatchObject({
+      ok: true,
+      options: { junit: "./out/results.xml" },
+    });
+  });
+
+  it("refuses --junit alongside --dry-run", () => {
+    // A dry run performs none, so there is nothing to report. Writing an empty
+    // file or quietly writing none both end with a pipeline configured to read
+    // something that never says anything.
+    expect(parseRunArgs(["--all", "--junit", "r.xml", "--dry-run"])).toEqual({
+      ok: false,
+      error: "--junit reports runs, and --dry-run performs none. Use one or the other.",
+    });
+    // Either order — the parser collects before it judges.
+    expect(parseRunArgs(["--all", "--dry-run", "--junit", "r.xml"]).ok).toBe(false);
+  });
+
   it("treats --help as a request rather than an error", () => {
     expect(parseRunArgs(["--help"])).toEqual({ ok: "help" });
     // Even alongside an otherwise-invalid line: someone reaching for --help is

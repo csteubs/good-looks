@@ -326,3 +326,39 @@ describe("the emitter list", () => {
     expect(emitFileName("ndjson", "2026-08-12")).toBe("good-looks-ndjson-2026-08-12.ndjson");
   });
 });
+
+describe("junitXml: a skipped run", () => {
+  // Reachable only from a run RESULT — every RunRecord is passed-or-failed, and
+  // the CLI is the caller that can decline to run a test at all. Before this
+  // branch existed, anything not "failed" emitted a bare `<testcase/>`, which
+  // every CI reads as a pass: a test skipped for want of a credential arrived
+  // in a dashboard green.
+  const skipped = {
+    id: "r9",
+    testId: "t-x",
+    testName: "checks out",
+    status: "skipped" as const,
+    durationMs: 0,
+    note: "declares 1 secret variable with no value here: PASSWORD.",
+  };
+
+  it("is counted as skipped, not as a pass and not as a failure", () => {
+    const xml = junitXml([skipped]);
+    expect(xml).toContain('tests="1"');
+    expect(xml).toContain('skipped="1"');
+    expect(xml).toContain('failures="0"');
+    expect(xml).toContain("<skipped");
+  });
+
+  it("carries its reason, redacted like any other free text", () => {
+    const xml = junitXml([{ ...skipped, note: "blocked by hunter2" }], {
+      redact: (t: string) => t.split("hunter2").join("[redacted]"),
+    });
+    expect(xml).not.toContain("hunter2");
+    expect(xml).toContain("[redacted]");
+  });
+
+  it("emits no message attribute when there is no reason", () => {
+    expect(junitXml([{ ...skipped, note: undefined }])).toContain("<skipped/>");
+  });
+});
