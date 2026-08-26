@@ -22,6 +22,7 @@ import { describe, expect, it } from "vitest";
 
 import { STEP_MARKER, splitStepMarkers } from "../../shared/step-marker.mjs";
 import { buildStepLineMapFromSource } from "../../shared/step-line-map.mjs";
+import { junitXml } from "../../shared/emitters.mjs";
 
 /** The runner's own accumulation, reproduced exactly: chunk in, visible text
  *  appended, `rest` carried to the next chunk, markers collected. */
@@ -132,5 +133,80 @@ describe("which step a failed run reports", () => {
     // classify. `undefined` is what the runner turns into "no step recorded",
     // which is an honest answer where a guessed index is not.
     expect(buildStepLineMapFromSource(SPEC)!.get(999)).toBeUndefined();
+  });
+});
+
+describe("the index and the count are on the same scale", () => {
+  // A recorded test with two DISABLED steps. The generator emits a disabled
+  // step as a comment — `// disabled — skipped: await …` — so it is not one of
+  // the spec's `await` lines and the line map does not count it.
+  //
+  // That is the whole hazard. The index is a position among the map's entries;
+  // `test.steps.length` counts the step list, disabled steps included. Reporting
+  // one against the other is reporting two scales as one, and the sentence it
+  // produces reads perfectly: "Failed at step 3 of 5" when the reader's step 5
+  // is not the one that failed.
+  const SPEC_WITH_DISABLED = [
+    'import { test, expect } from "@playwright/test";',
+    "",
+    'test("checkout", async ({ page }) => {',
+    '  await page.goto("https://shop.example");', // step 0
+    "  // disabled — skipped: await page.getByRole(\"button\", { name: \"Cookies\" }).click();",
+    '  await page.getByLabel("Card").fill("4242");', // step 1
+    "  // disabled — skipped: await page.getByText(\"Gift?\").click();",
+    '  await expect(page.getByText("Thanks")).toBeVisible();', // step 2
+    "});",
+    "",
+  ].join("\n");
+
+  it("does not count a disabled step, which is why the count cannot come from the step list", () => {
+    const map = buildStepLineMapFromSource(SPEC_WITH_DISABLED)!;
+    expect(map.size).toBe(3);
+    // The five entries a user sees in the app's step list, two of them disabled.
+    const stepListLength = 5;
+    expect(map.size).not.toBe(stepListLength);
+  });
+
+  it("pairs the failing index with the count from the same map", () => {
+    const map = buildStepLineMapFromSource(SPEC_WITH_DISABLED)!;
+    // The last emitted step — line 8 in the spec above.
+    const index = map.get(8);
+    expect(index).toBe(2);
+    // Same map, so the pair is coherent: the last step is the last of the count.
+    expect(index! + 1).toBe(map.size);
+  });
+
+  it("emits a coherent sentence, where the step-list length would not", () => {
+    const map = buildStepLineMapFromSource(SPEC_WITH_DISABLED)!;
+    const failedStepIndex = map.get(8)!;
+
+    const coherent = junitXml([
+      {
+        testId: "t-checkout",
+        testName: "checkout",
+        status: "failed",
+        exitCode: 1,
+        durationMs: 1000,
+        failedStepIndex,
+        stepCount: map.size,
+      },
+    ]);
+    expect(coherent).toContain("Failed at step 3 of 3");
+
+    // What the step-list length produced, and why this test exists: a sentence
+    // that is wrong, plausible, and points at a step the reader can count to.
+    const incoherent = junitXml([
+      {
+        testId: "t-checkout",
+        testName: "checkout",
+        status: "failed",
+        exitCode: 1,
+        durationMs: 1000,
+        failedStepIndex,
+        stepCount: 5,
+      },
+    ]);
+    expect(incoherent).toContain("Failed at step 3 of 5");
+    expect(coherent).not.toContain("of 5");
   });
 });

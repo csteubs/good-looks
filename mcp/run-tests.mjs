@@ -740,6 +740,15 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     // them. Null on any failure, because "we could not say which step" is an
     // honest answer and a wrong index is not.
     let failedStepIndex = null;
+    // COUNTED FROM THE SAME MAP as the index, and that is the whole point of
+    // carrying it separately from `test.steps.length`. The index is a position
+    // among the spec's `await` lines; a disabled step is emitted as a COMMENT
+    // and so is not one of them. Pairing a map index with a step-list length
+    // therefore reports two different scales as one — a 12-step test with two
+    // disabled steps failing on its last emitted step reads "step 10 of 12",
+    // which is wrong, plausible, and points the reader at the wrong step. Both
+    // numbers come from the spec that actually ran.
+    let failedStepCount = null;
     if (status === "failed" && failedLine !== null) {
       try {
         // `specPath`, not `test.scriptPath`: R10 exists because the stored path is
@@ -749,7 +758,10 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
         // whole feature is for.
         const map = buildStepLineMapFromSource(fs.readFileSync(specPath, "utf-8"));
         const index = map?.get(failedLine);
-        if (typeof index === "number") failedStepIndex = index;
+        if (typeof index === "number") {
+          failedStepIndex = index;
+          failedStepCount = map.size;
+        }
       } catch {
         // Unreadable spec, or a line the map does not cover. Either way the run
         // reports no step rather than a guessed one.
@@ -799,7 +811,7 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
       // renders it: `shared/emitters.mjs` falls back to the index, and the app
       // can say the phrase because it has the steps.
       ...(failedStepIndex !== null
-        ? { failedStepIndex, stepCount: (test.steps ?? []).length }
+        ? { failedStepIndex, stepCount: failedStepCount }
         : {}),
       // These runs are always headless — there's no user at a screen watching
       // an MCP-driven run.

@@ -488,9 +488,26 @@ const appRunner = code("main/services/playwright-runner.ts");
     /out \+= split\.visible;/.test(runner),
     "…so what the run stores and returns is the output WITHOUT the markers",
   );
+  // Anchored on the WRITE, not the identifier. `/failedStepIndex/` was what
+  // this said, and `let failedStepIndex = null;` satisfies it — deleting the
+  // line that puts the field on the record left it green. Same shape as the
+  // heal-map assertion that missed R49: an alternation or a bare identifier
+  // matches the declaration and reports the feature as present.
   assert(
-    /failedStepIndex/.test(runner),
+    /\{ failedStepIndex, stepCount: failedStepCount \}/.test(runner),
     "…and read, so a failed run records which step it failed on",
+  );
+  // The COUNT comes from the same map as the index. A disabled step is emitted
+  // as a comment, so it is not one of the spec's `await` lines and the map does
+  // not count it — pairing a map index with `test.steps.length` reports two
+  // scales as one and produces "step 10 of 12" for a failure at the last step.
+  assert(
+    /failedStepCount = map\.size;/.test(runner),
+    "…counted from the same line map, so the index and the count are one scale",
+  );
+  assert(
+    !/stepCount: \(test\.steps \?\? \[\]\)\.length/.test(runner),
+    "…and never from the step list, which counts steps the spec does not contain",
   );
   const policy = CI_FIXTURE_POLICY.find((p) => p.capability === "step reporter");
   assert(policy?.onInCi === true, "the written policy says the reporter is on");
