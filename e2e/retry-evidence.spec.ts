@@ -10,18 +10,22 @@
 // always the one worth reading. The run then reported "passed", pointing at
 // evidence of the attempt that worked.
 //
-// TWO QUESTIONS ONLY REAL PLAYWRIGHT CAN ANSWER, and both are modelled
-// elsewhere in this repo:
+// THREE QUESTIONS ONLY REAL PLAYWRIGHT CAN ANSWER, each modelled elsewhere in
+// this repo and each load-bearing:
 //
-//  • Does a retry actually re-enter the `page` fixture, with `testInfo.retry`
+//  • Does a retry actually re-enter the `page` fixture with `testInfo.retry`
 //    set? Everything downstream assumes it does. A unit test can only assert
 //    what we believe.
+//  • Does `retain-on-failure` keep the FAILING attempt's trace when the run as
+//    a whole exits 0? That is the entire premise of moving the runner's
+//    salvage gate off the exit code.
 //  • What does Playwright NAME a retried attempt's output directory? The
 //    runner reads that name to file each salvaged trace under the attempt it
-//    came from, and this repo's own note about the layout was wrong —
-//    `<slug>/retryN/`, a nested directory Playwright does not produce. The
-//    code now says `<slug>-retry<n>`, read out of the installed
-//    `workerProcessEntry.js`; this asserts it against the real thing.
+//    came from, and this repo's own note about the layout was wrong — it
+//    described a `retryN/` directory NESTED inside the test's own, which
+//    Playwright does not produce. The code now reads a `-retry<n>` SUFFIX, out
+//    of the installed `workerProcessEntry.js`; this asserts it against the
+//    real thing.
 //
 // Deliberately not an Electron test, for the same reason as step-progress and
 // assert-parity: the subject is what real Playwright does, not a window. It
@@ -63,22 +67,31 @@ import { stepReporterSource } from "../shared/step-reporter-source.mjs";
 import { userPageFixtureSource, USER_PAGE_FIXTURE_FILE } from "../shared/user-page-fixture-source.mjs";
 import type { Step } from "../main/recorder/types.js";
 
-/** The page is `not-ready` the first time it is served and `ready` after that,
- *  so one assertion fails on the first attempt and passes on the retry. That
- *  is the shape this whole feature is about: a run that goes green while
- *  having gone red, whose only record of the red is what the first attempt
- *  wrote. */
-const page = (text: string) => `<!doctype html>
+const pageHtml = (text: string) => `<!doctype html>
 <html><head><title>Retry | Acme</title></head>
 <body>
   <button data-testid="go">Click me</button>
   <p data-testid="out">${text}</p>
 </body></html>`;
 
+/**
+ * `flip` serves `pending` once and `ready` after that, so the test fails on
+ * its first attempt and passes on the retry. `stuck` never becomes ready, so
+ * both attempts fail.
+ *
+ * The two words are DISJOINT on purpose. An `assert: "text"` step emits
+ * `toContainText`, a SUBSTRING match — the first draft of this file served
+ * `not-ready`, which contains `ready`, so the assertion passed on the first
+ * attempt, no retry ever happened, and the whole test measured nothing. The
+ * `loads` assertion below is what caught it, and is why each test states its
+ * premise rather than assuming it.
+ */
+let mode: "flip" | "stuck" = "flip";
+let loads = 0;
+
 let server: http.Server;
 let base: string;
 let dir: string;
-let pageLoads = 0;
 
 test.beforeAll(async () => {
   server = http.createServer((req, res) => {
@@ -88,9 +101,9 @@ test.beforeAll(async () => {
       res.writeHead(404).end();
       return;
     }
-    pageLoads += 1;
+    loads += 1;
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(page(pageLoads === 1 ? "not-ready" : "ready"));
+    res.end(pageHtml(mode === "stuck" || loads === 1 ? "pending" : "ready"));
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
@@ -129,22 +142,36 @@ const readManifest = (at: string): Manifest | null => {
   }
 };
 
-test("a retried run leaves both attempts' evidence, and names each one", async () => {
+interface RunResult {
+  exitCode: number;
+  markers: StepMarker[];
+  /** line → step index, for reading a marker back as a step. */
+  lineMap: Record<number, number>;
+  artifactDir: string;
+  outputDir: string;
+  loads: number;
+}
+
+/** Run the three-step spec through the real CLI with one retry allowed. */
+async function run(name: string, serverMode: "flip" | "stuck"): Promise<RunResult> {
+  mode = serverMode;
+  loads = 0;
+
   const steps: Step[] = [
     { id: "s0", type: "goto", url: base },
     { id: "s1", type: "click", locator: { k: "testid", v: "go" } },
     { id: "s2", type: "assert", assert: "text", locator: { k: "testid", v: "out" }, text: "ready" },
   ] as Step[];
 
-  const { source, lineMap } = generateSpecDetailed({ name: "retry", url: base, steps }, {});
-  const specPath = path.join(dir, "retry.spec.ts");
+  const { source, lineMap } = generateSpecDetailed({ name, url: base, steps }, {});
+  const specPath = path.join(dir, `${name}.spec.ts`);
   fs.writeFileSync(
     specPath,
     source.replace(/from\s+["']@playwright\/test["']/, 'from "./glaze-capture.mjs"'),
   );
 
-  const artifactDir = path.join(dir, "retry-artifacts");
-  const outputDir = path.join(dir, "retry-out");
+  const artifactDir = path.join(dir, `${name}-artifacts`);
+  const outputDir = path.join(dir, `${name}-out`);
   const child = spawn(
     process.execPath,
     [
@@ -172,7 +199,7 @@ test("a retried run leaves both attempts' evidence, and names each one", async (
         GLAZE_CAPTURE_ARTIFACTS: "1",
         GLAZE_ARTIFACT_DIR: artifactDir,
         GLAZE_TEST_ID: "t-retry",
-        GLAZE_RUN_ID: "retry",
+        GLAZE_RUN_ID: name,
       },
     },
   );
@@ -185,21 +212,45 @@ test("a retried run leaves both attempts' evidence, and names each one", async (
     markers.push(...split.markers);
   });
   const exitCode = await new Promise<number>((r) => child.on("close", (c) => r(c ?? -1)));
+  return { exitCode, markers, lineMap, artifactDir, outputDir, loads };
+}
+
+/** Every `trace.zip` under a scratch dir, with the attempt its directory names
+ *  — the same walk `findTraceZips` does in the runner, which cannot be
+ *  imported here (it pulls in `@shell/backend`). */
+function tracesByAttempt(root: string): Map<number, string> {
+  const found = new Map<number, string>();
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return found;
+  }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const zip = path.join(root, e.name, "trace.zip");
+    if (fs.existsSync(zip)) found.set(attemptFromPlaywrightOutputDir(e.name), zip);
+  }
+  return found;
+}
+
+test("a retried run leaves both attempts' evidence, and each says which it is", async () => {
+  const result = await run("flip", "flip");
 
   // The premise. If this run did not fail and then pass, nothing below means
-  // what it says — so it is asserted rather than assumed.
-  expect(exitCode, "the run passes overall, on its second attempt").toBe(0);
-  expect(pageLoads, "the page was served to two attempts").toBeGreaterThanOrEqual(2);
+  // what it says.
+  expect(result.exitCode, "the run passes overall, on its second attempt").toBe(0);
+  expect(
+    result.loads,
+    "the page was served to two attempts — one load means the first attempt PASSED and there was no retry to measure",
+  ).toBeGreaterThanOrEqual(2);
 
   // ── 1. Two attempts, two sets of evidence ───────────────────────────────
-  const first = readManifest(attemptArtifactDir(artifactDir, 0));
-  const second = readManifest(attemptArtifactDir(artifactDir, 1));
+  const first = readManifest(attemptArtifactDir(result.artifactDir, 0));
+  const second = readManifest(attemptArtifactDir(result.artifactDir, 1));
 
   expect(first, "the first attempt wrote a manifest").not.toBeNull();
-  expect(
-    second,
-    "the retry wrote its own manifest instead of overwriting the first",
-  ).not.toBeNull();
+  expect(second, "the retry wrote its own instead of overwriting the first").not.toBeNull();
 
   expect(first!.attempt, "the first attempt says which attempt it was").toBe(0);
   expect(second!.attempt, "and so does the retry").toBe(1);
@@ -210,37 +261,65 @@ test("a retried run leaves both attempts' evidence, and names each one", async (
   expect(second!.status, "the retry's records that it passed").toBe("passed");
 
   // ── 2. …in different directories ────────────────────────────────────────
-  expect(attemptArtifactDir(artifactDir, 1)).not.toBe(attemptArtifactDir(artifactDir, 0));
+  expect(attemptArtifactDir(result.artifactDir, 1)).not.toBe(
+    attemptArtifactDir(result.artifactDir, 0),
+  );
   expect(
-    fs.existsSync(path.join(attemptArtifactDir(artifactDir, 1), "manifest.json")),
+    fs.existsSync(path.join(attemptArtifactDir(result.artifactDir, 1), "manifest.json")),
     "the retry's manifest is beneath the run directory, not beside it",
   ).toBe(true);
 
   // ── 3. The marker stream says which attempt each step belonged to ───────
-  const attempts = new Set(markers.map((m) => m.attempt));
   expect(
-    [...attempts].sort(),
+    [...new Set(result.markers.map((m) => m.attempt))].sort(),
     "steps are reported under both attempts, not folded into one",
   ).toEqual([0, 1]);
-  // The assertion that failed the first time is step 2, and it must be
-  // reported as failed under attempt 0 and passed under attempt 1 — the exact
-  // pair a flat map collapses to "passed".
-  const at = (attempt: number, ok: boolean) =>
-    markers.some(
-      (m) => m.attempt === attempt && m.event === "end" && m.ok === ok && lineMap[m.line] === 2,
+  // The assertion that failed the first time is step 2. It must be reported
+  // failed under attempt 0 and passed under attempt 1 — the exact pair a flat
+  // status map collapses to "passed".
+  const reported = (attempt: number, ok: boolean) =>
+    result.markers.some(
+      (m) =>
+        m.attempt === attempt && m.event === "end" && m.ok === ok && result.lineMap[m.line] === 2,
     );
-  expect(at(0, false), "the assertion is reported failed under attempt 0").toBe(true);
-  expect(at(1, true), "and passed under attempt 1").toBe(true);
+  expect(reported(0, false), "the assertion is reported failed under attempt 0").toBe(true);
+  expect(reported(1, true), "and passed under attempt 1").toBe(true);
 
-  // ── 4. Playwright's own directory naming, checked against Playwright ────
+  // ── 4. The failing attempt's trace survives a run that exits 0 ──────────
   //
-  // The runner derives a salvaged trace's attempt from this name. A wrong
-  // model files every retry's trace under attempt 0, where it overwrites — or
-  // is refused by — the one the app opens.
-  const scratch = fs.readdirSync(outputDir, { withFileTypes: true }).filter((e) => e.isDirectory());
-  const named = new Map(scratch.map((e) => [attemptFromPlaywrightOutputDir(e.name), e.name]));
+  // The whole reason the runner's salvage gate moved off the exit code. If
+  // `retain-on-failure` did not keep this, there would be nothing to salvage
+  // and the old gate would have been harmless.
   expect(
-    [...named.keys()].sort(),
-    `attempt 0 and attempt 1 each get a scratch directory (saw ${scratch.map((e) => e.name).join(", ")})`,
+    tracesByAttempt(result.outputDir).has(0),
+    "the failing attempt's trace is on disk even though the run exited 0",
+  ).toBe(true);
+});
+
+test("Playwright names a retried attempt's directory with a -retry suffix", async () => {
+  // Both attempts fail here, so `retain-on-failure` keeps BOTH traces and both
+  // scratch directories exist to be named. (In the flip case above the passing
+  // retry's trace is discarded, so there is nothing to read its name from.)
+  const result = await run("stuck", "stuck");
+
+  expect(result.exitCode, "both attempts failed, so the run fails").not.toBe(0);
+  expect(result.loads, "the page was served to two attempts").toBeGreaterThanOrEqual(2);
+
+  const traces = tracesByAttempt(result.outputDir);
+  const names = fs
+    .readdirSync(result.outputDir, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name);
+
+  expect(
+    [...traces.keys()].sort(),
+    `each attempt's trace is filed under its own attempt (scratch dirs: ${names.join(", ")})`,
   ).toEqual([0, 1]);
+
+  // Stated positively too, so a failure names the thing that changed rather
+  // than only the consequence.
+  expect(
+    names.some((n) => /-retry1$/.test(n)),
+    `a retried attempt's directory carries a "-retry" SUFFIX, not a nested retryN/ directory (saw: ${names.join(", ")})`,
+  ).toBe(true);
 });
