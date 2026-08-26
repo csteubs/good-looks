@@ -288,6 +288,19 @@ which is precisely the signal the Stability panel exists to give. If retry is
 added later it must mark the resulting `RunRecord` so flake analysis can exclude
 or count it deliberately.
 
+> **2026-08-26 — the condition was met, at the RUN level, not here (R24).**
+> `good-looks run --retries N` exists, and a run that recovers writes
+> `attempt` and `passedOnRetry`. The counting rule that keeps the paragraph
+> above true is `shared/run-attempts.mjs`: such a run is PASSED in the outcome
+> tally and FAILED in the flake transition series, so a test that only ever
+> passes by retrying reads "flaky" rather than "stable".
+>
+> **Routines still has no `retry` policy**, and the reason is specific to this
+> file rather than to retries in general: `stopRoutine` and `skipGroup` key on
+> "a step failed", a definition a retried pass silently escapes, and the run
+> alert would report a clean pass for a run that went red. Those two want
+> deciding before a policy field exists, not after.
+
 ### The lane invariant survives, and constrains the builder
 
 The batch runner keys a live run by `testId` (`runId === testId`) and serialises

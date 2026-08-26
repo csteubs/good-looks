@@ -160,6 +160,21 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      unattended run does not — the fixture falls back to the
                      step id, which puts the gap in the artifact rather than in
                      the ranking.
+                     run-attempts.mjs is WHAT A RETRY MEANS (R24), and the
+                     rule is that a retried pass answers TWO questions
+                     differently: PASSED as an outcome (the pass rate says
+                     yes) and FAILED as a signal (the flake transition series
+                     says it went red). Collapsing them either way is the bug
+                     ROUTINES.md refused a retry policy over — "a retry
+                     stacked on Auto-Heal makes a flaky test look stable,
+                     which is precisely the signal the Stability panel exists
+                     to give". The verdict check sits ABOVE `failed === 0` in
+                     verdictFor, because that rule reads OUTCOMES: a test
+                     needing a retry on every run has no failures and reached
+                     "stable" with every new field present and correct.
+                     retryFields returns FIELDS to spread and is EMPTY when
+                     nothing retried — `attempt: 0` on every row is
+                     indistinguishable from a row predating the field
                      attempt-artifacts.mjs is WHERE ONE ATTEMPT'S EVIDENCE
                      GOES (R24a). Playwright re-runs a failed test from the
                      top and the capture fixture is a `page` fixture, so every
@@ -399,7 +414,7 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 6067 Vitest tests across 334 files and 93 checks in the chain as of 2026-08-26 (95 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 6081 Vitest tests across 335 files and 93 checks in the chain as of 2026-08-26 (95 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
 
 **A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS — or a real navigation — gets checked: `click-navigation.spec.ts` (a click that changes route is recorded, including one a client-side router intercepts; the failure it was written against loses six clicks out of six and jsdom cannot host it, because nothing there has a navigation that destroys the document mid-read), `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `dialog-lifecycle.spec.ts` (whether the dialog that started a recording is still on top of the app afterwards — the existing recording spec invokes `recorder:start` over IPC, so it opens no dialog and could never see one left behind), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app), `verified-steps.spec.ts` (that an AI-proposed step is actually TRIED on the live page before it is inserted, that the first failure stops the rest, and that capture does not record the try a second time — a live session acting on a real page, which nothing in jsdom can host), `ts-service.spec.ts` (that the app forks the TypeScript service through a real `utilityProcess` and it answers — the child path, the node_modules resolution and `process.parentPort` exist nowhere else; `check:ts-service` boots the same built file under plain Node). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
 

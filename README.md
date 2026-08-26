@@ -262,7 +262,7 @@ log, so check the log too: renderer errors and warnings are forwarded there by
 ## Testing
 
 **Two systems, one command.** `npm run test:all` runs the `check:*` scripts and
-then Vitest. Both must pass. 6067 Vitest tests across 334 files and 93 checks in
+then Vitest. Both must pass. 6081 Vitest tests across 335 files and 93 checks in
 the chain as of 2026-08-26 (95 are defined — `check:repo-hygiene` and
 `check:shell-drift` are deliberately outside it).
 

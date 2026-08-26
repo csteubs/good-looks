@@ -23,14 +23,26 @@
 // both already queried by `test-detail-view.tsx` for other reasons.
 //
 // WHY "retry" MEANS WHAT IT MEANS HERE. The plan calls this state "attempt 1 vs
-// attempt 2", which in a runner with `retries` configured would be two attempts
-// inside one run. This app configures none — every run is one attempt — so the
-// two attempts are two RUNS, and the question survives the translation intact:
-// the previous run of this test failed, this one passed, what was different?
-// The answer is drawn only from what the record actually stores. When the
-// answer is NOTHING, that is the most useful reading the panel can give, and
-// the one the user is least likely to reach on their own: same browser, same
-// pacing, same budget, opposite outcome, so the test is flaky rather than fixed.
+// attempt 2", and there are now two ways to be in it.
+//
+// ACROSS RUNS, which is how this started and still the common case: the
+// previous run of this test failed, this one passed, what was different? The
+// answer is drawn only from what the record actually stores. When the answer is
+// NOTHING, that is the most useful reading the panel can give, and the one the
+// user is least likely to reach on their own: same browser, same pacing, same
+// budget, opposite outcome, so the test is flaky rather than fixed.
+//
+// WITHIN ONE RUN, since R24: `passedOnRetry` says this run failed and passed
+// again without ever ending. It is the same question with a stronger answer —
+// there is no previous record to compare against because nothing was compared,
+// and nothing COULD have differed, since the two attempts shared one process,
+// one browser, one budget and one commit. This app configured no retries until
+// R24, which is why the paragraph this replaces said the two attempts were
+// always two runs.
+//
+// The within-run case is checked FIRST. A run that passed on retry and also
+// followed a failed run is both, and the within-run reading is the one with no
+// confounder in it.
 
 import type { HealEntry, RunRecord } from "./recorder-types";
 
@@ -103,9 +115,14 @@ export interface HealedSummary extends Base {
 
 export interface RetrySummary extends Base {
   state: "retry";
-  /** The failed run immediately before this one. */
-  previous: RunRecord;
+  /** The failed run immediately before this one — absent on a WITHIN-RUN retry,
+   *  where the failure and the pass are the same record. */
+  previous: RunRecord | null;
+  /** Empty on a within-run retry, and meaningfully so: two attempts inside one
+   *  process cannot differ in anything this app records. */
   differences: RunDifference[];
+  /** How many attempts this run took. 0 when the retry is across runs. */
+  attempt: number;
   durationMs: number;
   stepCount: number;
 }
@@ -263,12 +280,26 @@ function summariseRecord(
     };
   }
 
+  // Within-run first — see the header. This run went red and recovered without
+  // ending, so there is nothing to diff and nothing that could have differed.
+  if (record.passedOnRetry === true) {
+    return {
+      state: "retry",
+      previous: null,
+      differences: [],
+      attempt: record.attempt ?? 1,
+      durationMs: record.durationMs,
+      stepCount,
+    };
+  }
+
   const previous = earlier.length > 0 ? earlier[earlier.length - 1] : null;
   if (previous && previous.status === "failed") {
     return {
       state: "retry",
       previous,
       differences: runDifferences(previous, record),
+      attempt: 0,
       durationMs: record.durationMs,
       stepCount,
     };

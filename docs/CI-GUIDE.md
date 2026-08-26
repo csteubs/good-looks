@@ -111,6 +111,7 @@ Pick exactly one. The rest of the options are optional:
 | `--browser <name>` | `chromium`, `firefox` or `webkit`. Defaults to chromium |
 | `--speed <name>` | `fast`, `medium`, `slow` or `crawl`, for this run only. Never written back to the test |
 | `--parallel <n>` | Run n tests at once |
+| `--retries <n>` | Re-run a failed test up to n times, 0 to 3. Defaults to 0 |
 | `--all-datasets` | Run each test once per dataset row it declares |
 | `--secrets-file <f>` | A JSON file of secret values. See §5 |
 | `--junit <path>` | Also write a JUnit XML report of this run |
@@ -120,6 +121,13 @@ Pick exactly one. The rest of the options are optional:
 `--dry-run` does the real selection and the real queue expansion, so what it
 prints is the actual plan rather than a description of one. It is the fastest
 way to check a tag still matches what you think it does.
+
+`--retries` is worth understanding before you reach for it. A test that fails
+and then passes on a retry is recorded as **passed** — your pipeline goes green —
+**and** counted as a failure by the app's flake analysis. Both are true at once,
+deliberately: absorbing an intermittent failure on the runner should not also
+hide it from the app, or you would have bought a green pipeline by losing the
+only evidence that something is flaky.
 
 A worked example — every test tagged `smoke`, two at a time, in Firefox, with a
 report your pipeline can publish:
@@ -261,6 +269,7 @@ that reads one re-resolves it against the library it is actually looking at.
 | `browser` | `chromium` | `chromium`, `firefox` or `webkit` |
 | `speed` | | `fast`, `medium`, `slow` or `crawl`, for this run only |
 | `parallel` | | How many tests to run at once |
+| `retries` | `0` | Re-run a failed test up to this many times, 0 to 3 |
 | `junit` | | Write a JUnit report here |
 | `secrets-file` | | JSON of secret values. The environment wins over it |
 | `install-deps` | `true` | Also install the browser's system libraries |

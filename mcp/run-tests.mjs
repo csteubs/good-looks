@@ -37,6 +37,7 @@ import { normalizeBaseUrl } from "../shared/base-url.mjs";
 import { readRunProvenance } from "../shared/run-provenance.mjs";
 import { normalizeRunTrigger } from "../shared/run-trigger.mjs";
 import { splitStepMarkers } from "../shared/step-marker.mjs";
+import { retryFields } from "../shared/run-attempts.mjs";
 import { buildStepLineMapFromSource } from "../shared/step-line-map.mjs";
 import { recordRun } from "./metrics.mjs";
 import { clampParallel, runPool } from "./run-pool.mjs";
@@ -472,6 +473,7 @@ export function createRunner({
       datasetName,
       speed: speedOverride,
       baseUrl: baseUrlOverride,
+      retries = 0,
     },
   ) {
     // The scripts ROOT, not the spec's own directory. An imported test's spec
@@ -782,7 +784,7 @@ export function createRunner({
     }
 
     const startedAt = Date.now();
-    const { exitCode, output, failedLine } = await new Promise((resolve) => {
+    const { exitCode, output, failedLine, maxAttempt } = await new Promise((resolve) => {
       const child = spawn(
         process.execPath,
         runArgs({
@@ -794,6 +796,7 @@ export function createRunner({
           // Written by `ensureRunFixtures` on every run, capabilities or not —
           // and, until this change, loaded by nothing.
           reporterPath: path.join(scriptsDir, STEP_REPORTER_FILE),
+          retries,
         }),
         { cwd: scriptsDir, env },
       );
@@ -817,12 +820,17 @@ export function createRunner({
       // and `ok: false` is the confirmation rather than the source.
       let lastLine = null;
       let failedLine = null;
+      // The highest attempt any marker reported, which is how this path knows a
+      // retry happened at all. Playwright says "1 flaky" in its summary line;
+      // that is prose, and these markers are already parsed.
+      let maxAttempt = 0;
       const take = (chunk) => {
         const split = splitStepMarkers(buffered, chunk);
         buffered = split.rest;
         for (const marker of split.markers) {
           if (marker.event === "begin") lastLine = marker.line;
           if (!marker.ok) failedLine = marker.line;
+          if (marker.attempt > maxAttempt) maxAttempt = marker.attempt;
         }
         out += split.visible;
       };
@@ -843,7 +851,12 @@ export function createRunner({
         // either way — so it goes through the same split with a closing
         // newline rather than being appended raw.
         if (buffered) out += splitStepMarkers(buffered, "\n").visible;
-        resolve({ exitCode: code ?? 1, output: out, failedLine: failedLine ?? lastLine });
+        resolve({
+          exitCode: code ?? 1,
+          output: out,
+          failedLine: failedLine ?? lastLine,
+          maxAttempt,
+        });
       });
     });
     const finishedAt = Date.now();
@@ -969,6 +982,10 @@ export function createRunner({
       // WHERE it came from, when the environment said. Absent on a laptop, and
       // absent is honestly unknown — see shared/run-provenance.mjs.
       ...(runProvenance ? { provenance: runProvenance } : {}),
+      // How many attempts this took, and whether the pass came from one. Same
+      // rule as the app's runner and the same module, so a run that recovered
+      // reads identically wherever it happened — see shared/run-attempts.mjs.
+      ...retryFields({ status, maxAttempt }),
       ...(batchId ? { batchId } : {}),
       // Both stored, like the app: the id joins back to the row, and the name
       // survives the row being renamed or deleted. A sweep whose history can't
@@ -1084,6 +1101,7 @@ export function createRunner({
     datasetIds,
     allDatasets,
     parallel,
+    retries,
     speed,
     baseUrl,
     vars: varOverrides,
@@ -1290,6 +1308,11 @@ export function createRunner({
           // Same shape, same reason: the CLI's `--base-url`, absent everywhere
           // else, and the test's own record decides when it is.
           baseUrl,
+          // The CLI's `--retries`. Absent for an MCP call and for the app, both
+          // of which run each test once; `runArgs` omits the flag entirely
+          // rather than passing 0, so a spec that configures its own retries
+          // still gets them.
+          retries,
         });
         results[i].status = r.status;
         results[i].exitCode = r.exitCode;

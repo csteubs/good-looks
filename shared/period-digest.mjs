@@ -38,11 +38,24 @@ export const WEEK_MS = 7 * DAY_MS;
  * passed", found by a failure at `i` and a pass at `i + 1`. Sorted the other
  * way it silently finds nothing.
  *
+ * Since R24 a run can also satisfy the rule BY ITSELF — `passedOnRetry` is a
+ * failure directly followed by a pass, inside one run, with nothing changed by
+ * construction. Its id is returned like any other, and the ordering does not
+ * matter for that half.
+ *
  * @param {readonly import("./period-digest.mjs").DigestRun[]} runsForOneTest
  * @returns {Set<string>} ids of the failed runs that look like flake
  */
 export function flakeRuns(runsForOneTest) {
   const out = new Set();
+  for (const r of runsForOneTest) {
+    // A retried pass is this rule's own definition, collapsed into one run: it
+    // failed and then passed with NOTHING changed in between — not the engine,
+    // not the pacing, not the budget, because it never left the run. There is
+    // no `sameSettings` check to make, which is why it is matched here rather
+    // than folded into the pair loop below (R24).
+    if (r.passedOnRetry === true) out.add(r.id);
+  }
   for (let i = 0; i < runsForOneTest.length - 1; i++) {
     const a = runsForOneTest[i];
     const b = runsForOneTest[i + 1];
@@ -219,6 +232,10 @@ function buildLines(d, periodLabel) {
   // Flake last, and only when there is some: it is a qualifier on the failures
   // above rather than a finding of its own, and on a clean period it would be
   // the only sentence with a number in it and read as a problem.
+  //
+  // Since R24 it CAN be the only such sentence — a period whose every run
+  // passed on a retry has no failures above to qualify — and that is the one
+  // period where this line is the whole finding rather than a footnote.
   if (d.flaky > 0) {
     // "N of those failures" pluralises the wrong noun — with one flake it reads
     // "1 of those failure", and with one failure total the phrase claims a set

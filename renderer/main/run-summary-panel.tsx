@@ -217,20 +217,32 @@ function HealedPanel({ summary, onReview }: { summary: HealedSummary; onReview?:
 }
 
 function RetryPanel({ summary }: { summary: RetrySummary }) {
+  // Three readings, not two. `withinRun` is R24's: this run failed and passed
+  // again without ever ending, so the claim is stronger than the cross-run
+  // one — there was no second run to differ in anything. The old copy said
+  // "same engine, same pacing, same budget", which is a comparison this case
+  // never made.
+  const withinRun = summary.attempt > 0;
   const flaky = summary.differences.length === 0;
   return (
     <div className="gl-run-summary" data-gl="run-summary" data-state="retry">
       <Verdict
-        tone={flaky ? "amber" : undefined}
+        tone={withinRun || flaky ? "amber" : undefined}
         detail={
-          flaky
-            ? "Same engine, same pacing, same budget, opposite outcome — so this is flake rather than a fix."
-            : "One of these could be the whole reason it passed. Re-run it under the old settings to find out."
+          withinRun
+            ? `It failed and passed again inside this run, ${summary.attempt === 1 ? "on one retry" : `over ${summary.attempt} retries`}. Nothing changed in between — same process, same browser, same commit — so the test is flaky.`
+            : flaky
+              ? "Same engine, same pacing, same budget, opposite outcome — so this is flake rather than a fix."
+              : "One of these could be the whole reason it passed. Re-run it under the old settings to find out."
         }
       >
-        {flaky ? "Passed, and nothing was different" : "Passed, after failing last time"}
+        {withinRun
+          ? "Passed, on a retry"
+          : flaky
+            ? "Passed, and nothing was different"
+            : "Passed, after failing last time"}
       </Verdict>
-      {flaky ? null : (
+      {withinRun || flaky ? null : (
         <KeyValue
           rows={summary.differences.map((d) => ({
             label: d.label,
