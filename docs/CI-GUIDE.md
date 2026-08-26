@@ -111,6 +111,7 @@ Pick exactly one. The rest of the options are optional:
 | `--browser <name>` | `chromium`, `firefox` or `webkit`. Defaults to chromium |
 | `--speed <name>` | `fast`, `medium`, `slow` or `crawl`, for this run only. Never written back to the test |
 | `--parallel <n>` | Run n tests at once |
+| `--retries <n>` | Re-run a failed test up to n times. 0 to 3, default 0 |
 | `--all-datasets` | Run each test once per dataset row it declares |
 | `--secrets-file <f>` | A JSON file of secret values. See §5 |
 | `--junit <path>` | Also write a JUnit XML report of this run |
@@ -120,6 +121,18 @@ Pick exactly one. The rest of the options are optional:
 `--dry-run` does the real selection and the real queue expansion, so what it
 prints is the actual plan rather than a description of one. It is the fastest
 way to check a tag still matches what you think it does.
+
+**A test that passes on a retry is recorded as a pass and counted as a
+failure.** Those are two different questions and it answers both. Your pipeline
+asked whether the suite passed, and it did — the exit code is 0. Stability asks
+whether the test is reliable, and it is not: it went red once, on this commit,
+on this machine. So the pass rate counts it passed and the flake verdict counts
+it flaky.
+
+That is the point of the flag rather than a side effect of it. Retries buy a
+green pipeline over an intermittent failure. They are not meant to buy a clean
+Stability panel, and a test that needs a retry on every single run reads as
+flaky rather than as stable.
 
 A worked example — every test tagged `smoke`, two at a time, in Firefox, with a
 report your pipeline can publish:
@@ -261,6 +274,7 @@ that reads one re-resolves it against the library it is actually looking at.
 | `browser` | `chromium` | `chromium`, `firefox` or `webkit` |
 | `speed` | | `fast`, `medium`, `slow` or `crawl`, for this run only |
 | `parallel` | | How many tests to run at once |
+| `retries` | | Re-run a failed test up to n times, 0 to 3 |
 | `junit` | | Write a JUnit report here |
 | `secrets-file` | | JSON of secret values. The environment wins over it |
 | `install-deps` | `true` | Also install the browser's system libraries |
@@ -327,6 +341,11 @@ because it cannot be worked out afterwards.
 Runs are also tagged with what started them. A run from the command line records
 `cli`, whether it happened on a build server or in your own terminal.
 
+An ingested run carries its retry marking too. CI is where `--retries` gets
+used, so a run that recovered in a container is exactly the run this command
+brings back — and without the marking it would arrive in the app looking like a
+clean pass.
+
 ---
 
 ## 8. When a CI run goes wrong
@@ -340,6 +359,7 @@ Runs are also tagged with what started them. A run from the command line records
 | Everything skipped, exit code 3 | No secrets reached the run at all. Check the variables are set on the right step |
 | The run cannot find the library | Check `good-looks data-dir`, and set `GOOD_LOOKS_USERDATA` if it is pointing at the wrong place |
 | A test fails here but passes in the app | Check the run's own notes on what it could not do. A missing crawler signature or an unauthenticated proxy both fail further down as a timeout, which reads like flakiness |
+| A test that passed is called flaky | It passed on a retry. That is the rule rather than a fault — see §3 |
 | Runs never appear in Stats | They are still on the build server. See §7 |
 
 ---

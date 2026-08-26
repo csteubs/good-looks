@@ -28,6 +28,14 @@
 //      unknown flag is a REFUSAL by design (`cli/args.mjs`), so a renamed flag
 //      turns every run through the action into exit 3 — which the self-test
 //      WOULD catch, but only for the flags it happens to exercise.
+//   4. DOCUMENTED-INPUT DRIFT. An input this action accepts and no document
+//      names is an input nobody can find. `retries` shipped with R24 and
+//      appeared in neither `docs/GITHUB-ACTION.md` nor `docs/CI-GUIDE.md` —
+//      the second of which is the IN-APP manual, so the app itself described
+//      an Action it no longer had. Nothing failed: both tables are prose, and
+//      prose that has stopped being true reads exactly like prose that has
+//      not. Derived from `action.yml` rather than listed here, for the same
+//      reason as the flag table above.
 
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -191,6 +199,44 @@ assert(
   "…and every one is an absolute path that cannot exist on the runner, which is " +
     `what a copied library carries (R10). Found: ${scriptPaths.join(", ")}`,
 );
+
+// ── 6. Every input is documented, in both places that document them ──
+//
+// `docs/GITHUB-ACTION.md` is the reference and `docs/CI-GUIDE.md` is the same
+// table rendered INSIDE THE APP (Settings → Documentation). An input missing
+// from the second is one a user of the app cannot discover at all.
+
+function declaredInputs(yaml: string): string[] {
+  const start = yaml.indexOf("\ninputs:\n");
+  if (start === -1) return [];
+  const rest = yaml.slice(start + 1);
+  const end = rest.search(/\n[a-z]/);
+  const block = end === -1 ? rest : rest.slice(0, end + 1);
+  return [...block.matchAll(/^ {2}([a-z][a-z0-9-]*):$/gm)].map((m) => m[1]);
+}
+
+const inputs = declaredInputs(action);
+assert(inputs.length >= 10, `action.yml declares inputs to check (found ${inputs.length})`);
+
+for (const [doc, label] of [
+  ["docs/GITHUB-ACTION.md", "the Action reference"],
+  ["docs/CI-GUIDE.md", "the in-app CI guide"],
+] as const) {
+  const text = read(doc);
+  // A row in an inputs table, not a passing mention: `| \`name\` |`. Anchoring
+  // on the backticked name alone would be satisfied by a sentence elsewhere in
+  // the file, which is not what a reader looking up an input finds.
+  const rows = new Set(
+    [...text.matchAll(/^\| `([a-z][a-z0-9-]*)` \|/gm)].map((m) => m[1]),
+  );
+  assert(rows.size >= 10, `${label} has an inputs table to read (found ${rows.size} rows)`);
+  const undocumented = inputs.filter((name) => !rows.has(name));
+  assert(
+    undocumented.length === 0,
+    `every input action.yml accepts has a row in ${label} — an input no document ` +
+      `names is one nobody can find. Missing: ${undocumented.join(", ") || "none"}`,
+  );
+}
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);

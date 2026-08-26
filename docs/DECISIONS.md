@@ -66,6 +66,24 @@ secret variables, the Shopify signature, a proxy password, all encrypted to the
 app — and points at the run's own `fixtures` field rather than at a list in a
 document that can go stale the same way.
 
+**And the audit found its own recurrence before the branch had landed.** R24
+merged while this was open and added a `retries` input to the Action. Neither
+`docs/GITHUB-ACTION.md` — the reference — nor `docs/CI-GUIDE.md` — the in-app
+manual added by this branch — gained a row for it, so the app shipped a
+description of an Action it no longer had. Nothing failed, because both tables
+are prose and prose that has stopped being true reads exactly like prose that
+has not. That is the same shape as the guide this branch is correcting, one
+release later, which is the argument for a guard rather than for another
+careful read.
+
+`check:github-action` now derives the input list from `action.yml` and requires
+a table ROW in both documents for each. Derived rather than listed, for the
+same reason its flag check already reads `cli/args.mjs`: a hand-written list is
+one that stops covering the input added next week. A row rather than a mention,
+because a sentence elsewhere in the file is not what a reader looking up an
+input finds. Verified by deleting both rows and watching it name `retries`
+twice.
+
 ### 2026-08-26 — Retries, and the two answers a retried run has to give (R24)
 
 `docs/ROUTINES.md` refused a retry policy in v1 and named its own condition for

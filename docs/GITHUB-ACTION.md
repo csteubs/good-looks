@@ -139,6 +139,7 @@ when the engine is already there, which makes the directory worth caching:
 | `browser` | `chromium` | `chromium`, `firefox` or `webkit` |
 | `speed` | | `fast`, `medium`, `slow`, `crawl` — this run only, never written back |
 | `parallel` | | How many tests at once |
+| `retries` | | Re-run a failed test up to n times, 0 to 3. A pass on a retry is recorded as a pass and counted as a failure by flake analysis |
 | `junit` | | Write a JUnit report of this run here |
 | `secrets-file` | | JSON of secret values; the environment wins over it |
 | `install-deps` | `true` | `--with-deps` when installing the browser |
