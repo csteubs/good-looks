@@ -53,7 +53,8 @@ function copyFile(from, to) {
 }
 
 /**
- * Copy a directory tree, refusing to follow a symlink out of it.
+ * Walk a directory tree, refusing to follow a symlink out of it, and copy it
+ * when `write` is set.
  *
  * An imported test's sandbox holds files that came from somebody else's
  * repository, and `copyFileSync` FOLLOWS a symlink — so a project shipping
@@ -61,11 +62,18 @@ function copyFile(from, to) {
  * The same rule `copyRelativeImports` applies on the way in, applied on the way
  * out, where the destination is a thing somebody commits.
  *
+ * The walk happens either way, and that is the point rather than an
+ * optimisation missed. `--dry-run` exists so you can see what a real run would
+ * do; counting a whole sandbox as one file, or staying quiet about a symlink it
+ * would skip, makes the preview disagree with the thing it is previewing —
+ * which is worse than having no preview, because this one gets believed.
+ *
  * @param {string} from
  * @param {string} to
+ * @param {boolean} write
  * @returns {{files: number, skipped: string[]}}
  */
-function copyTree(from, to) {
+function walkTree(from, to, write) {
   let files = 0;
   const skipped = [];
   const walk = (src, dest) => {
@@ -81,7 +89,7 @@ function copyTree(from, to) {
         continue;
       }
       if (!entry.isFile()) continue;
-      copyFile(s, d);
+      if (write) copyFile(s, d);
       files++;
     }
   };
@@ -107,6 +115,26 @@ function isEmptyEnough(dir) {
 }
 
 /**
+ * Whether `dir` names something that is not a directory.
+ *
+ * Checked before anything reads it. Without this, `--out` pointed at a file
+ * reaches `readdirSync` and the user gets an ENOTDIR stack trace out of
+ * `node:fs` — a Node internal for a plain typo, where every other refusal in
+ * this CLI is a sentence naming what to do instead.
+ *
+ * @param {string} dir
+ * @returns {boolean}
+ */
+function existsAsNonDirectory(dir) {
+  try {
+    return !fs.statSync(dir).isDirectory();
+  } catch {
+    // Not there at all, or unreadable. Neither is this function's question.
+    return false;
+  }
+}
+
+/**
  * Write a portable bundle of this library into `out`.
  *
  * @param {{out: string, dryRun: boolean, json: boolean, force: boolean}} options
@@ -123,6 +151,12 @@ export function exportCommand({ out: outDir, dryRun, json, force }, { out, err, 
   if (path.resolve(dataDir) === root || path.resolve(recorderDir) === root) {
     err(`That is this library's own directory (${root}).`);
     err("Export somewhere else — the bundle is a copy, not a rearrangement.");
+    return EXIT.CANNOT_START;
+  }
+
+  if (existsAsNonDirectory(root)) {
+    err(`${root} is a file, not a directory.`);
+    err("--out names the directory to write the bundle into.");
     return EXIT.CANNOT_START;
   }
 
@@ -152,8 +186,7 @@ export function exportCommand({ out: outDir, dryRun, json, force }, { out, err, 
   const symlinked = [];
   let specFiles = 0;
 
-  for (let i = 0; i < specs.length; i++) {
-    const spec = specs[i];
+  for (const spec of specs) {
     const from = path.join(scriptsDir, ...spec.segments);
     const to = bundleSpecPath(root, spec.segments);
     if (!fs.existsSync(from)) {
@@ -161,18 +194,18 @@ export function exportCommand({ out: outDir, dryRun, json, force }, { out, err, 
       continue;
     }
     if (spec.kind === "tree") {
-      if (!dryRun) {
-        const result = copyTree(from, to);
-        specFiles += result.files;
-        symlinked.push(...result.skipped);
-      } else {
-        specFiles++;
-      }
+      const result = walkTree(from, to, !dryRun);
+      specFiles += result.files;
+      symlinked.push(...result.skipped);
     } else {
       if (!dryRun) copyFile(from, to);
       specFiles++;
     }
-    kept.push(records[i]);
+    // The spec carries its own record. Reading `records[i]` worked — both are
+    // appended in one loop iteration — but it is an invariant held by nothing,
+    // and the failure it would produce is a bundle whose tests.json describes
+    // different tests from the specs beside it.
+    kept.push(spec.record);
   }
 
   if (kept.length === 0) {

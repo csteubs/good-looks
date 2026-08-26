@@ -232,7 +232,7 @@ export function secretNames(record) {
  * variable each wants, so nobody discovers it from a failing assertion.
  *
  * @param {unknown} tests
- * @returns {{records: Record<string, unknown>[], specs: ({kind: string, segments: string[], id: string})[], unusable: {id: unknown, name: unknown}[], needsSecrets: {id: string, name: string, names: string[]}[]}}
+ * @returns {{records: Record<string, unknown>[], specs: ({kind: string, segments: string[], id: string, record: Record<string, unknown>})[], unusable: {id: unknown, name: unknown}[], needsSecrets: {id: string, name: string, names: string[]}[]}}
  */
 export function planExport(tests) {
   const all = Array.isArray(tests) ? tests : [];
@@ -249,7 +249,12 @@ export function planExport(tests) {
       continue;
     }
     records.push(built.record);
-    specs.push({ ...source, id: String(test.id) });
+    // The record travels ON the spec, so a caller copying specs never has to
+    // pair the two lists by position. They are appended together here and the
+    // indices do line up — but that is an invariant nothing holds, and what it
+    // would produce if it broke is a bundle whose tests.json describes
+    // different tests from the specs beside it.
+    specs.push({ ...source, id: String(test.id), record: built.record });
     const names = secretNames(test);
     if (names.length > 0) {
       needsSecrets.push({ id: String(test.id), name: String(test?.name ?? test.id), names });

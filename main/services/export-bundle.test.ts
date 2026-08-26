@@ -174,6 +174,16 @@ describe("planExport", () => {
     ]);
   });
 
+  it("pairs each spec with its own record, so no caller matches them by position", () => {
+    // The two lists line up today because both are appended in one iteration.
+    // Nothing holds that, and what a break produces is a bundle whose
+    // tests.json describes different tests from the specs beside it.
+    const plan = planExport([recorded, imported]);
+    for (const spec of plan.specs) {
+      expect(spec.record.id).toBe(spec.id);
+    }
+  });
+
   it("sets aside a record it cannot build a path from, rather than dropping it silently", () => {
     const plan = planExport([recorded, { ...recorded, id: "../escape" }]);
     expect(plan.records).toHaveLength(1);

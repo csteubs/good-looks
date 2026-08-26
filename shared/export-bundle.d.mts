@@ -42,7 +42,9 @@ export declare function secretNames(record: Record<string, unknown>): string[];
 /** Plan a bundle from a library's tests.json. */
 export declare function planExport(tests: unknown): {
   records: Record<string, unknown>[];
-  specs: { kind: string; segments: string[]; id: string }[];
+  /** Each spec carries its own record, so a caller never pairs the two lists
+   *  by position. */
+  specs: { kind: string; segments: string[]; id: string; record: Record<string, unknown> }[];
   unusable: { id: unknown; name: unknown }[];
   needsSecrets: { id: string; name: string; names: string[] }[];
 };

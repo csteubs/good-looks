@@ -244,6 +244,37 @@ describe("--dry-run", () => {
     expect(existsSync(outDir)).toBe(false);
     expect(out.join("\n")).toContain("Would export");
   });
+
+  it("reports the SAME counts a real run writes, including the symlink it skips", () => {
+    // A preview that disagrees with the thing it previews is worse than no
+    // preview, because this one gets believed. It undercounted an imported
+    // test's sandbox as one file and said nothing about the symlink, so a
+    // library with any imported test previewed wrong.
+    symlinkSync(
+      join(dataDir, "recorder", "tests.json"),
+      join(dataDir, "recorder", "scripts", "imported", "t-imported", "link.ts"),
+    );
+
+    run({ dryRun: true });
+    const preview = out.join("\n");
+    out = [];
+    run();
+    const real = out.join("\n");
+
+    expect(preview.replace("Would export", "Exported")).toBe(real);
+    expect(preview).toContain("symlink");
+  });
+});
+
+describe("--out naming something that is not a directory", () => {
+  it("refuses with a sentence rather than an ENOTDIR stack trace", () => {
+    // Every other refusal in this CLI names what to do instead. This one
+    // reached readdirSync and gave the user a node:fs internal for a typo.
+    writeFileSync(outDir, "not a directory");
+    expect(run()).toBe(3);
+    expect(err.join("\n")).toContain("is a file, not a directory");
+    expect(err.join("\n")).not.toContain("ENOTDIR");
+  });
 });
 
 describe("--json", () => {
