@@ -1053,6 +1053,12 @@ export interface RunRecord {
   batchId?: string;
   /** how many steps run-time Auto-Heal got past by substituting a locator. */
   healedSteps?: number;
+  /** how many attempts Playwright made at this test, minus one. Absent — or 0
+   *  — is a run that ran once (R24) */
+  attempt?: number;
+  /** this run failed and then passed on a retry. PASSED in the outcome tally,
+   *  FAILED in the flake transition series — see shared/run-attempts.mjs */
+  passedOnRetry?: boolean;
   /** how many steps Auto-Heal TRIED to rescue and could not. The opposite
    *  evidence to `healedSteps` and the more informative half — a step that
    *  healed says the locator was stale, a step that could not says the element

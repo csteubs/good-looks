@@ -45,6 +45,8 @@ export const MIN_RUNS_FOR_VERDICT = 4;
 // has to compute it at ingest (the run log it reads is capped and pruned), and
 // the MCP needs the same clustering the app shows. Re-exported because callers
 // already import it from the flake module.
+import { flakeSignal } from "./run-attempts.mjs";
+
 export { errorSignature } from "./error-signature.mjs";
 
 /** Count consecutive-run disagreements. Runs must be oldest-first. */
@@ -64,9 +66,19 @@ export function countTransitions(statuses) {
  * that reads as flake — and calling it flake would send someone hunting for a
  * race condition that isn't there.
  */
-function verdictFor(statuses, transitions, dataDependent, browserDependent) {
+function verdictFor(statuses, transitions, dataDependent, browserDependent, retried = 0) {
   if (statuses.length < MIN_RUNS_FOR_VERDICT) return "unknown";
   const failed = statuses.filter((s) => s === "failed").length;
+  // A run that failed and passed on a retry went red. Checked BEFORE the
+  // stable rule, and this order is the whole reason ROUTINES.md refused a
+  // retry policy in v1: `statuses` holds OUTCOMES, so a test that needs a
+  // retry on every single run has `failed === 0` and would report "stable" —
+  // "precisely the signal the Stability panel exists to give", inverted.
+  //
+  // Consistent with how a bare failure is already treated: one failure among
+  // fifty passes yields two transitions and reads "flaky" today. A retry is
+  // that failure, absorbed.
+  if (failed === 0 && retried > 0) return "flaky";
   if (failed === 0) return "stable";
   if (failed === statuses.length) return "still-failing";
   if (dataDependent) return "data-dependent";
@@ -189,7 +201,11 @@ function transitionsByBrowser(runs) {
   for (const r of runs) {
     const key = r.runBrowser ?? "";
     const list = groups.get(key) ?? [];
-    list.push(r.status);
+    // The SIGNAL, not the status: a retried pass is a "failed" entry here and
+    // a "passed" one in the outcome tally below. Both are true of it, and
+    // which one a caller wants depends on the question — see
+    // shared/run-attempts.mjs.
+    list.push(flakeSignal(r));
     groups.set(key, list);
   }
   let transitions = 0;
@@ -247,6 +263,10 @@ export function analyseFlake(records, details = []) {
     // Per-step: which step was the failure point, and which needed healing.
     const stepStats = new Map();
     let healedRuns = 0;
+    // Runs that went red and recovered inside themselves. Counted from the
+    // runs rather than from `details`, because it is a property of the record
+    // and every run has one — `details` covers only runs with a replay.
+    const retriedRuns = testRuns.filter((r) => r.passedOnRetry === true).length;
     for (const r of testRuns) {
       const d = detailById.get(r.id);
       if (!d) continue;
@@ -293,11 +313,16 @@ export function analyseFlake(records, details = []) {
       // engines would divide a per-engine count by a whole-history denominator
       // and report a third of the real rate.
       flakeRate: pairs > 0 ? transitions / pairs : 0,
-      verdict: verdictFor(statuses, transitions, dataDependent, browserDependent),
+      verdict: verdictFor(statuses, transitions, dataDependent, browserDependent, retriedRuns),
       failingDatasets: rows,
       failingBrowsers: browserRows,
       steps,
       healedRuns,
+      // Beside `healedRuns` and for the same reason: a pass that only happened
+      // because something was retried is not the same evidence as a pass that
+      // happened. The verdict already accounts for it; this is what lets a
+      // reader see how much of a "flaky" verdict is retries.
+      retriedRuns,
     });
   }
 

@@ -313,7 +313,16 @@ export function CostPanel({
         <Figure
           label="Failures caught"
           value={String(cost.failures)}
-          note={cost.failures === 0 ? "none yet" : `${cost.flakeRuns} of them look like flake`}
+          // Gated on the flake count as well as the failure count: since R24 a
+          // retried pass is flake without ever being a failure, so "none yet"
+          // sat above a non-zero flake spend in the tile below it.
+          note={
+            cost.flakeRuns > 0
+              ? `${cost.flakeRuns} look like flake`
+              : cost.failures === 0
+                ? "none yet"
+                : "none look like flake"
+          }
           math={`${cost.failures} of ${cost.runs} runs failed`}
         />
         {/* Amber, because it is the one figure here that is a cost with nothing

@@ -27,6 +27,7 @@ function test_(partial: Partial<TestFlake> = {}): TestFlake {
     failingBrowsers: [],
     steps: [],
     healedRuns: 0,
+    retriedRuns: 0,
     ...partial,
   };
 }
@@ -123,6 +124,7 @@ describe("FlakePanel", () => {
           tests: [
             test_({
               healedRuns: 3,
+              retriedRuns: 0,
               steps: [{ stepId: "s1", label: 'getByTestId("pay").click()', failures: 0, heals: 3, failureRate: 0 }],
             }),
           ],

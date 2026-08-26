@@ -95,6 +95,7 @@ const RUN_SUMMARIES: RunSummary[] = [
   },
   {
     state: "retry",
+    attempt: 0,
     durationMs: 9_100,
     stepCount: 6,
     differences: [{ label: "Browser", before: "WebKit", after: "Chromium" }],
@@ -116,6 +117,7 @@ const RUN_SUMMARIES: RunSummary[] = [
   // not exist, so it gets its own specimen rather than sharing `retry`'s.
   {
     state: "retry",
+    attempt: 0,
     durationMs: 9_100,
     stepCount: 6,
     differences: [],
