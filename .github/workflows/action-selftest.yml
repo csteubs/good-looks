@@ -49,6 +49,11 @@ jobs:
       # library carries, and resolving it is R10's whole point. If script-path
       # resolution regresses, Playwright reports "no tests found" and this job
       # is what notices.
+      #
+      # `/opt/authoring-machine/…` rather than a `/Users/…` home, because
+      # `check:repo-hygiene` refuses a hardcoded home directory anywhere in the
+      # tree and is right to: this needs to be a path that does not exist on the
+      # runner, not a path that looks like somebody's laptop.
       - name: Build a library from nothing
         run: |
           set -euo pipefail
@@ -59,7 +64,7 @@ jobs:
               "id": "t-pass",
               "name": "a passing test",
               "url": "https://example.com",
-              "scriptPath": "/Users/someone-else/Library/Application Support/Good Looks!/recorder/scripts/t-pass.spec.ts",
+              "scriptPath": "/opt/authoring-machine/good-looks/recorder/scripts/t-pass.spec.ts",
               "tags": ["smoke"],
               "createdAt": 1756000000000,
               "updatedAt": 1756000000000,
@@ -69,7 +74,7 @@ jobs:
               "id": "t-fail",
               "name": "a failing test",
               "url": "https://example.com",
-              "scriptPath": "/Users/someone-else/Library/Application Support/Good Looks!/recorder/scripts/t-fail.spec.ts",
+              "scriptPath": "/opt/authoring-machine/good-looks/recorder/scripts/t-fail.spec.ts",
               "tags": ["smoke"],
               "createdAt": 1756000000000,
               "updatedAt": 1756000000000,

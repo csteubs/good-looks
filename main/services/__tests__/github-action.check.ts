@@ -176,9 +176,20 @@ assert(
   "…and that the JUnit message names the failing STEP — the end of the chain the " +
     "reporter, the line map and the emitter make up, which nothing else runs together",
 );
+// The PROPERTY, not a particular string: the fixture's scriptPath must be an
+// absolute path that cannot exist on the runner. Spelled `/opt/…` rather than a
+// `/Users/…` home because `check:repo-hygiene` refuses a hardcoded home
+// directory tree-wide — so this asserts "absolute and foreign", which is what
+// actually matters, instead of pinning a spelling that guard would reject.
+const scriptPaths = [...selftest.matchAll(/"scriptPath": "([^"]+)"/g)].map((m) => m[1]);
 assert(
-  /someone-else/.test(selftest),
-  "…against a library whose scriptPath is another machine's, which is what a copied library carries (R10)",
+  scriptPaths.length >= 2,
+  `the self-test's fixture library declares scriptPaths (found ${scriptPaths.length})`,
+);
+assert(
+  scriptPaths.every((p) => p.startsWith("/") && !p.startsWith("/home/runner")),
+  "…and every one is an absolute path that cannot exist on the runner, which is " +
+    `what a copied library carries (R10). Found: ${scriptPaths.join(", ")}`,
 );
 
 if (failures > 0) {
