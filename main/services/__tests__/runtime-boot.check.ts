@@ -133,6 +133,16 @@ const ROWS: Row[] = [
   },
   { helper: "glazeEcho", steps: [{ type: "echo", text: "hello" }] as Step[] },
   {
+    helper: "glazeEmailCode",
+    steps: [
+      {
+        type: "emailCode",
+        mailboxAddress: "shopper@mail.example.com",
+        captureVar: "loginCode",
+      },
+    ] as Step[],
+  },
+  {
     helper: "glazeCompare",
     steps: [
       { type: "if", cond: "variable", captureVar: "role", compareOp: "contains", value: "adm" },

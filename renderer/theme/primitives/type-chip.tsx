@@ -32,6 +32,9 @@ const SYNTAX: Record<SyntaxTheme, Record<StepType, string>> = {
     viewport: "#7fd6b0",
     cookie: "#7fd6b0",
     capture: "#7fd6b0",
+    // Reads a value into V like `capture` does, and is grouped with it for
+    // that reason — the difference is only where the value comes from.
+    emailCode: "#7fd6b0",
     // Interaction — the things a person did.
     click: "#8fd0e8",
     dblclick: "#8fd0e8",

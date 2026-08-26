@@ -61,6 +61,11 @@ export function makeController(overrides: Partial<SettingsController> = {}): Set
     signaturesBusy: false,
     addSignature: vi.fn(async () => true),
     removeSignature: vi.fn(async () => {}),
+    mailbox: { state: "none" },
+    mailboxBusy: false,
+    saveMailbox: vi.fn(async () => true),
+    clearMailbox: vi.fn(async () => {}),
+    testMailbox: vi.fn(async () => ({ ok: true, detail: "The mailbox answered." })),
 
     webhookStatus: { hasUrl: false, host: null },
     webhookBusy: false,

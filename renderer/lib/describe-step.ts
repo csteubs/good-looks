@@ -496,6 +496,13 @@ export function describeStep(step: Step): string {
       return "page.reload(" + optsExpr(timeoutParts(step)) + ")";
     case "echo":
       return "echo " + JSON.stringify(step.text ?? step.value ?? "");
+    case "emailCode": {
+      // Kept identical to the backend mirror in script-generator.ts —
+      // describe-step-parity.test.ts compares the two for every step type.
+      const where = step.mailboxAddress ? ` for ${JSON.stringify(step.mailboxAddress)}` : "";
+      const into = step.captureVar ? ` into \${${step.captureVar}}` : "";
+      return `read the emailed sign-in code${where}${into}`;
+    }
     case "press":
       return target
         ? target + ".press" + callArgs([q(step.value ?? "")], optsExpr(timeoutParts(step)))

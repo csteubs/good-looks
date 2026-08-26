@@ -1,0 +1,14 @@
+# Deploy: see README.md. `id` below is filled in by `wrangler kv namespace
+# create MAILBOX` — it is an identifier, not a secret, and the token that
+# actually guards the endpoint is set with `wrangler secret put MAILBOX_TOKEN`.
+
+name = "good-looks-mailbox"
+main = "src/worker.mjs"
+compatibility_date = "2026-08-26"
+
+[[kv_namespaces]]
+binding = "MAILBOX"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+
+[observability]
+enabled = true

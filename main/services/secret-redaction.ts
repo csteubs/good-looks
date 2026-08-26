@@ -17,6 +17,7 @@
 import { logger } from "@shell/backend";
 
 import { shopifySignatureStore } from "./shopify-signature-store.js";
+import { mailboxStore } from "./mailbox-store.js";
 import { testSecretsStore } from "./test-secrets-store.js";
 // The pure half. Shared so the CLI redacts with the SAME rule — R7 requires
 // that whatever supplies a secret to a run also feeds the redaction.
@@ -33,21 +34,27 @@ let snapshot: string[] = [];
 /**
  * Every value that must not appear in anything persisted or sent.
  *
- * TWO stores, because there are two ways a credential reaches a run's output. A
- * secret variable is typed INTO the page and comes back in an assertion diff or
- * a content dump. A Shopify crawler signature is attached to the request BY
- * THIS APP, and comes back in a recorded request header or a Playwright error.
- * Different paths in, one way out.
+ * THREE stores, because there are three ways a credential reaches a run's
+ * output. A secret variable is typed INTO the page and comes back in an
+ * assertion diff or a content dump. A Shopify crawler signature is attached to
+ * the request BY THIS APP, and comes back in a recorded request header or a
+ * Playwright error. The test-mailbox token is attached BY THE GENERATED SPEC —
+ * so it reaches a Playwright error on a failed fetch, and a run recording
+ * console and network traffic records the request that carries it. Different
+ * paths in, one way out.
  *
  * Exported for the one redaction site that is async and therefore does not read
  * the snapshot — see `alert-service.sendAlert`.
  */
 export async function allRedactableValues(): Promise<string[]> {
-  const [secrets, signatures] = await Promise.all([
+  const [secrets, signatures, mailbox] = await Promise.all([
     testSecretsStore.allValues(),
     shopifySignatureStore.headerValuesForRedaction(),
+    // The endpoint is deliberately NOT redacted — it is not a credential, and
+    // a run that cannot say which host it polled is a run nobody can debug.
+    mailboxStore.credentials().then((c) => (c ? [c.token] : [])),
   ]);
-  return [...new Set([...secrets, ...signatures])];
+  return [...new Set([...secrets, ...signatures, ...mailbox])];
 }
 
 /** Reload the snapshot from the encrypted stores. Called before a run starts and

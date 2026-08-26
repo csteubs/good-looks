@@ -800,6 +800,21 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords:
       "shopify crawler signature bot protection blocked throttled storefront credential domain expires web-bot-auth",
   },
+  {
+    // No `key`, for the reason above: an encrypted credential store, not a
+    // settings field, so "reset section" must leave it alone.
+    //
+    // Keywords name the SITUATION as well as the control. Someone reaching for
+    // this row is stuck at a login screen asking for a code they cannot read,
+    // so "otp", "one-time code", "verification code", "passwordless" and
+    // "customer account" are what they type — not "mailbox".
+    id: "test-mailbox",
+    pane: "integrations",
+    label: "Test mailbox",
+    keywords:
+      "mailbox email code otp one-time passcode verification code login sign-in passwordless " +
+      "shopify customer account magic link inbox catch-all worker credential",
+  },
 
   // Proxy
   //

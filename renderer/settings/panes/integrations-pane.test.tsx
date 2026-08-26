@@ -879,3 +879,126 @@ describe("the Shopify signature row", () => {
     expect(scope.textContent).toMatch(/bound to a single domain/i);
   });
 });
+
+describe("the test mailbox row", () => {
+  /** Type into both fields of the add form. */
+  function fillMailboxForm(scope: HTMLElement, url: string, token: string): void {
+    fireEvent.change(fieldById("test-mailbox"), { target: { value: url } });
+    fireEvent.change(within(scope).getByLabelText("Mailbox token"), { target: { value: token } });
+  }
+
+  const URL_VALUE = "https://mailbox.example.workers.dev/messages";
+
+  it("masks the token and leaves the URL readable", () => {
+    // The URL is deliberately NOT masked: it is the field most likely to be
+    // wrong (a missing /messages answers 404), and it is not a credential.
+    renderPane(<IntegrationsPane />);
+    const scope = row("test-mailbox");
+    expect(fieldById("test-mailbox").type).toBe("text");
+    expect(within(scope).getByLabelText("Mailbox token").getAttribute("type")).toBe("password");
+  });
+
+  it("trims the URL but never the token", () => {
+    // A pasted URL routinely carries a trailing space. A token that needs
+    // trimming is a token that was pasted wrong, and silently fixing it would
+    // hide the mismatch with what the Worker was configured with.
+    const saveMailbox = vi.fn(async () => true);
+    renderPane(<IntegrationsPane />, { controller: makeController({ saveMailbox }) });
+    const scope = row("test-mailbox");
+    fillMailboxForm(scope, `  ${URL_VALUE}  `, " tok3n ");
+    fireEvent.click(within(scope).getByRole("button", { name: /save test mailbox/i }));
+    expect(saveMailbox).toHaveBeenCalledWith({ endpoint: URL_VALUE, token: " tok3n " });
+  });
+
+  it("cannot be saved until both fields are filled", () => {
+    renderPane(<IntegrationsPane />);
+    const scope = row("test-mailbox");
+    const save = within(scope).getByRole("button", {
+      name: /save test mailbox/i,
+    }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fillMailboxForm(scope, URL_VALUE, "");
+    expect(save.disabled).toBe(true);
+    fillMailboxForm(scope, URL_VALUE, "tok3n");
+    expect(save.disabled).toBe(false);
+  });
+
+  it("keeps the paste when the save is refused", async () => {
+    renderPane(<IntegrationsPane />, {
+      controller: makeController({ saveMailbox: vi.fn(async () => false) }),
+    });
+    const scope = row("test-mailbox");
+    const token = within(scope).getByLabelText("Mailbox token") as HTMLInputElement;
+    fillMailboxForm(scope, "nope", "keep-me");
+    fireEvent.click(within(scope).getByRole("button", { name: /save test mailbox/i }));
+    await waitFor(() => expect(token.value).toBe("keep-me"));
+  });
+
+  it("clears the fields once it is saved", async () => {
+    renderPane(<IntegrationsPane />, {
+      controller: makeController({ saveMailbox: vi.fn(async () => true) }),
+    });
+    const scope = row("test-mailbox");
+    const token = within(scope).getByLabelText("Mailbox token") as HTMLInputElement;
+    fillMailboxForm(scope, URL_VALUE, "tok3n");
+    fireEvent.click(within(scope).getByRole("button", { name: /save test mailbox/i }));
+    await waitFor(() => expect(token.value).toBe(""));
+  });
+
+  it("offers no Test or Remove until something is saved", () => {
+    // Nothing to test and nothing to remove — buttons for either would be
+    // controls that quietly do nothing.
+    renderPane(<IntegrationsPane />);
+    const scope = row("test-mailbox");
+    expect(within(scope).queryByRole("button", { name: /test the mailbox/i })).toBeNull();
+    expect(within(scope).queryByRole("button", { name: /remove the test mailbox/i })).toBeNull();
+  });
+
+  it("offers Test and Remove once something is saved", () => {
+    renderPane(<IntegrationsPane />, {
+      controller: makeController({
+        mailbox: { state: "configured", host: "mailbox.example.workers.dev" },
+      }),
+    });
+    const scope = row("test-mailbox");
+    expect(within(scope).getByRole("button", { name: /test the mailbox/i })).toBeTruthy();
+    expect(within(scope).getByRole("button", { name: /remove the test mailbox/i })).toBeTruthy();
+  });
+
+  it("shows `unreadable` as its own state, never as `none`", () => {
+    // THE assertion on this row. Rendered as "not configured", a locked
+    // keychain looks like a mailbox nobody set up — and the run it breaks
+    // fails as a login timing out, which reads as a flaky test.
+    renderPane(<IntegrationsPane />, {
+      controller: makeController({
+        mailbox: { state: "unreadable", host: "mailbox.example.workers.dev" },
+      }),
+    });
+    const scope = row("test-mailbox");
+    expect(within(scope).getByText(/token unreadable/i)).toBeTruthy();
+    expect(within(scope).getByText("mailbox.example.workers.dev")).toBeTruthy();
+  });
+
+  it("never renders the token, only the host", () => {
+    renderPane(<IntegrationsPane />, {
+      controller: makeController({
+        mailbox: { state: "configured", host: "mailbox.example.workers.dev" },
+      }),
+    });
+    expect(row("test-mailbox").textContent).not.toContain("Bearer");
+  });
+
+  it("asks the backend to test, rather than fetching from the renderer", () => {
+    const testMailbox = vi.fn(async () => ({ ok: true, detail: "The mailbox answered." }));
+    renderPane(<IntegrationsPane />, {
+      controller: makeController({
+        testMailbox,
+        mailbox: { state: "configured", host: "mailbox.example.workers.dev" },
+      }),
+    });
+    fireEvent.click(
+      within(row("test-mailbox")).getByRole("button", { name: /test the mailbox/i }),
+    );
+    expect(testMailbox).toHaveBeenCalled();
+  });
+});

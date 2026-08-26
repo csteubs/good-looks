@@ -35,6 +35,7 @@ import type {
   RecorderSettings,
   RunTotals,
   ShopifySignatureStatus,
+  MailboxStatus,
 } from "../lib/recorder-types";
 import { formatBytes } from "../lib/settings-schema";
 
@@ -107,6 +108,17 @@ export interface SettingsController {
     signatureAgent?: string;
   }) => Promise<boolean>;
   removeSignature: (id: string) => Promise<void>;
+  /** The test mailbox the `emailCode` step reads sign-in codes from. State
+   *  only — the token never comes back across IPC. */
+  mailbox: MailboxStatus;
+  mailboxBusy: boolean;
+  /** Resolves true when the pair was accepted, so the pane knows whether to
+   *  clear its inputs. */
+  saveMailbox: (params: { endpoint: string; token: string }) => Promise<boolean>;
+  clearMailbox: () => Promise<void>;
+  /** Ask the endpoint whether it answers. Never throws — the detail is the
+   *  message the pane shows either way. */
+  testMailbox: () => Promise<{ ok: boolean; detail: string }>;
 
   /** Issue tracker. `issuesStatus.hasKey` and `issuesStatus.account` answer
    *  different questions — a key is saved, and the key works — so the pane can
@@ -224,6 +236,8 @@ export function useSettingsControllerState(): SettingsController {
   const [webhookStatus, setWebhookStatus] = useState<WebhookStatus>({ hasUrl: false, host: null });
   const [signatures, setSignatures] = useState<ShopifySignatureStatus[]>([]);
   const [signaturesBusy, setSignaturesBusy] = useState(false);
+  const [mailbox, setMailbox] = useState<MailboxStatus>({ state: "none" });
+  const [mailboxBusy, setMailboxBusy] = useState(false);
   const [webhookBusy, setWebhookBusy] = useState(false);
 
   // Same contract as the webhook above: the key travels renderer→backend only,
@@ -309,6 +323,10 @@ export function useSettingsControllerState(): SettingsController {
     load(
       () => api.shopify.list(),
       (next) => setSignatures(next ?? []),
+    );
+    load(
+      () => api.mailbox.status(),
+      (next) => setMailbox(next ?? { state: "none" }),
     );
     load(
       () => api.issues.status(),
@@ -596,6 +614,54 @@ export function useSettingsControllerState(): SettingsController {
       toast.error(`Failed to remove the signature: ${error}`);
     } finally {
       setSignaturesBusy(false);
+    }
+  }, []);
+
+  // ── The test mailbox ──────────────────────────────────────────────────────
+
+  const saveMailbox = useCallback(async (params: { endpoint: string; token: string }) => {
+    setMailboxBusy(true);
+    try {
+      setMailbox(await api.mailbox.set(params));
+      toast.success("Test mailbox saved.");
+      return true;
+    } catch (error) {
+      // The store's own message names WHICH half was wrong and why, which is
+      // the whole reason `problem()` returns a string rather than a boolean.
+      toast.error(
+        error instanceof Error ? error.message : `Failed to save the mailbox: ${error}`,
+      );
+      return false;
+    } finally {
+      setMailboxBusy(false);
+    }
+  }, []);
+
+  const clearMailbox = useCallback(async () => {
+    setMailboxBusy(true);
+    try {
+      setMailbox(await api.mailbox.clear());
+      toast.success("Test mailbox removed.");
+    } catch (error) {
+      toast.error(`Failed to remove the mailbox: ${error}`);
+    } finally {
+      setMailboxBusy(false);
+    }
+  }, []);
+
+  const testMailbox = useCallback(async () => {
+    setMailboxBusy(true);
+    try {
+      const result = await api.mailbox.test();
+      if (result.ok) toast.success(result.detail);
+      else toast.error(result.detail);
+      return result;
+    } catch (error) {
+      const detail = `Could not test the mailbox: ${error}`;
+      toast.error(detail);
+      return { ok: false, detail };
+    } finally {
+      setMailboxBusy(false);
     }
   }, []);
 
@@ -959,6 +1025,11 @@ export function useSettingsControllerState(): SettingsController {
     signaturesBusy,
     addSignature,
     removeSignature,
+    mailbox,
+    mailboxBusy,
+    saveMailbox,
+    clearMailbox,
+    testMailbox,
     webhookStatus,
     webhookBusy,
     saveWebhookUrl,

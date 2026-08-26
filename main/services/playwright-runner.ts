@@ -69,6 +69,7 @@ import { testSecretsStore } from "./test-secrets-store.js";
 import { backfillBaseUrl, importedSandboxDir } from "./import-service.js";
 import { shouldRefuseForMissingBaseUrl } from "./imported-config.js";
 import { refreshSecretSnapshot, redactWithSnapshot } from "./secret-redaction.js";
+import { mailboxStore } from "./mailbox-store.js";
 import { stripAnsi } from "../../shared/strip-ansi.mjs";
 import { firstErrorLine } from "../../shared/error-signature.mjs";
 import { suggestFailureReason } from "../../shared/failure-reasons.mjs";
@@ -1316,6 +1317,43 @@ export const playwrightRunner = {
             );
           }
         }
+        // The test mailbox, for a test that reads an emailed sign-in code.
+        //
+        // Armed on the test's OWN steps, not on "a mailbox is configured":
+        // the token is a credential, and a run with no emailCode step has no
+        // use for one. Same shape as the signature gate, for the same reason.
+        //
+        // And announced in all three outcomes, the `announceSignatureState`
+        // argument: a run that goes without a mailbox does not fail at the
+        // step that needed it with an obvious cause — it fails sixty seconds
+        // later, and then again at whatever the sign-in was a prerequisite
+        // for, and the whole thing reads as a flaky login.
+        const mailboxEnv: NodeJS.ProcessEnv = {};
+        if ((rec.steps ?? []).some((step) => step.type === "emailCode" && !step.disabled)) {
+          const credentials = await mailboxStore.credentials();
+          if (credentials) {
+            mailboxEnv.GLAZE_MAILBOX_URL = credentials.endpoint;
+            mailboxEnv.GLAZE_MAILBOX_TOKEN = credentials.token;
+            const host = (() => {
+              try {
+                return new URL(credentials.endpoint).host;
+              } catch {
+                return credentials.endpoint;
+              }
+            })();
+            emitOutput(runId, "system", `Reading sign-in codes from ${host}.\n`);
+          } else {
+            const status = await mailboxStore.status();
+            emitOutput(
+              runId,
+              "system",
+              status.state === "unreadable"
+                ? "A test mailbox is configured but its token could not be decrypted — this run will fail at the code step. Re-enter it in Settings > Integrations.\n"
+                : "This test reads an emailed sign-in code, but no test mailbox is configured (Settings > Integrations). The code step will fail.\n",
+            );
+          }
+        }
+
         // AI visual checks: the helper screenshots into the run's artifact
         // dir; the app evaluates them after the run. The dir is created here
         // because a checks-only run may have every capture toggle off.
@@ -1673,6 +1711,7 @@ export const playwrightRunner = {
             GLAZE_ARTIFACT_DIR: artifactDir,
             GLAZE_TEST_ID: rec.id,
             GLAZE_RUN_ID: recordId,
+            ...mailboxEnv,
             ...signatureEnv(signing ? signatureEntries : []),
             ...dismissEnv(dismissing ? overlayRules : []),
             ...userPage,

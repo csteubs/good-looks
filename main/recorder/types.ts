@@ -32,6 +32,7 @@ import type { CompareOp } from "../../shared/step-semantics.mjs";
 // and neither can import the other's module — see the header of
 // `shared/overlay-rules.mjs`.
 import { MAX_OVERLAY_LABEL, OVERLAY_LOCATOR_KINDS } from "../../shared/overlay-rules.mjs";
+import { MAX_ADDRESS_LENGTH, addressProblem } from "../../shared/email-code.mjs";
 
 export type { CostCurrency };
 export type { ProxySource, ProxyTraffic };
@@ -108,6 +109,18 @@ export type StepType =
   // any 4xx/5xx — a request step that silently accepts 500 hides exactly
   // what it exists to catch.
   | "api"
+  // Read the one-time code a site EMAILED, out of a mailbox we own, into a
+  // variable. Shopify's new customer accounts have no password — the whole
+  // account experience is behind a six-digit code sent to the customer — and
+  // nothing on Shopify's side substitutes for it: classic accounts are
+  // deprecated, Multipass is not supported on the new ones, and every Customer
+  // Account API flow begins at the same emailed-code screen.
+  //
+  // Emitted as ONE awaited glazeEmailCode(...) line that polls the configured
+  // mailbox endpoint and writes into `captureVar`; the fill that types the
+  // code is an ordinary step after it. NEVER accepted from the page — see
+  // `IPC_ONLY_STEP_TYPES`.
+  | "emailCode"
   // AI visual check: screenshot the page at this point (runtime helper) and
   // have the app's configured model verify a natural-language claim about it
   // AFTER the run. Never blocks or fails the Playwright run itself — the
@@ -500,6 +513,16 @@ export interface Step {
   expectStatus?: number;
   /** `api` step: dot/bracket path into the JSON response for captureVar. */
   capturePath?: string;
+  /** `emailCode` step: the mailbox address to poll. Interpolatable, because
+   *  the address is normally the same `${...}` the login form was filled
+   *  with, and one spelling of the customer's email is the point. */
+  mailboxAddress?: string;
+  /** `emailCode` step: digits in the code (default 6). */
+  codeDigits?: number;
+  /** `emailCode` step: plain text the code must follow, for a template a bare
+   *  scan reads wrong. Plain text and never a pattern — see
+   *  `codeFromMessage` in shared/email-code.mjs. */
+  codeLabel?: string;
   /** assertion text / extra description */
   text?: string;
   /** soft assertion — reports a failure but doesn't stop the test (expect.soft) */
@@ -710,6 +733,10 @@ export interface RawStep {
   apiBody?: string;
   expectStatus?: number;
   capturePath?: string;
+  /** emailCode fields, so the step can be inserted via insertStep */
+  mailboxAddress?: string;
+  codeDigits?: number;
+  codeLabel?: string;
   /** cookie fields, so a cookie step can be inserted via insertStep */
   cookieAction?: CookieAction;
   cookie?: CookieSpec;
@@ -1210,8 +1237,13 @@ export const STEP_TYPES: StepType[] = [
   "wait", "viewport", "if", "else", "endif", "loop", "endLoop", "cookie", "capture", "runFlow", "state",
   "scroll", "download", "a11y", "upload", "api", "aiCheck", "group", "endGroup", "dialog", "code",
   "teardown",
-  "reload", "echo", "dblclick", "rightclick", "drag",
+  "reload", "echo", "dblclick", "rightclick", "drag", "emailCode",
 ];
+
+/** Step types the PAGE may never author, only the app over IPC. Both do
+ *  something outside the page — see the boundary note in `normalizeRawStep`,
+ *  which is the one place this is enforced. */
+export const IPC_ONLY_STEP_TYPES: StepType[] = ["code", "emailCode"];
 
 export type DownloadMatch = "contains" | "exact";
 
@@ -1659,15 +1691,27 @@ export function normalizeFlowArgs(input: unknown): Record<string, string> | unde
  *
  * Accepts `unknown` because it sits directly behind the page boundary.
  */
-export function normalizeRawStep(input: unknown): RawStep | null {
+export function normalizeRawStep(input: unknown, allowIpcOnly = false): RawStep | null {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
   const s = input as Record<string, unknown>;
   const type = oneOf(s.type, STEP_TYPES);
   if (!type) return null;
-  // The page boundary: a code step's body is emitted VERBATIM into a spec
-  // that Playwright executes in Node. A page that could author one would be
-  // writing the run's code, so the raw path refuses the type outright; the
-  // IPC path (`normalizeStep`) is where it is accepted.
+  // The page boundary. Two step types do something OUTSIDE the page, so a
+  // page that could author one would be reaching past itself:
+  //
+  //   • `code` is emitted VERBATIM into a spec Playwright executes in Node,
+  //     so authoring one is writing the run's code.
+  //   • `emailCode` reads a mailbox with the run's credential. The endpoint
+  //     and token are the app's, not the step's — but the ADDRESS is the
+  //     step's, and a catch-all mailbox holds every test account's mail. A
+  //     page that could author one could read another account's sign-in code
+  //     and have the next step type it into a field of the page's choosing.
+  //
+  // The raw path refuses both outright; the IPC path (`normalizeStep`) passes
+  // `allowIpcOnly` and is where they are accepted.
+  if (!allowIpcOnly && IPC_ONLY_STEP_TYPES.includes(type)) return null;
+  // `code` carries its whole body, which this rebuild has no field for, so it
+  // is assembled in `normalizeStep` and never reaches here.
   if (type === "code") return null;
 
   const out: RawStep = { type };
@@ -1762,6 +1806,28 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   const expectStatus = int(s.expectStatus, 100, 599);
   if (expectStatus !== undefined) out.expectStatus = expectStatus;
   if (isValidCapturePath(s.capturePath)) out.capturePath = s.capturePath;
+
+  // emailCode. The address is validated by shape, not merely by type: it is
+  // interpolated into a URL and into an error message, and it reaches the
+  // generator as a string that `valueExpr` will quote. A `${ref}` is left for
+  // interpolation to resolve — the reference is checked, the address it
+  // resolves to is checked again by the runtime helper.
+  const mailboxAddress = str(s.mailboxAddress);
+  if (mailboxAddress !== undefined && mailboxAddress.length <= MAX_ADDRESS_LENGTH) {
+    if (VAR_REF_RE.test(mailboxAddress) || addressProblem(mailboxAddress) === null) {
+      out.mailboxAddress = mailboxAddress;
+    }
+    VAR_REF_RE.lastIndex = 0;
+  }
+  // A BARE NUMERAL reaching the generator — see the `int` note above. Bounded
+  // at both ends: a zero-digit code matches everything and a thirty-digit one
+  // matches nothing.
+  const codeDigits = int(s.codeDigits, 4, 10);
+  if (codeDigits !== undefined) out.codeDigits = codeDigits;
+  const codeLabel = str(s.codeLabel);
+  if (codeLabel !== undefined && !/[\r\n]/.test(codeLabel)) {
+    out.codeLabel = codeLabel.slice(0, 120);
+  }
 
   const cookieAction = oneOf(s.cookieAction, COOKIE_ACTIONS);
   if (cookieAction) out.cookieAction = cookieAction;
@@ -2149,7 +2215,7 @@ export function normalizeStep(input: unknown): Step | null {
     if (bool(s0.disabled)) step.disabled = true;
     return step;
   }
-  const raw = normalizeRawStep(input);
+  const raw = normalizeRawStep(input, true);
   if (!raw) return null;
   const s = input as Record<string, unknown>;
   const id = str(s.id);

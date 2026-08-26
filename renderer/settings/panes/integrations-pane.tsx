@@ -97,6 +97,11 @@ export function IntegrationsPane() {
     signaturesBusy,
     addSignature,
     removeSignature,
+    mailbox,
+    mailboxBusy,
+    saveMailbox,
+    clearMailbox,
+    testMailbox,
     webhookStatus,
     webhookBusy,
     saveWebhookUrl,
@@ -128,6 +133,10 @@ export function IntegrationsPane() {
   const [sigHost, setSigHost] = useState("");
   const [sigInput, setSigInput] = useState("");
   const [sigValue, setSigValue] = useState("");
+  // Held HERE, like every other credential field on this pane: a pasted token
+  // should not linger for the rest of the session.
+  const [mailboxUrlInput, setMailboxUrlInput] = useState("");
+  const [mailboxTokenInput, setMailboxTokenInput] = useState("");
   const [confirmEnableOpen, setConfirmEnableOpen] = useState(false);
   const onSaveSignature = async (): Promise<void> => {
     const ok = await addSignature({
@@ -141,6 +150,20 @@ export function IntegrationsPane() {
       setSigHost("");
       setSigInput("");
       setSigValue("");
+    }
+  };
+
+  const onSaveMailbox = async (): Promise<void> => {
+    const ok = await saveMailbox({
+      endpoint: mailboxUrlInput.trim(),
+      token: mailboxTokenInput,
+    });
+    // Cleared only on success, for the signature row's reason: a token is a
+    // long paste out of another window, and losing it to a typo'd URL would
+    // mean going back for it.
+    if (ok) {
+      setMailboxUrlInput("");
+      setMailboxTokenInput("");
     }
   };
 
@@ -747,6 +770,92 @@ export function IntegrationsPane() {
                   sigHost.trim().length === 0 ||
                   sigInput.trim().length === 0 ||
                   sigValue.trim().length === 0
+                }
+              >
+                Save
+              </Button>
+            </div>
+          </div>
+        </div>
+      </SettingRow>
+
+      <SettingRow
+        id="test-mailbox"
+        label="Test mailbox"
+        flag="leaves this Mac"
+        stacked
+        summary={
+          <>
+            Lets a test read a one-time sign-in code out of email — the only way into a Shopify
+            store on the current customer accounts, which have no password at all. Point this at
+            the catch-all mailbox Worker in <code>workers/mailbox</code>: the URL ends in{" "}
+            <code>/messages</code>, and the token is the one you set on the Worker. The token is
+            stored encrypted on this Mac and kept out of run output; the URL is not a credential
+            and is shown so a run can say which host it polled.{" "}
+            <strong>Sign in once per suite, not once per test</strong> — put the sign-in in one
+            test with session saving on and start the others from it, because a store locks a
+            customer out for thirty minutes after five rejected codes.
+          </>
+        }
+      >
+        <div className="flex w-full flex-col gap-3">
+          {mailbox.state !== "none" ? (
+            <div className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-sm">{mailbox.host}</span>
+              <Status variant={mailbox.state === "configured" ? "success" : "warning"}>
+                {mailbox.state === "configured" ? "Ready" : "Token unreadable"}
+              </Status>
+              <Button
+                variant="secondary"
+                aria-label="Test the mailbox"
+                onClick={() => void testMailbox()}
+                disabled={mailboxBusy}
+              >
+                Test
+              </Button>
+              <Button
+                variant="secondary"
+                aria-label="Remove the test mailbox"
+                onClick={() => void clearMailbox()}
+                disabled={mailboxBusy}
+              >
+                Remove
+              </Button>
+            </div>
+          ) : null}
+
+          <div className="flex w-full flex-col gap-2">
+            <Input
+              id="test-mailbox"
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              value={mailboxUrlInput}
+              onChange={(e) => setMailboxUrlInput(e.target.value)}
+              placeholder="https://good-looks-mailbox.example.workers.dev/messages"
+              aria-label="Mailbox endpoint URL"
+              disabled={mailboxBusy}
+              className="min-w-0"
+            />
+            <Input
+              type="password"
+              spellCheck={false}
+              value={mailboxTokenInput}
+              onChange={(e) => setMailboxTokenInput(e.target.value)}
+              placeholder="Mailbox token"
+              aria-label="Mailbox token"
+              disabled={mailboxBusy}
+              className="min-w-0"
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                aria-label="Save test mailbox"
+                onClick={() => void onSaveMailbox()}
+                disabled={
+                  mailboxBusy ||
+                  mailboxUrlInput.trim().length === 0 ||
+                  mailboxTokenInput.length === 0
                 }
               >
                 Save

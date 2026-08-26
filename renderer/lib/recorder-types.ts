@@ -60,6 +60,17 @@ export type A11yImpact = (typeof A11Y_IMPACTS)[number];
 export const API_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"] as const;
 export type ApiMethod = (typeof API_METHODS)[number];
 
+/** What the renderer may learn about the test mailbox. Mirror of
+ *  `MailboxStatus` in main/services/mailbox-store.ts. Note what is NOT here:
+ *  the token. The renderer learns an endpoint, a host and a state, which is
+ *  everything the UI needs and nothing an exfiltration path could use. */
+export interface MailboxStatus {
+  state: "none" | "configured" | "unreadable";
+  host?: string;
+  endpoint?: string;
+  savedAt?: number;
+}
+
 export type StepType =
   | "goto"
   | "click"
@@ -103,7 +114,11 @@ export type StepType =
   // only step that points at TWO elements — see Step.toLocator in main types.
   | "dblclick"
   | "rightclick"
-  | "drag";
+  | "drag"
+  // Read the one-time code a site EMAILED into a variable. Mirror of the
+  // main-process type; see the note there for why Shopify leaves no
+  // alternative.
+  | "emailCode";
 
 /** Predicate for an `if` step. Element conditions use `Step.locator`; page
  *  conditions (urlContains/titleContains) use `Step.value` as the substring. */
@@ -343,6 +358,11 @@ export interface Step {
   apiBody?: string;
   expectStatus?: number;
   capturePath?: string;
+  /** `emailCode` step: the mailbox address polled, the code's length, and
+   *  optional plain text the code must follow. */
+  mailboxAddress?: string;
+  codeDigits?: number;
+  codeLabel?: string;
   dialogAction?: DialogAction;
   text?: string;
   soft?: boolean;
@@ -447,6 +467,11 @@ export interface RawStep {
   apiBody?: string;
   expectStatus?: number;
   capturePath?: string;
+  /** `emailCode` step: the mailbox address polled, the code's length, and
+   *  optional plain text the code must follow. */
+  mailboxAddress?: string;
+  codeDigits?: number;
+  codeLabel?: string;
   dialogAction?: DialogAction;
   text?: string;
   soft?: boolean;
