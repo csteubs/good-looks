@@ -17,14 +17,18 @@
 // useless advice on a CI runner, the entire audience of this binary.
 //
 // ── What is deliberately not here ────────────────────────────────────────
-// `--base-url` (R5) and `--results-out`, `--retries`, `--fail-fast`, and the
-// `report`, `export`, `eject` and `ingest` subcommands are each their own
-// ranked item.
+// `--results-out` (R13), `--retries`, `--fail-fast`, and the `report`,
+// `export`, `eject` and `ingest` subcommands are each their own ranked item.
 //
 // `--junit` IS here as of R1 — see `cli/junit.mjs`, which is where the reason
 // it could not simply call the app's `emitReportTo` is written down.
 //
 // ── What arrived since, and changed the paragraph above ──────────────────
+// `--base-url` IS here as of R5. It overrides what RELATIVE navigations resolve
+// against — which only an imported spec has, since a recorded test navigates to
+// the absolute URL the recorder watched — and the run REPORTS when the override
+// reached tests it cannot affect, rather than changing nothing quietly.
+//
 // `--secrets-file` IS here as of R7 (#260) — see `cli/args.mjs`. R7 narrowed
 // the skip rather than removing it: a test is skipped only for the secret names
 // that actually resolved to nothing, and the note NAMES the variables to set
@@ -304,6 +308,14 @@ export async function runCommand(options, { out, err, env = process.env } = {}) 
     allDatasets: options.allDatasets,
     parallel: options.parallel,
     speed: options.speed,
+    // R5. Already normalized by the parser; `executeTest` runs it through the
+    // same gate again because `runSelection` is callable from anywhere in this
+    // process and "the caller validated it" is how an unchecked value gets in.
+    baseUrl: options.baseUrl,
+    // R5's other half: what actually re-points a RECORDED test, since
+    // `use.baseURL` resolves relative navigations and a recorded `goto` is
+    // absolute. See DECISIONS 2026-08-22, which measured that.
+    vars: options.vars,
     dryRun: options.dryRun,
   });
 

@@ -20,6 +20,7 @@
 // `process.env.CI`) yields nothing here. That case is answered by letting the
 // user type the URL in, not by getting cleverer with the parser.
 
+import { normalizeBaseUrl } from "../../shared/base-url.mjs";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -237,21 +238,14 @@ export function stripComments(source: string): string {
   return out;
 }
 
-/** The one place a base URL becomes trusted, wherever it came from — a parsed
- *  config or a field the user typed. Both go through this. */
-export function normalizeBaseUrl(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const raw = value.trim();
-  if (!raw || raw.includes("${")) return null;
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-  return url.href;
-}
+// The one place a base URL becomes trusted lives in `shared/base-url.mjs` now
+// (R5): a parsed config, a field the user typed and the CLI's `--base-url` all
+// go through it, and the last of those is plain `.mjs` that cannot import this
+// file. Re-exported so every existing caller here still sees one module.
+//
+// IMPORTED and then exported, not `export … from`: a bare re-export forwards
+// the name without binding it in this module, and the functions BELOW call it.
+export { normalizeBaseUrl };
 
 /** Lift a top-level `timeout` (ms) out of config source, if it is a numeric
  *  literal within a range worth adopting. */

@@ -12,6 +12,15 @@ export interface RunOptions {
   /** Path to a JSON object of secret values. The PATH only — the parser never
    *  reads it. */
   secretsFile?: string;
+  /** What RELATIVE navigations resolve against for this run (R5), overriding
+   *  the test's own. Already NORMALIZED — the parser stores what
+   *  `normalizeBaseUrl` returned, not what was typed, so one URL has one
+   *  spelling wherever it is recorded or compared. */
+  baseUrl?: string;
+  /** Declared variable values for this run, `name` → `value` (R5). Layered
+   *  over a dataset row's, because an explicit value is a decision about this
+   *  run and the row is the default it overrides. */
+  vars?: Record<string, string>;
   json: boolean;
 }
 

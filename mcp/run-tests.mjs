@@ -33,6 +33,7 @@ import { fileURLToPath } from "node:url";
 
 import { readJsonFile } from "./data-dir.mjs";
 import { resolveScriptPath, scriptsDirFor } from "../shared/script-path.mjs";
+import { normalizeBaseUrl } from "../shared/base-url.mjs";
 import { splitStepMarkers } from "../shared/step-marker.mjs";
 import { buildStepLineMapFromSource } from "../shared/step-line-map.mjs";
 import { recordRun } from "./metrics.mjs";
@@ -416,7 +417,16 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
    */
   async function executeTest(
     test,
-    { playwright, browser, batchId, vars, datasetId, datasetName, speed: speedOverride },
+    {
+      playwright,
+      browser,
+      batchId,
+      vars,
+      datasetId,
+      datasetName,
+      speed: speedOverride,
+      baseUrl: baseUrlOverride,
+    },
   ) {
     // The scripts ROOT, not the spec's own directory. An imported test's spec
     // lives in a sandbox subdirectory beside the sibling modules it imports, so
@@ -470,6 +480,17 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     // It reads `speed` above, which is the other half of why the two have to be
     // resolved together: an inherited `crawl` raises this floor to five minutes,
     // and resolving the pace wrongly silently resolved the timeout wrongly too.
+    // ── The base URL this run resolves relative navigations against (R5) ──
+    //
+    // Override → the test's own record. There is no environment layer yet; R16
+    // adds one and it slots between these two, which is why this is a
+    // resolution rather than a `??` at the call site.
+    //
+    // Normalized HERE as well as in the CLI's parser, through the same shared
+    // gate: `runSelection` is a function anything in this process can call, and
+    // "the caller already validated it" is how an unchecked value gets in.
+    const resolvedBaseUrl = normalizeBaseUrl(baseUrlOverride) ?? test.baseUrl;
+
     const { timeoutMs: testTimeoutMs, raised: timeoutRaised } = resolveTestTimeoutMs(
       test.testTimeoutMs,
       settings.defaultTestTimeoutMs,
@@ -499,7 +520,12 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
       vars,
       // Read straight off the record, exactly as the app reads it. An imported
       // test whose navigations are relative has one; a recorded test does not.
-      baseUrl: test.baseUrl,
+      // Resolved above rather than read straight off the record: R5 lets one run
+      // be pointed somewhere else — a PR preview — without editing the test. An
+      // imported test whose navigations are relative has a stored one; a
+      // recorded test does not, and see the caveat in `runSelection` for why an
+      // override on one of those is REPORTED rather than silently ignored.
+      baseUrl: resolvedBaseUrl,
       // The proxy settings ride the same file as everything else here. The
       // shared rule inside runEnv turns them into PW_PROXY_* — or into nothing,
       // which is most libraries.
@@ -865,6 +891,15 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
       // speed like any other. Without it these runs show a blank speed and
       // read as "recorded before the field existed".
       speed,
+      // WHERE THIS RUN POINTED (R5). Written only when there was one, so a run
+      // with no base URL is absent rather than empty — the same shape every
+      // other optional field on this record has.
+      //
+      // The plan asks for it explicitly: an override that is not recorded makes
+      // the history misleading, because two runs of one test against two
+      // different environments are indistinguishable afterwards and the failing
+      // one looks like a regression.
+      ...(resolvedBaseUrl ? { baseUrl: resolvedBaseUrl } : {}),
       // The budget this run actually got. Stored per run rather than read back
       // from the test later: the test's value is the CURRENT one, so a timeout
       // raised since would make every older run's step-vs-budget comparison
@@ -997,6 +1032,8 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     allDatasets,
     parallel,
     speed,
+    baseUrl,
+    vars: varOverrides,
     dryRun,
   }) {
     const engine = browser ?? "chromium";
@@ -1183,12 +1220,23 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
           batchId,
           // Read from the QUEUE entry, not from `results`: the values belong in
           // the child process's env and nowhere near the persisted batch record.
-          vars: entry.vars,
+          // The dataset row's values, with any `--var` LAYERED OVER them.
+          // Explicit beats stored, which is the same precedence `--speed` has
+          // over the test's own pin: a value typed at the command line is a
+          // decision about this run, and a row that also names it is the
+          // default it is overriding.
+          vars:
+            varOverrides && Object.keys(varOverrides).length > 0
+              ? { ...entry.vars, ...varOverrides }
+              : entry.vars,
           datasetId: entry.datasetId,
           datasetName: entry.datasetName,
           // Undefined for an MCP batch, which has no override; `resolveRunSpeed`
           // skips it and the test's own layers decide, exactly as before.
           speed,
+          // Same shape, same reason: the CLI's `--base-url`, absent everywhere
+          // else, and the test's own record decides when it is.
+          baseUrl,
         });
         results[i].status = r.status;
         results[i].exitCode = r.exitCode;
@@ -1268,6 +1316,65 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
         ),
       ),
     ];
+
+    // ── An override that could not apply says so, and names the remedy ──
+    //
+    // THIS IS THE HALF THAT MATTERS, because the limitation is already a
+    // measured finding on this tree rather than a guess. See DECISIONS,
+    // 2026-08-22: `use.baseURL` resolves RELATIVE navigations only, the
+    // generator emits a recorded `goto` as the absolute URL the recorder
+    // watched, and against two real servers "the absolute spec still landed on
+    // origin A while the relative spec followed to B". A per-run PW_BASE_URL
+    // "moves imported suites and nothing else".
+    //
+    // So this override is real for an IMPORTED spec — `page.goto("/")`, which
+    // is how a hand-written suite is idiomatically written — and inert for a
+    // recorded one. A flag that changes nothing is not a bug; a flag that
+    // changes nothing WITHOUT SAYING SO is how an operator points a pipeline at
+    // a PR preview, watches it go green, and reads results from production.
+    //
+    // The message NAMES THE THING THAT DOES WORK. "Nothing resolves against it"
+    // is half an answer: the app already ships the other half — declare the
+    // site address as a variable (`origin-variable.ts`, Variables panel), which
+    // rewrites every URL in the test onto `${name}` and takes a value per run
+    // through GLAZE_VARS. Sending someone away with a diagnosis and no
+    // treatment is the same disservice as saying nothing.
+    //
+    // Counted rather than named: a suite of sixty would otherwise print sixty
+    // lines of one fact.
+    if (normalizeBaseUrl(baseUrl)) {
+      const unaffected = [...byId.values()].filter((t) => !t.sourceDir).length;
+      if (unaffected > 0) {
+        fixturesSkipped.push(
+          `Base URL override on ${unaffected} recorded test${unaffected === 1 ? "" : "s"} — ` +
+            `their navigations are absolute, so nothing resolves against it. ` +
+            `To re-point a recorded test, make its site address a variable ` +
+            `(Variables panel) and pass the value with --var`,
+        );
+      }
+    }
+
+    // ── A variable nobody declared is almost always a typo ─────────────
+    //
+    // The generator substitutes DECLARED names only, so an unknown one is inert
+    // rather than dangerous — which is exactly why it has to be said out loud.
+    // `--var sight=https://pr-42.test` runs the whole suite against production
+    // and exits 0, and nothing about the output looks wrong. Same family as the
+    // base-URL caveat above and as exit code 2: the failure mode here is never
+    // a wrong answer, it is a confident one about nothing.
+    if (varOverrides) {
+      const declared = new Set(
+        [...byId.values()].flatMap((t) => (t.variables ?? []).map((v) => v?.name)),
+      );
+      const unknown = Object.keys(varOverrides).filter((n) => !declared.has(n));
+      if (unknown.length > 0) {
+        fixturesSkipped.push(
+          `--var ${unknown.join(", ")} — no selected test declares ` +
+            `${unknown.length === 1 ? "that variable" : "those variables"}, so ` +
+            `${unknown.length === 1 ? "it is" : "they are"} substituted nowhere`,
+        );
+      }
+    }
 
     return {
       ok: true,

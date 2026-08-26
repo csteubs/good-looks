@@ -2533,6 +2533,15 @@ export interface RunRecord {
   /** Browser engine this run used. Absent on runs recorded before the picker
    *  existed — treated as chromium, which is what they all ran on. */
   runBrowser?: RunBrowser;
+  /** What RELATIVE navigations resolved against for this run, when anything
+   *  did. The test's own `baseUrl`, or the per-run override (R5).
+   *
+   *  Recorded because without it the history is misleading: two runs of one
+   *  test against two environments are indistinguishable afterwards, and the
+   *  failing one reads as a regression rather than as a different target.
+   *  Absent on a recorded test, which navigates absolutely, and on every run
+   *  predating the field. */
+  baseUrl?: string;
   /** Playback speed this run executed at. Recorded because speed is a per-test
    *  setting the user changes between runs, so without it a run history can't
    *  say whether yesterday's failure and today's pass differ by the code or by
