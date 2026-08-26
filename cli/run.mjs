@@ -298,7 +298,26 @@ export async function runCommand(options, { out, err, env = process.env } = {}) 
     }
   }
 
-  const { runSelection } = createRunner({ dataDir, store, secretEnv: env, secretFile });
+  const { runSelection } = createRunner({
+    dataDir,
+    store,
+    secretEnv: env,
+    secretFile,
+    // WHICH ENTRY POINT this is (R6). Until this existed the shared runner wrote
+    // `"mcp"` for every caller, so every run of the GitHub Action landed in the
+    // app's history as "Started by an MCP client".
+    //
+    // `cli` rather than `ci`, which is what the plan's note anticipated: this
+    // same command is what the documentation tells a developer to try on their
+    // laptop first, and recording that as CI would invent evidence for the one
+    // filter the value exists to serve. Which MACHINE it ran on is `provenance`
+    // below, and that answer comes from the environment rather than from a
+    // guess about the entry point.
+    trigger: "cli",
+    // The environment the CLI was invoked with, not `process.env` — the same
+    // one the secrets come from, so a caller that isolates one isolates both.
+    provenanceEnv: env,
+  });
 
   const outcome = await runSelection({
     testIds: options.testIds,

@@ -253,6 +253,19 @@ describe("run history table", () => {
     expect(within(row).getByRole("img", { name: /MCP client/i })).toBeTruthy();
   });
 
+  it("marks a CLI run, which is how a CI run reaches this history at all", async () => {
+    // The mark that was WRONG rather than missing until R6. `mcp/run-tests.mjs`
+    // is the run path behind both entry points and stamped the literal "mcp",
+    // so every `good-looks run` — including every run of this repo's own GitHub
+    // Action — arrived here wearing the MCP glyph. A wrong mark is worse than
+    // none: it is evidence, and it pointed at the wrong thing.
+    runs = [run({ id: "r1", trigger: "cli" })];
+    renderView();
+    const [row] = await bodyRows();
+    expect(within(row).getByRole("img", { name: /command line/i })).toBeTruthy();
+    expect(within(row).queryByRole("img", { name: /MCP client/i })).toBeNull();
+  });
+
   it("says nothing on a manual run — the assumption a reader already makes", async () => {
     runs = [run({ id: "r1", trigger: "manual" })];
     renderView();
@@ -288,15 +301,17 @@ describe("run history table", () => {
     // THE CRASH THIS RULES OUT, found before this shipped. `run-history-store`
     // narrows on WRITE, but `readAll` casts the parsed JSON straight to
     // RunRecord[] — so the write-side guard does nothing for a value already on
-    // disk, and this store's file is written by the standalone MCP server today
-    // and the CLI ("ci") tomorrow, each shipping on its own schedule.
+    // disk, and this store's file is written by the app, by the standalone MCP
+    // server and by the CLI, each shipping on its own schedule. `gitlab` below
+    // stands in for a value a NEWER build writes: the vocabulary gained "cli"
+    // in R6, and the next addition arrives at an older app exactly like this.
     //
     // The old code indexed a component map with that raw string. The lookup
     // returned undefined, `createElement(undefined)` threw "Element type is
     // invalid", and the WHOLE VIEW rendered as nothing — not a missing glyph, a
     // blank screen. TypeScript could never catch it: the record arrives through
     // a cast, so the field already claims to be a RunTrigger.
-    runs = [run({ id: "r1", trigger: "ci" as unknown as "mcp" })];
+    runs = [run({ id: "r1", trigger: "gitlab" as unknown as "mcp" })];
     renderView();
     const [row] = await bodyRows();
     // The row renders, and the unknown trigger is treated exactly like an

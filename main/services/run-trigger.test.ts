@@ -52,9 +52,9 @@ beforeEach(() => {
 });
 
 describe("the run-trigger vocabulary", () => {
-  it("admits exactly the three triggers, and narrows anything else to undefined", () => {
+  it("admits exactly the four triggers, and narrows anything else to undefined", () => {
     for (const t of RUN_TRIGGERS) expect(normalizeRunTrigger(t)).toBe(t);
-    expect([...RUN_TRIGGERS]).toEqual(["manual", "schedule", "mcp"]);
+    expect([...RUN_TRIGGERS]).toEqual(["manual", "schedule", "mcp", "cli"]);
   });
 
   it("does NOT admit `replay` — a re-run is replayOfRunId, a different axis", () => {
@@ -70,7 +70,7 @@ describe("the run-trigger vocabulary", () => {
     // packaged app can therefore read a trigger it has never heard of, and
     // "unknown" is the honest answer; passing it along would put an
     // unvalidated string into every surface that renders one.
-    expect(normalizeRunTrigger("ci")).toBeUndefined();
+    expect(normalizeRunTrigger("gitlab")).toBeUndefined();
     expect(normalizeRunTrigger("Manual")).toBeUndefined();
     expect(normalizeRunTrigger("")).toBeUndefined();
     expect(normalizeRunTrigger(null)).toBeUndefined();
@@ -97,6 +97,7 @@ describe("runHistoryStore.append — trigger", () => {
     const byId = new Map(runHistoryStore.list().map((r) => [r.id, r.trigger]));
     expect(byId.get("r-schedule")).toBe("schedule");
     expect(byId.get("r-mcp")).toBe("mcp");
+    expect(byId.get("r-cli")).toBe("cli");
   });
 
   it("leaves an unrecognised trigger OFF the record entirely", () => {

@@ -105,6 +105,11 @@ const {
 const { findPlaywrightCli, isBrowserInstalled, executeTest, runSelection } = createRunner({
   dataDir,
   store,
+  // WHICH ENTRY POINT this is. It was a literal inside the runner until R6 and
+  // had to move out here, because `cli/run.mjs` runs through the same function
+  // and is not an MCP client. Stated at the call site, where it is a fact about
+  // this process rather than an assumption about the caller.
+  trigger: "mcp",
 });
 
 const server = new McpServer({ name: "good-looks", version: "1.0.0" });

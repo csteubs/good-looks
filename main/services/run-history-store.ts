@@ -53,6 +53,10 @@ import {
   normalizeRunTrigger,
   type RunTrigger,
 } from "../../shared/run-trigger.mjs";
+import {
+  normalizeRunProvenance,
+  type RunProvenance,
+} from "../../shared/run-provenance.mjs";
 import { DELETED_TEST_NAME } from "../recorder/types.js";
 import type {
   LogSearchResult,
@@ -426,12 +430,17 @@ export const runHistoryStore = {
       endedBy?: "user" | "process-timeout";
       /** who started the run — narrowed here, not trusted */
       trigger?: RunTrigger;
+      /** where the run came from — narrowed here, not trusted */
+      provenance?: RunProvenance;
     },
     logText: string,
   ): RunRecord {
     ensureDirs();
     const id = run.id ?? randomUUID();
     const logFile = path.join(logsDir(), id + ".log");
+    // Narrowed once, and the NARROWED value is what gets stored. See the note
+    // at its place in the record below.
+    const provenance = normalizeRunProvenance(run.provenance);
     // Redact on WRITE, not on read. A secret never reaches the generated spec,
     // but it does reach the browser — so it can come back in a Playwright error
     // message or an assertion diff. Redacting on read would leave the plaintext
@@ -497,6 +506,18 @@ export const runHistoryStore = {
       // Absent stays absent: a run predating the field could have been started
       // by any of the three, so defaulting to "manual" would invent evidence.
       ...(normalizeRunTrigger(run.trigger) ? { trigger: run.trigger } : {}),
+      // NARROWED, and the narrowed value is what is STORED — unlike the trigger
+      // above, which is a closed vocabulary that can only be accepted or
+      // dropped whole. Provenance is free text from an environment this process
+      // does not control: a pull request's source branch is named by whoever
+      // opened it, and on a fork that is anyone. The gate drops a field that is
+      // over-long, carries a control character, or is a URL with a scheme this
+      // application will not follow, and it drops them INDEPENDENTLY so a
+      // hostile branch name does not cost the run its revision.
+      //
+      // `run.provenance` is deliberately not spread through: writing the
+      // caller's object would make this guard advisory.
+      ...(provenance ? { provenance } : {}),
     };
 
     const all = readAll();

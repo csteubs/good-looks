@@ -15,8 +15,9 @@
 // It lives in shared/ because there are ALREADY TWO WRITERS IN TWO PROCESSES:
 // the app's run-history-store and `saveRunRecord` in mcp/server.mjs, which
 // writes into the same run-history.json without importing a line of the app.
-// The CLI (R3/R4) is a third writer, and the value it will need — "ci" — is
-// the one this module exists to make addable in one place rather than three.
+// The CLI (R3/R4) is a third writer, and adding its value here rather than in
+// three places is what this module exists for. It landed as `cli` rather than
+// the "ci" this note used to promise — see RUN_TRIGGERS for why.
 // A transcribed literal is right the day it is written and silent afterwards.
 //
 // Pure (see the admission rule in run-pacing.mjs): no fs, no IPC, no process,
@@ -39,8 +40,25 @@
  *              two routes to "the schedule ran this" are two chances to forget
  *              that a scheduled run is always headless.
  * - `mcp`      an MCP client, which may well be an agent rather than a person.
+ * - `cli`      the `good-looks` command line, wherever it was invoked from.
+ *
+ * ── Why the CLI's value is `cli` and not `ci` ──────────────────────────────
+ * This module's own note used to promise "ci", written before the CLI existed.
+ * The CLI exists now and it runs in two places: a pipeline, and a developer's
+ * terminal — the documentation tells you to try it locally first. A run started
+ * by hand on a laptop recorded as "ci" is invented evidence, which is precisely
+ * what the `undefined`-not-`manual` rule below exists to prevent, and it would
+ * be invented in the direction that matters: a CI-only filter would show runs
+ * that were never on a runner.
+ *
+ * `cli` is never wrong, and it keeps this axis the one it has always been. Read
+ * the four values back and they are all the same kind of answer — WHICH ENTRY
+ * POINT started this: the app's UI, the app's scheduler, the MCP server, the
+ * command line. "Was it CI?" is a different question with its own field, and it
+ * is answerable properly: `provenance` (R6) carries the commit, branch and job
+ * URL, so a consumer asks that rather than inferring from the entry point.
  */
-export const RUN_TRIGGERS = ["manual", "schedule", "mcp"];
+export const RUN_TRIGGERS = ["manual", "schedule", "mcp", "cli"];
 
 /**
  * Narrow an unknown value to a known trigger, or `undefined`.
@@ -59,11 +77,11 @@ export const RUN_TRIGGERS = ["manual", "schedule", "mcp"];
  * it along would put an unvalidated string into every surface that renders one.
  *
  * @param {unknown} value
- * @returns {"manual" | "schedule" | "mcp" | undefined}
+ * @returns {"manual" | "schedule" | "mcp" | "cli" | undefined}
  */
 export function normalizeRunTrigger(value) {
   return typeof value === "string" && RUN_TRIGGERS.includes(value)
-    ? /** @type {"manual" | "schedule" | "mcp"} */ (value)
+    ? /** @type {"manual" | "schedule" | "mcp" | "cli"} */ (value)
     : undefined;
 }
 
@@ -80,4 +98,5 @@ export const RUN_TRIGGER_DESCRIPTIONS = {
   manual: "Started by hand, in the app",
   schedule: "Started by a Routine's schedule",
   mcp: "Started by an MCP client",
+  cli: "Started from the command line",
 };

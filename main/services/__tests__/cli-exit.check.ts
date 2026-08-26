@@ -16,11 +16,17 @@
 // check reads stdout through a pipe, so a regression to it shows up here as
 // empty output rather than as nothing at all.
 //
-// Codes 0 and 1 need a browser and a real run, which no check in this chain
-// does. They are covered as a pure mapping — every arm including those two — in
-// `main/services/cli-exit.test.ts`, and the two REFUSAL codes are driven
-// end-to-end here. That split is deliberate and stated so nobody reads this
-// file as complete coverage of the contract on its own.
+// Codes 0 and 1 need a browser, so the CONTRACT is covered as a pure mapping —
+// every arm including those two — in `main/services/cli-exit.test.ts`, while the
+// two REFUSAL codes are driven end-to-end here. That split is deliberate and
+// stated so nobody reads this file as complete coverage of the contract on its
+// own.
+//
+// The last section is the exception and does execute a real run, because what it
+// asserts cannot be reached any other way — see "What a CLI run RECORDS about
+// itself" below. It needs no browser: Playwright collects before it launches
+// one, so a run whose spec is missing fails during collection, which is late
+// enough to have written the record and early enough to need nothing installed.
 //
 // Run with: npm run check:cli-exit
 
@@ -94,8 +100,12 @@ function expectedRevisions(engine: InstallableBrowser): string[] {
 
 /** Run the CLI and report what the OS saw. `execFileSync` throws on a non-zero
  *  exit, which is the case under test, so the status is read off the error. */
-function runCli(args: string[], dataDir: string): { code: number; stdout: string; stderr: string } {
-  const env = { ...process.env, [USERDATA_OVERRIDE_ENV]: dataDir };
+function runCli(
+  args: string[],
+  dataDir: string,
+  extraEnv: Record<string, string | undefined> = {},
+): { code: number; stdout: string; stderr: string } {
+  const env = { ...process.env, [USERDATA_OVERRIDE_ENV]: dataDir, ...extraEnv };
   try {
     const stdout = execFileSync(process.execPath, [BIN, ...args], {
       env,
@@ -635,6 +645,151 @@ try {
 } finally {
   rmSync(store, { recursive: true, force: true });
 }
+
+// ── What a CLI run RECORDS about itself (R6) ───────────────────────────────
+//
+// The one section here that performs a real run, and the reason is that nothing
+// short of one can answer the question. `trigger` and `provenance` are written
+// by `mcp/run-tests.mjs` — a module the CLI and the MCP server BOTH call — and
+// what makes the value right is which caller is asking. A unit test would have
+// to construct the runner itself, which is exactly the step that was wrong:
+// until R6 the module wrote the literal `"mcp"`, so every `good-looks run`,
+// every run of this repo's own GitHub Action included, was filed in the app's
+// history as "Started by an MCP client". A source-level assertion cannot see
+// that, because the source was self-consistent.
+//
+// No browser is needed. `isBrowserInstalled` reads a directory listing, so the
+// expected `<engine>-<revision>` names are enough to get past the refusal, and
+// Playwright then fails during COLLECTION on the missing spec — after the record
+// is written and before anything launches.
+{
+  /** A library whose browsers directory LOOKS installed. Deliberately not a
+   *  real install: this check runs on a machine that has never had one. */
+  function storeThatCanRun(): string {
+    const dir = makeStore(ONE_TEST);
+    for (const name of expectedRevisions("chromium")) {
+      mkdirSync(join(dir, "recorder", "browsers", name), { recursive: true });
+    }
+    return dir;
+  }
+
+  /** The single run this library recorded, or null. */
+  function recordedRun(dataDir: string): {
+    trigger?: string;
+    provenance?: { revision?: string; branch?: string; repositoryUrl?: string; jobUrl?: string };
+  } | null {
+    try {
+      const raw = readFileSync(join(dataDir, "recorder", "run-history.json"), "utf8");
+      const all = JSON.parse(raw) as Array<Record<string, unknown>>;
+      return (all[0] ?? null) as ReturnType<typeof recordedRun>;
+    } catch {
+      return null;
+    }
+  }
+
+  /** A GitHub Actions environment. `GITHUB_HEAD_REF` is set and EMPTY on a push
+   *  build — the real behaviour that makes `??` the wrong operator for choosing
+   *  between it and `GITHUB_REF_NAME`. */
+  const ACTIONS_ENV = {
+    GITHUB_SHA: "9f2c1ab3d4e5f60718293a4b5c6d7e8f90a1b2c3",
+    GITHUB_REF_NAME: "main",
+    GITHUB_HEAD_REF: "",
+    GITHUB_SERVER_URL: "https://github.com",
+    GITHUB_REPOSITORY: "csteubs/good-looks",
+    GITHUB_RUN_ID: "32937507630",
+  };
+
+  // ── In CI ────────────────────────────────────────────────────────────────
+  {
+    const dir = storeThatCanRun();
+    try {
+      runCli(["run", "--id", "t-one"], dir, ACTIONS_ENV);
+      const run = recordedRun(dir);
+      assert(run !== null, "a CLI run writes a record the app will read back");
+      assert(
+        run?.trigger === "cli",
+        run?.trigger === "mcp"
+          ? "…attributed to the CLI — it says `mcp`, the literal R6 removed"
+          : `…attributed to the CLI, not to whoever else calls the same runner (got ${JSON.stringify(run?.trigger)})`,
+      );
+      assert(
+        run?.provenance?.revision === ACTIONS_ENV.GITHUB_SHA,
+        "…and records the commit under test, which is the whole point on a runner",
+      );
+      assert(
+        run?.provenance?.branch === "main",
+        "…the branch from REF_NAME, since HEAD_REF is set-but-EMPTY on a push build",
+      );
+      assert(
+        run?.provenance?.jobUrl ===
+          `https://github.com/csteubs/good-looks/actions/runs/${ACTIONS_ENV.GITHUB_RUN_ID}`,
+        "…and the job it ran in, so a red row can be opened rather than only counted",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  // ── On a laptop ──────────────────────────────────────────────────────────
+  {
+    const dir = storeThatCanRun();
+    try {
+      runCli(["run", "--id", "t-one"], dir, {
+        GITHUB_SHA: undefined,
+        GITHUB_REF_NAME: undefined,
+        GITHUB_HEAD_REF: undefined,
+        GITHUB_SERVER_URL: undefined,
+        GITHUB_REPOSITORY: undefined,
+        GITHUB_RUN_ID: undefined,
+        GITHUB_ACTIONS: undefined,
+      });
+      const run = recordedRun(dir);
+      // ABSENT, not invented. The same command run at a desk has no commit to
+      // report, and a fabricated one would be indistinguishable from a real
+      // answer in every surface that reads it.
+      assert(
+        run?.provenance === undefined,
+        "a run outside CI records NO provenance rather than a fabricated one",
+      );
+      // …while the trigger is still true, because it is a fact about the entry
+      // point rather than about the environment. This is the whole reason the
+      // value is `cli` and not `ci`.
+      assert(
+        run?.trigger === "cli",
+        "…and is still attributed to the CLI, which is true wherever it ran",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  // ── With a hostile branch name ───────────────────────────────────────────
+  {
+    const dir = storeThatCanRun();
+    try {
+      runCli(["run", "--id", "t-one"], dir, {
+        ...ACTIONS_ENV,
+        // A pull request from a fork names its own branch, so this is ordinary
+        // untrusted input rather than a contrived one.
+        GITHUB_HEAD_REF: `main${String.fromCharCode(10)}X-Injected: yes`,
+      });
+      const run = recordedRun(dir);
+      assert(
+        run?.provenance?.branch === undefined,
+        "a branch name carrying a control character is not stored",
+      );
+      // The property that matters more than the refusal: the guard must not
+      // cost the run the evidence it exists to protect.
+      assert(
+        run?.provenance?.revision === ACTIONS_ENV.GITHUB_SHA,
+        "…and dropping it does NOT drop the commit, which is what a person needs",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+}
+
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);

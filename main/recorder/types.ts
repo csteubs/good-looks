@@ -25,6 +25,7 @@ import { COMPARE_OPS } from "../../shared/step-semantics.mjs";
 // standalone MCP server BOTH write RunRecords into the same file, and the CLI
 // will be a third writer — see the header of `shared/run-trigger.mjs`.
 import type { RunTrigger } from "../../shared/run-trigger.mjs";
+import type { RunProvenance } from "../../shared/run-provenance.mjs";
 import type { CompareOp } from "../../shared/step-semantics.mjs";
 // Which locator kinds a standing overlay rule may target, and how long its
 // label may be. In shared/ because the trainer resolves a rule inside a live
@@ -2658,6 +2659,26 @@ export interface RunRecord {
    * is shared: `shared/run-trigger.mjs`.
    */
   trigger?: RunTrigger;
+  /**
+   * WHERE this run came from — the commit, branch, repository and job.
+   *
+   * `trigger` says which entry point started a run; this says what was under
+   * test. On a laptop the second question has a tolerable default answer ("the
+   * checkout on this machine"). On a runner it is the only question that makes
+   * a run history worth keeping: without it, forty container runs a week are
+   * forty rows that cannot be told apart, and a suite that reddened on one
+   * commit and passed on the next reads as flake.
+   *
+   * Absent on every run started where no environment answered — which is every
+   * run the app itself records, and every CLI run outside CI. Absent means
+   * UNKNOWN and never "this machine's checkout": the field is not backfillable,
+   * because the environment that would have answered it is gone.
+   *
+   * UNTRUSTED TEXT, all four fields. A pull request's source branch is chosen
+   * by whoever opened it. One gate, `normalizeRunProvenance` in
+   * shared/run-provenance.mjs, and the run history store calls it on write.
+   */
+  provenance?: RunProvenance;
   /**
    * Label of the step this run failed at, when it is known.
    *

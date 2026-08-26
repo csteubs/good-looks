@@ -195,6 +195,25 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      navigation must agree. Start URLs only — a goto step's
                      URL may be baseUrl-relative, which is why the module is
                      named for the question rather than for `normalize`.
+                     run-provenance.mjs is WHAT A RUN WAS TESTING — commit,
+                     branch, repository, job — read from the environment by the
+                     runner both unattended entry points share. Not backfillable
+                     (the container is gone), which is why it landed AHEAD of the
+                     surfaces that read it and why R12's ingest was blocked on
+                     it. Every field is untrusted text and each is refused
+                     INDEPENDENTLY: a fork's PR names its own branch, and a
+                     hostile one must not cost the run its revision. Over-long
+                     is REJECTED, never truncated — a cut sha is a plausible
+                     sha for a different commit, while absent is honestly
+                     unknown. Its sibling run-trigger.mjs gained `cli` at the
+                     same time, and for a reason worth reading: run-tests.mjs
+                     hard-coded `trigger: "mcp"`, correct while the MCP server
+                     was its only caller and silently wrong from the day the CLI
+                     imported it — so every `good-looks run`, this repo's own
+                     action included, was recorded as MCP-driven. The literal
+                     never changed; the set of callers did, which is why
+                     check:cli-exit now does one REAL run and reads the record
+                     back rather than reading source
                      a11y-rollup.mjs is that shape a third time, and it retired two
                      hand-copies rather than adding a third: violationKey/keysOf lived
                      in main/services/a11y-diff.ts AND renderer/lib/a11y-format.ts,
