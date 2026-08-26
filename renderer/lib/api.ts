@@ -77,7 +77,7 @@ import type {
 } from "./issue-types";
 import type { TriageResult } from "../../shared/triage.mjs";
 import type { EmitterId } from "../../shared/emitters.mjs";
-import type { EmitResult, ShopifySignatureStatus } from "./recorder-types";
+import type { EmitResult, MailboxStatus, ShopifySignatureStatus } from "./recorder-types";
 import type {
   InsightReport,
   InsightReportSummary,
@@ -602,6 +602,18 @@ export const api = {
       signatureAgent?: string;
     }) => ipc().invoke<ShopifySignatureStatus>("shopify:add", params),
     remove: (id: string) => ipc().invoke<ShopifySignatureStatus[]>("shopify:remove", { id }),
+  },
+  /** The test mailbox the `emailCode` step reads from. Same contract as
+   *  `shopify` above: no way to read the token back. */
+  mailbox: {
+    status: () => ipc().invoke<MailboxStatus>("mailbox:status"),
+    set: (params: { endpoint: string; token: string }) =>
+      ipc().invoke<MailboxStatus>("mailbox:set", params),
+    clear: () => ipc().invoke<MailboxStatus>("mailbox:clear"),
+    /** Ask the endpoint for a throwaway address. Proves reachability, the
+     *  token and the answer's shape — never mail routing, since no mail was
+     *  sent. */
+    test: () => ipc().invoke<{ ok: boolean; detail: string }>("mailbox:test"),
   },
   alerts: {
     setWebhookUrl: (url: string) =>

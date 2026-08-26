@@ -85,6 +85,10 @@ const ALLOWED: Array<{ needle: string; why: string }> = [
     why: "prose in the alerts pane explaining that a webhook URL must be https",
   },
   {
+    needle: "https://good-looks-mailbox.example.workers.dev/messages",
+    why: "placeholder text in the test-mailbox field; shown to the user, never fetched — and example.com/workers.dev under a reserved name, so it resolves to nobody. The endpoint the app actually polls is the one the user saved, and the poll happens in the RUN, not the renderer",
+  },
+  {
     needle: "http://www.w3.org/2000/svg",
     why: "the SVG namespace — an XML identifier, never dereferenced",
   },

@@ -10,6 +10,88 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-26 — Signing a test in when the password is an email
+
+The account management experience of the production Shopify store has been
+undrivable by the suite, and the reason is not a gap in this app. Shopify's
+current customer accounts have **no password at all**: the only way in is a
+six-digit code emailed to the customer.
+
+**What was researched, and what it ruled out.** Classic customer accounts —
+email plus password, and the Storefront API's `customerAccessTokenCreate` —
+were deprecated in February 2026, cannot be enabled on a store not already
+using them, and have an unannounced sunset. **Multipass**, the one mechanism
+that ever minted a logged-in session from a signed token, is not supported on
+the new accounts. The **Customer Account API** is OAuth 2.0 only: public client
+with PKCE or confidential client, and every flow begins at Shopify's hosted
+authorize endpoint, which is the same emailed-code screen. There is no
+client-credentials grant, no password grant, and no Admin API mutation that
+mints a customer session or a login link. Sign in with Shop and the social
+providers each need a third party. Shopify's own guidance for storefront E2E,
+and the community's, is to reuse an authenticated session — which is advice
+about amortising the problem, not solving it.
+
+So the code has to be read out of a mailbox. That is what mabl's
+`@mablmail.com` was, and it is still the only door. Rejected on the way:
+a hosted email-testing API (Mailosaur, MailSlurp) — it works, but it costs
+money and puts live customer mail through a third party; and IMAP against the
+existing mailboxes — it changes no production data, but it needs a client
+dependency in the runner where a Worker needs only an HTTPS GET.
+
+**Most of the feature already existed, which is why the new surface is small.**
+`saveSession`/`useSessionFrom` already logs in once and reuses `storageState`
+with a 24-hour cap; Shopify's own customer session cookie lasts about 24 hours,
+and that coincidence is what the design rests on — the code is paid once a day,
+not once a test. Secret variables were already encrypted, CI-suppliable and
+redacted. `glazeTotp` was already the precedent for "a read mints a fresh
+one-time code", single-sourced between trainer and runtime. The missing piece
+was one step.
+
+**The watermark is the whole anti-flake story, and it is not obvious.** The
+failure that matters is not "no code arrived" — that one is loud. It is typing
+a code that was ALREADY in the inbox, from the previous run or from earlier in
+the same suite. Shopify honours a code for about thirty minutes, so a stale one
+is not visibly stale: it is a plausible six digits that gets rejected, and five
+rejections locks the customer out for another thirty. So a message counts only
+when it arrived after `max(runStartedAt, lastConsumed[address])`. Both halves
+carry their own failure and both are revert-verified. `runStartedAt` is stamped
+at MODULE scope in the generated runtime — inside the helper it would be "now",
+every message would beat it, and the guard would be decoration.
+
+The residual hole is stated rather than papered over: two runs signing the same
+customer in concurrently can each see the other's code. Sub-addressing does not
+close it, because Shopify identifies a customer by the exact address, so the
+address is the customer's and cannot be varied per run. `useSessionFrom` is the
+mitigation that matters.
+
+**Two smaller decisions worth the ink.** The code scan reads the SUBJECT before
+the body and matches only a digit run bounded by non-digits — a subject holds
+one number where a body holds an order number, a year and a tracking id, and a
+bare six-digit scan returns the first six digits of an eight-digit order number.
+And `parseMailMessage` lives in `shared/email-code.mjs` rather than in the
+Worker, for two reasons: it decides what `subject` and `body` ARE while
+`codeFromMessage` decides where to look, so they are two halves of one rule; and
+`workers/` matches neither vitest project, so a test beside the Worker would be
+silently never run.
+
+**`emailCode` joins `code` in `IPC_ONLY_STEP_TYPES`.** A catch-all mailbox holds
+every test account's mail, so a page that could author this step could name
+another account's address and have the next step type that account's sign-in
+code into a field of the page's choosing. `insertStep` passes `allowIpcOnly`
+because it IS the app — the training page has no preload and cannot invoke IPC —
+and `code` stays refused there anyway, since the raw rebuild has no field for
+its body.
+
+**What the maintainer still has to do in Shopify admin**, both deliberate and
+neither reversible by this app: uncheck hCaptcha for login / create account /
+password recovery under Online Store → Preferences → Spam protection, and point
+the test customers' email addresses at the catch-all domain. The second is a
+change to live customer records, and it is what makes the accounts drivable at
+all.
+
+Plan: [plans/shopify-account-auth.md](plans/shopify-account-auth.md). Deploy:
+[../workers/mailbox/README.md](../workers/mailbox/README.md).
+
 ### 2026-08-25 — The capture fixture imported a file no CI run wrote
 
 Found while wiring overlay dismissal onto the unattended path, which is a

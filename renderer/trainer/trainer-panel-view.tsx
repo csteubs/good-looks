@@ -133,6 +133,7 @@ const ADD_STEP_KINDS: AddStepKind[] = [
   "upload",
   "api",
   "aiCheck",
+  "emailCode",
   "group",
   "teardown",
   "dialog",

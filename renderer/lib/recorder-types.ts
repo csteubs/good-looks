@@ -60,6 +60,17 @@ export type A11yImpact = (typeof A11Y_IMPACTS)[number];
 export const API_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"] as const;
 export type ApiMethod = (typeof API_METHODS)[number];
 
+/** What the renderer may learn about the test mailbox. Mirror of
+ *  `MailboxStatus` in main/services/mailbox-store.ts. Note what is NOT here:
+ *  the token. The renderer learns an endpoint, a host and a state, which is
+ *  everything the UI needs and nothing an exfiltration path could use. */
+export interface MailboxStatus {
+  state: "none" | "configured" | "unreadable";
+  host?: string;
+  endpoint?: string;
+  savedAt?: number;
+}
+
 export type StepType =
   | "goto"
   | "click"

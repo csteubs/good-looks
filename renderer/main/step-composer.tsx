@@ -105,6 +105,7 @@ export type AddStepKind =
   | "upload"
   | "api"
   | "aiCheck"
+  | "emailCode"
   | "group"
   | "teardown"
   | "dialog"
@@ -132,6 +133,7 @@ export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   upload: "Upload a file",
   api: "API request",
   aiCheck: "AI visual check",
+  emailCode: "Read an emailed code",
   group: "Group steps",
   teardown: "Teardown (always runs)",
   dialog: "Handle next dialog",
@@ -804,6 +806,14 @@ export function StepComposer({
   const [a11yImpact, setA11yImpact] = React.useState<A11yImpact>("serious");
   // The AI check's claim about the page at this point.
   const [aiClaim, setAiClaim] = React.useState("");
+  // The emailed sign-in code: which mailbox to watch and where to put the
+  // code. The digits field is here rather than fixed at six because the
+  // default is a convention, not a standard — and a store using four would
+  // otherwise have no way to say so.
+  const [emailAddress, setEmailAddress] = React.useState("");
+  const [emailVar, setEmailVar] = React.useState("loginCode");
+  const [emailDigits, setEmailDigits] = React.useState("6");
+  const [emailLabel, setEmailLabel] = React.useState("");
   const [groupLabel, setGroupLabel] = React.useState("");
   const [dialogAction, setDialogAction] = React.useState<DialogAction>("accept");
   const [dialogText, setDialogText] = React.useState("");
@@ -1092,6 +1102,24 @@ export function StepComposer({
         const claim = aiClaim.trim();
         if (claim === "") return null;
         return [{ type: "aiCheck", text: claim }];
+      }
+      case "emailCode": {
+        const address = emailAddress.trim();
+        const name = emailVar.trim();
+        // Both required. A code read into nowhere is not a step, and an
+        // address-less one has no mailbox to watch — the generator emits
+        // nothing for either, so refusing here is what makes that visible.
+        if (address === "" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || name.length > 40) {
+          return null;
+        }
+        const step: RawStep = { type: "emailCode", mailboxAddress: address, captureVar: name };
+        const digits = Number(emailDigits.trim());
+        // Refuses the whole submit rather than silently falling back to six —
+        // the api kind's rule for a malformed field.
+        if (!Number.isInteger(digits) || digits < 4 || digits > 10) return null;
+        if (digits !== 6) step.codeDigits = digits;
+        if (emailLabel.trim() !== "") step.codeLabel = emailLabel.trim();
+        return [step];
       }
       case "group": {
         // The pair inserts together, the loop kind's idiom — the user drags
@@ -2186,6 +2214,57 @@ export function StepComposer({
                   No file staged yet.
                 </Text>
               )}
+            </div>
+          </>
+        ) : null}
+        {kind === "emailCode" ? (
+          <>
+            <Text size="small" className="text-secondary">
+              Waits for the one-time code emailed to this address and puts it in a variable — the
+              way into a store whose sign-in has no password. A later step types{" "}
+              <code className="font-mono">{"${" + (emailVar.trim() || "loginCode") + "}"}</code>{" "}
+              into the form. Needs a mailbox in Settings &rsaquo; Integrations. Only mail that
+              arrives <strong>after this run starts</strong> counts, so a code already sitting in
+              the inbox is never typed.
+            </Text>
+            <div className="flex items-center gap-2">
+              <Input
+                size="small"
+                aria-label="Mailbox address"
+                placeholder="shopper@mail.example.com"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                value={emailAddress}
+                className="flex-1"
+                onChange={(e) => setEmailAddress(e.target.value)}
+              />
+              <Input
+                size="small"
+                aria-label="Store the code in"
+                placeholder="loginCode"
+                value={emailVar}
+                className="w-40"
+                onChange={(e) => setEmailVar(e.target.value)}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Input
+                size="small"
+                aria-label="Code length"
+                placeholder="6"
+                value={emailDigits}
+                className="w-20"
+                onChange={(e) => setEmailDigits(e.target.value)}
+              />
+              <Input
+                size="small"
+                aria-label="Code follows this text"
+                placeholder="Code follows this text (optional)"
+                value={emailLabel}
+                className="flex-1"
+                onChange={(e) => setEmailLabel(e.target.value)}
+              />
             </div>
           </>
         ) : null}

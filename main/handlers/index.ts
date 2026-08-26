@@ -70,6 +70,8 @@ import {
 } from "../services/script-change-store.js";
 import { refreshSecretSnapshot } from "../services/secret-redaction.js";
 import { shopifySignatureStore } from "../services/shopify-signature-store.js";
+import { mailboxStore } from "../services/mailbox-store.js";
+import { probeMailbox } from "../services/mailbox-service.js";
 import { parseSpecDetailed } from "../services/spec-parser.js";
 import { checkTestScript } from "../services/script-check.js";
 import { livePageService } from "../services/live-page-service.js";
@@ -1892,6 +1894,31 @@ export function registerHandlers(): void {
     sendToMain("settings:changed", null);
     return shopifySignatureStore.list();
   });
+
+  // ── The test mailbox ────────────────────────────────────────────────
+  //
+  // `status` returns STATE ONLY — the endpoint, its host and when it was
+  // saved. The token never crosses IPC after being saved, the same contract
+  // the webhook URL and the Shopify signatures have.
+  ipcMain.handle("mailbox:status", async () => mailboxStore.status());
+  ipcMain.handle(
+    "mailbox:set",
+    async (_e, params: { endpoint: string; token: string }) => {
+      await mailboxStore.set(params.endpoint ?? "", params.token ?? "");
+      // Redactable the moment it exists, not at the next run start — a webhook
+      // or a log written in between would otherwise carry it.
+      await refreshSecretSnapshot();
+      sendToMain("settings:changed", null);
+      return mailboxStore.status();
+    },
+  );
+  ipcMain.handle("mailbox:clear", async () => {
+    await mailboxStore.clear();
+    await refreshSecretSnapshot();
+    sendToMain("settings:changed", null);
+    return mailboxStore.status();
+  });
+  ipcMain.handle("mailbox:test", async () => probeMailbox());
 
   ipcMain.handle("alerts:setWebhookUrl", async (_e, params: { url: string }) => {
     await webhookUrlStore.setUrl(params.url ?? "");

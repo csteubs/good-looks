@@ -3050,7 +3050,15 @@ export const recorderService = {
       // Normalized for the same reason the drain is: this arrives over IPC, and
       // its fields reach the generator through the identical path. A step the
       // page couldn't sneak in the front door shouldn't get in the side one.
-      const clean = normalizeRawStep(raw);
+      //
+      // `allowIpcOnly` is what makes the "+ Add step" menu's emailCode entry
+      // reachable. It is not a hole in the sentence above: this channel is the
+      // app's own UI — the training page has no preload and cannot invoke IPC
+      // at all — and what it opens is only the ADDRESS of a mailbox the user
+      // already configured. `code` stays refused either way, because the raw
+      // rebuild has no field for its body and returns null for the type
+      // regardless of this flag.
+      const clean = normalizeRawStep(raw, true);
       if (!clean) return currentState();
       const step: Step = { id: randomUUID(), timestamp: Date.now(), ...clean };
       // Same routing as the capture funnel: an open scope receives the insert.

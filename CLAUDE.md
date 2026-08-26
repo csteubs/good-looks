@@ -193,6 +193,18 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      by the injected replayer (as JSON + `toString`d source) and
                      by the renderer's step list. Three copies of those rules is
                      what made a "URL contains" assertion that could never pass
+workers/mailbox/     the catch-all inbox behind the `emailCode` step, deployed
+                     separately (Cloudflare Email Routing -> Worker -> KV, one
+                     authenticated JSON endpoint). Shopify's customer accounts have
+                     NO PASSWORD — a six-digit code by email is the only way in, and
+                     classic accounts, Multipass and the Customer Account API all
+                     dead-end (DECISIONS 2026-08-26) — so the suite needs a mailbox
+                     it owns. In the repo rather than only in a dashboard for the
+                     switch-branch reason: a mechanism reachable only through a
+                     button is one nobody can debug. It imports shared/email-code.mjs
+                     rather than parsing mail itself, and is BOOTED by
+                     main/services/mailbox-worker.test.ts because `workers/` matches
+                     neither vitest project
 bin/good-looks.mjs   the `good-looks` CLI's entry point (R3). Thin by design: argv in,
                      exit code out. `process.exitCode` and a natural return, NEVER
                      `process.exit` — that truncates a piped stdout, so a CLI doing it
