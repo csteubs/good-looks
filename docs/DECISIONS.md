@@ -10,6 +10,118 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-26 — A relative library path failed every test, and blamed nothing
+
+The GitHub Action's self-test found this on its FIRST real run, which is the
+entire argument for having written it.
+
+Both tests failed, in 0.6 seconds each, and the JUnit report said
+
+    <testsuite tests="2" failures="2" …>
+      <testcase classname="t-pass" …><failure message="exit 1"/>
+
+— a test named "a passing test", failing, with no step and no reason. Nothing
+in the CLI's own output said more.
+
+**The cause is one word: `fixture-library`.** A workflow naturally passes a path
+relative to the workspace, so `GOOD_LOOKS_USERDATA` was relative. Every path a
+run uses is joined onto that root, and one of them is handed to the Playwright
+CLI as `--reporter <scriptsDir>/step-reporter.mjs`. Playwright resolves it with
+`require.resolve`, **which reads a specifier that does not begin with `./` as a
+PACKAGE NAME**:
+
+    Cannot find module 'fixture-library/recorder/scripts/step-reporter.mjs'
+
+The run died before any test body, and the CLI reported what it saw: two tests,
+both failed, exit 1.
+
+**Fixed at the root, not at the reporter.** `resolveDataDir` now returns an
+absolute path. The two derived branches always were; the OVERRIDE is whatever
+the caller typed, and `--library ./tests` in a workflow or
+`GOOD_LOOKS_USERDATA=fixture-library` in a shell is the ordinary spelling rather
+than an exotic one. The reporter is simply where it surfaced first — the output
+directory, the artifact directory and the heal map are all joined onto the same
+root, and each would have been its own version of this.
+
+**It was reachable long before the action existed.** Nothing had ever run the
+CLI with a relative override, so nothing had met it. `check:cli-exit` builds its
+throwaway stores with `mkdtemp`, which returns an absolute path; every manual
+run in this session used an absolute one too. The action is the first caller for
+which relative is the NATURAL spelling, which is why it is the first thing to
+fail.
+
+**A second lesson, and the workflow now carries the fix for it.** Diagnosing
+this cost a CI round trip, because the reason was in a run log inside the
+library and nothing surfaced it — the job printed the report, which said `exit
+1`, and stopped. A self-test that fails without saying why is the same
+confident-signal-about-nothing shape as everything else in this arc. It now
+dumps the run logs and the library layout on failure, and uploads the logs
+beside the report.
+
+### 2026-08-26 — The GitHub Action, and the question that had no answer (R14)
+
+R14 is ranked S, and the plan warns in the same paragraph what shipping it
+badly looks like: *"shipping a workflow template that cannot work"*. The
+warning was about R10's absolute `scriptPath`. The actual blocker was one nobody
+had written down.
+
+**There was no way to get the CLI onto a runner.** `package.json` is
+`private: true` with no `files` field, so `npm install good-looks` does not
+exist — and should not: publishing an Electron app's whole dependency closure
+(React, CodeMirror, Radix, thirty-odd packages) so a runner can execute a Node
+CLI is absurd. That is not a packaging oversight to fix; it is the reason the
+action has to be a COMPOSITE action.
+
+A composite action answers it by construction. GitHub checks this repository out
+at `${{ github.action_path }}` before the first step, so `bin/`, `cli/`, `mcp/`
+and `shared/` are already on disk; and `mcp/run-tests.mjs` resolves Playwright
+from `PROJECT_ROOT/node_modules` where `PROJECT_ROOT` is `mcp/..` — the action
+path. One targeted install there is the whole bootstrap.
+
+**Measured before designing around it**: `bin` + `cli` + `mcp` + `shared` plus
+`@playwright/test` is three packages and 19 MB. That experiment is also what
+found the stale `node_modules` link (see the entry above) — the lean tree ran,
+and failed every test, for a reason that had nothing to do with being lean.
+
+**The version is read, never written.** A literal in `action.yml` would be a
+second spelling of the pin in `package.json`, and this is not a reproducibility
+nicety: `shared/browser-install.mjs` answers "is the browser installed" by
+reading the INSTALLED Playwright's `browsers.json` — the name-prefix rule it
+replaced said yes to the previous build after the 1.62 upgrade — so the CLI, the
+installer and the detector have to be looking at one tree.
+
+**Every input reaches bash as an environment variable.** The first draft spliced
+`${{ inputs.tag }}` straight into the script, which is the standard GitHub
+Actions injection vector: `${{ }}` is substituted *before* bash parses the line,
+so an input carrying `; rm -rf …` is not an argument, it is the next command.
+An action input is attacker-controlled the moment a workflow passes it a pull
+request title, a branch name or an issue body — the same class of input this
+repository already guards for a branch name (`shared/branch-paths.mjs`) and for
+an imported project. `check:github-action` scans every `run:` block for it.
+
+**The action does not fetch, build or export a library.** `library` is a path
+the caller already has. How a library reaches a runner — committed, cached, or
+downloaded as an artifact — is R10's export command and a separate decision, and
+an action that guessed would be an action that guessed wrong.
+
+**`action-selftest.yml` is the part that makes this real.** Every CI item in
+this arc has failed the same way — the heal map named a file nothing wrote, the
+step reporter was written and never loaded, the dismissal fixture was a
+dependency nobody shipped — and every one passed every check in the repository.
+So the self-test uses the action the way a stranger would (`uses: ./`) against a
+library built from nothing on a runner where this app has never been installed,
+and asserts the exit code for all three outcomes plus that the JUnit message
+names the failing STEP. Its fixture library carries another machine's absolute
+`scriptPath`, because that is what a copy carries and resolving it is R10's whole
+point.
+
+**`check:github-action` caught its own gap on its first run.** It asserts that
+every flag the action emits is one `cli/args.mjs` accepts — an unknown flag is a
+refusal there, so a rename would turn every run through the action into exit 3 —
+and immediately failed on `--with-deps`, which belongs to the `install`
+subcommand and is compared inline rather than held in a flag table. The fix was
+to derive the inline set too, rather than to add an exception.
+
 ### 2026-08-26 — A copied library resolved a second Playwright, and blamed your package.json
 
 Found while measuring something else: whether the CLI can run from a lean tree

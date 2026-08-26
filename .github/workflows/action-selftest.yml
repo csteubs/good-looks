@@ -1,0 +1,203 @@
+# Does the action in this repository's root actually run a suite?
+#
+# The plan's own warning about R14 is that shipping "a workflow template that
+# cannot work" is the failure mode here, and the whole CI arc has kept meeting
+# the same shape: the heal map named a file nothing wrote, the step reporter was
+# written and never loaded, the dismissal fixture was a dependency nobody
+# shipped. Every one of them passed every check in the repository.
+#
+# So this workflow uses the action the way a stranger would — `uses: ./` — and
+# asserts on what comes back out. It builds a library from nothing, on a runner
+# where this app has never been installed, which is the ONE configuration none
+# of the local checks can stand up.
+#
+# It is deliberately not part of `gate.yml`. That job is the fast feedback loop
+# on the code; this one downloads a browser.
+
+name: Action self-test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "action.yml"
+      - ".github/workflows/action-selftest.yml"
+      - "bin/**"
+      - "cli/**"
+      - "mcp/**"
+      - "shared/**"
+      - "package.json"
+  workflow_dispatch:
+
+concurrency:
+  group: action-selftest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # A LIBRARY THAT HAS NEVER SEEN THIS APP. `scriptPath` is deliberately an
+      # absolute path from somebody else's machine — that is what a copied
+      # library carries, and resolving it is R10's whole point. If script-path
+      # resolution regresses, Playwright reports "no tests found" and this job
+      # is what notices.
+      #
+      # `/opt/authoring-machine/…` rather than a `/Users/…` home, because
+      # `check:repo-hygiene` refuses a hardcoded home directory anywhere in the
+      # tree and is right to: this needs to be a path that does not exist on the
+      # runner, not a path that looks like somebody's laptop.
+      - name: Build a library from nothing
+        run: |
+          set -euo pipefail
+          mkdir -p fixture-library/recorder/scripts
+          cat > fixture-library/recorder/tests.json <<'JSON'
+          [
+            {
+              "id": "t-pass",
+              "name": "a passing test",
+              "url": "https://example.com",
+              "scriptPath": "/opt/authoring-machine/good-looks/recorder/scripts/t-pass.spec.ts",
+              "tags": ["smoke"],
+              "createdAt": 1756000000000,
+              "updatedAt": 1756000000000,
+              "steps": [{ "id": "s1", "type": "goto", "url": "https://example.com", "timestamp": 0 }]
+            },
+            {
+              "id": "t-fail",
+              "name": "a failing test",
+              "url": "https://example.com",
+              "scriptPath": "/opt/authoring-machine/good-looks/recorder/scripts/t-fail.spec.ts",
+              "tags": ["smoke"],
+              "createdAt": 1756000000000,
+              "updatedAt": 1756000000000,
+              "steps": [{ "id": "s1", "type": "goto", "url": "https://example.com", "timestamp": 0 }]
+            }
+          ]
+          JSON
+          # `setContent` rather than a real navigation: the subject is the
+          # runner, not the network, and a job that reaches out is a job that
+          # goes red for somebody else's outage.
+          cat > fixture-library/recorder/scripts/t-pass.spec.ts <<'SPEC'
+          import { test, expect } from "@playwright/test";
+
+          test("a passing test", async ({ page }) => {
+            await page.setContent("<h1>hello</h1>");
+            await expect(page.getByRole("heading")).toHaveText("hello");
+          });
+          SPEC
+          cat > fixture-library/recorder/scripts/t-fail.spec.ts <<'SPEC'
+          import { test, expect } from "@playwright/test";
+
+          test("a failing test", async ({ page }) => {
+            await page.setContent("<h1>hello</h1>");
+            await expect(page.getByRole("heading")).toHaveText("goodbye");
+          });
+          SPEC
+
+      # ── 1. A suite with a failure in it ────────────────────────────────
+      #
+      # `continue-on-error` because the expected outcome is a RED step: one test
+      # fails, so exit 1 is correct. The assertions below check the number.
+      - name: Run the suite
+        id: suite
+        continue-on-error: true
+        uses: ./
+        with:
+          library: fixture-library
+          tag: smoke
+          junit: results.xml
+
+      - name: The exit code and the report say what happened
+        run: |
+          set -euo pipefail
+          code="${{ steps.suite.outputs.exit-code }}"
+          [ "$code" = "1" ] || { echo "::error::expected exit 1 for a suite with a failure, got '${code}'"; exit 1; }
+
+          test -f results.xml || { echo "::error::--junit wrote no report"; exit 1; }
+          echo "--- results.xml ---"; cat results.xml
+
+          grep -q 'tests="2"' results.xml    || { echo "::error::report does not cover both tests"; exit 1; }
+          grep -q 'failures="1"' results.xml || { echo "::error::report does not record the failure"; exit 1; }
+          # R13: the message names the STEP, not just the exit code. This is the
+          # end of the chain the reporter, the line map and the emitter make up,
+          # and the only place all three run together against real Playwright.
+          grep -q 'Failed at step' results.xml || { echo "::error::the failure message names no step — the reporter, the line map or the emitter is not wired"; exit 1; }
+          echo "ok — exit 1, both tests reported, the failing step named"
+
+      # ── 2. A selector that matches nothing is 2, not 0 ─────────────────
+      #
+      # The distinction the whole exit contract exists for: a suite of zero is
+      # shaped exactly like a clean pass, so without its own code a renamed tag
+      # leaves a pipeline green while testing nothing.
+      - name: A selector that matches nothing
+        id: empty
+        continue-on-error: true
+        uses: ./
+        with:
+          library: fixture-library
+          tag: no-such-tag
+
+      - name: …is exit 2
+        run: |
+          set -euo pipefail
+          code="${{ steps.empty.outputs.exit-code }}"
+          [ "$code" = "2" ] || { echo "::error::expected exit 2 for a selector that matched nothing, got '${code}'"; exit 1; }
+          echo "ok — exit 2"
+
+      # ── 3. And a passing selection is 0 ────────────────────────────────
+      - name: One passing test
+        id: passing
+        uses: ./
+        with:
+          library: fixture-library
+          id: t-pass
+
+      - name: …is exit 0
+        run: |
+          set -euo pipefail
+          code="${{ steps.passing.outputs.exit-code }}"
+          [ "$code" = "0" ] || { echo "::error::expected exit 0, got '${code}'"; exit 1; }
+          echo "ok — exit 0"
+
+      # WHY THIS EXISTS. The first real run of this workflow failed with
+      # `failures="2"` where it expected 1, and the report said only
+      # `message="exit 1"` — which is the CLI's summary, not the reason. The
+      # reason was in the run log, inside the library, which nothing surfaced;
+      # diagnosing it cost a round trip. A self-test that fails without saying
+      # why is the same "confident signal about nothing" this whole arc keeps
+      # meeting.
+      #
+      # (It was a relative GOOD_LOOKS_USERDATA: `--reporter` became a relative
+      # specifier, and Playwright's require.resolve reads one that does not
+      # begin with `./` as a PACKAGE NAME. Every test died before its body.)
+      - name: Say what actually happened
+        if: failure()
+        run: |
+          set -uo pipefail
+          echo "::group::run logs"
+          for log in fixture-library/recorder/logs/*.log; do
+            [ -f "$log" ] || continue
+            echo "--- $log ---"
+            head -40 "$log"
+          done
+          echo "::endgroup::"
+          echo "::group::library layout"
+          find fixture-library -maxdepth 3 | head -40
+          echo "::endgroup::"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selftest-junit
+          path: |
+            results.xml
+            fixture-library/recorder/logs/
+          if-no-files-found: warn
