@@ -77,15 +77,22 @@ export class DocParseError extends Error {
  * The Help menu deep-links these, and a deep link that resolves to nothing
  * lands the user on the top of the document with no explanation — the exact
  * silent failure this file exists to prevent, one level up. `check:docs-blocks`
- * asserts every one of them is a real topic, so renaming a heading in
- * `docs/MCP-GUIDE.md` fails the gate instead of quietly breaking a menu item.
+ * asserts every one of them is a real topic ACROSS THE SHIPPED DOCUMENTS, so
+ * renaming a heading in one of them fails the gate instead of quietly breaking
+ * a menu item. A slug is looked up without reference to which document holds
+ * it, which is why they have to stay unique across all of them.
  */
 export const REQUIRED_TOPIC_SLUGS = [
+  // docs/MCP-GUIDE.md
   "what-it-is",
   "setup",
   "what-you-can-ask-for",
   "linear-github-and-slack",
   "troubleshooting",
+  // docs/CI-GUIDE.md
+  "why-run-tests-outside-the-app",
+  "the-command-line",
+  "github-actions",
 ] as const;
 
 /** Heading → slug. Drops a leading "3. " so the section numbering in the

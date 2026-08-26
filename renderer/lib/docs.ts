@@ -13,10 +13,18 @@
 
 import { parseDoc, slugify, type DocPage } from "./doc-blocks";
 import mcpGuideSource from "../../docs/MCP-GUIDE.md?raw";
+import ciGuideSource from "../../docs/CI-GUIDE.md?raw";
 
-/** Ids of the documents the pane can show. One today; the pane is a list, not a
- *  special case, so a second costs a line here and nothing in the UI. */
-export type DocId = "mcp";
+/** Ids of the documents the pane can show. The pane is a list rather than a
+ *  special case, so a further document costs a line here and a Help menu item.
+ *
+ *  SLUGS ARE UNIQUE ACROSS DOCUMENTS, not within one. A topic slug is the row
+ *  id the settings search indexes it under (`docRowId`), the key the topic list
+ *  renders it with, and the segment `/settings/documentation/$topic` carries —
+ *  so two documents both ending in "See also" would collide in all three, and
+ *  the visible symptom is a Help link that opens the wrong document.
+ *  `check:docs-blocks` asserts it. */
+export type DocId = "mcp" | "ci";
 
 export interface AppDoc {
   id: DocId;
@@ -27,9 +35,24 @@ export interface AppDoc {
 
 export const APP_DOCS: readonly AppDoc[] = [
   { id: "mcp", label: "AI assistants (MCP)", page: parseDoc(mcpGuideSource) },
+  { id: "ci", label: "Running tests without the app", page: parseDoc(ciGuideSource) },
 ];
 
 export const MCP_GUIDE = APP_DOCS[0].page;
+export const CI_GUIDE = APP_DOCS[1].page;
+
+/** The document a topic slug belongs to, or null when nothing ships it.
+ *
+ *  The pane needs this to title a topic with ITS OWN document rather than with
+ *  the first one in the list — which is what it did while there was only one,
+ *  and which would have labelled every CI topic as the MCP guide the day a
+ *  second arrived. */
+export function docForSlug(slug: string): AppDoc | null {
+  for (const doc of APP_DOCS) {
+    if (doc.page.topics.some((t) => t.slug === slug)) return doc;
+  }
+  return null;
+}
 
 /** The row id a topic is indexed and filtered under. Prefixed so it cannot
  *  collide with a setting row's id, which shares that namespace. */

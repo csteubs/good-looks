@@ -5,6 +5,11 @@ navigation, assertions — and generates runnable `@playwright/test` specs from
 them. Point it at a URL, drive the site in the recorder window, and it produces
 a spec you can run, edit, batch, and re-run against future builds.
 
+Those tests do not need the app to run them. A `good-looks` command line ships
+inside the app, and a GitHub Action wraps it, so the same recorded tests run on
+a build server and report on the CLI's exit code — see [Running tests without
+the app](#running-tests-without-the-app).
+
 A standalone **Electron** app: a React 19 renderer served over a custom `app://`
 scheme, a Node.js main process, and Electron IPC between them. It builds, runs,
 tests and packages entirely from this folder with `npm` — no external SDK, and
@@ -69,10 +74,49 @@ package` refuses up front and re-checks the finished bundle, but the fix is
 
 `npm run dev:web` is the fastest way to see a UI change and the only one an
 agent can drive. Open a view directly with `?view=stats|visual|batch|heals`,
-`?test=<id>`, `?view=settings`, `?view=recorder`, or `?view=specimen` (every
-redesign primitive in every state). It does not replace running the real app: a
-preview has no backend, so it cannot catch a broken IPC handler, a window that
-fails to open, or native menu behaviour.
+`?test=<id>`, `?view=settings` (add `&pane=cost` for one section),
+`?view=recorder`, or `?view=specimen` (every redesign primitive in every state).
+It does not replace running the real app: a preview has no backend, so it cannot
+catch a broken IPC handler, a window that fails to open, or native menu
+behaviour.
+
+## Running tests without the app
+
+The app records tests; it is not the only thing that can run them. Three entry
+points read the same library:
+
+| Entry point | What it is for |
+| --- | --- |
+| The app | Recording, watching a run, accepting baselines, everything that edits |
+| `good-looks` (CLI) | Build servers and terminals. Exits 0/1/2/3 on the result |
+| The MCP server | Driving the library from an AI assistant |
+
+The CLI lives at `bin/good-looks.mjs`, decides nothing itself (`cli/` holds the
+rules so they can be tested), and ships inside the packaged app alongside the
+MCP server:
+
+```bash
+good-looks run --tag smoke --browser firefox --parallel 2 --junit results.xml
+```
+
+Exactly one selector — `--id`, `--tag`, `--group` or `--all` — and no default,
+because a command that runs the whole library when a flag is misspelt is worse
+than one that refuses. Exit code 2 means the selector matched nothing, which is
+otherwise indistinguishable from a clean pass.
+
+[`action.yml`](action.yml) wraps the same CLI as a composite GitHub Action, and
+`good-looks ingest` carries a CI job's runs back into the local library so
+Stability, the flake verdict and step health count them.
+
+Unattended runs are not lesser runs: screenshots, accessibility checks, console
+and network recording, Auto-Heal, page-settling and standing overlay rules all
+apply, each following the setting the test already carries. What cannot cross
+the boundary is anything encrypted to the app — secret variables, the Shopify
+crawler signature, a proxy password — and a run says which of those it went
+without.
+
+Full detail: [`docs/CI-GUIDE.md`](docs/CI-GUIDE.md) (also the app's in-app
+manual) and [`docs/GITHUB-ACTION.md`](docs/GITHUB-ACTION.md).
 
 ## Repo layout
 
@@ -80,13 +124,17 @@ fails to open, or native menu behaviour.
 main/shell/          the Electron seam: backend adapter, logger, host IPC, the app://
                      protocol. THE ONLY PLACE THAT IMPORTS `electron`
 main/handlers/       IPC handler registration
-main/services/       business logic (recorder, playwright-runner, llm, spec-parser,
+main/services/       business logic (recorder, playwright-runner, spec-parser,
                      visual-pipeline, metrics-store, issue-tracker)
-main/services/llm/   local + hosted LLM chat (Ollama, LM Studio, Claude)
+main/services/insights/    the scheduled AI report — the app's only unattended LLM egress
+main/services/ts-service/  the Script IDE's TypeScript language service, in a utilityProcess
+main/services/llm/   local + hosted LLM chat (Ollama, LM Studio, Claude), and the
+                     two halves of standing overlay rules
 main/recorder/       recording-session logic (script injection, step capture)
 main/windows/        BrowserWindow creation/config
 renderer/main/       primary views (home, recording/trainer, script view, ai-debug-panel, stats)
-renderer/settings/   settings window UI (panes/, one per sidebar row)
+renderer/settings/   the Settings SCREENS (panes/, one per rail row). Routes in the main
+                     window, not a separate window — it stopped being one on 2026-08-24
 renderer/trainer/    the trainer window's own panel
 renderer/recorder-chrome/  the training browser's read-only URL bar
 renderer/ui/         the app's component library (Radix + Tailwind + cva)
@@ -95,21 +143,27 @@ renderer/theme/      the indie redesign's token and treatment layer (--gl-* toke
                      primitives/, shell/, screens.css)
 renderer/lib/        shared frontend utilities
 renderer/dev/        the browser preview's fake backend — never shipped
-shared/              the one pure core both the app and the MCP import (.mjs +
-                     hand-written .d.mts). No fs, no IPC, no process
+shared/              the one pure core the app, the MCP server and the CLI all import
+                     (.mjs + hand-written .d.mts). No fs, no IPC, no process. The run
+                     fixtures live here, which is what lets a CI runner heal and settle
+bin/                 the `good-looks` CLI entry point — argv in, exit code out
+cli/                 what the CLI decides, kept out of bin/ so it can be tested
 mcp/                 standalone MCP server exposing the test library (see mcp/README.md)
+workers/mailbox/     the catch-all inbox behind the `emailCode` step (Cloudflare)
 e2e/                 Playwright specs driving the real app through `_electron`
 scripts/             build-main, dev harness, package verification, branch switcher
-docs/                ARCHITECTURE.md, DECISIONS.md, MCP-GUIDE.md, and the notes below
+docs/                ARCHITECTURE.md, DECISIONS.md, the two in-app manuals, and the notes below
 .github/             PR template, workflows, and the scripts they run
-vite.config.ts       renderer build (three windows + the training browser's URL strip);
+action.yml           the `good-looks` GitHub Action — a composite action over the CLI
+vite.config.ts       renderer build (two windows + the training browser's URL strip);
                      `--mode preview` builds the browser preview instead
 vitest.config.ts     test runner config (node + jsdom projects)
 ```
 
 Tests are colocated with the code they cover. `main/services/__tests__/` holds
 the standalone `check:*` scripts and `shell-backend-stub.ts`, the stub that
-`@shell/backend` resolves to under test.
+`@shell/backend` resolves to under test. The CLI's own unit tests live there
+too, because a test file under `cli/` would match neither Vitest project.
 
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is the per-file map;
 [`CLAUDE.md`](CLAUDE.md) carries the fuller annotated version of the tree above.
@@ -124,15 +178,21 @@ the standalone `check:*` scripts and `shell-backend-stub.ts`, the stub that
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Per-file map of what exists and why — read before any non-trivial change |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Dated record of *why* each feature landed the way it did |
 | [`docs/MCP-GUIDE.md`](docs/MCP-GUIDE.md) | Driving the app from an AI assistant, and where the Linear/GitHub/Slack integrations fit |
+| [`docs/CI-GUIDE.md`](docs/CI-GUIDE.md) | Running recorded tests from the CLI and from GitHub Actions |
+| [`docs/GITHUB-ACTION.md`](docs/GITHUB-ACTION.md) | The Action's full input/output reference |
 
 All are hand-maintained. `ARCHITECTURE.md` and `DECISIONS.md` were kept current
 automatically until 2026-08-06; they stay accurate now only if changes carry
 them, so update the relevant entry in the same commit.
 
-`docs/MCP-GUIDE.md` is **also the app's in-app manual** — Settings →
-Documentation renders it, and `check:docs-blocks` holds it to the markdown
-subset that pane can draw. Edit it as prose, but expect the gate to refuse an
-ordered list or a nested bullet.
+**Two of these are also the app's in-app manual.** Settings → Documentation
+renders `docs/MCP-GUIDE.md` and `docs/CI-GUIDE.md`, and the Help menu deep-links
+their sections. `renderer/lib/doc-blocks.ts` parses a subset of markdown and
+throws on the rest; `check:docs-blocks` runs it in the gate, so a construct the
+pane cannot draw is a red build rather than a section that renders as nothing.
+Edit them as prose, but expect the gate to refuse an ordered list or a nested
+bullet — and note that topic slugs must stay unique **across** both files, since
+a slug names a topic rather than a document plus a topic.
 
 Two subdirectories differ in kind. [`docs/plans/`](docs/plans/) is a historical
 record of intent — design documents written before larger features, kept for
@@ -150,7 +210,7 @@ it landed — read that first.
 | [`docs/REDESIGN.md`](docs/REDESIGN.md) | The indie redesign's implementation plan | **Phases A, B and C complete** — B8, the last one open, landed 2026-08-17 |
 | [`docs/ROUTINES.md`](docs/ROUTINES.md) | Batch v2: Routines as a first-class entity | Capabilities 1 and 2 **built** (2026-08-13); the rest is still design |
 | [`docs/QA-KNOWN-GAPS.md`](docs/QA-KNOWN-GAPS.md) | What was already known going into the 2026-08-12 QA pass | Reference — do not file these as bugs |
-| [`docs/IFRAMES.md`](docs/IFRAMES.md) | Interacting with iframes in the engine, ignoring them in the trainer | Unbuilt, accurate |
+| [`docs/IFRAMES.md`](docs/IFRAMES.md) | Interacting with iframes in the engine, ignoring them in the trainer | **Engine shipped 2026-08-22** — a framed step is writable and runnable. Trainer capture inside a frame is still unbuilt |
 | [`docs/JAM-IMPORT.md`](docs/JAM-IMPORT.md) | Turning a jam.dev recording into a runnable test | Unbuilt, accurate |
 | [`docs/LINEAR.md`](docs/LINEAR.md) | "Send to Linear" on an a11y violation, and what leaves the Mac | **Shipped** — and since 2026-08-14 the tracker is selectable (Linear or GitHub) in Settings → Integrations; see `main/services/issue-tracker/` |
 | [`docs/TRAINING-CONTEXT.md`](docs/TRAINING-CONTEXT.md) | Explaining a failure to the model: user prose, screenshots, HTML state | **Half shipped** — user prose and `capture_app`/`get_screenshot` exist; screenshot annotation and preserved HTML state do not |
@@ -202,8 +262,8 @@ log, so check the log too: renderer errors and warnings are forwarded there by
 ## Testing
 
 **Two systems, one command.** `npm run test:all` runs the `check:*` scripts and
-then Vitest. Both must pass. 3997 Vitest tests across 191 files and 70 checks in
-the chain as of 2026-08-18 (72 are defined — `check:repo-hygiene` and
+then Vitest. Both must pass. 6048 Vitest tests across 333 files and 92 checks in
+the chain as of 2026-08-26 (94 are defined — `check:repo-hygiene` and
 `check:shell-drift` are deliberately outside it).
 
 Vitest has two projects. **`node`** covers `main/**/*.test.ts`,
@@ -220,24 +280,34 @@ assertions and a non-zero exit, no runner. Six are *source-level*
 `check:clickable-chrome`, `check:dialog-footer`, `check:drift-gap`) because
 they guard layout contracts jsdom cannot observe — occlusion, which it cannot
 see at all, and overflow, which it renders as zeros in both the fixed and the
-broken case.
+broken case. Two others **boot what they test** rather than reading it:
+`check:mcp-boot` speaks stdio JSON-RPC to a real server process, and
+`check:cli-exit` spawns the CLI and reads its exit code through a pipe. Both
+exist because every other `check:mcp-*` read source and stayed green for the six
+months the MCP server threw at module load.
 
-**A third system the local gate does not run: `e2e/`.** Sixteen Playwright
+**A third system the local gate does not run: `e2e/`.** Twenty-four Playwright
 specs driving the real app through `_electron` (`npm run test:e2e`, and CI's
 `gate.yml`). It is where anything about real windows gets checked — a click
 that changes route, a second window actually opening, occlusion, where the
-trainer panel physically lands, dialog footer layout, window titles, UI scale.
-jsdom has no second window and no layout engine, so these are not slow
-duplicates of unit tests; they are the only place their subject exists.
+trainer panel physically lands, dialog footer layout, window titles, UI scale,
+the forked TypeScript service. jsdom has no second window and no layout engine,
+so these are not slow duplicates of unit tests; they are the only place their
+subject exists.
 
-Three specs there are not about windows at all. `assert-parity.spec.ts` is the
-authority on what a step *means*, running every row through both the real
-injected replayer and the real generated source executed by real Playwright and
-asserting the two agree. `context-parity.spec.ts` answers the neighbouring
-question — which element a step points at. `step-progress.spec.ts` covers which
-steps a run reports, which is what decides which step the app can highlight.
-Changing what an assertion, a context clause, or the step reporter emits? Add a
-row.
+Five specs there are not about windows at all, and each answers a question only
+real Playwright can settle:
+
+| Spec | The question |
+| --- | --- |
+| `assert-parity.spec.ts` | What a step *means* — the injected replayer and the generated source must agree |
+| `context-parity.spec.ts` | Which element a step points *at* |
+| `shadow-parity.spec.ts` | The same, one level down, inside a web component |
+| `frame-parity.spec.ts` | Whether an emitted `frameLocator` chain resolves what the recorder meant |
+| `step-progress.spec.ts` | Which steps a run *reports*, which decides what the app can highlight |
+
+Changing what an assertion, a context clause, a shadow-DOM walk, a frame
+reference or the step reporter emits? Add a row.
 
 New features ship with tests. Most bugs found in this codebase so far have been
 silent — wrong behaviour that threw no error and looked correct on screen.
@@ -248,7 +318,8 @@ debugging time. Read it before any non-trivial change.
 
 ## CI
 
-Two workflows, both on every pull request and on pushes to `main`.
+Two workflows on every pull request and on pushes to `main`, plus a self-test
+for the Action.
 
 **`.github/workflows/gate.yml`** runs the real gate on hosted runners — `lint`,
 `type-check`, `test:all` and `build`, plus the Playwright e2e suite under
@@ -277,3 +348,7 @@ builtins and git only:
 - no absolute `/Users/...` paths in tracked files
 - no obvious secret material
 - `package.json` and `package-lock.json` in sync
+
+**`.github/workflows/action-selftest.yml`** drives `action.yml` the way a
+stranger would (`uses: ./`) against a library built from nothing — the one
+configuration no local check can stand up.

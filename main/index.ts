@@ -409,10 +409,11 @@ async function setupApplicationMenu() {
     // users look for it and attaches the system's own search field to it.
     //
     // Each item deep-links a TOPIC of the Documentation pane. The slugs are a
-    // contract with `docs/MCP-GUIDE.md` — rename one of those headings and
-    // `check:docs-blocks` fails rather than these items quietly opening the top
-    // of the document. The one external link is github.com, which is the only
-    // host `shell.openExternal` accepts here.
+    // contract with the documents in `docs/` that the pane ships — rename one
+    // of those headings and `check:docs-blocks` fails rather than these items
+    // quietly opening the top of the document. Two documents are linked from
+    // here now, which is why the slugs have to stay unique across both: this
+    // menu names a topic, never a document plus a topic.
     {
       role: "help",
       submenu: [
@@ -436,6 +437,19 @@ async function setupApplicationMenu() {
         {
           label: "Linear, GitHub and Slack",
           click: async () => await openSettingsPane("documentation/linear-github-and-slack"),
+        },
+        { type: "separator" },
+        {
+          label: "Running tests without the app",
+          click: async () => await openSettingsPane("documentation/why-run-tests-outside-the-app"),
+        },
+        {
+          label: "The command line",
+          click: async () => await openSettingsPane("documentation/the-command-line"),
+        },
+        {
+          label: "Running in GitHub Actions",
+          click: async () => await openSettingsPane("documentation/github-actions"),
         },
         { type: "separator" },
         {

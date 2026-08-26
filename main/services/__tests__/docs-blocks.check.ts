@@ -36,7 +36,7 @@ const root = process.cwd();
 
 /** Every doc the renderer bundles. Adding one here and forgetting to import it
  *  is harmless; importing one and forgetting to list it is what this catches. */
-const SHIPPED_DOCS = ["docs/MCP-GUIDE.md"];
+const SHIPPED_DOCS = ["docs/MCP-GUIDE.md", "docs/CI-GUIDE.md"];
 
 let failures = 0;
 
@@ -50,6 +50,10 @@ function assert(condition: boolean, label: string): void {
 }
 
 // ── Every shipped doc parses, and says something ─────────────────────
+
+/** slug -> the docs that define it. Filled by the loop, read by the two blocks
+ *  below, which both ask questions no single document can answer. */
+const slugOwners = new Map<string, string[]>();
 
 for (const rel of SHIPPED_DOCS) {
   const src = readFileSync(join(root, rel), "utf-8");
@@ -80,14 +84,47 @@ for (const rel of SHIPPED_DOCS) {
       : `${rel} topics with no content: ${empty.map((t) => t.slug).join(", ")}`,
   );
 
-  const slugs = page.topics.map((t) => t.slug);
-  const missing = REQUIRED_TOPIC_SLUGS.filter((s) => slugs.indexOf(s) === -1);
+  for (const topic of page.topics) {
+    const seen = slugOwners.get(topic.slug);
+    if (seen === undefined) slugOwners.set(topic.slug, [rel]);
+    else seen.push(rel);
+  }
+}
+
+// ── Slugs are unique across documents, not within one ────────────────
+
+{
+  // A slug is the row id the settings search indexes a topic under, the React
+  // key the topic list renders it with, and the segment
+  // `/settings/documentation/$topic` carries. None of the three is scoped by
+  // document, so two documents that both end in "See also" collide in all
+  // three — and the visible symptom is a Help menu item opening the wrong
+  // document's section. Caught here because nothing else looks across files.
+  const collisions = [...slugOwners.entries()].filter(([, owners]) => owners.length > 1);
+  assert(
+    collisions.length === 0,
+    collisions.length === 0
+      ? `topic slugs are unique across the ${SHIPPED_DOCS.length} shipped documents`
+      : `the same slug in more than one document: ${collisions
+          .map(([slug, owners]) => `${slug} (${owners.join(", ")})`)
+          .join("; ")}\n` +
+          "     Rename one of the headings — a slug names a topic, not a document plus a topic.",
+  );
+}
+
+// ── Every topic the app promises to keep is somewhere ────────────────
+
+{
+  // Across the union, not per document. Each doc carries its own topics, and
+  // asking every doc for every linked slug would fail the moment there were two.
+  const all = [...slugOwners.keys()];
+  const missing = REQUIRED_TOPIC_SLUGS.filter((s) => all.indexOf(s) === -1);
   assert(
     missing.length === 0,
     missing.length === 0
-      ? `${rel} still has every topic the app deep-links`
-      : `${rel} is missing topics the Help menu links to: ${missing.join(", ")}\n` +
-          `     Present: ${slugs.join(", ")}\n` +
+      ? "every topic the app deep-links still exists"
+      : `topics the Help menu links to are missing: ${missing.join(", ")}\n` +
+          `     Present: ${all.join(", ")}\n` +
           "     Either restore the heading or update REQUIRED_TOPIC_SLUGS and the menu.",
   );
 }
@@ -106,8 +143,9 @@ for (const rel of SHIPPED_DOCS) {
   );
   assert(linked.length > 0, `the Help menu deep-links topics (${linked.length})`);
 
-  const page = parseDoc(readFileSync(join(root, "docs/MCP-GUIDE.md"), "utf-8"));
-  const slugs = page.topics.map((t) => t.slug);
+  const slugs = SHIPPED_DOCS.flatMap((rel) =>
+    parseDoc(readFileSync(join(root, rel), "utf-8")).topics.map((t) => t.slug),
+  );
   const broken = linked.filter((s) => slugs.indexOf(s) === -1);
   assert(
     broken.length === 0,
