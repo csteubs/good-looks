@@ -34,6 +34,8 @@ import { fileURLToPath } from "node:url";
 import { readJsonFile } from "./data-dir.mjs";
 import { resolveScriptPath, scriptsDirFor } from "../shared/script-path.mjs";
 import { normalizeBaseUrl } from "../shared/base-url.mjs";
+import { readRunProvenance } from "../shared/run-provenance.mjs";
+import { normalizeRunTrigger } from "../shared/run-trigger.mjs";
 import { splitStepMarkers } from "../shared/step-marker.mjs";
 import { buildStepLineMapFromSource } from "../shared/step-line-map.mjs";
 import { recordRun } from "./metrics.mjs";
@@ -97,11 +99,55 @@ export const RUN_BROWSERS = ["chromium", "firefox", "webkit"];
 /**
  * The runner, bound to one data directory and one store.
  *
- * @param {{ dataDir: string, store: ReturnType<import("./store.mjs").createStore> }} deps
+ * ── `trigger` has NO DEFAULT, deliberately ─────────────────────────────────
+ * This function is the single run path behind two entry points, and it wrote
+ * `trigger: "mcp"` as a literal until R6. That was right while the MCP server
+ * was the only caller and became wrong the moment `cli/run.mjs` imported it:
+ * every `good-looks run` — every run of the GitHub Action included — was filed
+ * in the app's history as "Started by an MCP client".
+ *
+ * The reflex fix is a default of `"mcp"`, which reproduces the same bug for the
+ * next caller. An absent trigger is the honest answer for a caller that has not
+ * said, and `shared/run-trigger.mjs` already rules that absent means UNKNOWN
+ * rather than any particular value. So it is passed or it is not recorded, and
+ * it is NARROWED here rather than trusted: a typo would otherwise be written
+ * into a store the app reads back through a cast.
+ *
+ * @param {{
+ *   dataDir: string,
+ *   store: ReturnType<import("./store.mjs").createStore>,
+ *   secretEnv?: Record<string, string | undefined>,
+ *   secretFile?: Record<string, unknown>,
+ *   trigger?: string,
+ *   provenanceEnv?: Record<string, string | undefined>,
+ * }} deps
  */
-export function createRunner({ dataDir, store, secretEnv = process.env, secretFile = {} }) {
+export function createRunner({
+  dataDir,
+  store,
+  secretEnv = process.env,
+  secretFile = {},
+  trigger,
+  provenanceEnv = process.env,
+}) {
   const { listTests, readSettings, readSignatures, readOverlayRules, saveRunRecord, saveBatchRecord } =
     store;
+
+  /** Narrowed once. An unrecognised value is not carried through — see the
+   *  note on the signature. */
+  const runTrigger = normalizeRunTrigger(trigger);
+
+  /** WHERE these runs came from, resolved ONCE for the life of the runner.
+   *
+   *  Per run would be wrong rather than merely wasteful: a batch is one
+   *  invocation against one checkout, and re-reading the environment per test
+   *  invites a history in which two runs of the same batch record two
+   *  revisions — which is exactly the confusion the field exists to remove.
+   *
+   *  Nothing is fabricated when the environment says nothing. On a laptop this
+   *  is `undefined` and the field is simply absent, which is what an
+   *  un-attributable run honestly is. */
+  const runProvenance = readRunProvenance(provenanceEnv);
 
   /** WHERE BROWSERS LIVE, once. Three things need this answer and they must be
    *  the same one: `isBrowserInstalled` asks whether an engine is there,
@@ -906,16 +952,23 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
       // wrong while still looking like a plausible number.
       testTimeoutMs,
       // WHO started this. Same argument as `speed` above and a stronger one:
-      // without it an MCP-driven run is written into the app's history looking
-      // exactly like a person pressing Run, and the app has no other way to tell
-      // — this server writes run-history.json directly and shares no line of the
-      // app's runner. A literal rather than an import because there is one value
-      // to write, but it is a literal the APP validates: run-history-store
-      // narrows an unrecognised trigger to undefined, so a typo here would not
-      // fail, it would silently write MCP runs as unattributed. So check:mcp-parity
-      // §14 does not match a string — it runs what this literal says through the
-      // app's own normalizeRunTrigger, the function that would have dropped it.
-      trigger: "mcp",
+      // without it an unattended run is written into the app's history looking
+      // exactly like a person pressing Run, and the app has no other way to
+      // tell — this path writes run-history.json directly and shares no line of
+      // the app's runner.
+      //
+      // IT WAS THE LITERAL `"mcp"` UNTIL R6, and that is the whole reason it is
+      // a parameter now: this module became the run path for TWO entry points
+      // when `cli/run.mjs` imported it, and a literal cannot be right for both.
+      // Every CLI run, GitHub Action included, was filed as "Started by an MCP
+      // client" — wrong in the one surface the field was added to feed, and
+      // wrong silently, because a plausible value is exactly what nothing
+      // checks. Narrowed at construction, so a caller's typo writes nothing
+      // rather than an unvalidated string; absent stays absent.
+      ...(runTrigger ? { trigger: runTrigger } : {}),
+      // WHERE it came from, when the environment said. Absent on a laptop, and
+      // absent is honestly unknown — see shared/run-provenance.mjs.
+      ...(runProvenance ? { provenance: runProvenance } : {}),
       ...(batchId ? { batchId } : {}),
       // Both stored, like the app: the id joins back to the row, and the name
       // survives the row being renamed or deleted. A sweep whose history can't

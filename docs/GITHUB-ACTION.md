@@ -170,3 +170,50 @@ code:
 
 by index rather than by label, because the phrasing lives app-side and two
 spellings of one step is a drift this codebase has paid for before.
+
+## What the run history records about the job
+
+Every run this action performs writes a record into the library it was pointed
+at — the same `run-history.json` the app reads. Two fields say where that run
+came from, and both matter once results are carried back to a machine that was
+not there:
+
+- **`trigger: "cli"`.** Which entry point started it. Not `manual`, which means
+  a person in the app, and no longer `mcp`, which is what every CLI run was
+  recorded as until this was fixed.
+- **`provenance`** — the commit, branch, repository and job URL. Read straight
+  out of the environment GitHub Actions already sets, so a workflow needs to
+  pass nothing:
+
+  ```
+  revision       GITHUB_SHA
+  branch         GITHUB_HEAD_REF on a pull request, else GITHUB_REF_NAME
+  repositoryUrl  GITHUB_SERVER_URL + GITHUB_REPOSITORY
+  jobUrl         …/actions/runs/GITHUB_RUN_ID
+  ```
+
+  Two of those repay a second look, because both look wrong at a glance and
+  are not. On a **pull request**, `GITHUB_SHA` is the sha of the MERGE commit
+  GitHub built for the run, not of your branch's head — so the revision on the
+  record will be a commit you cannot find in your branch, and it is the honest
+  answer, because the merge commit is what the tests actually ran against.
+  `GITHUB_REF_NAME` on that same event is `123/merge`, naming no branch anyone
+  can check out, which is why the branch comes from `GITHUB_HEAD_REF` instead.
+
+On another CI, or to correct a value your provider reports uselessly, set any of
+these instead — they win per field, so you can override one and leave the rest:
+
+```yaml
+env:
+  GOOD_LOOKS_REVISION: ${{ env.CI_COMMIT_SHA }}
+  GOOD_LOOKS_BRANCH: release/2026-08
+  GOOD_LOOKS_REPOSITORY_URL: https://gitlab.example.com/team/app
+  GOOD_LOOKS_JOB_URL: https://gitlab.example.com/team/app/-/jobs/99
+```
+
+A field the runner cannot vouch for is **left out rather than repaired**. An
+over-long value is dropped, not truncated — a cut commit sha is a plausible sha
+for a different commit, while an absent one is honestly unknown. The four fields
+are judged independently, so a branch name your fork's contributor chose cannot
+cost the run its revision. Outside CI, where nothing answers, there is no
+`provenance` at all rather than a guess.

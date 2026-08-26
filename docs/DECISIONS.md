@@ -10,6 +10,120 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-26 — Where a run came from, and the literal that had quietly become a lie (R6)
+
+`RunRecord` has said WHO started a run since R33. It could not say WHAT WAS
+UNDER TEST. On a laptop that is tolerable — the answer is "the checkout on this
+machine". On a runner it is the only question that makes a run history worth
+keeping: forty container runs a week are forty rows nothing can tell apart, and
+a suite that reddened on one commit and passed on the next reads as flake.
+
+So `RunRecord.provenance` — revision, branch, repositoryUrl, jobUrl — resolved
+once per runner from the environment, through one gate in
+`shared/run-provenance.mjs`.
+
+**This is a prerequisite, not a nice-to-have, and the plan says so about a
+different item.** §10 records that an ingress path needs R6 first because *"this
+class of field cannot be backfilled — every row written before it exists is
+unclassifiable forever."* R12 ingests foreign runs into the local library.
+Ingesting them before the library can say they are foreign writes rows nothing
+can ever classify, and the environment that would have answered is gone with the
+container. That is why R6 came before R12 rather than after it.
+
+**The bug I found on the way is the more useful half of this entry.**
+
+`mcp/run-tests.mjs` wrote `trigger: "mcp"` as a literal. That was correct,
+deliberate, commented, and pinned by `check:mcp-parity` §14 — which did not
+match the string but ran it through the app's own `normalizeRunTrigger`, exactly
+the right technique. It was right while the MCP server was the only caller.
+
+It became wrong the day `cli/run.mjs` imported the same runner, and nothing
+noticed, because **nothing about the literal changed — what changed was who was
+asking.** Every `good-looks run` since R3 has been filed in the app's history as
+"Started by an MCP client", including every run of this repository's own GitHub
+Action. It lands in the Stats trigger strip, which is the one surface R33 built,
+wearing the wrong glyph. A wrong mark is worse than a missing one: it is
+evidence, and it points somewhere.
+
+A source-level check could not have caught it. The source was self-consistent;
+the assumption that broke was one level up, in the set of callers. What would
+have caught it is the thing this repo already knows about MCP boot and CLI exit
+— *run the real entry point and read what it actually wrote*. So `check:cli-exit`
+now does one real run and reads the record back out of `run-history.json`. It
+needs no browser: Playwright collects before it launches one, so a run whose
+spec is missing fails during collection, which is late enough to have written
+the record and early enough to need nothing installed.
+
+**`cli`, not the `ci` the plan and the module's own note both promised.** The
+same command is what the documentation tells a developer to run on their laptop
+first, and recording that as CI would invent evidence for the one filter the
+value exists to serve — the failure `normalizeRunTrigger`'s own
+`undefined`-never-`manual` rule exists to prevent. Read the four values back and
+they are one axis still: WHICH ENTRY POINT started this — the app's UI, the
+app's scheduler, the MCP server, the command line. "Was it CI?" is a different
+question, and `provenance` answers it from the environment rather than by
+inferring it from an entry point.
+
+**`createRunner` takes the trigger with NO DEFAULT.** A default of `"mcp"` is
+the reflex repair and it rebuilds this exact bug for the next caller, who would
+inherit a plausible wrong answer instead of an honest absent one — and
+`shared/run-trigger.mjs` already rules that absent means unknown. `check:mcp-parity`
+§14 asserts the absence of the default, because that is the property a future
+reader is most likely to "tidy up".
+
+**Reject, never truncate.** The rule in the provenance gate that is not the
+obvious one. Capping an over-long value by cutting it produces a shorter value
+of the right shape: a truncated commit sha is still a plausible commit sha,
+naming a different commit or none at all, and everything downstream compares it
+against real ones. A field that is absent says "unknown", which is true; a field
+that is truncated says something false in a format nothing can detect. So an
+over-long field is dropped — and dropping one never drops the others, because a
+fork's pull request names its own branch and a hostile branch name must not cost
+the run its revision. That last property is what the end-to-end case asserts:
+a `GITHUB_HEAD_REF` carrying a newline is not stored, and the run still records
+its commit.
+
+**`??` is the wrong operator for choosing between `GITHUB_HEAD_REF` and
+`GITHUB_REF_NAME`,** and this one is a real GitHub behaviour rather than a
+hypothesis: `GITHUB_HEAD_REF` is DEFINED AND EMPTY on a push build. `a ?? b`
+skips only null and undefined, so the obvious spelling picks the empty string
+and every push build records no branch — while pull-request builds, the ones a
+developer tests this on, work perfectly.
+
+**Rejected: reading the environment inside the app's own runner.** It would have
+been one more call site and it can never fire in the normal case — a macOS app
+launched from Finder does not inherit a shell's environment at all. The field
+exists to attribute runs nobody watched; the app's are the attended path.
+
+**Measured on a real runner before this was called done.** The self-test's new
+step reads the library's own `run-history.json` back and compares each field
+against the environment *that step* sees. On `6e3ce05` it recorded:
+
+```json
+"trigger": "cli",
+"provenance": {
+  "revision": "43debe81b1c1a35dbfee5de0079fb34a572b8b7a",
+  "branch": "feat/run-provenance",
+  "repositoryUrl": "https://github.com/csteubs/good-looks",
+  "jobUrl": "https://github.com/csteubs/good-looks/actions/runs/32940712199"
+}
+```
+
+Two things that could only be learned there. The branch is the source branch,
+which is the `GITHUB_HEAD_REF` preference paying off on a real `pull_request`
+event — `GITHUB_REF_NAME` was `283/merge`. And the revision is the sha of the
+MERGE COMMIT GitHub built for the run, not of the branch head: a commit you
+cannot find in your own branch, and the honest answer, because it is what the
+tests ran against. That reads as a bug to anyone comparing it with their branch,
+so it is written down in `docs/GITHUB-ACTION.md` rather than left to be
+rediscovered.
+
+**Nothing renders provenance yet, deliberately.** R6 is the record; the
+consumers are R12 and the Stability/flake surfaces. Adding the field ahead of
+them is the whole point of a value that cannot be backfilled, and it is what the
+plan asks for. What IS user-visible here is the trigger fix: a CLI run now wears
+its own glyph in Stats instead of the MCP one.
+
 ### 2026-08-26 — R5's remaining half, and the entry that already refuted the other
 
 I set out to build R5 as the plan specifies it and found, on the way, that

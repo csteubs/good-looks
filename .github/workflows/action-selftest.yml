@@ -132,6 +132,52 @@ jobs:
           grep -q 'Failed at step' results.xml || { echo "::error::the failure message names no step — the reporter, the line map or the emitter is not wired"; exit 1; }
           echo "ok — exit 1, both tests reported, the failing step named"
 
+      # ── 1b. The run history says WHERE the run came from (R6) ──────────
+      #
+      # The one assertion here that nothing local can make. `check:cli-exit`
+      # proves the same fields end-to-end through the real binary, but it
+      # SUPPLIES the environment — so it proves the reader works and says
+      # nothing about whether GITHUB_SHA and friends actually reach the CLI
+      # through a composite action's step. That is exactly the class of
+      # assumption this workflow was written to catch: its first real run found
+      # a relative `GOOD_LOOKS_USERDATA` killing every test, which four local
+      # invocations with absolute paths could not see.
+      - name: The run history says where the run came from
+        run: |
+          set -euo pipefail
+          history=fixture-library/recorder/run-history.json
+          test -f "$history" || { echo "::error::the run wrote no history at $history"; exit 1; }
+          echo "--- run-history.json ---"; cat "$history"
+          node -e '
+            const fs = require("fs");
+            const runs = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const fail = (m) => { console.log(`::error::${m}`); process.exit(1); };
+            if (runs.length === 0) fail("no run records were written");
+            for (const run of runs) {
+              // WHICH ENTRY POINT. `mcp` here is the pre-R6 bug verbatim: the
+              // shared runner hard-coded it, so every action run was filed as
+              // MCP-driven.
+              if (run.trigger !== "cli") {
+                fail(`run ${run.id} recorded trigger ${JSON.stringify(run.trigger)}, expected "cli"`);
+              }
+              const p = run.provenance;
+              if (!p) fail(`run ${run.id} recorded no provenance, but this IS a CI runner`);
+              // Compared against the environment this step sees, not against a
+              // literal — a hard-coded sha would pass while reading nothing.
+              if (p.revision !== process.env.GITHUB_SHA) {
+                fail(`revision ${JSON.stringify(p.revision)} is not GITHUB_SHA ${JSON.stringify(process.env.GITHUB_SHA)}`);
+              }
+              if (!p.branch) fail(`run ${run.id} recorded no branch`);
+              if (!p.jobUrl || !p.jobUrl.includes(process.env.GITHUB_RUN_ID)) {
+                fail(`jobUrl ${JSON.stringify(p.jobUrl)} does not name run id ${process.env.GITHUB_RUN_ID}`);
+              }
+              if (!p.repositoryUrl || !p.repositoryUrl.startsWith("https://")) {
+                fail(`repositoryUrl ${JSON.stringify(p.repositoryUrl)} is not an https URL`);
+              }
+            }
+            console.log(`ok — ${runs.length} run(s) recorded trigger=cli with this job\u2019s commit, branch and URL`);
+          ' "$history"
+
       # ── 2. A selector that matches nothing is 2, not 0 ─────────────────
       #
       # The distinction the whole exit contract exists for: a suite of zero is

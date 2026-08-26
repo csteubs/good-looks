@@ -7,7 +7,7 @@
 
 /** Who or what started a run. See RUN_TRIGGERS for why `replay` is not one of
  *  these — it is a different axis, already recorded as `replayOfRunId`. */
-export type RunTrigger = "manual" | "schedule" | "mcp";
+export type RunTrigger = "manual" | "schedule" | "mcp" | "cli";
 
 export declare const RUN_TRIGGERS: readonly RunTrigger[];
 

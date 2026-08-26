@@ -1122,20 +1122,38 @@ function codeOnly(source: string): string {
   );
 }
 
-// ── 14. An MCP-driven run says so on the record ───────────────────────
+// ── 14. An unattended run says WHICH ONE it was on the record ─────────
 //
-// `trigger` is what stops an agent-driven run reading, in the app's own history,
-// exactly like a person pressing Run. This server writes run-history.json
-// DIRECTLY — it shares no line of playwright-runner.ts — so nothing but the
-// literal in its record decides the answer.
+// `trigger` is what stops an unattended run reading, in the app's own history,
+// exactly like a person pressing Run. These processes write run-history.json
+// DIRECTLY — they share no line of playwright-runner.ts — so nothing but what
+// they stamp decides the answer.
 //
-// The failure this is written against is a typo, and it is silent in the worst
-// direction: `run-history-store` narrows an unrecognised trigger to `undefined`
-// rather than carrying it, so `trigger: "MCP"` would not throw, would not warn,
-// and would write every agent-driven run as unattributed — indistinguishable
-// from a run recorded before the field existed. The check therefore does not
-// match a string; it runs what the source writes through the APP'S OWN
-// normalizer, which is the function that would have dropped it.
+// The failure this was originally written against is a typo, and it is silent
+// in the worst direction: `run-history-store` narrows an unrecognised trigger to
+// `undefined` rather than carrying it, so `trigger: "MCP"` would not throw,
+// would not warn, and would write every unattended run as unattributed —
+// indistinguishable from a run recorded before the field existed. The check
+// therefore does not match a string; it runs what the source writes through the
+// APP'S OWN normalizer, the function that would have dropped it.
+//
+// ── What R6 changed, and why this section grew rather than moved ───────────
+// The stamp used to be a literal `"mcp"` inside `mcp/run-tests.mjs`. That was
+// right while the MCP server was the only caller and became WRONG, silently, the
+// day `cli/run.mjs` imported the same runner: every `good-looks run` — every run
+// of this repo's own GitHub Action included — was filed as "Started by an MCP
+// client". The literal was correct, self-consistent and checked; what changed
+// underneath it was who was asking.
+//
+// So the assertions now follow the value to where it is decided. Two properties
+// carry the weight, and the second is the one a reader is likely to drop:
+//
+//   - each ENTRY POINT states its own trigger, and each states one the app will
+//     accept — run through `normalizeRunTrigger` here, never matched as a
+//     string;
+//   - the shared runner has NO DEFAULT for it. A default of `"mcp"` is the
+//     reflex repair and it rebuilds the exact bug for the next caller, who would
+//     inherit a plausible wrong answer instead of an honest absent one.
 
 {
   const mcpSrc = codeOnly(mcpRunSource());
@@ -1155,21 +1173,66 @@ function codeOnly(source: string): string {
     "mcp: isolated executeTest's record literal (the trigger assertions read only it)",
   );
 
-  const written = /\btrigger:\s*"([^"]*)"/.exec(recordSrc)?.[1];
+  // The record stamps whatever the runner RESOLVED, rather than a literal. A
+  // literal here cannot be right for both callers — that is R6's bug verbatim.
   assert(
-    written !== undefined,
-    "mcp: the run record stamps a trigger — without it an agent's run looks manual",
-  );
-  // The whole point: the value the APP will accept, checked by the app's
-  // function rather than by a second copy of the vocabulary here.
-  assert(
-    normalizeRunTrigger(written) === "mcp",
-    "mcp: the stamped trigger survives run-history-store's narrowing as \"mcp\"",
+    /\.\.\.\(runTrigger \? \{ trigger: runTrigger \} : \{\}\)/.test(recordSrc),
+    "runner: the record stamps the trigger its CALLER gave it, not a literal",
   );
   assert(
-    RUN_TRIGGERS.includes("mcp"),
-    "mcp: \"mcp\" is in the shared vocabulary, so the CLI adds its own in one place",
+    !/\btrigger:\s*"/.test(recordSrc),
+    "runner: …and hard-codes none, which is what made every CLI run read as `mcp`",
   );
+  // Narrowed where it enters, so a caller's typo writes nothing rather than an
+  // unvalidated string into a store the app reads back through a cast.
+  assert(
+    /const runTrigger = normalizeRunTrigger\(trigger\);/.test(mcpSrc),
+    "runner: …and narrows it through the shared vocabulary on the way in",
+  );
+  // NO DEFAULT. `trigger = "mcp"` in the destructuring would compile, pass every
+  // other assertion here, and hand the next caller the same silent misattribution
+  // this section exists to have caught once.
+  const deps = mcpSrc.slice(
+    mcpSrc.indexOf("export function createRunner("),
+    mcpSrc.indexOf("const { listTests"),
+  );
+  assert(
+    deps.length > 0 && deps.includes("provenanceEnv"),
+    "runner: isolated createRunner's parameter list (the default assertion reads only it)",
+  );
+  assert(
+    !/\btrigger\s*=/.test(deps),
+    "runner: createRunner defaults the trigger to NOTHING — absent is honest, a default is a lie",
+  );
+
+  // Each entry point states its own, and states one the app will accept. Read
+  // from the source rather than assumed, because the value is the whole subject.
+  for (const [label, file, expected] of [
+    ["mcp", "mcp/server.mjs", "mcp"],
+    ["cli", "cli/run.mjs", "cli"],
+  ] as const) {
+    const src = codeOnly(readFileSync(resolve(process.cwd(), file), "utf8"));
+    // Anchored on the call that yields `runSelection`, NOT on the first
+    // `createRunner(` in the file. `cli/run.mjs` builds a second runner for
+    // `install`, which records no run and rightly names no trigger; matching
+    // that one would report the run path as untriggered and be wrong in the
+    // reassuring direction.
+    const callStart = src.indexOf("runSelection } = createRunner({");
+    const callSrc = src.slice(callStart, src.indexOf("});", callStart));
+    const written = /\btrigger:\s*"([^"]*)"/.exec(callSrc)?.[1];
+    assert(
+      callStart > -1 && written !== undefined,
+      `${label}: names its own trigger where it builds the runner`,
+    );
+    assert(
+      normalizeRunTrigger(written) === expected,
+      `${label}: …and it survives run-history-store's narrowing as "${expected}"`,
+    );
+    assert(
+      RUN_TRIGGERS.includes(expected),
+      `${label}: "${expected}" is in the shared vocabulary, spelled in one place for both`,
+    );
+  }
 
   // The other half of the parity, and the reason this lives HERE rather than in
   // a check of its own: a trigger only tells the two writers apart if BOTH
@@ -1430,6 +1493,78 @@ function codeOnly(source: string): string {
   assert(
     /no selected test declares/.test(mcpSrc),
     "…and a --var name nobody declares is reported, because it is inert and almost always a typo",
+  );
+}
+
+// ── 18. ONE gate for a run's PROVENANCE, and one on each side of it ────
+//
+// R6 records what a run was testing — the commit, branch, repository and job.
+// Two properties have to hold together, and they fail in opposite directions.
+//
+// THE FIELDS ARE UNTRUSTED TEXT. `GITHUB_HEAD_REF` on a pull request is the
+// branch name whoever opened it chose, and on a fork that is anyone. So the
+// runner must not write what the environment said; it must write what the gate
+// returned. And the app's store must narrow again on its own write, because the
+// store is fed by the app, by the MCP server and by the CLI — three processes
+// that ship on their own schedules — and a guard that only runs in the writer
+// you happened to look at is not a guard.
+//
+// AND THE GATE MUST NOT BE TOO EAGER. Dropping a whole record because one field
+// was hostile would cost the user the commit sha — the single field a person
+// actually needs when a CI run goes red. The field-by-field property is
+// asserted for real in `run-provenance.test.ts` and end-to-end through the
+// spawned binary in `check:cli-exit`; what is asserted here is the structural
+// half those cannot see, that both writers route through the same function.
+{
+  const mcpSrc = codeOnly(mcpRunSource());
+  const storeSrc = codeOnly(
+    readFileSync(resolve(process.cwd(), "main/services/run-history-store.ts"), "utf8"),
+  );
+  const shared = readFileSync(resolve(process.cwd(), "shared/run-provenance.mjs"), "utf8");
+
+  assert(
+    /export function normalizeRunProvenance/.test(shared) &&
+      /export function readRunProvenance/.test(shared),
+    "shared: the provenance gate and its environment reader live in shared/run-provenance.mjs",
+  );
+  // Reading the environment is not the same act as trusting it. `readRunProvenance`
+  // builds candidate strings — including URLs it assembles itself out of
+  // GITHUB_SERVER_URL and GITHUB_REPOSITORY — and hands them to the gate rather
+  // than returning them. A reader that returned its own object would be a second
+  // way in, which is the shape every module in shared/ exists to prevent.
+  assert(
+    /return normalizeRunProvenance\(\{/.test(shared),
+    "shared: …and the reader passes even its OWN derived values through that gate",
+  );
+
+  assert(
+    /const runProvenance = readRunProvenance\(provenanceEnv\);/.test(mcpSrc),
+    "runner: resolves provenance from the environment it was given",
+  );
+  // ONCE, at construction, not per run. A batch is one invocation against one
+  // checkout; re-reading per test invites a history where two runs of the same
+  // batch record two revisions, which is the confusion the field removes.
+  assert(
+    mcpSrc.split("readRunProvenance(").length - 1 === 1,
+    "runner: …exactly once, so every run of one batch records the same checkout",
+  );
+  assert(
+    /\.\.\.\(runProvenance \? \{ provenance: runProvenance \} : \{\}\)/.test(mcpSrc),
+    "runner: …and writes it only when the environment actually said something",
+  );
+
+  // The app's store narrows AGAIN on its own write. Not redundant: this file is
+  // written by three processes, and it is the only one of them the app controls.
+  assert(
+    /normalizeRunProvenance/.test(storeSrc),
+    "app: run-history-store narrows provenance on write, like it narrows the trigger",
+  );
+  // The NARROWED value is what is stored. `provenance: run.provenance` beside a
+  // call to the gate would type-check, read as guarded, and store the input.
+  assert(
+    /const provenance = normalizeRunProvenance\(run\.provenance\);/.test(storeSrc) &&
+      /\.\.\.\(provenance \? \{ provenance \} : \{\}\)/.test(storeSrc),
+    "app: …and stores what the gate RETURNED, never the caller's object",
   );
 }
 

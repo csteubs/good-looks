@@ -23,6 +23,7 @@ import {
   MonitorOff,
   Search,
   Stamp,
+  Terminal,
   Timer,
   X,
   Wand2,
@@ -138,6 +139,7 @@ function dayEndMs(v: string): number {
 const TRIGGER_MARKS: Record<Exclude<RunTrigger, "manual">, LucideIcon> = {
   schedule: CalendarClock,
   mcp: Bot,
+  cli: Terminal,
 };
 
 /**
