@@ -6,12 +6,21 @@
 // page-mutating action into GLAZE_ARTIFACT_DIR.
 //
 // Contract (Phase 1 of the visual-testing roadmap):
-//   • Files:    <GLAZE_ARTIFACT_DIR>/<stepIndex>.png  (stepIndex = 0-based ACTION order)
-//   • Manifest: <GLAZE_ARTIFACT_DIR>/manifest.json     (per-step artifact + outcome model)
+//   • Files:    <artifact dir>/<stepIndex>.png  (stepIndex = 0-based ACTION order)
+//   • Manifest: <artifact dir>/manifest.json     (per-step artifact + outcome model)
 // The check is env-gated so an off run pays nothing (falls back to base `test`,
 // no prototype patching, no fixture wrapping). Every capture is wrapped so a
 // failure (detached frame, navigation mid-shot, timeout) is logged and skipped
 // and can NEVER fail or alter the underlying test's pass/fail result.
+//
+// The artifact dir is GLAZE_ARTIFACT_DIR on a first attempt and
+// `<GLAZE_ARTIFACT_DIR>/attempt-<n>/` on a retry. This is a `page` fixture, so
+// Playwright re-enters it for every attempt with the step counter back at 0 —
+// and before R24a that meant attempt 2 wrote its screenshots, manifest and logs
+// straight over attempt 1's. Since a retry only follows a failure, the attempt
+// being destroyed was always the one worth looking at. The spelling is
+// `shared/attempt-artifacts.mjs`, interpolated below rather than copied: this
+// file WRITES those directories and the app READS them.
 //
 // Plain JavaScript (no TypeScript) because Playwright loads it via its own
 // Babel transform, which does not understand `import type`.
@@ -29,6 +38,7 @@ import { DISMISS_COUNT_ENV, DISMISS_FIXTURE_FILE } from "./dismiss-fixture-names
 import { USER_CSS_ENV, USER_INIT_ENV, USER_PAGE_FIXTURE_FILE } from "./user-page-fixture-source.mjs";
 import { SIGNATURE_COUNT_ENV, SIGNATURE_FIXTURE_FILE } from "./signature-fixture-source.mjs";
 import { STEP_MARKER } from "./step-marker.mjs";
+import { ATTEMPT_HELPERS } from "./attempt-artifacts.mjs";
 
 export const captureFixtureSource = `import { test as base, expect } from "@playwright/test";
 import * as fs from "fs";
@@ -83,6 +93,16 @@ const AXE_PATH = process.env.GLAZE_AXE_PATH || "";
 const MAX_VIOLATIONS = 25;
 const MAX_NODES = 5;
 const DIR = process.env.GLAZE_ARTIFACT_DIR || "";
+// The ONE spelling of what an attempt IS and where its evidence goes,
+// interpolated from shared/attempt-artifacts.mjs. Not imported: this file is
+// written next to the specs and loaded by Playwright's own transform, and a
+// hand-copied branch here is the drift the shared module exists to stop.
+${ATTEMPT_HELPERS}
+// This attempt's directory. Attempt 0 keeps DIR, so every existing reader — the
+// replay, the visual diff, readManifest, readShot — is untouched.
+function attemptArtifactDir(attempt) {
+  return path.join(DIR, attemptDirName(attempt));
+}
 const TEST_ID = process.env.GLAZE_TEST_ID || "";
 const RUN_ID = process.env.GLAZE_RUN_ID || "";
 // Where to save this run's signed-in storage state (login-session tests).
@@ -125,9 +145,18 @@ const STEP_MARKER = ${JSON.stringify(STEP_MARKER)};
 // from \`testInfo.file\` — the path PLAYWRIGHT resolved, so a capture run's
 // redirected temp copy is matched without any guessing about where it lives.
 let specFile = "";
+// Which attempt is running, set per test from \`testInfo.retry\`. Every marker
+// carries it so the backend can keep one attempt's outcomes apart from
+// another's; without it the last attempt's verdict is the only one that
+// survives, and a test that failed and then passed reports no failure at all.
+let attemptNo = 0;
 
 function emitStepMarker(payload) {
   try {
+    // Stamped HERE rather than at each call site: three of them, and a fourth
+    // that forgot would report its step under attempt 0 no matter which
+    // attempt ran it.
+    payload.attempt = attemptNo;
     process.stdout.write(STEP_MARKER + JSON.stringify(payload) + "\\n");
   } catch (err) {
     // Progress reporting must never fail a run. A step that goes unhighlighted
@@ -531,7 +560,11 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
     // Installed AFTER heal and settle so it is the outermost of the three — but
     // \`specCallerLine\` searches the whole stack rather than one frame, so a
     // future patch landing on either side of it does not silently stop progress.
+    // Per-test state, read together: the spec Playwright resolved, and which
+    // attempt at it this is. Playwright numbers a retry from 1 and re-enters a
+    // \`page\` fixture for every attempt, so this is the one place that knows.
     specFile = testInfo.file || "";
+    attemptNo = normalizeAttempt(testInfo.retry);
     patchOnce(page);
     // Inject axe into every document, once, rather than evaluating its ~570KB
     // source per check. addInitScript survives navigation, which a per-check
@@ -558,8 +591,9 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
       }
       return;
     }
-    try { fs.mkdirSync(DIR, { recursive: true }); } catch (e) { /* ignore */ }
-    ctx = { dir: DIR, index: 0, manifest: [], startedAt: Date.now(), captureMs: 0, a11yMs: 0, a11yChecks: 0 };
+    const attemptDir = attemptArtifactDir(attemptNo);
+    try { fs.mkdirSync(attemptDir, { recursive: true }); } catch (e) { /* ignore */ }
+    ctx = { dir: attemptDir, index: 0, manifest: [], startedAt: Date.now(), captureMs: 0, a11yMs: 0, a11yChecks: 0 };
     const logs = LOGS_ON ? { console: glazeMakeStore(), network: glazeMakeStore() } : null;
     if (logs) installLogCapture(page, logs);
     // The action patch itself is already installed above — every run that loads
@@ -578,6 +612,10 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
           runId: RUN_ID,
           title: testInfo.title,
           status: testInfo.status,
+          // Which attempt produced this evidence. The directory already says
+          // so, but a manifest is also read on its own — and "which attempt is
+          // this" has no answer from inside one that does not carry it.
+          attempt: attemptNo,
           startedAt: ctx.startedAt,
           finishedAt: Date.now(),
           // Total wall-clock ms spent taking screenshots this run, and how many
@@ -590,7 +628,7 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
           a11yChecks: ctx.a11yChecks,
           steps: ctx.manifest,
         };
-        fs.writeFileSync(path.join(DIR, "manifest.json"), JSON.stringify(manifest, null, 2));
+        fs.writeFileSync(path.join(ctx.dir, "manifest.json"), JSON.stringify(manifest, null, 2));
       } catch (err) {
         process.stderr.write("[glaze-capture] manifest write failed: " + String(err) + "\\n");
       }
@@ -601,10 +639,10 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
         try {
           const c = glazeDrain(logs.console);
           const n = glazeDrain(logs.network);
-          fs.writeFileSync(path.join(DIR, "console.json"), JSON.stringify({
+          fs.writeFileSync(path.join(ctx.dir, "console.json"), JSON.stringify({
             testId: TEST_ID, runId: RUN_ID, dropped: c.dropped, entries: c.entries,
           }, null, 2));
-          fs.writeFileSync(path.join(DIR, "network.json"), JSON.stringify({
+          fs.writeFileSync(path.join(ctx.dir, "network.json"), JSON.stringify({
             testId: TEST_ID, runId: RUN_ID, dropped: n.dropped, headersFiltered: !ALL_HEADERS, entries: n.entries,
           }, null, 2));
         } catch (err) {

@@ -160,6 +160,19 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      unattended run does not — the fixture falls back to the
                      step id, which puts the gap in the artifact rather than in
                      the ranking.
+                     attempt-artifacts.mjs is WHERE ONE ATTEMPT'S EVIDENCE
+                     GOES (R24a). Playwright re-runs a failed test from the
+                     top and the capture fixture is a `page` fixture, so every
+                     attempt re-entered it with the step counter at 0 and one
+                     fixed directory — attempt 2 wrote over attempt 1's
+                     screenshots, manifest and logs, and the scratch dir
+                     holding both traces was deleted at run end. A retry only
+                     follows a failure, so the attempt destroyed was always
+                     the one worth reading. Attempt 0 KEEPS the run directory
+                     (it is the failing one, and where every reader already
+                     points); later attempts get `attempt-<n>/`. Interpolated
+                     into the capture fixture as ATTEMPT_HELPERS, because that
+                     file WRITES the directories the app READS
                      heal-artifacts.mjs is the FILE that map arrives in —
                      healMapFileName/healDirName. Added after R49, where the
                      app wrote <runId>.heal-map.json and the MCP path pointed
@@ -381,9 +394,9 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 
 **A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS — or a real navigation — gets checked: `click-navigation.spec.ts` (a click that changes route is recorded, including one a client-side router intercepts; the failure it was written against loses six clicks out of six and jsdom cannot host it, because nothing there has a navigation that destroys the document mid-read), `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `dialog-lifecycle.spec.ts` (whether the dialog that started a recording is still on top of the app afterwards — the existing recording spec invokes `recorder:start` over IPC, so it opens no dialog and could never see one left behind), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app), `verified-steps.spec.ts` (that an AI-proposed step is actually TRIED on the live page before it is inserted, that the first failure stops the rest, and that capture does not record the try a second time — a live session acting on a real page, which nothing in jsdom can host), `ts-service.spec.ts` (that the app forks the TypeScript service through a real `utilityProcess` and it answers — the child path, the node_modules resolution and `process.parentPort` exist nowhere else; `check:ts-service` boots the same built file under plain Node). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
 
-**Five specs there are not about windows at all.** `assert-parity.spec.ts`,
-`context-parity.spec.ts`, `shadow-parity.spec.ts`, `step-progress.spec.ts` and
-`frame-parity.spec.ts`
+**Six specs there are not about windows at all.** `assert-parity.spec.ts`,
+`context-parity.spec.ts`, `shadow-parity.spec.ts`, `step-progress.spec.ts`,
+`frame-parity.spec.ts` and `retry-evidence.spec.ts`
 — the second answers the neighbouring question, not
 "what does this step MEAN" but "which element does it POINT AT". Element context
 is resolved twice, by a DOM walk in the trainer (`ctxFilter` inside `matchesFor`)
@@ -417,6 +430,18 @@ crawl run, where the fixtures take every action's location off the spec, NO step
 was reported and the progress bar never left the first one. The laptop-speed
 half is `check:step-progress`. **Changing what reports a step — the reporter's
 categories, the fixture's wrapper, the marker format? Add a row.**
+
+**`retry-evidence.spec.ts`** is the sixth, and it asks two things only real
+Playwright answers. Does a retry actually re-enter the `page` fixture with
+`testInfo.retry` set — which everything in R24a assumes? And what does
+Playwright NAME a retried attempt's scratch directory, which is what the runner
+files a salvaged trace by? The repo's own comment said `<slug>/retryN/`, a
+nested directory Playwright does not produce. It runs a test that fails once
+and passes on retry and asserts two manifests, two statuses, markers under both
+attempts, and both scratch directories. The laptop-speed half is
+`check:retry-evidence`, which executes the shipped fixture and reporter strings
+without a browser. **Changing where an attempt's artifacts go, or how the
+attempt is read? Add a row.**
 
 **`frame-parity.spec.ts`** is the fourth, and the iframe engine's authority: the
 emitted `frameLocator` chain, executed by real Playwright, must resolve the

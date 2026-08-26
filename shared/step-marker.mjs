@@ -11,6 +11,8 @@
 // Pure: no fs, no IPC, no shell import. The runner owns the stream; this owns
 // what a line of it MEANS.
 
+import { normalizeAttempt } from "./attempt-artifacts.mjs";
+
 /** Prefix identifying a progress line on a run's stdout. */
 export const STEP_MARKER = "__GLAZE_STEP__:";
 
@@ -18,11 +20,17 @@ export const STEP_MARKER = "__GLAZE_STEP__:";
  *  carried: nothing consumes it, and it is the only field that can contain
  *  page-derived text. */
 // The two shapes this module speaks are declared in step-marker.d.mts:
-//   StepMarker  { event: "begin" | "end"; line: number; ok: boolean }
+//   StepMarker  { event: "begin" | "end"; line: number; ok: boolean; attempt: number }
 //   StdoutSplit { visible: string; markers: StepMarker[]; rest: string }
 // `line` is 1-based and maps to a step index in the runner; `ok` is false only
 // on a reported failure, and a `begin` is always true. `rest` is the trailing
 // partial line, handed back in as `buffered` next time.
+//
+// `attempt` is which of Playwright's attempts at this test the transition
+// belongs to — 0 unless `retries` is on. Carried because the runner keys a
+// run's per-step outcomes by it: without the field every attempt writes into
+// one map, last write wins, and a test that failed and then passed reports
+// that nothing failed (R24a).
 
 /**
  * Validate one marker payload.
@@ -42,11 +50,17 @@ function parseStepMarker(json) {
     return null;
   }
   if (!raw || typeof raw !== "object") return null;
-  const { event, line, ok } = raw;
+  const { event, line, ok, attempt } = raw;
   if (event !== "begin" && event !== "end") return null;
   if (typeof line !== "number" || !Number.isInteger(line) || line < 1) return null;
   // Absent means "fine" — a `begin` never carries one.
-  return { event, line, ok: ok === undefined ? true : ok === true };
+  //
+  // `attempt` is normalized rather than validated away: a marker from a writer
+  // that predates the field, or one whose attempt is unusable, is still a real
+  // step transition and dropping it would put the progress bar back where it
+  // was before any of this was reported. `normalizeAttempt` answers 0, which is
+  // exactly what such a marker means.
+  return { event, line, ok: ok === undefined ? true : ok === true, attempt: normalizeAttempt(attempt) };
 }
 
 /**

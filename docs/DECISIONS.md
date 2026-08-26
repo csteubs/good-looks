@@ -10,6 +10,78 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-26 — The passing attempt destroyed the failing one (R24a)
+
+Retries are not on in this app. `--retries` is R24, unbuilt. So the obvious
+reading of R24a is "prepare for a feature nobody has asked for yet", and that
+reading is wrong twice over.
+
+**A test can already retry itself.** `test.describe.configure({ retries: 1 })`
+is a line in a spec, and an imported project can carry one. The `--retries`
+flag is not what creates attempts; Playwright is.
+
+**And an attempt's evidence is written once or never.** The capture fixture is
+a `page` fixture, so Playwright re-enters it for every attempt with the step
+counter back at 0. It wrote into one fixed `GLAZE_ARTIFACT_DIR`, so attempt 2
+put its screenshots, `manifest.json`, `console.json` and `network.json` over
+attempt 1's. Playwright's scratch dir — which holds both attempts' traces — is
+deleted in the runner's `finally`. Nothing survives to reconstruct from
+afterwards.
+
+A retry only ever follows a failure. So the attempt overwritten was always the
+one that failed, and what the app reported was a green run pointing at evidence
+of the attempt that worked. On a product whose claim is that it is better at
+diagnosis than at absorption.
+
+**The rule: attempt 0 keeps the run directory; later attempts get
+`attempt-<n>/` beneath it.**
+
+The asymmetry is the decision. Numbering every attempt — `attempt-0/`,
+`attempt-1/` — is tidier and is the wrong way round: attempt 0 is the failing
+attempt, and it is what `readManifest`, `readShot`, the replay, the visual diff
+and Open Trace already point at. Numbering it moves the interesting evidence
+somewhere nothing reads and leaves the passing attempt where the app looks.
+Keeping attempt 0 in place also means no reader changed and no migration
+exists — every run on disk today is a run of one attempt.
+
+**The trace gate was the exit code, and the exit code is the wrong question.**
+`retain-on-failure` keeps a trace per FAILED attempt. A run that fails and then
+passes exits 0, so `if (!outputDir || exitCode === 0) return false` deleted the
+one trace worth opening. It now asks whether ANY attempt failed — three
+signals, because none is sufficient alone: a non-zero exit, more than one
+attempt (Playwright retries nothing that passed), and a failed step in any
+attempt's map. `findTraceZips` returns every trace with the attempt it came
+from, instead of whichever the walk reached first.
+
+**Two things deliberately NOT done.**
+
+`attempt` is not on the `runner:step` IPC payload. The renderer has nothing to
+show for it until retries exist — on a retry the step list simply walks back to
+step one — and a field on the wire that nothing reads is the exact shape this
+plan keeps naming. It is also the one part of this that IS backfillable: a live
+stream can gain a field the day something consumes it.
+
+`artifactStore` gained no `listAttempts`. R27 and R29 will want one; adding it
+now would be a read API with no reader. The write side is what cannot wait.
+
+**How Playwright names a retried attempt's directory was checked, not
+modelled.** The runner derives a salvaged trace's attempt from that name, and
+this repo's own comment said `<test-slug>/retryN/` — a nested directory
+Playwright does not produce. The installed `playwright/lib/worker/
+workerProcessEntry.js` says `testOutputDir += "-retry" + this.retry`. An
+unrecognised name answers attempt 0, and the salvage never overwrites a trace
+it has already copied, so a future rename costs a retry's trace rather than the
+first attempt's.
+
+`check:retry-evidence` executes the shipped fixture and reporter STRINGS —
+compiling `attemptArtifactDir` out of the fixture and driving both reporter
+copies through a swapped `process.stdout.write` — because a check that
+re-implemented either would verify something that never runs.
+`e2e/retry-evidence.spec.ts` is the half only real Playwright can answer: a
+test that fails once and passes on retry, asserting two manifests, two
+statuses, markers under both attempts, and that Playwright's own scratch
+directories are named the way the runner assumes.
+
 ### 2026-08-26 — Ingesting a CI run, and the field that made it a read primitive (R12)
 
 `good-looks ingest DIR` carries the runs a CI job recorded into the local

@@ -5,6 +5,11 @@ export interface StepMarker {
   line: number;
   /** False only on a reported failure. A `begin` is always true. */
   ok: boolean;
+  /** Which of Playwright's attempts at this test the transition belongs to.
+   *  0 unless `retries` is on, and 0 for a marker from a writer that predates
+   *  the field — the runner keys per-step outcomes by this, so an attempt that
+   *  failed and one that then passed no longer overwrite each other (R24a). */
+  attempt: number;
 }
 
 export interface StdoutSplit {
