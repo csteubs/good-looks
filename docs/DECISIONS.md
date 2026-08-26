@@ -10,6 +10,65 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-26 — Retries, and the two answers a retried run has to give (R24)
+
+`docs/ROUTINES.md` refused a retry policy in v1 and named its own condition for
+revisiting: *"If retry is added later it must mark the resulting `RunRecord` so
+flake analysis can exclude or count it deliberately."* R24a made the evidence
+survive a retry. This is the marking, and the counting rule without which the
+marking is decoration.
+
+**The rule: a retried pass is PASSED as an outcome and FAILED as a signal.**
+
+Those are different questions and collapsing them either way is the bug.
+Count it passed everywhere and the retry buys a green board over a test nobody
+will ever fix — the exact outcome ROUTINES refused the feature over. Count it
+failed everywhere and a suite that recovers reports as broken. So the outcome
+tally (`passed`, `failed`, the pass rate) sees a pass, and the flake transition
+series sees a failure. One module, `shared/run-attempts.mjs`, because four
+callers across three processes ask it and a second spelling is a board that
+disagrees with a digest about the same week.
+
+**The verdict check had to move above the `failed === 0` short-circuit**, and
+that is where this could most easily have shipped wrong. `verdictFor` reads
+OUTCOMES, so a test that needs a retry on every single run has `failed === 0`
+and reached "stable" — the refused behaviour, reproduced exactly, while every
+new field was present and correct. It now answers "flaky" before that rule.
+Consistent with what a bare failure already does: one failure among fifty
+passes reads flaky today.
+
+**Not inferred from `attempt > 0 && status === "passed"`.** Same reason
+`ingestedAt` is not inferred from `provenance`: a reader that re-derives a rule
+is a second spelling of it. And a run that retried and STILL failed carries
+`attempt` with no `passedOnRetry` — it did retry, and it is not a recovery.
+
+**`retryFields` returns FIELDS, not values, and is empty when nothing
+retried.** `attempt: 0` on every row ever written is indistinguishable from a
+row predating the field, and telling those apart is the whole reason the field
+exists.
+
+**Three things the change surfaced that were already inconsistent.**
+`reviewReason` divided `flakeRuns` by `failures`, a denominator that no longer
+contains its own numerator — it still returned "flaky", by accident rather than
+by the rule. `never-caught` would have called a test that fails on every run
+and recovers "never caught anything". And the cost panel said "none yet" above
+a non-zero flake spend. All three are now stated in terms of the population
+they actually mean.
+
+**`good-looks ingest` had to learn the fields too**, and `check:run-ingest`
+would not have caught it: both are optional, and the gate only has to produce
+what `RunRecord` REQUIRES. CI is where `--retries` is used, so a run that
+recovered in a container is exactly the run that command carries back — and
+without them it arrives looking like a clean pass.
+
+**Scope.** The flag is on the CLI and the Action, not in the app: an app-side
+setting is a Settings pane and a per-test pin, and it wants its own change. The
+data work is not scoped that way and could not be — a spec can configure its
+own retries, and an imported project can carry one, so both runners record the
+fields whether or not anything asked for a retry. Routines still has no policy;
+`stopRoutine`/`skipGroup` key on "a step failed", which a retried pass escapes,
+and that wants deciding before a field exists rather than after.
+
 ### 2026-08-26 — A second in-app document, and the three things that were only correct because there was one
 
 The Documentation pane shipped one document, `docs/MCP-GUIDE.md`, and
@@ -83,65 +142,6 @@ one that stops covering the input added next week. A row rather than a mention,
 because a sentence elsewhere in the file is not what a reader looking up an
 input finds. Verified by deleting both rows and watching it name `retries`
 twice.
-
-### 2026-08-26 — Retries, and the two answers a retried run has to give (R24)
-
-`docs/ROUTINES.md` refused a retry policy in v1 and named its own condition for
-revisiting: *"If retry is added later it must mark the resulting `RunRecord` so
-flake analysis can exclude or count it deliberately."* R24a made the evidence
-survive a retry. This is the marking, and the counting rule without which the
-marking is decoration.
-
-**The rule: a retried pass is PASSED as an outcome and FAILED as a signal.**
-
-Those are different questions and collapsing them either way is the bug.
-Count it passed everywhere and the retry buys a green board over a test nobody
-will ever fix — the exact outcome ROUTINES refused the feature over. Count it
-failed everywhere and a suite that recovers reports as broken. So the outcome
-tally (`passed`, `failed`, the pass rate) sees a pass, and the flake transition
-series sees a failure. One module, `shared/run-attempts.mjs`, because four
-callers across three processes ask it and a second spelling is a board that
-disagrees with a digest about the same week.
-
-**The verdict check had to move above the `failed === 0` short-circuit**, and
-that is where this could most easily have shipped wrong. `verdictFor` reads
-OUTCOMES, so a test that needs a retry on every single run has `failed === 0`
-and reached "stable" — the refused behaviour, reproduced exactly, while every
-new field was present and correct. It now answers "flaky" before that rule.
-Consistent with what a bare failure already does: one failure among fifty
-passes reads flaky today.
-
-**Not inferred from `attempt > 0 && status === "passed"`.** Same reason
-`ingestedAt` is not inferred from `provenance`: a reader that re-derives a rule
-is a second spelling of it. And a run that retried and STILL failed carries
-`attempt` with no `passedOnRetry` — it did retry, and it is not a recovery.
-
-**`retryFields` returns FIELDS, not values, and is empty when nothing
-retried.** `attempt: 0` on every row ever written is indistinguishable from a
-row predating the field, and telling those apart is the whole reason the field
-exists.
-
-**Three things the change surfaced that were already inconsistent.**
-`reviewReason` divided `flakeRuns` by `failures`, a denominator that no longer
-contains its own numerator — it still returned "flaky", by accident rather than
-by the rule. `never-caught` would have called a test that fails on every run
-and recovers "never caught anything". And the cost panel said "none yet" above
-a non-zero flake spend. All three are now stated in terms of the population
-they actually mean.
-
-**`good-looks ingest` had to learn the fields too**, and `check:run-ingest`
-would not have caught it: both are optional, and the gate only has to produce
-what `RunRecord` REQUIRES. CI is where `--retries` is used, so a run that
-recovered in a container is exactly the run that command carries back — and
-without them it arrives looking like a clean pass.
-
-**Scope.** The flag is on the CLI and the Action, not in the app: an app-side
-setting is a Settings pane and a per-test pin, and it wants its own change. The
-data work is not scoped that way and could not be — a spec can configure its
-own retries, and an imported project can carry one, so both runners record the
-fields whether or not anything asked for a retry. Routines still has no policy;
-`stopRoutine`/`skipGroup` key on "a step failed", which a retried pass escapes,
-and that wants deciding before a field exists rather than after.
 
 ### 2026-08-26 — The passing attempt destroyed the failing one (R24a)
 
