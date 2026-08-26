@@ -75,6 +75,12 @@ inputs:
   parallel:
     description: "How many tests to run at once."
     required: false
+  retries:
+    description: >
+      Re-run a failed test up to this many times (0-3). A run that passes on a
+      retry is recorded as passed AND counted as a failure by the flake
+      analysis, so absorbing an intermittent here does not hide it in the app.
+    required: false
   junit:
     description: >
       Write a JUnit XML report of THIS run to this path. Scoped to the runs this
@@ -184,6 +190,7 @@ runs:
         GL_BROWSER: ${{ inputs.browser }}
         GL_SPEED: ${{ inputs.speed }}
         GL_PARALLEL: ${{ inputs.parallel }}
+        GL_RETRIES: ${{ inputs.retries }}
         GL_JUNIT: ${{ inputs.junit }}
         GL_SECRETS_FILE: ${{ inputs.secrets-file }}
         GL_ACTION_PATH: ${{ github.action_path }}
@@ -201,6 +208,7 @@ runs:
         [ -n "$GL_BROWSER" ] && args+=(--browser "$GL_BROWSER")
         [ -n "$GL_SPEED" ] && args+=(--speed "$GL_SPEED")
         [ -n "$GL_PARALLEL" ] && args+=(--parallel "$GL_PARALLEL")
+        [ -n "$GL_RETRIES" ] && args+=(--retries "$GL_RETRIES")
         [ -n "$GL_SECRETS_FILE" ] && args+=(--secrets-file "$GL_SECRETS_FILE")
         report=""
         if [ -n "$GL_JUNIT" ]; then

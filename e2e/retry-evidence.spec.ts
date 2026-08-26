@@ -62,6 +62,7 @@ import {
   signatureFixtureSource,
   SIGNATURE_FIXTURE_FILE,
 } from "../shared/signature-fixture-source.mjs";
+import { retryFields } from "../shared/run-attempts.mjs";
 import { splitStepMarkers, type StepMarker } from "../shared/step-marker.mjs";
 import { stepReporterSource } from "../shared/step-reporter-source.mjs";
 import { userPageFixtureSource, USER_PAGE_FIXTURE_FILE } from "../shared/user-page-fixture-source.mjs";
@@ -285,7 +286,20 @@ test("a retried run leaves both attempts' evidence, and each says which it is", 
   expect(reported(0, false), "the assertion is reported failed under attempt 0").toBe(true);
   expect(reported(1, true), "and passed under attempt 1").toBe(true);
 
-  // ── 4. The failing attempt's trace survives a run that exits 0 ──────────
+  // ── 4. The marker stream is enough to MARK THE RECORD (R24) ────────────
+  //
+  // Both runners derive `attempt` and `passedOnRetry` from exactly this stream
+  // — no Playwright summary line is parsed anywhere. So the honest test of
+  // that derivation is to run it over markers real Playwright produced, which
+  // is the one thing a unit test cannot supply.
+  const maxAttempt = result.markers.reduce((n, m) => Math.max(n, m.attempt), 0);
+  expect(maxAttempt, "the stream carries a second attempt").toBe(1);
+  expect(
+    retryFields({ status: "passed", maxAttempt }),
+    "a real retried run marks the record as a recovery",
+  ).toEqual({ attempt: 1, passedOnRetry: true });
+
+  // ── 5. The failing attempt's trace survives a run that exits 0 ──────────
   //
   // The whole reason the runner's salvage gate moved off the exit code. If
   // `retain-on-failure` did not keep this, there would be nothing to salvage

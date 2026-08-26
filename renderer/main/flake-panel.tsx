@@ -9,7 +9,7 @@
 
 import * as React from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@ui";
-import { ChevronDown, ChevronRight, Wand2 } from "lucide-react";
+import { ChevronDown, ChevronRight, RotateCw, Wand2 } from "lucide-react";
 
 import { Btn, Panel, TONE, toneSurface } from "../theme";
 import type { ToneName } from "../theme";
@@ -164,6 +164,19 @@ function TestRow({ test }: { test: TestFlake }) {
           >
             <Wand2 aria-hidden="true" className="gl-mini-icon me-[3px]" />
             {test.healedRuns}
+          </span>
+        ) : null}
+        {test.retriedRuns > 0 ? (
+          // Beside the heal chip, and load-bearing rather than decorative: a
+          // retried pass is what keeps this test's verdict off "stable", and
+          // without the chip that verdict has no visible cause at all — the
+          // pass rate reads 100% and the badge says flaky.
+          <span
+            className="gl-chip"
+            title={`Failed and passed on a retry in ${test.retriedRuns} runs`}
+          >
+            <RotateCw aria-hidden="true" className="gl-mini-icon me-[3px]" />
+            {test.retriedRuns}
           </span>
         ) : null}
         {/* The badge is a word the user is expected to act on, and none of the

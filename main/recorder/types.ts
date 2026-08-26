@@ -2560,6 +2560,27 @@ export interface RunRecord {
    *  something was silently substituted is not the same evidence as one that
    *  passed outright. */
   healedSteps?: number;
+  /** How many attempts Playwright made at this test, minus one. 0 — or absent,
+   *  on a run recorded before R24 — is a run that ran once.
+   *
+   *  Derived from the step markers, which carry the attempt since R24a, rather
+   *  than from Playwright's summary line: the markers are already parsed and a
+   *  summary line is prose. */
+  attempt?: number;
+  /** This run failed and then passed on a retry.
+   *
+   *  Its own field rather than an inference from `attempt > 0 && status ===
+   *  "passed"`, for the reason `ingestedAt` is not inferred from `provenance`:
+   *  a reader that re-derives it is a second spelling of the rule, and the
+   *  first thing to disagree when the rule moves.
+   *
+   *  `docs/ROUTINES.md` refused a retry policy until a run could say this, and
+   *  said why: a retry stacked on Auto-Heal "makes a flaky test look stable —
+   *  which is precisely the signal the Stability panel exists to give". The
+   *  counting rule that keeps that from happening is `shared/run-attempts.mjs`:
+   *  this run is PASSED in the outcome tally and FAILED in the transition
+   *  series. */
+  passedOnRetry?: boolean;
   /** How many steps Auto-Heal TRIED to rescue and could not — it looked for
    *  the element under every candidate locator it could rank, and none of them
    *  worked (or nothing on the page resembled it at all).

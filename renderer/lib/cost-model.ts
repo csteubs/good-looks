@@ -163,11 +163,26 @@ export function reviewReason(row: {
   // A third or more of its failures being flake, with at least two of them —
   // one flaky failure is an anecdote, and a ratio over a single sample is not
   // a ratio.
-  if (row.flakeRuns >= 2 && row.flakeRuns / Math.max(1, row.failures) >= 0.33) return "flaky";
+  //
+  // The denominator is `max(failures, flakeRuns)` since R24. `flakeRuns` now
+  // counts retried passes, which are NOT in `failures` — that stays the
+  // outcome tally — so a test that recovers on retry every time had
+  // `flakeRuns / max(1, 0)`, a ratio over a denominator smaller than its own
+  // numerator. It still returned "flaky" here, by accident rather than by the
+  // rule; naming the population makes it deliberate.
+  if (row.flakeRuns >= 2 && row.flakeRuns / Math.max(1, row.failures, row.flakeRuns) >= 0.33) {
+    return "flaky";
+  }
   // Run a lot and never failed. NOT a bug — a test that always passes may be
   // guarding something that never breaks — but it is the row worth asking
   // about, and nothing else in the app ever raises it.
-  if (row.runs >= MIN_RUNS_FOR_NEVER_CAUGHT && row.failures === 0) return "never-caught";
+  //
+  // `flakeRuns === 0` too: a test whose every pass needed a retry has failed
+  // repeatedly, and calling it "never caught anything" is the opposite of what
+  // its history says.
+  if (row.runs >= MIN_RUNS_FOR_NEVER_CAUGHT && row.failures === 0 && row.flakeRuns === 0) {
+    return "never-caught";
+  }
   return null;
 }
 

@@ -325,6 +325,7 @@ describe("the chip's six states are six distinct readings", () => {
       }),
       chipFor({
         state: "retry",
+        attempt: 0,
         previous: run({ id: "r1", startedAt: 1, status: "failed", exitCode: 1 }),
         differences: [{ label: "Browser", before: "a", after: "b" }],
         durationMs: 1,

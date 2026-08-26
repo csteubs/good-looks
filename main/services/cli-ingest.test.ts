@@ -483,3 +483,41 @@ describe("the real binary", () => {
     expect(stored[0].logFile).toBe(join(local, "recorder", "logs", "run-1.log"));
   });
 });
+
+describe("retries (R24)", () => {
+  // CI is where `--retries` is used, so a run that recovered on a retry is
+  // exactly the run this command exists to carry back. Both fields are
+  // OPTIONAL on RunRecord, so `check:run-ingest` stayed green while the gate
+  // dropped them — the loss would have been silent, and the flake verdict
+  // would have read a green history for a test that went red every run.
+  it("carries a retried pass, so the flake verdict still sees the failure", () => {
+    const out = normalizeIngestedRun({
+      ...validRun(),
+      attempt: 2,
+      passedOnRetry: true,
+    });
+    expect(out).not.toBeNull();
+    expect(out!.attempt).toBe(2);
+    expect(out!.passedOnRetry).toBe(true);
+  });
+
+  it("refuses an unusable attempt without losing the run", () => {
+    // An optional field judged on its own: a bad value costs itself, never the
+    // record. The run's outcome and timing are what the verdict reads.
+    const out = normalizeIngestedRun({
+      ...validRun(),
+      attempt: "two" as unknown as number,
+      passedOnRetry: "yes" as unknown as boolean,
+    });
+    expect(out).not.toBeNull();
+    expect("attempt" in out!).toBe(false);
+    expect("passedOnRetry" in out!).toBe(false);
+    expect(out!.status).toBe(validRun().status);
+  });
+
+  it("leaves a run that never retried carrying neither field", () => {
+    const out = normalizeIngestedRun(validRun());
+    expect("attempt" in out!).toBe(false);
+    expect("passedOnRetry" in out!).toBe(false);
+  });
+});

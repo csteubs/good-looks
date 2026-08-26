@@ -326,6 +326,9 @@ export async function runCommand(options, { out, err, env = process.env } = {}) 
     browser: options.browser,
     allDatasets: options.allDatasets,
     parallel: options.parallel,
+    // R24. Undefined unless asked for, and `runArgs` omits the flag entirely
+    // at 0 — a spec that configures its own retries keeps them either way.
+    retries: options.retries,
     speed: options.speed,
     // R5. Already normalized by the parser; `executeTest` runs it through the
     // same gate again because `runSelection` is callable from anywhere in this

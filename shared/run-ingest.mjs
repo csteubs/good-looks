@@ -241,6 +241,13 @@ export function normalizeIngestedRun(value) {
   opt("batchId", text(raw.batchId));
   opt("healedSteps", num(raw.healedSteps));
   opt("healFailedSteps", num(raw.healFailedSteps));
+  // R24, and the reason it is not optional-in-spirit: CI is where `--retries`
+  // is actually used, so a run that recovered on a retry is exactly the run
+  // this command carries back — and without these two it arrives looking like
+  // a clean pass. The flake verdict would then read a green history for a test
+  // that went red on every run in the container.
+  opt("attempt", num(raw.attempt));
+  opt("passedOnRetry", bool(raw.passedOnRetry));
   opt("testTimeoutMs", num(raw.testTimeoutMs));
   opt("datasetId", text(raw.datasetId));
   opt("datasetName", text(raw.datasetName));

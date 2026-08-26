@@ -98,6 +98,10 @@ export interface TestFlake {
   steps: StepFlake[];
   /** runs where Auto-Heal substituted a locator */
   healedRuns: number;
+  /** runs that failed and then passed on a retry — counted as passed in
+   *  `passed`, as failed in `transitions`, and enough on their own to keep the
+   *  verdict off "stable" */
+  retriedRuns: number;
 }
 
 export interface FlakeReport {
