@@ -470,6 +470,77 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     // the values for redaction.
     Object.assign(env, secrets.env);
 
+    // MOVED ABOVE THE ENV BLOCK, and that is the whole point of the order.
+    // These are `const`, so the `if (anyCapability)` below sits in their
+    // TEMPORAL DEAD ZONE if they are declared after it — every run threw
+    // `ReferenceError: Cannot access 'anyCapability' before initialization`
+    // before it did anything at all. Ported from #276, which carries the
+    // guard and the DECISIONS entry; it no-ops once that lands. Without it
+    // this branch's own feature is unreachable — the throw is above it.
+    // ── What this run turns on (R8) ────────────────────────────────────
+    //
+    // The policy is stated in shared/run-fixtures.mjs; this is it applied. Each
+    // gate reads the TEST's own preference where it has one, exactly as the app
+    // reads it — an unattended run is not a different product.
+    //
+    // An IMPORTED spec gets none of it: `sourceDir` means someone else's
+    // Playwright project, where redirecting the `@playwright/test` import would
+    // rewrite their code rather than instrument ours. Same rule the app applies.
+    const imported = Boolean(test.sourceDir);
+    const wantsScreenshots =
+      !imported && Boolean(test.captureArtifacts ?? settings.defaultCaptureArtifacts);
+    const wantsA11y = !imported && Boolean(test.a11yChecks ?? settings.defaultA11yChecks);
+    const wantsLogs = !imported && Boolean(test.recordLogs ?? settings.defaultRecordLogs);
+    const wantsSettle = !imported && speed === "crawl";
+    // ── Run-time healing (R49) ──────────────────────────────────────────
+    //
+    // ON, and gated exactly as the app gates it: the user's setting, and a test
+    // with at least one locator to heal. Without it a run fails on a stale
+    // locator the app would have healed past, which is the false red that
+    // teaches a team to distrust CI.
+    //
+    // It was ON here once before and healed NOTHING — see the R49 entry in
+    // DECISIONS. The reason was never the switch: the heal fixture rethrows
+    // untouched for a locator it has no MAP ENTRY for, and the map holds a probe
+    // script per step built from the recorder's locator engine, which was
+    // compiled TypeScript this plain-.mjs server could not import. R51 moved the
+    // engine to shared/ and the probe builder followed it; the map is buildable
+    // here now, and `check:ci-fixtures` asserts a switch that is not "0" implies
+    // both a map named through shared/heal-artifacts.mjs AND a writer for it.
+    const wantsHeal =
+      !imported && Boolean(settings.autoHealEnabled) && (test.steps ?? []).some((st) => st?.locator);
+    // ── The WRITEBACK, which stays off ─────────────────────────────────
+    //
+    // "Suggest, never apply", and it holds by construction rather than by a
+    // flag: nothing in this process reads a heal back into a test. It could not
+    // usefully — the tests.json it would edit dies with the container, so the
+    // fix would be lost and the run would still report a heal it did not keep.
+    // `check:ci-fixtures` asserts the absence directly.
+    const wantsUserPage =
+      !imported && Boolean(settings.userStylesheet || settings.userInitScript);
+    // Standing overlay rules, armed by HOST from the test's own starting URL —
+    // the same rule the app applies, through the same `armedRulesFor`. There is
+    // no setting: a run against a host with no rules arms nothing and pays
+    // nothing, which is what makes this safe to have on by default.
+    //
+    // It could not be on before R51. The fixture's watcher embeds the recorder's
+    // locator engine, so a rule taught in the trainer and a rule enforced in a
+    // run resolve through ONE `matchesFor` — and until that engine reached
+    // shared/, this process could not hold it. A second resolver would have been
+    // the worse answer: two implementations of "does this rule match" agree
+    // right up until the page they disagree on, and the symptom is a run
+    // clicking something nobody chose.
+    const armedRules = imported ? [] : armedRulesFor(overlayRules, test.url ?? "");
+    const wantsDismiss = armedRules.length > 0;
+    const anyCapability =
+      wantsScreenshots ||
+      wantsA11y ||
+      wantsLogs ||
+      wantsSettle ||
+      wantsHeal ||
+      wantsUserPage ||
+      wantsDismiss;
+
     // ── The fixture gates (R8) ─────────────────────────────────────────────
     //
     // Set AFTER runEnv rather than inside it, because runEnv is shared with the
@@ -535,69 +606,6 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
       // answer by luck is how the heal gate came to be half-set (R49).
       Object.assign(env, dismissEnv(armedRules));
     }
-    // ── What this run turns on (R8) ────────────────────────────────────
-    //
-    // The policy is stated in shared/run-fixtures.mjs; this is it applied. Each
-    // gate reads the TEST's own preference where it has one, exactly as the app
-    // reads it — an unattended run is not a different product.
-    //
-    // An IMPORTED spec gets none of it: `sourceDir` means someone else's
-    // Playwright project, where redirecting the `@playwright/test` import would
-    // rewrite their code rather than instrument ours. Same rule the app applies.
-    const imported = Boolean(test.sourceDir);
-    const wantsScreenshots =
-      !imported && Boolean(test.captureArtifacts ?? settings.defaultCaptureArtifacts);
-    const wantsA11y = !imported && Boolean(test.a11yChecks ?? settings.defaultA11yChecks);
-    const wantsLogs = !imported && Boolean(test.recordLogs ?? settings.defaultRecordLogs);
-    const wantsSettle = !imported && speed === "crawl";
-    // ── Run-time healing (R49) ──────────────────────────────────────────
-    //
-    // ON, and gated exactly as the app gates it: the user's setting, and a test
-    // with at least one locator to heal. Without it a run fails on a stale
-    // locator the app would have healed past, which is the false red that
-    // teaches a team to distrust CI.
-    //
-    // It was ON here once before and healed NOTHING — see the R49 entry in
-    // DECISIONS. The reason was never the switch: the heal fixture rethrows
-    // untouched for a locator it has no MAP ENTRY for, and the map holds a probe
-    // script per step built from the recorder's locator engine, which was
-    // compiled TypeScript this plain-.mjs server could not import. R51 moved the
-    // engine to shared/ and the probe builder followed it; the map is buildable
-    // here now, and `check:ci-fixtures` asserts a switch that is not "0" implies
-    // both a map named through shared/heal-artifacts.mjs AND a writer for it.
-    const wantsHeal =
-      !imported && Boolean(settings.autoHealEnabled) && (test.steps ?? []).some((st) => st?.locator);
-    // ── The WRITEBACK, which stays off ─────────────────────────────────
-    //
-    // "Suggest, never apply", and it holds by construction rather than by a
-    // flag: nothing in this process reads a heal back into a test. It could not
-    // usefully — the tests.json it would edit dies with the container, so the
-    // fix would be lost and the run would still report a heal it did not keep.
-    // `check:ci-fixtures` asserts the absence directly.
-    const wantsUserPage =
-      !imported && Boolean(settings.userStylesheet || settings.userInitScript);
-    // Standing overlay rules, armed by HOST from the test's own starting URL —
-    // the same rule the app applies, through the same `armedRulesFor`. There is
-    // no setting: a run against a host with no rules arms nothing and pays
-    // nothing, which is what makes this safe to have on by default.
-    //
-    // It could not be on before R51. The fixture's watcher embeds the recorder's
-    // locator engine, so a rule taught in the trainer and a rule enforced in a
-    // run resolve through ONE `matchesFor` — and until that engine reached
-    // shared/, this process could not hold it. A second resolver would have been
-    // the worse answer: two implementations of "does this rule match" agree
-    // right up until the page they disagree on, and the symptom is a run
-    // clicking something nobody chose.
-    const armedRules = imported ? [] : armedRulesFor(overlayRules, test.url ?? "");
-    const wantsDismiss = armedRules.length > 0;
-    const anyCapability =
-      wantsScreenshots ||
-      wantsA11y ||
-      wantsLogs ||
-      wantsSettle ||
-      wantsHeal ||
-      wantsUserPage ||
-      wantsDismiss;
 
     // ALWAYS, capabilities or not: a generated spec importing a helper needs
     // glaze-runtime.mjs on disk to load at all.
