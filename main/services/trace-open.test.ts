@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "glaze-trace-test-"));
 process.env.GLAZE_TEST_USERDATA = userData;
 
-import { findTraceZip, openTrace } from "./playwright-runner.js";
+import { findTraceZip, findTraceZips, openTrace } from "./playwright-runner.js";
 import { artifactStore } from "./artifact-store.js";
 
 afterAll(() => {
@@ -37,6 +37,47 @@ describe("findTraceZip", () => {
     fs.mkdirSync(deep, { recursive: true });
     fs.writeFileSync(path.join(deep, "trace.zip"), "z");
     expect(findTraceZip(path.join(root, "a"))).toBeNull();
+  });
+});
+
+// ── Every attempt's trace, not the first one found (R24a) ─────────────────
+//
+// `trace: "retain-on-failure"` keeps one trace per FAILED attempt, so a run
+// that failed twice leaves two in the scratch dir — which the runner deletes
+// at run end. Taking whichever the walk reached first dropped the other
+// permanently, and there is nothing to read it back from afterwards.
+describe("findTraceZips", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "glaze-attempts-"));
+  beforeAll(() => {
+    // The layout Playwright writes: `testOutputDir += "-retry" + this.retry`.
+    for (const dir of ["spec-test-chromium", "spec-test-chromium-retry1"]) {
+      fs.mkdirSync(path.join(root, dir), { recursive: true });
+      fs.writeFileSync(path.join(root, dir, "trace.zip"), "z");
+    }
+  });
+  afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it("finds both attempts' traces and says which is which", () => {
+    const found = findTraceZips(root).sort((a, b) => a.attempt - b.attempt);
+    expect(found.map((f) => f.attempt)).toEqual([0, 1]);
+    expect(found[1].file).toBe(path.join(root, "spec-test-chromium-retry1", "trace.zip"));
+  });
+
+  it("files a trace under attempt 0 when the directory does not name one", () => {
+    // The safe default: attempt 0 is where every existing reader looks, so an
+    // unrecognised layout lands the trace where the app has always found it
+    // rather than somewhere nothing reads.
+    const plain = fs.mkdtempSync(path.join(os.tmpdir(), "glaze-plain-"));
+    fs.mkdirSync(path.join(plain, "t-slug", "retry1"), { recursive: true });
+    fs.writeFileSync(path.join(plain, "t-slug", "retry1", "trace.zip"), "z");
+    expect(findTraceZips(plain).map((f) => f.attempt)).toEqual([0]);
+    fs.rmSync(plain, { recursive: true, force: true });
+  });
+
+  it("still answers the singular question the same way", () => {
+    // findTraceZip is the plural's first element — the order the walk had
+    // before, files at each level ahead of subdirectories.
+    expect(findTraceZip(root)).toBe(findTraceZips(root)[0].file);
   });
 });
 

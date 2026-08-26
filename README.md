@@ -262,8 +262,8 @@ log, so check the log too: renderer errors and warnings are forwarded there by
 ## Testing
 
 **Two systems, one command.** `npm run test:all` runs the `check:*` scripts and
-then Vitest. Both must pass. 6048 Vitest tests across 333 files and 92 checks in
-the chain as of 2026-08-26 (94 are defined — `check:repo-hygiene` and
+then Vitest. Both must pass. 6067 Vitest tests across 334 files and 93 checks in
+the chain as of 2026-08-26 (95 are defined — `check:repo-hygiene` and
 `check:shell-drift` are deliberately outside it).
 
 Vitest has two projects. **`node`** covers `main/**/*.test.ts`,
@@ -286,7 +286,7 @@ broken case. Two others **boot what they test** rather than reading it:
 exist because every other `check:mcp-*` read source and stayed green for the six
 months the MCP server threw at module load.
 
-**A third system the local gate does not run: `e2e/`.** Twenty-four Playwright
+**A third system the local gate does not run: `e2e/`.** Twenty-five Playwright
 specs driving the real app through `_electron` (`npm run test:e2e`, and CI's
 `gate.yml`). It is where anything about real windows gets checked — a click
 that changes route, a second window actually opening, occlusion, where the
@@ -295,7 +295,7 @@ the forked TypeScript service. jsdom has no second window and no layout engine,
 so these are not slow duplicates of unit tests; they are the only place their
 subject exists.
 
-Five specs there are not about windows at all, and each answers a question only
+Six specs there are not about windows at all, and each answers a question only
 real Playwright can settle:
 
 | Spec | The question |
@@ -305,9 +305,11 @@ real Playwright can settle:
 | `shadow-parity.spec.ts` | The same, one level down, inside a web component |
 | `frame-parity.spec.ts` | Whether an emitted `frameLocator` chain resolves what the recorder meant |
 | `step-progress.spec.ts` | Which steps a run *reports*, which decides what the app can highlight |
+| `retry-evidence.spec.ts` | Whether a retry re-enters the `page` fixture, and what Playwright names a retried attempt's scratch directory |
 
 Changing what an assertion, a context clause, a shadow-DOM walk, a frame
-reference or the step reporter emits? Add a row.
+reference or the step reporter emits, or where an attempt's artifacts go? Add a
+row.
 
 New features ship with tests. Most bugs found in this codebase so far have been
 silent — wrong behaviour that threw no error and looked correct on screen.

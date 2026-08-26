@@ -19,6 +19,12 @@
 // The step's `location.line` (1-based) is emitted so the backend can map it back
 // to a step index via the spec file.
 //
+// `result.retry` is emitted alongside it — 0 on a first attempt, 1 on the first
+// retry. The parameter was here all along, underscore-prefixed and unread, and
+// that is what let attempt 2's outcomes overwrite attempt 1's in the runner's
+// per-step map: a test that failed and then passed reported that nothing had
+// failed (R24a).
+//
 // WHAT THIS REPORTER CANNOT SEE: an action the capture/heal/settle fixtures have
 // wrapped. Playwright takes a step's location from the first stack frame outside
 // its own library, which for a wrapped action is the FIXTURE, so the file guard
@@ -48,12 +54,12 @@ function reportable(test: TestCase, step: TestStep): boolean {
 }
 
 export default class StepReporter implements Reporter {
-  onStepBegin(test: TestCase, _result: TestResult, step: TestStep): void {
+  onStepBegin(test: TestCase, result: TestResult, step: TestStep): void {
     if (!reportable(test, step)) return;
-    emit({ event: "begin", line: step.location!.line, title: step.title });
+    emit({ event: "begin", line: step.location!.line, title: step.title, attempt: result.retry });
   }
 
-  onStepEnd(test: TestCase, _result: TestResult, step: TestStep): void {
+  onStepEnd(test: TestCase, result: TestResult, step: TestStep): void {
     if (!reportable(test, step)) return;
     emit({
       event: "end",
@@ -61,6 +67,7 @@ export default class StepReporter implements Reporter {
       title: step.title,
       ok: !step.error,
       duration: step.duration,
+      attempt: result.retry,
     });
   }
 }

@@ -18,6 +18,10 @@ import {
   isHeal as isHealEvent,
   isHealFailure as isHealFailureEvent,
 } from "../../shared/heal-artifacts.mjs";
+import {
+  attemptArtifactDir,
+  attemptFromPlaywrightOutputDir,
+} from "../../shared/attempt-artifacts.mjs";
 import { buildHealMap } from "../../shared/heal-map.mjs";
 import { resolveScriptPath } from "../../shared/script-path.mjs";
 import { buildStepLineMapFromSource } from "../../shared/step-line-map.mjs";
@@ -940,11 +944,31 @@ const stepLineMaps = new Map<string, Map<number, number> | null>();
 // completed run can be persisted to the run-history log database.
 const logBuffers = new Map<string, string[]>();
 
-// Per-run accumulation of per-step pass/fail, keyed by the reporter's step
-// index (same index the renderer highlights by). Written to replay.json at run
-// end so the replay timeline (Phase 2) has persisted outcome data — the live
-// runner:step stream is otherwise ephemeral.
-const stepStatusMaps = new Map<string, Record<number, "passed" | "failed">>();
+// Per-run accumulation of per-step pass/fail, keyed by ATTEMPT and then by the
+// reporter's step index (same index the renderer highlights by). Written to
+// replay.json at run end so the replay timeline (Phase 2) has persisted outcome
+// data — the live runner:step stream is otherwise ephemeral.
+//
+// The attempt dimension is R24a. Playwright re-runs a test from the top on a
+// retry, so a flat `Record<number, …>` is last-write-wins ACROSS attempts: the
+// passing attempt overwrites the failing one step for step, `buildReplay`
+// computes `failedIndex === null`, and the replay of a run that went red says
+// nothing went wrong. Retries are not on yet — a spec can still configure its
+// own, and the evidence is written once or never.
+type AttemptStatuses = Map<number, Record<number, "passed" | "failed">>;
+const stepStatusMaps = new Map<string, AttemptStatuses>();
+
+/** This run's outcomes for one attempt, created on first sight of it. */
+function attemptStatuses(runId: string, attempt: number): Record<number, "passed" | "failed"> | null {
+  const byAttempt = stepStatusMaps.get(runId);
+  if (!byAttempt) return null;
+  let map = byAttempt.get(attempt);
+  if (!map) {
+    map = {};
+    byAttempt.set(attempt, map);
+  }
+  return map;
+}
 
 function emitStep(
   runId: string,
@@ -957,9 +981,15 @@ function emitStep(
   // two agree for a generated spec and can disagree for a hand-edited one,
   // where the runner's fallback line map is a heuristic.
   line: number,
+  // Which of Playwright's attempts reported this. Recorded, but NOT sent to
+  // the renderer: the live highlight has no attempt to show yet, and a field
+  // on the wire that nothing reads is the shape this plan keeps naming. It
+  // becomes a payload field when retries do (R24), where the step list has to
+  // explain why it just walked back to step one.
+  attempt: number,
 ): void {
   if (status === "end") {
-    const map = stepStatusMaps.get(runId);
+    const map = attemptStatuses(runId, attempt);
     if (map) map[index] = ok ? "passed" : "failed";
   }
   sendToMain("runner:step", { runId, index, status, ok, line });
@@ -983,34 +1013,53 @@ function processStdout(runId: string, chunk: string): string {
     for (const marker of markers) {
       const stepIndex = map.get(marker.line);
       if (typeof stepIndex === "number") {
-        emitStep(runId, stepIndex, marker.event, marker.ok, marker.line);
+        emitStep(runId, stepIndex, marker.event, marker.ok, marker.line, marker.attempt);
       }
     }
   }
   return visible;
 }
 
-/** First `trace.zip` under Playwright's scratch dir, walking at most a few
- *  levels — the layout is `<outputDir>/<test-slug>[/retryN]/trace.zip` and a
- *  bounded walk cannot be sent spelunking by a weird artifact tree. */
-export function findTraceZip(root: string, depth = 3): string | null {
-  if (depth < 0) return null;
+/** Every `trace.zip` under Playwright's scratch dir, with the ATTEMPT each
+ *  belongs to, walking at most a few levels — the layout is
+ *  `<outputDir>/<test-slug>[-retryN]/trace.zip` and a bounded walk cannot be
+ *  sent spelunking by a weird artifact tree.
+ *
+ *  Plural since R24a. `trace: "retain-on-failure"` keeps a trace per FAILED
+ *  attempt, so a run that failed twice leaves two — and taking the first one
+ *  the walk reached dropped the other with the scratch dir, silently. The
+ *  attempt comes from the directory name; anything unrecognised is attempt 0,
+ *  which is where every reader already looks. */
+export function findTraceZips(
+  root: string,
+  depth = 3,
+  attempt = 0,
+): Array<{ attempt: number; file: string }> {
+  if (depth < 0) return [];
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(root, { withFileTypes: true });
   } catch {
-    return null;
+    return [];
+  }
+  const found: Array<{ attempt: number; file: string }> = [];
+  for (const e of entries) {
+    if (e.isFile() && e.name === "trace.zip") found.push({ attempt, file: path.join(root, e.name) });
   }
   for (const e of entries) {
-    if (e.isFile() && e.name === "trace.zip") return path.join(root, e.name);
+    if (!e.isDirectory()) continue;
+    // A `-retryN` segment names the attempt for everything beneath it; a plain
+    // segment inherits whatever its parent was.
+    const named = attemptFromPlaywrightOutputDir(e.name);
+    found.push(...findTraceZips(path.join(root, e.name), depth - 1, named || attempt));
   }
-  for (const e of entries) {
-    if (e.isDirectory()) {
-      const found = findTraceZip(path.join(root, e.name), depth - 1);
-      if (found) return found;
-    }
-  }
-  return null;
+  return found;
+}
+
+/** First `trace.zip` under Playwright's scratch dir. Kept as its own export
+ *  because the walk's depth bound is a property worth stating on its own. */
+export function findTraceZip(root: string, depth = 3): string | null {
+  return findTraceZips(root, depth)[0]?.file ?? null;
 }
 
 /** Open a failed run's salvaged trace in Playwright's trace viewer.
@@ -1219,7 +1268,7 @@ export const playwrightRunner = {
     // so Stats/logs/artifacts all join on one id.
     const recordId = randomUUID();
     logBuffers.set(runId, []);
-    stepStatusMaps.set(runId, {});
+    stepStatusMaps.set(runId, new Map());
 
     const done = (async () => {
       let exitCode = -1;
@@ -1734,6 +1783,27 @@ export const playwrightRunner = {
             /* ignore */
           }
         }
+        // Read the per-step outcomes BEFORE the scratch dir is salvaged and
+        // deleted: the trace gate below asks whether any attempt failed, and
+        // this is where that is known.
+        const byAttempt =
+          stepStatusMaps.get(runId) ?? new Map<number, Record<number, "passed" | "failed">>();
+        stepStatusMaps.delete(runId);
+        // Attempt 0's outcomes are the run's canonical ones. A retry only
+        // follows a failure, so the first attempt is the one that failed and
+        // the one a person opening this run wants to read; a later attempt's
+        // evidence sits in its own directory beside it.
+        const statuses = byAttempt.get(0) ?? {};
+        // Did this run go red at any point, whatever it exited with? Three
+        // signals, because none is sufficient alone: a non-zero exit (no
+        // retries configured, or every attempt failed), more than one attempt
+        // (Playwright retries nothing that passed), and a failed step in any
+        // attempt's map (a run that passed on its second attempt exits 0 and
+        // may have reported only one attempt's steps by the time this runs).
+        const anyAttemptFailed =
+          exitCode !== 0 ||
+          byAttempt.size > 1 ||
+          [...byAttempt.values()].some((m) => Object.values(m).includes("failed"));
         // Salvage the failure trace BEFORE the scratch dir goes. The generated
         // config has said `trace: "retain-on-failure"` since it was written,
         // and this cleanup was deleting the result on every run — retention
@@ -1742,17 +1812,35 @@ export const playwrightRunner = {
         // run artifact. A missing or uncopyable trace must never fail a run's
         // bookkeeping.
         const hasTrace = (() => {
-          if (!outputDir || exitCode === 0) return false;
-          try {
-            const zip = findTraceZip(outputDir);
-            if (!zip) return false;
-            const dest = path.join(artifactStore.runDir(rec.id, recordId), "trace.zip");
-            fs.mkdirSync(path.dirname(dest), { recursive: true });
-            fs.copyFileSync(zip, dest);
-            return true;
-          } catch {
-            return false;
+          // Gated on "any attempt failed", not on the exit code. A run that
+          // failed and then passed on a retry exits 0, and `retain-on-failure`
+          // has kept exactly the trace for the attempt that went red — the
+          // only one worth opening. The old gate deleted it with the scratch
+          // dir, so the retry that made the run green also destroyed the
+          // evidence of why it had not been (R24a).
+          if (!outputDir || !anyAttemptFailed) return false;
+          const runDir = artifactStore.runDir(rec.id, recordId);
+          let copied = false;
+          // Ascending, so attempt 0 claims the canonical `trace.zip` when two
+          // traces resolve to the same attempt — the first one found wins and
+          // a later one never overwrites it.
+          for (const { attempt, file } of findTraceZips(outputDir).sort((a, b) => a.attempt - b.attempt)) {
+            try {
+              const dest = path.join(attemptArtifactDir(runDir, attempt), "trace.zip");
+              if (fs.existsSync(dest)) continue;
+              fs.mkdirSync(path.dirname(dest), { recursive: true });
+              fs.copyFileSync(file, dest);
+              // `hasTrace` is the RECORD's field, and Open Trace opens the run
+              // directory's own — so only attempt 0's copy sets it. A retry's
+              // trace is on disk for R27/R29 to reach; claiming a trace the
+              // opener cannot find would be worse than saying there is none.
+              if (attempt === 0) copied = true;
+            } catch {
+              // A missing or uncopyable trace must never fail a run's
+              // bookkeeping — and one attempt's failure must not lose another's.
+            }
           }
+          return copied;
         })();
         // …and this run's Playwright scratch dir, for the same reason.
         if (outputDir) {
@@ -1786,9 +1874,9 @@ export const playwrightRunner = {
 
         // When this run captured artifacts, persist the canonical replay model
         // (per-step outcome + screenshot mapping) alongside them, keyed by the
-        // same runId so the Phase 2 timeline can retrieve it.
-        const statuses = stepStatusMaps.get(runId) ?? {};
-        stepStatusMaps.delete(runId);
+        // same runId so the Phase 2 timeline can retrieve it. Its per-step
+        // outcomes are `statuses` above — attempt 0's.
+        //
         // Dropped here rather than when the Playwright process closes, because
         // a browser install runs through the same `runCli` under the same runId
         // and would otherwise take the map with it.

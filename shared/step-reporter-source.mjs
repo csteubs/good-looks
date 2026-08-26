@@ -17,6 +17,10 @@ export const stepReporterSource = `// Per-step progress reporter for Test Record
 // left a failing assertion — the commonest way a test fails — reported by
 // nothing at all. Fixture and hook steps are still skipped: they are
 // Playwright's own setup, not lines anybody recorded.
+//
+// \`result.retry\` rides along so the backend can key a run's per-step outcomes
+// by attempt. Without it, attempt 2 overwrites attempt 1 and a test that failed
+// and then passed reports that nothing failed.
 const STEP_MARKER = ${JSON.stringify(STEP_MARKER)};
 
 function emit(payload) {
@@ -33,12 +37,12 @@ function reportable(test, step) {
 }
 
 class StepReporter {
-  onStepBegin(test, _result, step) {
+  onStepBegin(test, result, step) {
     if (!reportable(test, step)) return;
-    emit({ event: "begin", line: step.location.line, title: step.title });
+    emit({ event: "begin", line: step.location.line, title: step.title, attempt: result.retry });
   }
 
-  onStepEnd(test, _result, step) {
+  onStepEnd(test, result, step) {
     if (!reportable(test, step)) return;
     emit({
       event: "end",
@@ -46,6 +50,7 @@ class StepReporter {
       title: step.title,
       ok: !step.error,
       duration: step.duration,
+      attempt: result.retry,
     });
   }
 }
