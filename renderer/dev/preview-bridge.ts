@@ -1202,6 +1202,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
             { stepId: "s-pay", label: "click Place order", failures: 4, heals: 1, failureRate: 0.33 },
           ],
           healedRuns: 1,
+          retriedRuns: 0,
         },
         {
           testId: "t-login",
@@ -1218,6 +1219,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
             { stepId: "s-pw", label: "fill Password", failures: 4, heals: 0, failureRate: 0.44 },
           ],
           healedRuns: 0,
+          retriedRuns: 0,
         },
         {
           testId: "t-search",
@@ -1232,6 +1234,26 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
           failingBrowsers: [],
           steps: [],
           healedRuns: 0,
+          retriedRuns: 0,
+        },
+        // The R24 case, and the reason the retry chip exists: 100% passed, and
+        // NOT stable. Every one of those passes needed a second attempt, so the
+        // transition series is all-failed and the verdict is flaky — a reading
+        // nothing on the row would explain without the chip.
+        {
+          testId: "t-cart",
+          testName: "Add to cart updates the badge",
+          runs: 8,
+          passed: 8,
+          failed: 0,
+          transitions: 0,
+          flakeRate: 0,
+          verdict: "flaky",
+          failingDatasets: [],
+          failingBrowsers: [],
+          steps: [],
+          healedRuns: 0,
+          retriedRuns: 8,
         },
       ],
       clusters: [

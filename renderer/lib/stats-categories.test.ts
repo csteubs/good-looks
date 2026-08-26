@@ -133,6 +133,7 @@ function testFlake(over: Record<string, unknown>) {
     failingDatasets: [],
     steps: [],
     healedRuns: 0,
+    retriedRuns: 0,
     ...over,
   } as never;
 }

@@ -486,6 +486,70 @@ function main(): void {
     );
   }
 
+  // ── Retries (R24) ────────────────────────────────────────────────────────
+  //
+  // `docs/ROUTINES.md` refused a retry policy in v1 because "a routine-level
+  // retry stacked on top makes a flaky test look stable — which is precisely
+  // the signal the Stability panel exists to give". These are that sentence,
+  // as assertions.
+  {
+    // Every run passed. Every run needed a retry to do it. The pass rate is
+    // 100% and `statuses` holds nothing but "passed", so the `failed === 0`
+    // rule reaches "stable" unless the retry is checked first.
+    const alwaysRetried = history("t-retry-always", "PPPPPP", () => ({
+      attempt: 1,
+      passedOnRetry: true,
+    }));
+    assertEqual(
+      verdictOf(alwaysRetried),
+      "flaky",
+      "a test that passes only by retrying is FLAKY, not stable — the v1 refusal, held",
+    );
+
+    const t = analyseFlake(alwaysRetried).tests[0];
+    assertEqual(t.passed, 6, "…and it is still six passes in the outcome tally");
+    assertEqual(t.failed, 0, "…with no failures, because none of those runs failed");
+    assertEqual(t.retriedRuns, 6, "…and the retry count is what explains the verdict");
+    assert(
+      t.transitions === 0,
+      `…transitions stay 0 because the SERIES is uniformly failed, not mixed (${t.transitions})`,
+    );
+  }
+
+  {
+    // The mixed case: the signal series makes a retried pass a state change,
+    // so a history that looks clean by status is not clean by signal.
+    const mixed = history("t-retry-mixed", "PPPP", (i) =>
+      i % 2 === 1 ? { attempt: 1, passedOnRetry: true } : {},
+    );
+    const t = analyseFlake(mixed).tests[0];
+    assert(
+      t.transitions > 0,
+      `a retried pass between plain passes is a transition (${t.transitions})`,
+    );
+    assertEqual(verdictOf(mixed), "flaky", "…and the verdict says so");
+  }
+
+  {
+    // A run that retried and STILL failed is not a recovery, and must not be
+    // counted as one — `retryFields` writes `attempt` with no `passedOnRetry`.
+    const stillFailing = history("t-retry-failed", "FFFF", () => ({ attempt: 2 }));
+    const t = analyseFlake(stillFailing).tests[0];
+    assertEqual(t.retriedRuns, 0, "a run that retried and still failed is not a retried PASS");
+    assertEqual(verdictOf(stillFailing), "still-failing", "…and the verdict is unchanged by it");
+  }
+
+  {
+    // The regression that matters most: a history with no retry field counts
+    // exactly as it did before R24, or every stored verdict changes on upgrade.
+    assertEqual(verdictOf(history("t-legacy-stable", "PPPPPP")), "stable", "a clean history is still stable");
+    assertEqual(
+      analyseFlake(history("t-legacy-stable2", "PPPPPP")).tests[0].retriedRuns,
+      0,
+      "…and reports no retries rather than undefined",
+    );
+  }
+
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed`);
     process.exit(1);

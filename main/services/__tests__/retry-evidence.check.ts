@@ -37,6 +37,7 @@ import {
   attemptDirName,
   parseAttemptDirName,
 } from "../../../shared/attempt-artifacts.mjs";
+import { retryFields } from "../../../shared/run-attempts.mjs";
 import { splitStepMarkers, STEP_MARKER } from "../../../shared/step-marker.mjs";
 import { captureFixtureSource } from "../../../shared/capture-fixture-source.mjs";
 import { stepReporterSource } from "../../../shared/step-reporter-source.mjs";
@@ -55,6 +56,10 @@ function assert(condition: boolean, label: string): void {
 const read = (rel: string) => readFileSync(resolve(process.cwd(), rel), "utf8");
 const runner = read("main/services/playwright-runner.ts");
 const reporterTs = read("main/services/step-reporter.ts");
+const mcpRunner = read("mcp/run-tests.mjs");
+const cliRun = read("cli/run.mjs");
+const cliArgs = read("cli/args.mjs");
+const runPlan = read("mcp/run-plan.mjs");
 
 // ── 1. The fixture resolves a different directory per attempt ──────────────
 //
@@ -252,6 +257,68 @@ const reporterTs = read("main/services/step-reporter.ts");
   assert(
     /findTraceZips\(outputDir\)/.test(runner),
     "runner: salvages every attempt's trace, not the first one the walk finds",
+  );
+}
+
+// ── 6. The RECORD says a run retried (R24) ─────────────────────────────────
+//
+// R24a made the evidence survive a retry. This is the other half: a run that
+// recovered has to SAY so, or `docs/ROUTINES.md`'s refusal stands — "a retry
+// stacked on top makes a flaky test look stable, which is precisely the signal
+// the Stability panel exists to give".
+{
+  // Both runners derive the attempt from the marker stream rather than from
+  // Playwright's summary line, and both stamp it through the same module. Two
+  // spellings of "did this run retry" is a board that disagrees with a digest.
+  for (const [name, src] of [
+    ["app", runner],
+    ["unattended", mcpRunner],
+  ] as const) {
+    assert(
+      /retryFields\(\{ status[^}]*maxAttempt \}\)/.test(src),
+      `${name} runner: stamps the retry fields through shared/run-attempts.mjs`,
+    );
+  }
+  assert(
+    /const maxAttempt = byAttempt\.size > 0 \? Math\.max\(\.\.\.byAttempt\.keys\(\)\) : 0;/.test(runner),
+    "app runner: reads the attempt off the attempt-keyed status map R24a built",
+  );
+  assert(
+    /if \(marker\.attempt > maxAttempt\) maxAttempt = marker\.attempt;/.test(mcpRunner),
+    "unattended runner: reads it off the marker stream, not Playwright's summary line",
+  );
+
+  // Executed, not grepped: the rule itself.
+  assert(
+    Object.keys(retryFields({ status: "passed", maxAttempt: 0 })).length === 0,
+    "a run that never retried writes NEITHER field — 0 would be indistinguishable from absent",
+  );
+  assert(
+    retryFields({ status: "passed", maxAttempt: 1 }).passedOnRetry === true,
+    "…a run that failed and then passed is marked as such",
+  );
+  assert(
+    retryFields({ status: "failed", maxAttempt: 2 }).passedOnRetry === undefined,
+    "…and a run that retried and STILL failed is not called a recovery",
+  );
+}
+
+// ── 7. `--retries` actually reaches Playwright ─────────────────────────────
+//
+// Four hops between the flag and the process, and every one of them is a name
+// that can be misspelt into silence. The failure mode is a CLI that accepts
+// `--retries 2`, runs each test once, and reports the intermittent as a real
+// failure — which is exactly what the caller asked it not to do.
+{
+  assert(/"--retries",/.test(cliArgs), "args: --retries is a value flag, so it consumes its number");
+  assert(/retries: options\.retries,/.test(cliRun), "run: the parsed value is handed to runSelection");
+  assert(
+    /^\s*retries,$/m.test(mcpRunner),
+    "runner: runSelection and executeTest both destructure it",
+  );
+  assert(
+    /\.\.\.\(retries > 0 \? \[`--retries=\$\{retries\}`\] : \[\]\)/.test(runPlan),
+    "runArgs: emits the flag only when asked, so a spec's own retries survive",
   );
 }
 

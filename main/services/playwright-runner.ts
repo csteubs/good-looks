@@ -22,6 +22,7 @@ import {
   attemptArtifactDir,
   attemptFromPlaywrightOutputDir,
 } from "../../shared/attempt-artifacts.mjs";
+import { retryFields } from "../../shared/run-attempts.mjs";
 import { buildHealMap } from "../../shared/heal-map.mjs";
 import { resolveScriptPath } from "../../shared/script-path.mjs";
 import { buildStepLineMapFromSource } from "../../shared/step-line-map.mjs";
@@ -1804,6 +1805,11 @@ export const playwrightRunner = {
           exitCode !== 0 ||
           byAttempt.size > 1 ||
           [...byAttempt.values()].some((m) => Object.values(m).includes("failed"));
+        // What this run records about its attempts. Nothing in the app turns
+        // retries on yet, but a spec can configure its own and an imported
+        // project can carry one — so this is written unconditionally rather
+        // than behind a flag that does not exist here.
+        const maxAttempt = byAttempt.size > 0 ? Math.max(...byAttempt.keys()) : 0;
         // Salvage the failure trace BEFORE the scratch dir goes. The generated
         // config has said `trace: "retain-on-failure"` since it was written,
         // and this cleanup was deleting the result on every run — retention
@@ -1998,6 +2004,11 @@ export const playwrightRunner = {
               datasetName: params.datasetName,
               healedSteps,
               healFailedSteps,
+              // Spread rather than written flat, so a run that ran once carries
+              // neither key. An `attempt: 0` on every record ever written would
+              // be indistinguishable from a run that predates the field, and
+              // the whole point of these two is that a reader can tell.
+              ...retryFields({ status: runStatus, maxAttempt }),
               testTimeoutMs: runTestTimeoutMs,
               captureOverheadMs,
               shotCount,

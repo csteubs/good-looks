@@ -156,7 +156,15 @@ export function runEnv({
 /** The Playwright CLI arguments for one run. `--timeout` is authoritative: it
  *  wins over whatever the config declares, matching the app. The env var above
  *  carries the same number for a config-only run. */
-export function runArgs({ cliPath, specFile, configPath, browser, testTimeoutMs, reporterPath }) {
+export function runArgs({
+  cliPath,
+  specFile,
+  configPath,
+  browser,
+  testTimeoutMs,
+  reporterPath,
+  retries = 0,
+}) {
   return [
     cliPath,
     "test",
@@ -178,6 +186,11 @@ export function runArgs({ cliPath, specFile, configPath, browser, testTimeoutMs,
     ...(reporterPath ? ["--reporter", `${reporterPath},line`] : []),
     `--browser=${browser}`,
     `--timeout=${testTimeoutMs}`,
+    // Only when asked for. Passing `--retries=0` explicitly would also override
+    // a spec that configured its own, which is not what "no retries requested"
+    // means — and the generated config declares none, so omitting it leaves
+    // Playwright's default of 0.
+    ...(retries > 0 ? [`--retries=${retries}`] : []),
   ];
 }
 

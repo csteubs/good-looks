@@ -160,6 +160,21 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      unattended run does not — the fixture falls back to the
                      step id, which puts the gap in the artifact rather than in
                      the ranking.
+                     run-attempts.mjs is WHAT A RETRY MEANS (R24), and the
+                     rule is that a retried pass answers TWO questions
+                     differently: PASSED as an outcome (the pass rate says
+                     yes) and FAILED as a signal (the flake transition series
+                     says it went red). Collapsing them either way is the bug
+                     ROUTINES.md refused a retry policy over — "a retry
+                     stacked on Auto-Heal makes a flaky test look stable,
+                     which is precisely the signal the Stability panel exists
+                     to give". The verdict check sits ABOVE `failed === 0` in
+                     verdictFor, because that rule reads OUTCOMES: a test
+                     needing a retry on every run has no failures and reached
+                     "stable" with every new field present and correct.
+                     retryFields returns FIELDS to spread and is EMPTY when
+                     nothing retried — `attempt: 0` on every row is
+                     indistinguishable from a row predating the field
                      attempt-artifacts.mjs is WHERE ONE ATTEMPT'S EVIDENCE
                      GOES (R24a). Playwright re-runs a failed test from the
                      top and the capture fixture is a `page` fixture, so every

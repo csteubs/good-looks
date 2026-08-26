@@ -151,7 +151,7 @@ describe("summariseRun — which state", () => {
       now: 0,
     });
     expect(s.state).toBe("retry");
-    expect(s.state === "retry" && s.previous.id).toBe("r1");
+    expect(s.state === "retry" && s.previous?.id).toBe("r1");
     expect(s.state === "retry" && s.differences).toEqual([
       { label: "Browser", before: "WebKit", after: "Chromium" },
     ]);
@@ -203,7 +203,7 @@ describe("summariseRun — which state", () => {
     // The failure is still the run before this one — accepting baselines is an
     // audit event, not an execution.
     expect(s.state).toBe("retry");
-    expect(s.state === "retry" && s.previous.id).toBe("r1");
+    expect(s.state === "retry" && s.previous?.id).toBe("r1");
   });
 
   it("summarises the most recent record when nothing ran this session", () => {

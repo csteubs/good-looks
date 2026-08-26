@@ -61,6 +61,7 @@ vi.mock("../../lib/api", () => ({
             failingDatasets: [],
             steps: [],
             healedRuns: 0,
+            retriedRuns: 0,
           },
           {
             testId: "t2",
@@ -74,6 +75,7 @@ vi.mock("../../lib/api", () => ({
             failingDatasets: [],
             steps: [],
             healedRuns: 0,
+            retriedRuns: 0,
           },
         ],
         clusters: [],

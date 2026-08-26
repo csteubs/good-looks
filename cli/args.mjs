@@ -18,6 +18,7 @@ import { normalizeBaseUrl } from "../shared/base-url.mjs";
 import { RUN_BROWSERS } from "../mcp/run-tests.mjs";
 import { SLOW_MO_MS } from "../shared/run-pacing.mjs";
 import { MAX_PARALLEL } from "../mcp/run-pool.mjs";
+import { MAX_RETRIES } from "../shared/run-attempts.mjs";
 
 /** Speeds the `--speed` flag accepts, read off the delay table rather than
  *  listed again — a fifth speed added there is accepted here the same day. */
@@ -32,6 +33,7 @@ const VALUE_FLAGS = new Set([
   "--browser",
   "--speed",
   "--parallel",
+  "--retries",
   "--secrets-file",
   "--junit",
   "--base-url",
@@ -73,6 +75,7 @@ export function parseRunArgs(argv) {
   let browser;
   let speed;
   let parallel;
+  let retries;
   let json = false;
   let allDatasets = false;
   let dryRun = false;
@@ -173,6 +176,22 @@ export function parseRunArgs(argv) {
           }
           speed = value;
           break;
+        case "--retries": {
+          // Whole numbers only, same rule as --parallel and for the same
+          // reason. A misspelt value must not silently become "no retries" —
+          // the whole point of asking is that the caller expects the suite to
+          // absorb an intermittent, and a run that quietly did not is a report
+          // they will read as a real failure.
+          if (!/^\d+$/.test(value)) {
+            return fail(`--retries needs a whole number, got "${value}".`);
+          }
+          const n = Number(value);
+          if (n > MAX_RETRIES) {
+            return fail(`--retries must be ${MAX_RETRIES} or fewer, got ${n}.`);
+          }
+          retries = n;
+          break;
+        }
         case "--parallel": {
           // Whole numbers only. `--parallel 2.5` and `--parallel eight` are
           // both someone expecting something; neither should quietly become 1.
@@ -246,6 +265,7 @@ export function parseRunArgs(argv) {
       browser,
       speed,
       parallel,
+      retries,
       allDatasets: allDatasets || undefined,
       dryRun,
       secretsFile,
@@ -329,6 +349,9 @@ Options:
   --speed <name>     ${SPEEDS.join(" | ")} — overrides the test's own pace for
                      this run only, and is never written back to the test
   --parallel <n>     run n tests at once, 1-${MAX_PARALLEL} (default: 1)
+  --retries <n>      re-run a failed test up to n times, 0-${MAX_RETRIES} (default: 0)
+                     A run that passes on a retry is recorded as passed AND
+                     counted as a failure by the flake analysis.
   --all-datasets     run each selected test once per dataset row it declares
   --secrets-file <f> JSON object of secret values for tests that declare them,
                      keyed "<testId>.<name>" or "<name>". An environment
