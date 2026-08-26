@@ -10,6 +10,53 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-26 — The settings search index and the settings panes disagreed
+
+Found finishing the Batch → Routine rename (R48), and it is the more useful half
+of that change.
+
+`settings-schema.ts` carries a `label` per row so search can match on it, and
+each pane carries the same label on its `<SettingRow>` because that is what a
+person reads. **Two copies of one string, and nothing compared them.** So a
+setting could be found under one name and displayed under another — the failure
+mode of a search index in general: it does not error, it answers about something
+the screen does not show.
+
+Renaming the two batch rows in their panes left the index still saying "batch",
+and no test noticed. Comparing all 82 rows then surfaced a pre-existing one:
+`github-token` read "GitHub token" in search and "GitHub token (branch
+switcher)" on screen.
+
+`settings-search-labels.test.ts` compares every row that has a `SettingRow` — 71
+of them. Rows built by hand (buttons, selects, connection widgets) are skipped
+rather than failed: demanding one markup shape from every pane would be a test
+about JSX rather than about copy. It decodes HTML entities before comparing,
+because JSX decodes them in an attribute value — `&amp;` on the page IS `&`, and
+comparing the raw text fails on a difference nobody can see. And it asserts the
+extractors found more than fifty rows, because a regex that stops matching would
+otherwise make the comparison pass on an empty set, which is the shape this
+repo keeps meeting.
+
+**What the rename covered, and what it deliberately did not.** User-visible copy
+only: the two settings panes, the desktop notification titles, the webhook
+alert headline, the job ticker, the Routines view's own toasts and the outcome
+headings. Not route paths (`/batch`), query keys, IPC channels, CSS class names,
+setting ids or module paths — none of which a user reads, and all of which are
+load-bearing elsewhere. `command-palette`'s search KEYWORDS keep "batch" on
+purpose, as do the two schema rows: somebody who still thinks of it as a batch
+should still find it.
+
+**Three surfaces were half-renamed already**, which is what made this worth
+doing rather than cosmetic: `alert-service` said "Routine stopped" in one branch
+and "Batch stopped" in the next; `run-notifier` said "Routine stopped by a
+failure" and "Batch passed"; the Settings panes said "Routines" in the rail and
+"batch" in the rows.
+
+**`docs/MCP-GUIDE.md` is untouched on purpose.** It is also the in-app manual, so
+its prose is UI copy — but it documents tools actually named `run_batch` and
+`list_batches`, and renaming the prose without the API would make the manual
+disagree with the thing it documents.
+
 ### 2026-08-26 — The step reporter was written on every CI run and never loaded
 
 Found while sizing R1 (`--junit` for the CLI), which the plan ranks S and

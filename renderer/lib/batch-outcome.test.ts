@@ -66,8 +66,8 @@ describe("batchOutcomeTitle", () => {
   });
 
   it("does not call a partly-passing batch a failure outright", () => {
-    expect(batchOutcomeTitle("mixed")).toBe("Batch finished with failures");
-    expect(batchOutcomeTitle("failed")).toBe("Batch failed");
+    expect(batchOutcomeTitle("mixed")).toBe("Routine finished with failures");
+    expect(batchOutcomeTitle("failed")).toBe("Routine failed");
   });
 });
 

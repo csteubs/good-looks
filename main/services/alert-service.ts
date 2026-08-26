@@ -247,8 +247,8 @@ export function buildAlertPayload(alert: Alert): AlertPayload | null {
   const headline = alert.stopped
     ? alert.stoppedBy === "failure"
       ? `⏹ Routine stopped${alert.stoppedByTest ? ` — "${alert.stoppedByTest}" failed` : " by a failure"} — ${summary.passed}/${summary.total} passed`
-      : `⏹ Batch stopped — ${summary.passed}/${summary.total} passed`
-    : `❌ Batch: ${summary.failed} of ${summary.total} failed`;
+      : `⏹ Routine stopped — ${summary.passed}/${summary.total} passed`
+    : `❌ Routine: ${summary.failed} of ${summary.total} failed`;
   const parts: string[] = [];
   if (alert.failedTests.length > 0) {
     // Cap the list: a suite where everything failed shouldn't produce a wall

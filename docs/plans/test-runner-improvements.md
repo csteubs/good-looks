@@ -162,7 +162,7 @@ row is only moved here with a file and a symbol behind it.
 | R45 | Show a suite's expected duration before it runs | Perf | missing | M |
 | R46 | Lean diagnostics mode for the app | Perf | partial | M |
 | R47 | Fix heal candidate scores above 1 being reported as 0 | Stab | **done 2026-08-25** | S |
-| R48 | Finish the Batch-to-Routine rename in UI copy | UX | partial | S |
+| R48 | Finish the Batch-to-Routine rename in UI copy | UX | **done 2026-08-26** | S |
 | R49 | Run the heal fixture for MCP-driven runs | Stab | **done 2026-08-25** — guard, then feature | M |
 | R50 | Export a run as a shareable PDF | UX | missing | M |
 | R51 | Move the recorder's locator engine into `shared/` | Stab | **done 2026-08-25** — R49 and CI overlay rules unblocked | L |

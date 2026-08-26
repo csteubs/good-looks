@@ -3403,7 +3403,7 @@ export interface BatchState {
    *  A SEPARATE FIELD rather than a note parsed back out, because three
    *  consumers act on it: the skip note on the entries that never ran, the
    *  alert, and the desktop notification. A scheduled routine's notification is
-   *  often the ONLY thing the user sees, and "Batch stopped" for a run nobody
+   *  often the ONLY thing the user sees, and "Routine stopped" for a run nobody
    *  touched is a lie about who did it. */
   stoppedBy?: "user" | "failure";
   /** The test whose failure stopped it, for `stoppedBy: "failure"`. The NAME,

@@ -321,7 +321,7 @@ export function BatchView() {
       // the batch finished. The toasts stay — they are this view's own report
       // of a batch it started, not a fact about the cache.
       if (state.stopped) {
-        toast.info("Batch stopped.");
+        toast.info("Routine stopped.");
       } else if (state.summary.failed > 0) {
         toast.error(
           `${state.summary.failed} of ${state.summary.total} failed.`,
@@ -992,7 +992,7 @@ export function BatchView() {
     if (!openId || selectedIds.length === 0) return;
     try {
       const res = await api.routines.run(openId);
-      if (res.alreadyRunning) toast.info("A batch is already running.");
+      if (res.alreadyRunning) toast.info("A routine is already running.");
       // A NOTE, NOT A FAILURE. The run still did most of what was asked; the
       // alternative — refusing — lets one deleted test disable a suite. Saying
       // nothing is what would make this feature untrustworthy.
@@ -1004,7 +1004,7 @@ export function BatchView() {
         );
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to start the batch.");
+      toast.error(err instanceof Error ? err.message : "Failed to start the routine.");
     }
   };
 
@@ -1205,7 +1205,7 @@ export function BatchView() {
                 commitRows(applyHeadlessToAll(rowOptions, tests, rowDefaults, next));
               }}
               disabled={running}
-              aria-label="Run every test in this batch headless"
+              aria-label="Run every test in this routine headless"
             />
             Headless
           </label>
@@ -1224,7 +1224,7 @@ export function BatchView() {
                 });
               }}
               disabled={running}
-              aria-label="Capture screenshots during this batch"
+              aria-label="Capture screenshots during this routine"
             />
             Capture screenshots
           </label>
@@ -2030,7 +2030,7 @@ export function BatchView() {
 
               {history.length > 0 ? (
                 <Panel
-                  title="Previous batches"
+                  title="Previous runs"
                   id={String(history.length)}
                   right={
                     <Btn
@@ -2043,12 +2043,12 @@ export function BatchView() {
                           qc.invalidateQueries({ queryKey: ["batch-history"] });
                           toast.success(
                             res.removed === 1
-                              ? "Cleared 1 batch."
-                              : `Cleared ${res.removed} batches.`,
+                              ? "Cleared 1 run."
+                              : `Cleared ${res.removed} runs.`,
                           );
                         } catch (err) {
                           toast.error(
-                            err instanceof Error ? err.message : "Failed to clear batch history.",
+                            err instanceof Error ? err.message : "Failed to clear the run history.",
                           );
                         }
                       }}
@@ -2158,10 +2158,10 @@ export function BatchView() {
         size="small"
         title={`Open ${pendingHeadedRun ?? 0} browser windows at once?`}
         description={
-          `This batch runs ${pendingHeadedRun ?? 0} tests in parallel with visible browsers, so ` +
+          `This routine runs ${pendingHeadedRun ?? 0} tests in parallel with visible browsers, so ` +
           `${pendingHeadedRun ?? 0} windows will open together and take focus as they launch — ` +
-          "the machine will be hard to use until the batch finishes. Tick Headless to run the " +
-          "same batch invisibly, or lower “At once”."
+          "the machine will be hard to use until the routine finishes. Tick Headless to run the " +
+          "same routine invisibly, or lower “At once”."
         }
         confirmLabel="Run anyway"
         onConfirm={() => {

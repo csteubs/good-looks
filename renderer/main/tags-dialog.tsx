@@ -70,7 +70,7 @@ export function TagsDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={test ? `Tags for “${test.name}”` : "Tags"}
-      description="Group tests so you can run a subset as a batch. Separate tags with commas."
+      description="Group tests so you can run a subset as a routine. Separate tags with commas."
       confirmLabel={saving ? "Saving…" : "Save"}
       onConfirm={save}
     >

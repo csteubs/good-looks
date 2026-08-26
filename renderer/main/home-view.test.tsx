@@ -255,7 +255,7 @@ describe("the readouts navigate", () => {
    *  proves nothing. This is the second, independent copy, and disagreement
    *  between the two is exactly the bug worth catching. */
   const READOUTS = [
-    { label: "Tests", view: "Batch", to: "/batch" },
+    { label: "Tests", view: "Routines", to: "/batch" },
     { label: "Green · 7d", view: "Stats", to: "/stats" },
     { label: "Heals to review", view: "Heals", to: "/heals" },
   ] as const;
@@ -314,7 +314,7 @@ describe("the readouts navigate", () => {
     await waitFor(() => expect(statValue("Tests")).toBe("2"));
 
     const expected: Record<string, string> = {
-      Tests: "Tests: 2, opens the Batch view",
+      Tests: "Tests: 2, opens the Routines view",
       "Green · 7d": "Green · 7d: 0%, opens the Stats view",
       "Heals to review": "Heals to review: 2, opens the Heals view",
     };
