@@ -331,13 +331,56 @@ export function createRunner({ dataDir, store, secretEnv = process.env, secretFi
     return out;
   }
 
+  /**
+   * The `node_modules` link beside the specs, and it REPAIRS a stale one rather
+   * than only creating a missing one.
+   *
+   * The app's runner learned this and this copy did not — see the long comment
+   * on `ensureModuleResolution` in `main/services/playwright-runner.ts`, which
+   * documents both failure modes. They are worse here, because THIS is the path
+   * a copied library reaches: R10 exists so a library can be handed to a runner,
+   * and a library that has ever been run carries an absolute link to the
+   * node_modules of the machine that ran it.
+   *
+   *  - **The old tree is still on disk** (two installs on one machine — a source
+   *    checkout and a packaged app, or the app and this CLI). The CLI runs from
+   *    OUR node_modules while the spec resolves a SECOND @playwright/test
+   *    through the link. Playwright compares module identity, not version, so
+   *    collection dies with "Playwright Test did not expect test() to be called
+   *    here" and then "No tests found".
+   *  - **The old tree is gone** (the library was copied to a CI runner). The
+   *    link dangles. `fs.existsSync` FOLLOWS symlinks, so it answers false for a
+   *    dangling one; the old code read that as "no link here", called
+   *    `symlinkSync`, got EEXIST because the path is occupied, and carried on
+   *    with the broken link in place.
+   *
+   * Both end in the same message, and it names four possible causes of which
+   * none is this one — it sends the reader to their own package.json. Verified
+   * by reproducing each against a library copied out of one tree and run from
+   * another.
+   *
+   * Hence `lstat` rather than `existsSync`: the question is what the link IS,
+   * not what it points at. A real directory is left alone — that is someone's
+   * own install, not ours to delete.
+   */
   function ensureModuleResolution(scriptsDir, nodeModules) {
     const link = path.join(scriptsDir, "node_modules");
-    if (fs.existsSync(link)) return;
     try {
+      const entry = fs.lstatSync(link, { throwIfNoEntry: false });
+      if (entry) {
+        if (!entry.isSymbolicLink()) return;
+        // Resolved against the link's own directory so a relative target
+        // compares correctly. Deliberately NOT realpath: that throws on a
+        // dangling link, which is precisely the case to repair.
+        const target = path.resolve(scriptsDir, fs.readlinkSync(link));
+        if (target === path.resolve(nodeModules)) return;
+        fs.unlinkSync(link);
+      }
       fs.symlinkSync(nodeModules, link, "dir");
     } catch {
-      // best-effort; NODE_PATH env still lets Node resolve @playwright/test
+      // best-effort; NODE_PATH env still lets Node resolve @playwright/test —
+      // though ESM imports do not consult it, so this is a degraded state and
+      // not a supported one.
     }
   }
 
