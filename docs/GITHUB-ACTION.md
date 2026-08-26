@@ -192,6 +192,14 @@ not there:
   jobUrl         …/actions/runs/GITHUB_RUN_ID
   ```
 
+  Two of those repay a second look, because both look wrong at a glance and
+  are not. On a **pull request**, `GITHUB_SHA` is the sha of the MERGE commit
+  GitHub built for the run, not of your branch's head — so the revision on the
+  record will be a commit you cannot find in your branch, and it is the honest
+  answer, because the merge commit is what the tests actually ran against.
+  `GITHUB_REF_NAME` on that same event is `123/merge`, naming no branch anyone
+  can check out, which is why the branch comes from `GITHUB_HEAD_REF` instead.
+
 On another CI, or to correct a value your provider reports uselessly, set any of
 these instead — they win per field, so you can override one and leave the rest:
 

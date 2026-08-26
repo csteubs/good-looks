@@ -95,6 +95,29 @@ been one more call site and it can never fire in the normal case — a macOS app
 launched from Finder does not inherit a shell's environment at all. The field
 exists to attribute runs nobody watched; the app's are the attended path.
 
+**Measured on a real runner before this was called done.** The self-test's new
+step reads the library's own `run-history.json` back and compares each field
+against the environment *that step* sees. On `6e3ce05` it recorded:
+
+```json
+"trigger": "cli",
+"provenance": {
+  "revision": "43debe81b1c1a35dbfee5de0079fb34a572b8b7a",
+  "branch": "feat/run-provenance",
+  "repositoryUrl": "https://github.com/csteubs/good-looks",
+  "jobUrl": "https://github.com/csteubs/good-looks/actions/runs/32940712199"
+}
+```
+
+Two things that could only be learned there. The branch is the source branch,
+which is the `GITHUB_HEAD_REF` preference paying off on a real `pull_request`
+event — `GITHUB_REF_NAME` was `283/merge`. And the revision is the sha of the
+MERGE COMMIT GitHub built for the run, not of the branch head: a commit you
+cannot find in your own branch, and the honest answer, because it is what the
+tests ran against. That reads as a bug to anyone comparing it with their branch,
+so it is written down in `docs/GITHUB-ACTION.md` rather than left to be
+rediscovered.
+
 **Nothing renders provenance yet, deliberately.** R6 is the record; the
 consumers are R12 and the Stability/flake surfaces. Adding the field ahead of
 them is the whole point of a value that cannot be backfilled, and it is what the
