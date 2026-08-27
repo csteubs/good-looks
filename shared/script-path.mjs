@@ -129,9 +129,20 @@ export function scriptRelSegments(record) {
  *  Resolved on both sides and requiring a separator at the boundary, so
  *  `/a/scripts-evil` is not read as living inside `/a/scripts`. Mirrors
  *  `isInside` in import-service.ts, which guards the same class of thing one
- *  directory over. */
+ *  directory over.
+ *
+ *  A RELATIVE candidate is refused outright, and that is load-bearing rather
+ *  than tidy. `path.resolve` completes a relative path against `process.cwd()`,
+ *  so without this the answer depends on where the process happens to have been
+ *  started — `t-1.spec.ts` is "inside" only while the cwd is the scripts dir,
+ *  and `resolveScriptPath` would then hand its caller the relative string it
+ *  was given. The caller's next move is `path.relative(scriptsDir, specPath)`,
+ *  which turns that into a `../../..` walk out of the library. Nothing the app
+ *  writes is relative; a bundle's tests.json and a hand edit are where one comes
+ *  from, and both are exactly the untrusted input this module exists for. */
 export function isInsideScripts(scriptsDir, candidate) {
   if (!scriptsDir || !candidate) return false;
+  if (!path.isAbsolute(candidate)) return false;
   const root = path.resolve(scriptsDir);
   const child = path.resolve(candidate);
   return child === root || child.startsWith(root + path.sep);

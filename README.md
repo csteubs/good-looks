@@ -104,6 +104,11 @@ because a command that runs the whole library when a flag is misspelt is worse
 than one that refuses. Exit code 2 means the selector matched nothing, which is
 otherwise indistinguishable from a clean pass.
 
+`good-looks export --out DIR` writes the library a runner needs — `tests.json`
+and the specs, and nothing else. It exists because the app's own store holds run
+history, logs, screenshots, saved sessions, an API key and the encrypted secrets
+beside the tests, so copying that folder by hand was the wrong default.
+
 [`action.yml`](action.yml) wraps the same CLI as a composite GitHub Action, and
 `good-looks ingest` carries a CI job's runs back into the local library so
 Stability, the flake verdict and step health count them.
@@ -148,6 +153,7 @@ shared/              the one pure core the app, the MCP server and the CLI all i
                      fixtures live here, which is what lets a CI runner heal and settle
 bin/                 the `good-looks` CLI entry point — argv in, exit code out
 cli/                 what the CLI decides, kept out of bin/ so it can be tested
+                     (args, exit codes, run, junit, export, ingest)
 mcp/                 standalone MCP server exposing the test library (see mcp/README.md)
 workers/mailbox/     the catch-all inbox behind the `emailCode` step (Cloudflare)
 e2e/                 Playwright specs driving the real app through `_electron`
@@ -262,8 +268,8 @@ log, so check the log too: renderer errors and warnings are forwarded there by
 ## Testing
 
 **Two systems, one command.** `npm run test:all` runs the `check:*` scripts and
-then Vitest. Both must pass. 6081 Vitest tests across 335 files and 93 checks in
-the chain as of 2026-08-26 (95 are defined — `check:repo-hygiene` and
+then Vitest. Both must pass. 6124 Vitest tests across 337 files and 94 checks in
+the chain as of 2026-08-26 (96 are defined — `check:repo-hygiene` and
 `check:shell-drift` are deliberately outside it).
 
 Vitest has two projects. **`node`** covers `main/**/*.test.ts`,

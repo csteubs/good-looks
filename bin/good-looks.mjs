@@ -17,6 +17,7 @@ import process from "node:process";
 
 import { INSTALL_USAGE, parseInstallArgs, parseRunArgs, RUN_USAGE } from "../cli/args.mjs";
 import { EXIT, EXIT_MEANINGS } from "../cli/exit.mjs";
+import { EXPORT_USAGE, exportCommand, parseExportArgs } from "../cli/export.mjs";
 import { INGEST_USAGE, ingestCommand, parseIngestArgs } from "../cli/ingest.mjs";
 import { installCommand, runCommand } from "../cli/run.mjs";
 import { resolveDataDir } from "../mcp/data-dir.mjs";
@@ -28,6 +29,7 @@ Usage: good-looks <command> [options]
 Commands:
   run        run recorded tests and exit on their result
   install    download a browser engine into this library's browsers directory
+  export     write a portable copy of this library for a build server
   ingest     carry a CI job's run results back into this library
   data-dir   print the library directory this CLI reads
   help       show this
@@ -88,6 +90,31 @@ async function main(argv) {
       return EXIT.CANNOT_START;
     }
     return installCommand(parsed.options, { out, err });
+  }
+
+  if (command === "export") {
+    const parsed = parseExportArgs(rest);
+    if (parsed.ok === "help") {
+      out(EXPORT_USAGE);
+      return EXIT.PASSED;
+    }
+    if (!parsed.ok) {
+      err(parsed.error);
+      err("");
+      err(EXPORT_USAGE);
+      return EXIT.CANNOT_START;
+    }
+    // Resolved HERE, like ingest's, so a library this CLI cannot find is one
+    // refusal with one sentence naming the override, rather than a third way
+    // of saying "no store".
+    let exportDataDir;
+    try {
+      exportDataDir = resolveDataDir();
+    } catch (error) {
+      err(String(error.message ?? error));
+      return EXIT.CANNOT_START;
+    }
+    return exportCommand(parsed.options, { out, err, dataDir: exportDataDir });
   }
 
   if (command === "ingest") {

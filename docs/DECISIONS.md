@@ -10,6 +10,72 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-26 — The export bundle, and the leak the hand-copy already was (R10)
+
+R10's other half landed on 2026-08-25: `shared/script-path.mjs` resolves a
+spec against the scripts directory of whichever machine is reading, so a copied
+library finds its own tests. This is the command that produces the copy.
+
+**The feature is mostly a redaction.** Until now the only way to give a runner a
+library was to copy the app's data directory, and the Action's own documentation
+said as much with a warning attached — "do not commit your settings file if it
+holds a token". That directory also holds every run's history and log, every
+screenshot, `metrics.db`, saved login sessions, an alerts webhook URL, a Shopify
+signature register and `test-secrets.bin`. A warning is not a boundary, and the
+person copying it is by definition in a hurry.
+
+**An allowlist in BOTH directions, and the second is the one worth arguing
+about.** Naming the files positively is obvious enough: a denylist is right the
+day it is written and wrong the day a new store file lands beside the others,
+and the new file is the one nobody has thought about. The same reasoning applies
+to FIELDS, which is less obvious because `tests.json` holds no credential today —
+a secret's value is documented as never living on the record. But an exported
+record built by spreading and deleting three keys carries every future key too,
+so the next optional field on `TestRecord` would ship in a bundle because nobody
+looked. It is REBUILT from named keys instead, exactly as `normalizeRawStep`
+rebuilds a step at the capture boundary, and for the same reason in the opposite
+direction.
+
+**The field rule is "a run reads it", not "it looks harmless".** A field no
+runner reads is inert in the bundle, and inert-but-present is how R49 shipped a
+heal map that installed itself and healed nothing. Writing the check made the
+rule bite immediately: four fields I had exported on the strength of seeming
+useful — `scriptEdited`, `runBrowser`, `isFlow`, `flowParams` — are read by
+`mcp/server.mjs` for display and by nothing on the run path, and are now
+withheld with the reason recorded. `check:export-egress` reads `TestRecord` and
+fails on a key in NEITHER list, so the next field is a decision somebody makes
+rather than one that happens.
+
+**Secrets: export the rest and name the tests that will not run.** Refusing the
+whole export because two tests out of thirty want a password would be refusing
+the feature — twenty-eight of them run on the runner today. The failure worth
+preventing is not the export, it is a CI operator discovering the two from a
+failing assertion at a login form, so the command names them and the variables
+each wants. This is the MCP's existing rule (`secretVariableNames` exists so a
+run says so up front) applied one step earlier.
+
+**A directory, not an archive.** A tarball is a thing you have to open before
+you can see what you shipped, and what you shipped is the whole point of the
+review this command exists to make possible.
+
+**One latent bug fell out of writing it, in `shared/script-path.mjs`.** A
+bundle's `scriptPath` is RELATIVE — that is what makes it portable — and
+`isInsideScripts` completed a candidate with `path.resolve`, which resolves a
+relative path against `process.cwd()`. So the answer depended on where the
+process happened to be started: with the cwd inside the scripts directory,
+`resolveScriptPath` returned the relative string it was handed, and its caller's
+next move is `path.relative(scriptsDir, specPath)` — a `../../..` walk out of
+the library, which is the exact class of failure that module exists to end. A
+relative candidate is refused now. Nothing the app writes is relative; a
+bundle's `tests.json` and a hand edit are where one comes from, and both are the
+untrusted input the module was written for.
+
+**Deferred, both deliberately.** `eject` (a standalone Playwright project) is a
+different artifact for a different reader and wants its own change. So does the
+plan's `--check` mode — "fail when a committed spec does not match what the
+store would generate" — which needs the generator, and the generator is compiled
+TypeScript unreachable from plain `.mjs`.
+
 ### 2026-08-26 — Retries, and the two answers a retried run has to give (R24)
 
 `docs/ROUTINES.md` refused a retry policy in v1 and named its own condition for

@@ -137,6 +137,22 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      UNTRUSTED INPUT for the same reason an imported project is:
                      the derived path is joined onto the local scripts dir and
                      then executed as a spec.
+                     export-bundle.mjs is WHAT MAY LEAVE (R10), and the
+                     shape it takes from the rule above: a bundle's
+                     scriptPath is the position INSIDE the bundle, which
+                     resolves through script-path.mjs on whatever runner it
+                     lands on. Two allowlists, because a denylist is right
+                     the day it is written and wrong the day a store file
+                     lands beside the others — FILES (tests.json + scripts/,
+                     never browsers, history, logs, artifacts, metrics.db or
+                     any .bin) and FIELDS, where a record is REBUILT from
+                     named keys. The field rule is "a run reads it": a field
+                     nothing reads is inert in a bundle, which is R49's shape.
+                     check:export-egress reads TestRecord and refuses a field
+                     in NEITHER list, so a new one fails the gate until
+                     somebody decides. Here rather than in cli/ because the
+                     plan has the app exporting too, and two allowlists is the
+                     drift this repo keeps paying for.
                      step-line-map.mjs is WHICH STEP A SPEC LINE IS — the
                      fallback that turns the reporter's line number into a step
                      index. Here because the unattended runner needs it: until
@@ -320,8 +336,18 @@ cli/                 what the CLI decides, kept out of bin/ so it can be tested.
                      (either level), plan, copy each log BY ID, stamp
                      ingestedAt, write through saveRunRecords so the cap and
                      pruned tally stay one implementation.
+                     export.mjs is R10's, and points the other way: a bundle a
+                     runner can be handed. The store it reads holds run
+                     history, logs, screenshots, metrics.db, saved sessions,
+                     an LLM key, a webhook URL and the encrypted secrets, so
+                     the hand-copy it replaces was a leak waiting for someone
+                     in a hurry. WHAT may cross is shared/export-bundle.mjs,
+                     an ALLOWLIST in both directions — two files, and a
+                     REBUILT record rather than a spread one, so the next
+                     field on TestRecord cannot ship because nobody looked.
                      Its unit tests live in main/services/cli-exit.test.ts,
-                     cli-junit.test.ts and cli-ingest.test.ts, because vitest's
+                     cli-junit.test.ts, cli-ingest.test.ts and
+                     cli-export.test.ts, because vitest's
                      node project takes main/**, mcp/** and renderer/lib/** and
                      a test file here would match NEITHER project
 mcp/                 standalone MCP server exposing the test library to external MCP clients.
@@ -414,7 +440,7 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 6081 Vitest tests across 335 files and 93 checks in the chain as of 2026-08-26 (95 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 6124 Vitest tests across 337 files and 94 checks in the chain as of 2026-08-26 (96 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
 
 **A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS — or a real navigation — gets checked: `click-navigation.spec.ts` (a click that changes route is recorded, including one a client-side router intercepts; the failure it was written against loses six clicks out of six and jsdom cannot host it, because nothing there has a navigation that destroys the document mid-read), `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `dialog-lifecycle.spec.ts` (whether the dialog that started a recording is still on top of the app afterwards — the existing recording spec invokes `recorder:start` over IPC, so it opens no dialog and could never see one left behind), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app), `verified-steps.spec.ts` (that an AI-proposed step is actually TRIED on the live page before it is inserted, that the first failure stops the rest, and that capture does not record the try a second time — a live session acting on a real page, which nothing in jsdom can host), `ts-service.spec.ts` (that the app forks the TypeScript service through a real `utilityProcess` and it answers — the child path, the node_modules resolution and `process.parentPort` exist nowhere else; `check:ts-service` boots the same built file under plain Node). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
 
