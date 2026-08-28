@@ -220,17 +220,80 @@ describe("session state", () => {
 });
 
 describe("tools reach their actions", () => {
-  it("pauses recording", () => {
+  // THE CHIP IS THE PAUSE TOGGLE — same correction as recording-view.tsx, made
+  // in both places or the two trainers disagree about what clicking the state
+  // word does. The ToolButton it replaced is pinned absent below.
+  it("pauses recording through the Recording chip", () => {
     renderPanel();
-    fireEvent.click(screen.getByRole("button", { name: /pause recording/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Recording" }));
     expect(actions.pause).toHaveBeenCalledTimes(1);
+    expect(actions.resume).not.toHaveBeenCalled();
   });
 
-  it("resumes when paused", () => {
+  it("resumes through the Paused chip", () => {
     setStore({ state: state({ paused: true }) });
     renderPanel();
-    fireEvent.click(screen.getByRole("button", { name: /resume recording/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Paused" }));
     expect(actions.resume).toHaveBeenCalledTimes(1);
+    expect(actions.pause).not.toHaveBeenCalled();
+  });
+
+  it("offers no separate pause/resume tool button", () => {
+    // Its glyph was the whole reason the replay arrow could not be a play
+    // triangle; keep the strip clear so the freed space stays freed.
+    renderPanel();
+    expect(screen.queryByRole("button", { name: /pause recording/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /resume recording/i })).toBeNull();
+  });
+
+  it("keeps the chip passive while a replay owns the window", () => {
+    setStore({ state: state({ replaying: true }) });
+    renderPanel();
+    expect(screen.queryByRole("button", { name: /replaying/i })).toBeNull();
+    expect(screen.getByText("Replaying")).toBeTruthy();
+  });
+
+  it("⌘P replays the selected step, resolved against THIS window's selection", () => {
+    setStore({
+      liveSteps: [step("a", { type: "click" }), step("b", { type: "click" })],
+    });
+    renderPanel();
+    fireEvent.click(screen.getAllByRole("option")[1]);
+    fireEvent.keyDown(window, { key: "p", metaKey: true });
+    expect(actions.replayStep).toHaveBeenCalledWith("b");
+  });
+
+  it("⌘P is inert with nothing selected — there is nothing to play", () => {
+    setStore({ liveSteps: [step("a", { type: "click" })] });
+    renderPanel();
+    fireEvent.keyDown(window, { key: "p", metaKey: true });
+    expect(actions.replayStep).not.toHaveBeenCalled();
+  });
+
+  it("renders the Paused chip passive while the Refine picker is armed", () => {
+    // Refine owns the pause (startRefine pauses, endRefine restores) — a
+    // resume from the chip would run capture live behind the pick. Mirrors
+    // recording-view and the ⌘R gate's "consume" state.
+    setStore({ state: state({ paused: true, refineMode: true }) });
+    renderPanel();
+    expect(screen.getByText("Paused")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Paused" })).toBeNull();
+  });
+
+  it("⌘P is inert while the tools are locked, even with a step selected", () => {
+    // Selection survives the lock (it is view state), so the gate has to be
+    // the shortcut's own — the same `controlsDisabled` the row's ▶ obeys.
+    setStore({ liveSteps: [step("a", { type: "click" })] });
+    const view = renderPanel();
+    fireEvent.click(screen.getAllByRole("option")[0]);
+    setStore({ liveSteps: [step("a", { type: "click" })], executing: true });
+    view.rerender(
+      <TooltipProvider>
+        <TrainerPanelView />
+      </TooltipProvider>,
+    );
+    fireEvent.keyDown(window, { key: "p", metaKey: true });
+    expect(actions.replayStep).not.toHaveBeenCalled();
   });
 
   it("replays from the first step when nothing is selected", async () => {
@@ -306,10 +369,12 @@ describe("tool icons stay distinguishable", () => {
   // the same button twice. Nothing else catches this: both render fine, both
   // have correct accessible names, and the tests above pass either way.
   //
-  // The specific trap is that Pause/Resume is a TOGGLE. Replay looked fine
-  // beside a pause bar; the moment the user pauses, the neighbour becomes a
-  // play triangle and the two are indistinguishable — while doing very
-  // different things (replay the recorded steps vs. carry on recording).
+  // The trap that taught this rule was the pause/resume TOGGLE that used to
+  // sit beside replay: paused, it became a play triangle and the two were
+  // indistinguishable while doing very different things. That toggle is the
+  // Recording/Paused chip in the header now (which draws no glyph), but the
+  // rule outlives it — replay must never pick the triangle up, and the next
+  // tool added to the row must not reuse a glyph already in it.
 
   it("does not draw replay as a play triangle", () => {
     renderPanel();
@@ -317,25 +382,10 @@ describe("tool icons stay distinguishable", () => {
       .not.toBe("play");
   });
 
-  it("keeps replay distinct from resume once paused", () => {
-    // The regression, exactly: pause, then look at the two neighbours.
-    setStore({ state: state({ paused: true }) });
-    renderPanel();
-    const replay = glyphOf(screen.getByRole("button", { name: /replay from the current step/i }));
-    const resume = glyphOf(screen.getByRole("button", { name: /resume recording/i }));
-    expect(replay).not.toBe(resume);
-  });
-
-  it("keeps replay distinct from pause while recording", () => {
-    renderPanel();
-    const replay = glyphOf(screen.getByRole("button", { name: /replay from the current step/i }));
-    const pause = glyphOf(screen.getByRole("button", { name: /pause recording/i }));
-    expect(replay).not.toBe(pause);
-  });
-
   it("gives every tool-row control its own glyph", () => {
     // Generalises the rule rather than pinning today's four buttons: any future
-    // tool that reuses a glyph already in the row fails here.
+    // tool that reuses a glyph already in the row fails here. Paused, because
+    // that is the state that used to produce the collision.
     setStore({ state: state({ paused: true }) });
     renderPanel();
     const labels = [
@@ -343,7 +393,6 @@ describe("tool icons stay distinguishable", () => {
       /add step/i,
       /generate steps with ai/i,
       /replay from the current step/i,
-      /resume recording/i,
     ];
     const glyphs = labels.map((l) => glyphOf(screen.getByRole("button", { name: l })));
     expect(new Set(glyphs).size).toBe(glyphs.length);
@@ -641,14 +690,12 @@ describe("a replay started in the OTHER trainer window", () => {
     }
   });
 
-  it("hides the pause/resume toggle, which would fight the replay's own suspension", () => {
-    // Capture is already suspended for the duration; a Pause press here would
-    // be restored out from under the user when the replay finishes, because the
-    // replay puts back the pause state it found.
-    renderPanel();
-    expect(screen.queryByLabelText("Pause recording")).toBe(null);
-    expect(screen.queryByLabelText("Resume recording")).toBe(null);
-  });
+  // The "hides the pause/resume toggle while replaying" test that used to sit
+  // here went vacuous when the labelled ToolButtons it queried were removed —
+  // those labels now exist in NO state, so it could never fail again. Its
+  // property is pinned by "keeps the chip passive while a replay owns the
+  // window" above: the toggle IS the chip now, and Replaying renders it as a
+  // passive span.
 
   it("goes back to Recording when the replay ends", () => {
     const { rerender } = renderPanel();

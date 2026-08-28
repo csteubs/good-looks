@@ -29,8 +29,6 @@ import {
   CheckSquare,
   ChevronDown,
   Crosshair,
-  Pause,
-  Play,
   Plus,
   RotateCcw,
   Shrink,
@@ -42,6 +40,8 @@ import {
 import { api } from "../lib/api";
 import type { AssertKind, PickedElement, RawStep, WaitDialogMode } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
+import { usePlayStepShortcut } from "../lib/use-play-step-shortcut";
+import { prettyKey } from "../lib/editor-keymap-table";
 import { urlAssertPrefill } from "../../shared/url-assert.mjs";
 import { useRecorder } from "../main/recorder-store";
 import { CursorGap, INSERT_HERE, StepRow } from "../main/step-row";
@@ -277,6 +277,17 @@ export function TrainerPanelView() {
   // not received yet inserts at the wrong position, and the insert cursor the
   // backend sent means nothing without the rows it points between.
   const controlsDisabled = !state.pageReady || !stepsLoaded || running;
+
+  // ⌘P plays the selected step — same wiring as recording-view.tsx, resolved
+  // against THIS window's selection. ⌘R (pause/resume) is not handled here:
+  // the main process claims it on this window's webContents, where the View
+  // menu's Reload can be beaten. See renderer/lib/use-play-step-shortcut.ts.
+  // Inert while a picker is armed, for the reason the mirror comment gives.
+  usePlayStepShortcut(
+    controlsDisabled || !!state.assertMode || state.refineMode || !selectedStepId
+      ? null
+      : () => void replayStep(selectedStepId),
+  );
 
   // See the mirror of this in recording-view.tsx: follow the bottom only while
   // the bottom is where the next captured step will actually land.
@@ -530,13 +541,27 @@ export function TrainerPanelView() {
             {state.replaying ? "Replaying" : "Running"}
           </StatusChip>
         ) : state.paused ? (
-          <StatusChip>Paused</StatusChip>
+          // THE CHIP IS THE PAUSE TOGGLE, here as in recording-view.tsx — it
+          // replaced the Pause/Resume ToolButton that sat in the tools row,
+          // because users kept clicking the chip anyway. Safe by branch order:
+          // either word only renders when the old button was enabled. ⌘R does
+          // the same from the keyboard (claimed in the main process — see
+          // attachRecorderShortcuts in recorder-service.ts). Passive while
+          // the Refine picker is armed: refine owns the pause, and a resume
+          // here would run capture live behind the pick.
+          state.refineMode ? (
+            <StatusChip>Paused</StatusChip>
+          ) : (
+            <StatusChip onClick={resume} title={`Resume recording (${prettyKey("Mod-r")})`}>
+              Paused
+            </StatusChip>
+          )
         ) : (
           // "Recording", not "Editing", for a session continuing an existing
           // test — capture is live in both, and the chip that says so is the
           // wrong place to carry that distinction. The Save Test button below
           // already does. See the mirror of this in recording-view.tsx.
-          <StatusChip running animated>
+          <StatusChip running animated onClick={pause} title={`Pause recording (${prettyKey("Mod-r")})`}>
             Recording
           </StatusChip>
         )}
@@ -769,12 +794,14 @@ export function TrainerPanelView() {
           <Wand2 className="size-3.5" />
         </ToolButton>
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          {/* Replay is a RETURN arrow, not a play triangle. The control beside
-              it is a pause/resume TOGGLE, so the moment the user pauses it
-              becomes a play triangle too — leaving two identical glyphs side by
-              side, each doing something quite different (replay the recorded
-              steps vs. carry on recording). Both are icon-only at this width,
-              so the label is a tooltip and the glyph is all there is to go on. */}
+          {/* Replay is a RETURN arrow, not a play triangle, and that glyph
+              choice has outlived its first reason. The pause/resume TOGGLE
+              that used to sit beside it — whose paused state wore the play
+              triangle this arrow must not be confused with — is gone: the
+              Recording/Paused chip in the header is the toggle now. The
+              return arrow stays because the trainer's other replay control
+              (the main window's labelled button) wears it too, and the same
+              action must not wear a different glyph in the two trainers. */}
           <ToolButton
             label="Replay from the current step"
             onClick={onReplayFromCurrent}
@@ -782,15 +809,6 @@ export function TrainerPanelView() {
           >
             <RotateCcw className="size-3.5" />
           </ToolButton>
-          {controlsDisabled ? null : state.paused ? (
-            <ToolButton label="Resume recording" onClick={resume}>
-              <Play className="size-3.5" />
-            </ToolButton>
-          ) : (
-            <ToolButton label="Pause recording" onClick={pause}>
-              <Pause className="size-3.5" />
-            </ToolButton>
-          )}
         </div>
       </div>
 

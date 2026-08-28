@@ -185,6 +185,58 @@
   white-space: nowrap;
 }
 
+/* The chip AS the control — the trainer's Recording/Paused chip is a real
+   <button> that toggles the state it reports (status-chip.tsx `onClick`).
+   These rules ONLY unwind the button UA styles and add the affordances; they
+   declare no width and no flex, so the layout contract above stays written
+   once. The UA `background` reset is scoped with `:not(.gl-status-chip-running)`
+   rather than relying on source order — both selectors set the `background`
+   shorthand at equal specificity, and "the holo survives because this rule
+   happens to come first" is a contract a tidy-minded reorder breaks silently.
+   Hover is a `filter` rather than a background/border swap for the same
+   reason — brightness composites over the holo treatment and the neutral
+   border alike without overriding either. */
+.gl-status-chip-btn {
+  appearance: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  cursor: pointer;
+  /* The visible chip is 78×20 (the layout contract above), which is under
+     the 24px minimum a pointer target wants — and the buttons this chip
+     replaced were taller. The pseudo-element below grows the HIT area past
+     24px without moving a pixel of layout; it needs the button positioned
+     and, since the base chip clips (`overflow: hidden`), visible overflow.
+     Safe here: the only clickable chips say "Recording" or "Paused", both of
+     which fit the fixed width, so the clip was never doing work for them. */
+  position: relative;
+  overflow: visible;
+}
+
+.gl-status-chip-btn:not(.gl-status-chip-running) {
+  background: transparent;
+}
+
+.gl-status-chip-btn::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+}
+
+.gl-status-chip-btn:hover {
+  filter: brightness(1.35);
+}
+
+/* `outline-offset: 1px` (outside the chip), not the `-1px` the menu trigger
+   uses: the Recording chip's own 1px border ring is painted with the holo
+   gradient, whose second stop IS this cyan — an inset outline lands exactly
+   on that ring and vanishes into it. Outside the edge it sits on the panel
+   background in both states. */
+.gl-status-chip-btn:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 1px;
+}
+
 /* Running is the one state drawn with the holo treatment rather than a hue.
    It is not an exception to "colour means outcome" — running is not an outcome,
    it is the absence of one yet, and giving it a status hue would make a row in

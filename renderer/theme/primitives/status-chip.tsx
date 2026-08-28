@@ -33,6 +33,13 @@ export interface StatusChipProps {
    *  is decoration, and the WORD is what reports the state. */
   animated?: boolean;
   title?: string;
+  /** Makes the chip a real `<button>` — for the one place a status IS the
+   *  control: the trainer's Recording/Paused chip, which toggles the state it
+   *  reports. Everywhere else omit it and the chip stays a passive `<span>`;
+   *  a chip in a table must not grow a click target because a handler was
+   *  convenient. Pass `title` alongside so the action is discoverable — the
+   *  visible word still names the STATE, not the action. */
+  onClick?: () => void;
   children: React.ReactNode;
 }
 
@@ -41,23 +48,35 @@ export function StatusChip({
   running,
   animated,
   title,
+  onClick,
   children,
 }: StatusChipProps): React.ReactElement {
-  return (
-    <span
-      className={["gl-status-chip", running ? "gl-status-chip-running" : null]
-        .filter(Boolean)
-        .join(" ")}
-      // Not `role="status"`. A live region announces on every change, and these
-      // sit in tables of dozens — a filter that repaints the list would read the
-      // whole column aloud. The row's own accessible name carries the state.
-      style={running || !tone ? undefined : toneSurface(TONE[tone])}
-      data-gl="status-chip"
-      data-tone={running ? "running" : (tone ?? "neutral")}
-      {...(animated && running ? { "data-gl-motion": "ambient" as const } : null)}
-      title={title}
-    >
-      {children}
-    </span>
-  );
+  const shared = {
+    // `gl-status-chip-btn` only ever appears WITH `gl-status-chip`: it resets
+    // the button UA styles (padding, background) without touching the width
+    // contract, which stays declared once, on the base class.
+    className: [
+      "gl-status-chip",
+      onClick ? "gl-status-chip-btn" : null,
+      running ? "gl-status-chip-running" : null,
+    ]
+      .filter(Boolean)
+      .join(" "),
+    // Not `role="status"`. A live region announces on every change, and these
+    // sit in tables of dozens — a filter that repaints the list would read the
+    // whole column aloud. The row's own accessible name carries the state.
+    style: running || !tone ? undefined : toneSurface(TONE[tone]),
+    "data-gl": "status-chip" as const,
+    "data-tone": running ? "running" : (tone ?? "neutral"),
+    ...(animated && running ? { "data-gl-motion": "ambient" as const } : null),
+    title,
+  };
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} {...shared}>
+        {children}
+      </button>
+    );
+  }
+  return <span {...shared}>{children}</span>;
 }

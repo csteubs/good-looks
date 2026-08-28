@@ -329,6 +329,16 @@ export function Specimen(): React.ReactElement {
               Running
             </StatusChip>
             <StatusChip>Never</StatusChip>
+            {/* The chip AS a control — the trainer's Recording/Paused chip is
+                a real <button> that toggles the state it reports. Rendered
+                here in both states because hover/focus affordances exist
+                nowhere jsdom can see them. */}
+            <StatusChip running animated onClick={() => {}} title="Pause recording (⌘R)">
+              Recording
+            </StatusChip>
+            <StatusChip onClick={() => {}} title="Resume recording (⌘R)">
+              Paused
+            </StatusChip>
           </div>
         </Panel>
 
