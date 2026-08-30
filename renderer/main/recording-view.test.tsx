@@ -195,24 +195,16 @@ describe("nothing is usable until the steps have arrived", () => {
   });
 });
 
-describe("replay and pause stay visually distinct", () => {
-  // Here the two controls carry TEXT labels, so today nothing is ambiguous.
-  // The guard exists anyway for two reasons: the docked panel renders the same
-  // action icon-only (where the collision is real and this suite's sibling
-  // pins it), and the same glyph must not mean two things across the two
-  // trainers. If this view ever tightens to icon-only, the bug arrives silently.
+describe("replay does not wear a play triangle", () => {
+  // The pause/resume toggle that used to sit beside this control is gone (the
+  // chip is the toggle now, and it draws no glyph at all) — but the guard
+  // stays: the paused state of that OLD toggle wore the play triangle, and a
+  // replay control that picks it up reads as "carry on recording". The same
+  // glyph must not mean two things across the two trainers.
   it("does not draw replay as a play triangle", () => {
     render(withAiDebug(<RecordingView />));
     const replay = screen.getByRole("button", { name: /replay from the current step/i });
     expect(glyphOf(replay)).not.toBe("play");
-  });
-
-  it("keeps replay distinct from resume once paused", () => {
-    setStore({ state: state({ paused: true }) });
-    render(withAiDebug(<RecordingView />));
-    const replay = glyphOf(screen.getByRole("button", { name: /replay from the current step/i }));
-    const resume = glyphOf(screen.getByRole("button", { name: /resume/i }));
-    expect(replay).not.toBe(resume);
   });
 });
 
@@ -223,18 +215,143 @@ describe("recording state", () => {
     expect(screen.getByText(/https:\/\/example\.com/)).toBeTruthy();
   });
 
-  it("offers Pause while recording", () => {
+  // THE CHIP IS THE PAUSE TOGGLE. It replaced the Pause/Resume button at the
+  // row's right edge — users kept clicking the chip anyway — so what these
+  // two pin is that the state indicator and the control are the same element:
+  // a real button whose visible word is the state and whose click is the
+  // toggle.
+  it("pauses when the Recording chip is clicked", () => {
     render(withAiDebug(<RecordingView />));
-    fireEvent.click(screen.getByRole("button", { name: /pause/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Recording" }));
     expect(actions.pause).toHaveBeenCalledTimes(1);
     expect(actions.resume).not.toHaveBeenCalled();
   });
 
-  it("offers Resume while paused", () => {
+  it("resumes when the Paused chip is clicked", () => {
     setStore({ state: state({ paused: true }) });
     render(withAiDebug(<RecordingView />));
-    fireEvent.click(screen.getByRole("button", { name: /resume/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Paused" }));
     expect(actions.resume).toHaveBeenCalledTimes(1);
+    expect(actions.pause).not.toHaveBeenCalled();
+  });
+
+  it("offers no separate Pause/Resume button — the chip is the one control", () => {
+    // The button this replaced must STAY replaced: if it comes back, the app
+    // has two controls for one state, and the freed toolbar space is spent.
+    render(withAiDebug(<RecordingView />));
+    expect(screen.queryByRole("button", { name: /^pause$/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^resume$/i })).toBeNull();
+  });
+
+  it("keeps the chip passive while a replay owns the window", () => {
+    // Replaying/Running/Loading are not toggleable states: `withCaptureSuspended`
+    // owns `session.paused` during a replay and would silently unwind a toggle.
+    // The chip must go back to being an indicator, not a dead button.
+    setStore({ state: state({ replaying: true }) });
+    render(withAiDebug(<RecordingView />));
+    expect(screen.queryByRole("button", { name: /replaying/i })).toBeNull();
+    expect(screen.getByText("Replaying")).toBeTruthy();
+  });
+});
+
+describe("⌘P plays the selected step", () => {
+  const CLICK = { k: "testid" as const, v: "go" };
+  const steps = () => [
+    step("a", { type: "goto", url: "https://example.com" }),
+    step("b", { type: "click", locator: CLICK }),
+  ];
+
+  it("replays the selection anchor on ⌘P", () => {
+    setStore({ liveSteps: steps() });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getAllByRole("option")[1]);
+    fireEvent.keyDown(window, { key: "p", metaKey: true });
+    expect(actions.replayStep).toHaveBeenCalledWith("b");
+  });
+
+  it("does nothing without a selected step — there is nothing to play", () => {
+    setStore({ liveSteps: steps() });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.keyDown(window, { key: "p", metaKey: true });
+    expect(actions.replayStep).not.toHaveBeenCalled();
+  });
+
+  it("does nothing while the controls are disabled, even with a step selected", () => {
+    // Same gate as the row's own ▶ button: a replay queued during a replay —
+    // or before this window holds the step list — acts on a session whose
+    // premise right now is that it must not. Selection survives the lock (it
+    // is view state), so the gate has to be the shortcut's own.
+    setStore({ liveSteps: steps() });
+    const view = render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getAllByRole("option")[1]);
+    setStore({ liveSteps: steps(), state: state({ replaying: true }) });
+    view.rerender(withAiDebug(<RecordingView />));
+    fireEvent.keyDown(window, { key: "p", metaKey: true });
+    expect(actions.replayStep).not.toHaveBeenCalled();
+  });
+
+  it("ignores a bare p — it is a character, and fields get to keep it", () => {
+    setStore({ liveSteps: steps() });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getAllByRole("option")[1]);
+    fireEvent.keyDown(window, { key: "p" });
+    expect(actions.replayStep).not.toHaveBeenCalled();
+  });
+
+  it("never steals the chord from a field", () => {
+    // Ctrl+P is a caret movement inside macOS text fields; a composer input
+    // must keep it even while a step is selected behind it.
+    setStore({ liveSteps: steps() });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getAllByRole("option")[1]);
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    try {
+      fireEvent.keyDown(input, { key: "p", metaKey: true });
+      expect(actions.replayStep).not.toHaveBeenCalled();
+    } finally {
+      input.remove();
+    }
+  });
+
+  it("stays inert while a dialog is open", () => {
+    // Radix portals into document.body, so a keydown born inside a dialog
+    // still bubbles to the window listener — and a replay started behind a
+    // modal yanks OS focus to the training window out from under it.
+    setStore({ liveSteps: steps() });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getAllByRole("option")[1]);
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    document.body.appendChild(dialog);
+    try {
+      fireEvent.keyDown(window, { key: "p", metaKey: true });
+      expect(actions.replayStep).not.toHaveBeenCalled();
+    } finally {
+      dialog.remove();
+    }
+  });
+
+  it("stays inert while an assertion is armed", () => {
+    // The replayed click would land in the armed capture branch and record an
+    // assert step against whatever element the replay happened to touch.
+    setStore({ liveSteps: steps(), state: state({ assertMode: "visible" }) });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getAllByRole("option")[1]);
+    fireEvent.keyDown(window, { key: "p", metaKey: true });
+    expect(actions.replayStep).not.toHaveBeenCalled();
+  });
+});
+
+describe("refine mode owns the pause", () => {
+  it("renders the Paused chip passive while the Refine picker is armed", () => {
+    // startRefine pauses and endRefine restores; a resume from the chip here
+    // would run capture live behind the pick and the review dialog. Same rule
+    // as the ⌘R gate's "consume" state.
+    setStore({ state: state({ paused: true, refineMode: true }) });
+    render(withAiDebug(<RecordingView />));
+    expect(screen.getByText("Paused")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Paused" })).toBeNull();
   });
 });
 

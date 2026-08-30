@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, it, expect } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
 
 import { StatusChip } from "./status-chip";
 import { TONE, hexToRgb } from "../tokens";
@@ -92,5 +92,46 @@ describe("<StatusChip />", () => {
     // column aloud every time a filter repainted the list.
     render(<StatusChip tone="red">Failed</StatusChip>);
     expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("stays a passive span without onClick — a chip in a table is not a control", () => {
+    render(<StatusChip>Never</StatusChip>);
+    expect(screen.getByText("Never").tagName).toBe("SPAN");
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("becomes a real button with onClick, keeping the chip contract", () => {
+    // The trainer's Recording/Paused chip is the pause toggle. It must be a
+    // real <button> (focusable, Enter/Space, accessible role), and it must
+    // still BE the chip: same base class carrying the fixed-width contract,
+    // same data vocabulary, same holo treatment while running.
+    const onClick = vi.fn();
+    render(
+      <StatusChip running animated onClick={onClick} title="Pause recording (⌘R)">
+        Recording
+      </StatusChip>,
+    );
+    const el = screen.getByRole("button", { name: "Recording" });
+    expect(el.tagName).toBe("BUTTON");
+    // `type="button"` or a chip inside a form submits it on click.
+    expect(el.getAttribute("type")).toBe("button");
+    expect(el.className).toContain("gl-status-chip");
+    expect(el.className).toContain("gl-status-chip-btn");
+    expect(el.className).toContain("gl-status-chip-running");
+    expect(el.dataset.tone).toBe("running");
+    expect(el.title).toBe("Pause recording (⌘R)");
+    fireEvent.click(el);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the neutral chip neutral when clickable — Paused is not an outcome", () => {
+    render(
+      <StatusChip onClick={() => {}} title="Resume recording (⌘R)">
+        Paused
+      </StatusChip>,
+    );
+    const el = screen.getByRole("button", { name: "Paused" });
+    expect(el.dataset.tone).toBe("neutral");
+    expect(el.style.color).toBe("");
   });
 });

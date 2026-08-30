@@ -40,6 +40,7 @@ import { batchHistoryStore } from "./services/batch-history-store.js";
 import { routineStore } from "./services/routine-store.js";
 import { routineScheduler } from "./services/routine-scheduler.js";
 import { recorderSettingsStore } from "./services/recorder-settings-store.js";
+import { attachRecorderShortcuts } from "./services/recorder-service.js";
 import { initProxyService } from "./services/proxy-service.js";
 import { testStore } from "./services/test-store.js";
 import { aiDebugStore } from "./services/ai-debug-store.js";
@@ -273,6 +274,14 @@ async function createMainWindow() {
   attachUiScale(mainWindow, { width: 960, height: 456 });
 
   forwardRendererConsole(mainWindow, "main");
+
+  // ⌘R toggles recording/paused while a session is live — decided in the main
+  // process because the View menu's Reload owns the same chord and a menu
+  // accelerator beats any renderer listener. With no session it falls through
+  // to Reload unchanged; a live session owns the chord in every state (a
+  // non-toggleable one consumes it rather than reloading the window showing
+  // the session). See attachRecorderShortcuts in recorder-service.ts.
+  attachRecorderShortcuts(mainWindow.webContents);
 
   // Share the main window with backend services so they can push events.
   setMainWindow(mainWindow);

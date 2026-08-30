@@ -15,11 +15,13 @@ import {
   ToolbarContent,
   ToolbarTitle,
 } from "@ui";
-import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, RotateCcw, Sparkles, Wand2, Workflow, X } from "lucide-react";
+import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Plus, RotateCcw, Sparkles, Wand2, Workflow, X } from "lucide-react";
 
 import { Btn, Segmented, StatusChip, TONE } from "../theme";
 import type { AiDebugStatus, AssertKind, DebugEntry, HealSuggestion, Locator, PickedElement, RawStep, Step, WaitDialogMode } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
+import { usePlayStepShortcut } from "../lib/use-play-step-shortcut";
+import { prettyKey } from "../lib/editor-keymap-table";
 import { urlAssertPrefill } from "../../shared/url-assert.mjs";
 import { locatorToPrompt } from "../lib/llm-prompts";
 import { useRecorder, type ReplayRun } from "./recorder-store";
@@ -721,6 +723,19 @@ export function RecordingView() {
   // backend sent means nothing without the rows it points between.
   const controlsDisabled = !state.pageReady || !stepsLoaded || running;
 
+  // ⌘P plays the selected step. Renderer-side because WHICH step is selected
+  // is this window's own state; its sibling ⌘R (pause/resume) is claimed in
+  // the main process, where the View menu's Reload can be beaten — see
+  // renderer/lib/use-play-step-shortcut.ts for the whole asymmetry. Inert
+  // while a picker is armed: the replayed click would land in the armed
+  // mode's own capture branch (recording an assert, or completing a refine
+  // pick on an element the user never chose).
+  usePlayStepShortcut(
+    controlsDisabled || !!state.assertMode || state.refineMode || !selectedStepId
+      ? null
+      : () => void replayStep(selectedStepId),
+  );
+
   // Whether the next captured step will land under the last row. True for the
   // whole of an ordinary new recording, and that is why "scroll to the bottom"
   // looked like the right rule for years — it is, right up until the session is
@@ -888,7 +903,18 @@ export function RecordingView() {
           all IN FLIGHT, which is exactly what `StatusChip`'s `running` treatment
           means ("a treatment says this is not a result"); the word is what
           separates them, and the word is the primary signal anyway. Paused and
-          the two loading states are neutral: real, not results, not live. */}
+          the two loading states are neutral: real, not results, not live.
+
+          THE RECORDING/PAUSED CHIP IS ALSO THE PAUSE TOGGLE — it replaced the
+          Pause/Resume button that used to sit at the row's right edge, because
+          users kept clicking the chip itself (and the branch order makes it
+          safe: by the time either word renders, the page is ready, the steps
+          are loaded and nothing is replaying, which is exactly when the old
+          button was enabled). ⌘R does the same from the keyboard, claimed in
+          the MAIN process — the View menu's Reload owns that chord and beats
+          any listener here; see attachRecorderShortcuts in recorder-service.ts.
+          The other three states stay passive spans: a chip that cannot act
+          must not read as a control. */}
       <div className="gl-trainer-status">
         {!state.pageReady ? (
           <StatusChip>Loading page…</StatusChip>
@@ -905,7 +931,17 @@ export function RecordingView() {
             {state.replaying ? "Replaying" : "Running"}
           </StatusChip>
         ) : state.paused ? (
-          <StatusChip>Paused</StatusChip>
+          // Passive while the Refine picker is armed: refine OWNS the pause
+          // (startRefine pauses, endRefine restores), and a resume here would
+          // run capture live behind the pick and the review dialog. Same rule
+          // as the ⌘R gate's "consume" state in recording-shortcut.ts.
+          state.refineMode ? (
+            <StatusChip>Paused</StatusChip>
+          ) : (
+            <StatusChip onClick={resume} title={`Resume recording (${prettyKey("Mod-r")})`}>
+              Paused
+            </StatusChip>
+          )
         ) : (
           // "Recording" WHETHER OR NOT this session is continuing an existing
           // test, and that is a fix rather than a simplification. It used to
@@ -914,22 +950,11 @@ export function RecordingView() {
           // is listening said it was not. Reported as "it doesn't record any
           // manual page interaction". That this is an existing test is said
           // twice already, by the title above and by "Save Test" beside it.
-          <StatusChip running animated>
+          <StatusChip running animated onClick={pause} title={`Pause recording (${prettyKey("Mod-r")})`}>
             Recording
           </StatusChip>
         )}
         <span className="gl-mono-value min-w-0 truncate">{state.url}</span>
-        <div className="ml-auto shrink-0">
-          {controlsDisabled ? null : state.paused ? (
-            <Btn onClick={resume}>
-              <Play className="size-3.5" /> Resume
-            </Btn>
-          ) : (
-            <Btn onClick={pause}>
-              <Pause className="size-3.5" /> Pause
-            </Btn>
-          )}
-        </div>
       </div>
 
       <div className="gl-trainer-tools">

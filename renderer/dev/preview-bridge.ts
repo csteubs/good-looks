@@ -174,6 +174,10 @@ let previewFlowScope: {
 /** Set by the flow-scope handlers; the invoke wrapper (which holds `emit`)
  *  flushes it as the `recorder:flowScope` + `recorder:state` pushes. */
 let pendingFlowScopePush = false;
+/** Whether the preview's recording session is paused. The Recording/Paused
+ *  chip is the pause TOGGLE (it replaced the Pause/Resume button), and a
+ *  control the preview cannot drive is one nobody reviews in a tab. */
+let previewPaused = false;
 
 function recorderState(): RecorderState {
   if (!recorderPreview()) {
@@ -197,7 +201,7 @@ function recorderState(): RecorderState {
   }
   return {
     recording: true,
-    paused: false,
+    paused: previewPaused,
     assertMode: null,
     stepCount: TESTS[0].steps.length,
     testId: TESTS[0].id,
@@ -2581,6 +2585,14 @@ export function installPreviewBridge(options: PreviewBridgeOptions = {}): Previe
     if (channel === "recorder:startRefine") {
       setTimeout(() => emit("recorder:picked", structuredClone(PICKED_ELEMENT)), 400);
       return handlers["recorder:getState"]?.({} as Payload);
+    }
+    // The chip toggle. The store ignores the return value and reacts to the
+    // `recorder:state` push, exactly as it does against the real backend — so
+    // the push is what makes the chip flip in a tab.
+    if (channel === "recorder:pause" || channel === "recorder:resume") {
+      previewPaused = channel === "recorder:pause";
+      setTimeout(() => emit("recorder:state", recorderState()), 0);
+      return recorderState();
     }
     const handler = handlers[channel];
     if (handler) {

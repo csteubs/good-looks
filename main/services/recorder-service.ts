@@ -112,9 +112,11 @@ import type {
 import { sendToMain } from "./app-window.js";
 import {
   closeTrainerPanel,
+  getTrainerPanel,
   isTrainerPanelOpen,
   openTrainerPanel,
 } from "../windows/trainer-panel-window.js";
+import { isRecordingToggleInput, recordingToggleAction } from "../recorder/recording-shortcut.js";
 import { recorderDebugStore } from "./recorder-debug-store.js";
 import * as overlayRuleStore from "./overlay-rule-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
@@ -1851,6 +1853,68 @@ function stopPolling(): void {
   captureStats = { console: 0, drain: 0, late: 0 };
 }
 
+/**
+ * ⌘R (Ctrl+R off macOS) toggles recording/paused while a session is live.
+ *
+ * Attached to a window's webContents via `before-input-event` because that is
+ * the only hook that runs AHEAD of the application menu: `role: "viewMenu"`
+ * gives Reload the same chord, a menu accelerator beats any renderer keydown
+ * listener, and what it does on winning — reloading the window — tears down
+ * the very view showing the session. `preventDefault()` here stops both the
+ * page event and the menu shortcut (the documented contract of
+ * `before-input-event`).
+ *
+ * What the chord means is decided by `recordingToggleAction`, and the split
+ * that matters is on SESSION, not on toggleability: with no session the chord
+ * falls through to Reload unchanged, but a live session owns the chord in
+ * EVERY state — a state where toggling would be wrong (loading, replaying,
+ * refine armed; the pure function documents why each is) consumes the key and
+ * does nothing, because falling through there would reload the window showing
+ * the session on exactly the transient states where that hurts most.
+ *
+ * Two renderer-local windows this gate cannot see, both accepted: a toggle
+ * while THIS window still says "Loading steps…" (`stepsLoaded` is a renderer
+ * query state) flips capture with no visible feedback until the steps arrive,
+ * and the instant between a replay's IPC call and `withCaptureSuspended`
+ * setting `session.replaying` is unguarded. Both windows are milliseconds to
+ * seconds wide and a toggle inside them is a real, ordinary pause — not
+ * state corruption.
+ *
+ * Attached to the MAIN window (whose outlet is the recording view while a
+ * session runs) and to the TRAINER PANEL — never to the training page, where
+ * ⌘R keeps meaning "reload the site" and is recorded as a reload step (see the
+ * reload notice in `attachPageListeners`). ⌘⇧R falls through everywhere:
+ * force-reload stays available as the escape hatch, per recording-shortcut.ts.
+ *
+ * The WeakSet makes attachment idempotent per webContents — defensive, since
+ * today each panel window is created fresh per session, but a second listener
+ * would toggle twice per press: pause and resume in the same keystroke.
+ */
+const shortcutAttached = new WeakSet<Electron.WebContents>();
+
+export function attachRecorderShortcuts(wc: Electron.WebContents): void {
+  if (shortcutAttached.has(wc)) return;
+  shortcutAttached.add(wc);
+  wc.on("before-input-event", (event, input) => {
+    if (!isRecordingToggleInput(input)) return;
+    const action = recordingToggleAction({
+      hasSession: !!session,
+      pageReady: session?.pageReady ?? false,
+      replaying: session?.replaying ?? false,
+      refineMode: session?.refineMode ?? false,
+    });
+    if (action === "fallthrough") return;
+    event.preventDefault();
+    if (action !== "toggle" || !session) return;
+    // pause()/resume() reach into the page (`applyStateAttributes`), which can
+    // reject mid-navigation; an unhandled rejection here would be the whole
+    // report for a keystroke that mostly worked, so log it instead.
+    (session.paused ? recorderService.resume() : recorderService.pause()).catch((err) => {
+      logger.warn("recorder", "Shortcut pause/resume failed", { err: String(err) });
+    });
+  });
+}
+
 export const recorderService = {
   getState(): RecorderState {
     return currentState();
@@ -2871,6 +2935,11 @@ export const recorderService = {
         // has the full one. Failing to open it must not fail the session.
         logger.warn("recorder", "Could not open the trainer panel", { err: String(err) });
       });
+      // ⌘R must toggle here too, or the two trainers disagree about what the
+      // key does while docked side by side. (The main window's webContents is
+      // wired once at creation, in main/index.ts.)
+      const panel = getTrainerPanel();
+      if (panel && !panel.isDestroyed()) attachRecorderShortcuts(panel.webContents);
     }
 
     return currentState();

@@ -10,6 +10,85 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-28 — ⌘R toggles recording, and the chip became the button
+
+Two shortcuts for the trainer — ⌘R toggles recording/paused, ⌘P plays the
+selected step — and the Recording/Paused chip is now itself the pause toggle,
+replacing the Pause/Resume button in both trainers (the main view's status-row
+button and the panel's tool-row ToolButton). Users kept clicking the chip
+anyway, and the freed tool-row space is claimed by the coming reorganisation
+of the trainer's action bar.
+
+**⌘R is decided in the main process, because the renderer cannot win that
+chord.** The application menu carries `role: "viewMenu"`, whose Reload item
+owns CmdOrCtrl+R, and a menu accelerator is dispatched before the focused
+page's keydown listeners — a renderer handler for ⌘R is not lower priority,
+it is unreachable, and the accelerator it loses to RELOADS THE WINDOW showing
+the session. The one documented lever that runs ahead of both is
+`before-input-event`, whose `preventDefault()` stops the page event and the
+menu shortcut together. So the decision is a pure module
+(`main/recorder/recording-shortcut.ts`) and the attachment lives in
+recorder-service (`attachRecorderShortcuts`). The split that matters is on
+SESSION, not on toggleability: with no session the chord falls through to
+Reload unchanged, but a live session owns the chord in EVERY state — while
+the page is loading, a replay owns the window, or the Refine picker is armed,
+the key is CONSUMED and does nothing, because falling through there would
+reload the window on exactly the transient states where that hurts most, and
+because replay (`withCaptureSuspended`) and refine (`startRefine`/`endRefine`)
+both save and restore `session.paused`, so a toggle inside either would be
+unwound or, worse, run capture live behind a refine pick. (The first review
+of this change shipped the naive version — fall through whenever not
+toggleable — and the adversarial pass caught both consequences.) ⌘⇧R is
+deliberately not matched: force reload stays the escape hatch for a wedged
+window.
+
+**⌘P is decided in the renderer, and the asymmetry is forced from both
+ends.** ⌘P collides with nothing in the menus, so the renderer receives it —
+and WHICH step is selected is per-window state (`selection.anchorId`) the
+main process never sees. Each trainer window resolves the chord against its
+own selection, which is also what a user looking at that window expects.
+Three guards keep it from firing where a replay would do harm: never from a
+field (the app-strip's "never steal a keystroke from a field" rule — Ctrl+P
+is a caret movement in macOS text fields), never while a dialog is open
+(Radix portals to `document.body`, so dialog keydowns bubble to the window
+listener, and a replay behind a modal yanks OS focus to the training page
+out from under it), and never while an assert or refine picker is armed (the
+replayed click lands in the armed mode's own capture branch and records a
+step the user never made).
+
+**The chip-as-button is safe by branch order, not by a disabled state.** The
+status chip renders Recording/Paused only after the loading and replaying
+branches have been passed — exactly the condition under which the old button
+was enabled — so the clickable states need no `disabled` wiring, and the
+other three states stay passive spans (a chip that cannot act must not read
+as a control). One state the old button got wrong is now handled: while the
+Refine picker is armed the Paused chip is passive too, because refine owns
+the pause and a resume mid-pick runs capture live behind the review dialog
+(the old Resume button offered exactly that trap). `StatusChip` grew an `onClick` that swaps the span for a real
+`<button>`; the width contract stays declared once (`gl-status-chip-btn`
+resets UA styles and declares no width, which `check:status-width`'s offender
+scan verifies for any rule naming the chip).
+
+**The trainer page keeps its own ⌘R meaning.** In the training browser the
+key still reloads the site and is recorded as a reload step — that is a
+feature (see 2026-08-13's capture-channel entry), and the interception is
+attached only to the main window and the panel, never to the page's
+webContents.
+
+**What the e2e run taught: synthesized input does not exist for this
+feature.** Playwright's `keyboard.press` drives CDP `Input.dispatchKeyEvent`,
+which injects into the renderer's pipeline directly — `before-input-event`
+never fires for it (measured with a probe listener: nothing for the CDP
+press, a full Input object for `webContents.sendInputEvent`). So
+`e2e/recorder-shortcuts.spec.ts` presses the chord with `sendInputEvent`,
+the same browser-side path a physical key takes, on the main window AND the
+docked panel. Verified to fail without the attachment: `paused` never
+changes on the press. A second measurement bounded what the spec can claim:
+on Linux/xvfb the Reload accelerator does not fire for synthesized input
+either (deleting only the `preventDefault()` leaves the spec green there),
+so the no-reload sentinel it carries is a macOS-side tripwire and the
+CI-load-bearing assertions are the toggles themselves.
+
 ### 2026-08-26 — The export bundle, and the leak the hand-copy already was (R10)
 
 R10's other half landed on 2026-08-25: `shared/script-path.mjs` resolves a
