@@ -130,7 +130,11 @@ assert(
 
 // ── 2. Every replay path goes through it ─────────────────────────────
 
-const REPLAY_METHODS = ["replayStep", "replayFromStart", "replayAll", "replayFromCurrent"];
+// `tryStep` is here although it is not a replay: it runs one verified step
+// against the live page (the agent's per-step entry to the verify gate), and
+// an unsuspended verified try RECORDS THE STEP IT JUST INSERTED — the exact
+// duplicate-appending failure this check exists to prevent.
+const REPLAY_METHODS = ["replayStep", "replayFromStart", "replayAll", "replayFromCurrent", "tryStep"];
 
 for (const name of REPLAY_METHODS) {
   const start = service.indexOf(`  async ${name}(`);

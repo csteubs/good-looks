@@ -105,6 +105,11 @@ describe("parseSpecDetailed ranges", () => {
       ["click", true, false],
       ["click", false, true],
     ]);
+    // The wrapper's timeout bracket (page.setDefaultTimeout before and after
+    // the try/catch) is the generator's own furniture: it must be consumed
+    // like a viewport log line, or every test using the flag would carry a
+    // permanent stepsDiverged warning for lines the user never wrote.
+    expect(parsed.skipped).toBe(0);
     const lines = source.split("\n");
     const disabledLine = lines.findIndex((l) => l.includes("disabled") && l.includes('getByTestId("go")')) + 1;
     const tryLine = lines.findIndex((l) => l.includes('getByTestId("next")')) + 1;

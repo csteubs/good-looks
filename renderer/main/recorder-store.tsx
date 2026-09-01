@@ -8,6 +8,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@ui";
 
 import { api } from "../lib/api";
+import {
+  applyAgentEvent,
+  reduceAgentEvents,
+  type AgentEventRecord,
+  type AgentRunView,
+} from "../lib/agent-run";
 import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
 import { invalidateRunDerived } from "../lib/run-derived-cache";
 import type {
@@ -230,6 +236,19 @@ interface RecorderContextValue {
    *  — and the only path that VERIFIES before inserting. Resolves with what
    *  happened to each step; the dialog renders that as its activity log. */
   verifyGeneratedSteps: (steps: RawStep[], label: string) => Promise<VerifiedStepsResult>;
+  /** The trainer agent's run as this window sees it, or null before any run.
+   *  `agentRun?.running` is a controls gate on both trainers — while the
+   *  agent drives the page, every other mutation waits. */
+  agentRun: AgentRunView | null;
+  /** Start a run toward a typed goal. The service refuses (with a showable
+   *  reason) over a live run or without a session. */
+  startAgent: (goal: string) => Promise<{ ok: boolean; runId?: string; reason?: string }>;
+  /** Queue a mid-run message — drained between steps, never mid-flight. */
+  sayToAgent: (text: string) => Promise<boolean>;
+  stopAgent: () => Promise<boolean>;
+  /** Resolve an assertion-proposal card. Accepting TRIES the assertion on
+   *  the live page through the same gate as everything else. */
+  resolveAgentProposal: (id: string, accept: boolean) => Promise<{ ok: boolean; detail?: string }>;
   reorderStep: (id: string, toIndex: number) => void;
   updateStep: (id: string, patch: Partial<Step>) => void;
   /** Declare a variable on the live session, so a step composed here can
@@ -375,6 +394,10 @@ export function RecorderProvider({
   // Those are two different questions that happened to share a variable; this
   // is only ever "what is running now".
   const [liveBatch, setLiveBatch] = React.useState<BatchState | null>(null);
+  // The trainer agent's run, reduced from `agent:event` pushes — see
+  // lib/agent-run.ts for why a reducer, and the effect below for the seed a
+  // late-opening window needs.
+  const [agentRun, setAgentRun] = React.useState<AgentRunView | null>(null);
   // See the interface: the rail selects it, the Batch view edits it.
   const [openRoutineId, setOpenRoutineId] = React.useState<string | null>(null);
   // Per-step status for an in-flight trainer replayAll (auto-run on Edit in
@@ -731,7 +754,28 @@ export function RecorderProvider({
       .then((steps) => receiveSteps(steps ?? []))
       .catch(() => {});
 
+    // The trainer agent's event stream, applied incrementally; the ask seeds
+    // a window that opened mid-run (the recorder:getSteps argument again —
+    // the run's earlier pushes reached windows that existed then). The
+    // reducer's seq guard makes the overlap between the snapshot and a push
+    // that raced it harmless.
+    const offAgent = api.on<AgentEventRecord>("agent:event", (record) => {
+      setAgentRun((prev) => applyAgentEvent(prev, record));
+    });
+    // Through a resolved promise (the composer's countMatches pattern), so a
+    // bridge that lacks the call degrades to "no run" rather than crashing
+    // the provider every view in the window hangs off.
+    void Promise.resolve()
+      .then(() => api.agent.getRun())
+      .then((snap) => {
+        if (snap?.runId) {
+          setAgentRun((prev) => (prev ? prev : reduceAgentEvents(snap.events)));
+        }
+      })
+      .catch(() => {});
+
     return () => {
+      offAgent();
       offState();
       offSteps();
       offFlowScope();
@@ -994,6 +1038,17 @@ export function RecorderProvider({
   }, [clearNewSteps]);
   const stopRun = React.useCallback((id: string) => void api.runner.stop(id), []);
 
+  // The agent's actions are thin: the SERVICE owns validity (a start over a
+  // live run, a say with no run), and its answer carries the reason — the
+  // command box shows it rather than re-deriving the rules here.
+  const startAgent = React.useCallback((goal: string) => api.agent.start(goal), []);
+  const sayToAgent = React.useCallback((text: string) => api.agent.say(text), []);
+  const stopAgent = React.useCallback(() => api.agent.stop(), []);
+  const resolveAgentProposal = React.useCallback(
+    (id: string, accept: boolean) => api.agent.resolveProposal(id, accept),
+    [],
+  );
+
   const value: RecorderContextValue = {
     state,
     liveSteps,
@@ -1043,6 +1098,11 @@ export function RecorderProvider({
     run,
     stopRun,
     runEpoch,
+    agentRun,
+    startAgent,
+    sayToAgent,
+    stopAgent,
+    resolveAgentProposal,
   };
 
   return <RecorderContext.Provider value={value}>{children}</RecorderContext.Provider>;

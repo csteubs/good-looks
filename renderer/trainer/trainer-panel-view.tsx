@@ -37,6 +37,9 @@ import { useRecorder } from "../main/recorder-store";
 import { createFlowGate, pickAddStepFromMenu, pickAssertFromMenu } from "../main/trainer-actions";
 import { BarContextZone, TILE_COPY, useNextAction } from "../main/trainer-bar-controls";
 import { suggestFlowName } from "../lib/next-action";
+import { parseCommand } from "../lib/command-parse";
+import { AgentPanel } from "../main/agent-panel";
+import { toast } from "@ui";
 import { CursorGap, INSERT_HERE, StepRow } from "../main/step-row";
 import { CreateFlowDialog } from "../main/create-flow-dialog";
 import { FlowStepsPreview } from "../main/flow-steps-preview";
@@ -112,10 +115,23 @@ export function TrainerPanelView() {
     addVariable,
     contextAction,
     clearContextAction,
+    agentRun,
+    startAgent,
+    sayToAgent,
+    stopAgent,
+    resolveAgentProposal,
   } = useRecorder();
 
   const [addKind, setAddKind] = React.useState<AddStepKind | null>(null);
   const [aiOpen, setAiOpen] = React.useState(false);
+  // The command drawer — same posture as the main trainer: opens on the AI
+  // tile, and once more when a run STARTS (possibly in the other window);
+  // closable mid-run because the effect fires on the transition.
+  const [agentOpen, setAgentOpen] = React.useState(false);
+  const agentBusy = !!agentRun?.running;
+  React.useEffect(() => {
+    if (agentBusy) setAgentOpen(true);
+  }, [agentBusy]);
   const [exitOpen, setExitOpen] = React.useState(false);
   // Hard/Soft, REAL state here at last: this view hard-coded `soft: false`
   // into its assert menu handler for its whole life, which made soft
@@ -147,7 +163,43 @@ export function TrainerPanelView() {
     elementState?: "hover" | "focus";
     prefillText?: string;
     prefillValue?: string;
+    /** duration prefill for the wait form — the command box's "wait 2s" */
+    waitMs?: number;
   } | null>(null);
+
+  // The command box's send — mechanical parse first, then the agent. The
+  // mirror of submitCommand in recording-view.tsx; see the comment there.
+  const submitCommand = React.useCallback(
+    (text: string) => {
+      const parsed = parseCommand(text);
+      if (parsed?.kind === "arm-assert") {
+        setAssert(parsed.assert, soft);
+        return;
+      }
+      if (parsed?.kind === "compose-assert") {
+        setContextPick({
+          picked: null,
+          assert: parsed.assert,
+          prefillValue: urlAssertPrefill(parsed.assert, state.liveUrl ?? state.url ?? ""),
+        });
+        setAddKind("assertion");
+        return;
+      }
+      if (parsed?.kind === "compose-wait") {
+        setContextPick({ picked: null, waitMode: "time", waitMs: parsed.waitMs });
+        setAddKind("wait");
+        return;
+      }
+      if (agentRun?.running) {
+        void sayToAgent(text);
+        return;
+      }
+      void startAgent(text).then((res) => {
+        if (!res.ok && res.reason) toast.error(res.reason);
+      });
+    },
+    [agentRun?.running, sayToAgent, setAssert, soft, startAgent, state.liveUrl, state.url],
+  );
 
   // `state.replaying` is what makes this true for a replay started in the MAIN
   // window: `executing` and `replayRun` are both local to the window that asked
@@ -161,7 +213,10 @@ export function TrainerPanelView() {
   // missed the initial `recorder:steps` push: editing against a list you have
   // not received yet inserts at the wrong position, and the insert cursor the
   // backend sent means nothing without the rows it points between.
-  const controlsDisabled = !state.pageReady || !stepsLoaded || running;
+  // A live agent run locks the bar here too — the agent drives the one
+  // session both windows show, and the command box is the channel while it
+  // does.
+  const controlsDisabled = !state.pageReady || !stepsLoaded || running || agentBusy;
 
   // ⌘P plays the selected step — same wiring as recording-view.tsx, resolved
   // against THIS window's selection. ⌘R (pause/resume) is not handled here:
@@ -393,6 +448,7 @@ export function TrainerPanelView() {
         initialState={contextPick?.elementState}
         prefillText={contextPick?.prefillText}
         prefillValue={contextPick?.prefillValue}
+        initialWaitMs={contextPick?.waitMs}
         variables={state.variables ?? []}
         onCreateVariable={addVariable}
       />
@@ -524,8 +580,10 @@ export function TrainerPanelView() {
           mark={<Wand2 />}
           name={TILE_COPY.ai.name}
           what={TILE_COPY.ai.what}
-          onClick={() => setAiOpen(true)}
-          disabled={controlsDisabled}
+          // Opens the command drawer; the Generate Steps dialog lives inside
+          // it. Not agent-gated — the drawer is how a run is watched.
+          onClick={() => setAgentOpen(true)}
+          disabled={!state.pageReady || !stepsLoaded || running}
         />
       </div>
 
@@ -566,6 +624,19 @@ export function TrainerPanelView() {
           shortLabel: true,
         }}
       />
+
+      {agentOpen ? (
+        <AgentPanel
+          className="gl-panelwin-ai"
+          run={agentRun}
+          inputDisabled={!state.pageReady || !stepsLoaded}
+          onSubmit={submitCommand}
+          onStop={() => void stopAgent()}
+          onResolveProposal={(id, accept) => void resolveAgentProposal(id, accept)}
+          onClose={() => setAgentOpen(false)}
+          onOpenGenerate={() => setAiOpen(true)}
+        />
+      ) : null}
 
       <ScrollArea
         className="min-h-0 flex-1"

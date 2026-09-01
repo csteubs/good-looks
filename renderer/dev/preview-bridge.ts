@@ -2466,6 +2466,101 @@ function stopFakeRun(
  * added for: a locator that matched several elements, which the model cannot
  * resolve without being shown the page.
  */
+// ── The trainer agent, faked ─────────────────────────────────────────
+// A SCRIPTED run so the recorder views can show the command drawer's whole
+// vocabulary — transcript, verified steps, a proposal card, the
+// awaiting-user state line — with no model and no page. Mirrors the shapes
+// in renderer/lib/agent-run.ts the way every fixture here mirrors its
+// channel's real payload.
+let fakeAgentSeq = 0;
+let fakeAgentRunId: string | null = null;
+let fakeAgentRunning = false;
+let fakeAgentState = "idle";
+const fakeAgentEvents: unknown[] = [];
+
+function agentRecord(
+  emit: (channel: string, value: unknown) => void,
+  event: Record<string, unknown>,
+): void {
+  if (!fakeAgentRunId) return;
+  if (event.kind === "state") fakeAgentState = event.state as string;
+  const record = { runId: fakeAgentRunId, seq: ++fakeAgentSeq, at: Date.now(), event };
+  fakeAgentEvents.push(record);
+  emit("agent:event", record);
+  if (event.kind === "finished") fakeAgentRunning = false;
+}
+
+function agentLater(
+  emit: (channel: string, value: unknown) => void,
+  event: Record<string, unknown>,
+  delay: number,
+): void {
+  const runId = fakeAgentRunId;
+  setTimeout(() => {
+    // A stop (or a new run) between scheduling and firing withdraws the line.
+    if (!fakeAgentRunning || fakeAgentRunId !== runId) return;
+    agentRecord(emit, event);
+  }, delay);
+}
+
+function startFakeAgentRun(
+  emit: (channel: string, value: unknown) => void,
+  goal: string,
+): { ok: boolean; runId?: string; reason?: string } {
+  if (!goal.trim()) return { ok: false, reason: "Say what the agent should do." };
+  if (fakeAgentRunning) return { ok: false, reason: "An agent run is already in progress." };
+  fakeAgentRunId = `preview-agent-${Date.now()}`;
+  fakeAgentRunning = true;
+  fakeAgentSeq = 0;
+  fakeAgentEvents.length = 0;
+  agentRecord(emit, { kind: "say", who: "user", text: goal });
+  agentLater(emit, { kind: "state", state: "planning" }, 200);
+  agentLater(emit, { kind: "say", who: "agent", text: "Adding the item and opening the cart." }, 900);
+  agentLater(emit, { kind: "state", state: "acting" }, 1000);
+  agentLater(emit, { kind: "step", label: "Click “Add to cart”", status: "ran" }, 1700);
+  agentLater(emit, { kind: "step", label: "Click “Cart”", status: "ran" }, 2500);
+  agentLater(emit, { kind: "proposal", id: "preview-prop-1", label: "Assert “Added to cart” is visible" }, 3100);
+  agentLater(
+    emit,
+    { kind: "say", who: "agent", text: "The item is in the cart — worth pinning the confirmation. Anything else?" },
+    3200,
+  );
+  agentLater(emit, { kind: "state", state: "awaiting-user" }, 3300);
+  return { ok: true, runId: fakeAgentRunId };
+}
+
+function fakeAgentSay(emit: (channel: string, value: unknown) => void, text: string): boolean {
+  if (!fakeAgentRunning || !text.trim()) return false;
+  agentRecord(emit, { kind: "say", who: "user", text });
+  agentLater(emit, { kind: "state", state: "planning" }, 200);
+  agentLater(emit, { kind: "say", who: "agent", text: "Understood — the preview stops here, but a live session would act on that." }, 900);
+  agentLater(emit, { kind: "state", state: "awaiting-user" }, 1000);
+  return true;
+}
+
+function fakeAgentStop(emit: (channel: string, value: unknown) => void): boolean {
+  if (!fakeAgentRunning) return false;
+  agentRecord(emit, { kind: "state", state: "stopped" });
+  agentRecord(emit, { kind: "finished", reason: "stopped" });
+  return true;
+}
+
+function fakeAgentResolve(
+  emit: (channel: string, value: unknown) => void,
+  params?: Payload,
+): { ok: boolean; detail?: string } {
+  const id = typeof params?.id === "string" ? params.id : "";
+  if (!fakeAgentRunId || !id) return { ok: false, detail: "That proposal is no longer available." };
+  const accepted = params?.accept === true;
+  agentRecord(
+    emit,
+    accepted
+      ? { kind: "proposal-resolved", id, accepted: true, outcome: "inserted" }
+      : { kind: "proposal-resolved", id, accepted: false },
+  );
+  return { ok: true };
+}
+
 function startFakeChat(
   emit: (channel: string, value: unknown) => void,
   params?: Payload,
@@ -2577,6 +2672,19 @@ export function installPreviewBridge(options: PreviewBridgeOptions = {}): Previe
     if (channel === "runner:run") return startFakeRun(args[0] as Payload, state, emit, runTickMs);
     if (channel === "runner:stop") return stopFakeRun(args[0] as Payload, emit);
     if (channel === "llm:chat") return startFakeChat(emit, args[0] as Payload);
+    // The trainer agent, scripted — see startFakeAgentRun above.
+    if (channel === "agent:start") return startFakeAgentRun(emit, String((args[0] as Payload)?.goal ?? ""));
+    if (channel === "agent:say") return fakeAgentSay(emit, String((args[0] as Payload)?.text ?? ""));
+    if (channel === "agent:stop") return fakeAgentStop(emit);
+    if (channel === "agent:resolveProposal") return fakeAgentResolve(emit, args[0] as Payload);
+    if (channel === "agent:getRun") {
+      return {
+        runId: fakeAgentRunId,
+        running: fakeAgentRunning,
+        state: fakeAgentState,
+        events: [...fakeAgentEvents],
+      };
+    }
     // Refine mode, which in the real app pauses the session and waits for the
     // user to click an element in the training browser. There is no training
     // browser here, so the pick is delivered on a timer — without it neither

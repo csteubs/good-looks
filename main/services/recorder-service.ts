@@ -50,7 +50,11 @@ import {
   type InputHost,
 } from "./input-service.js";
 import { applyViewportStep, type ResizeHost } from "./resize-service.js";
-import { healStep } from "./auto-heal.js";
+import { buildHealProbeScript, healStep } from "./auto-heal.js";
+// The trainer agent's bounded page inventory — script + ingest normalizer.
+// This service only lends the agent its page access; the loop lives in
+// agent/trainer-agent-service.ts.
+import { buildPageSummaryScript, normalizePageSummary, type PageSummary } from "./agent/page-summary.js";
 // Which clicks a captured double-click withdraws. Its own module, and pure, so
 // every branch is exercisable without a window — the recorder-navigation.ts
 // argument again.
@@ -1915,6 +1919,68 @@ export function attachRecorderShortcuts(wc: Electron.WebContents): void {
   });
 }
 
+/** What one verified try produced — the vocabulary of `tryOneStep` below.
+ *  `skipped` is a step the ingest boundary refused (nothing to report, the
+ *  caller moves on); `no-session` ends a run. */
+export type TryStepOutcome =
+  | { status: "no-session" }
+  | { status: "skipped" }
+  | { status: "failed"; result: VerifiedStepResult }
+  | { status: "inserted"; result: VerifiedStepResult };
+
+/**
+ * Try ONE raw step against the LIVE page and insert it only once it has
+ * actually worked — the per-step body of `verifyAndInsertSteps`, extracted
+ * (2026-09-01) so the trainer agent is a SECOND CALLER of the same gate
+ * rather than a second gate. One ingest (`normalizeRawStep`, exactly as
+ * `insertStep` applies it), one execution (`runStep` against the page the
+ * previous step left behind), one insert path — whoever is asking.
+ *
+ * THE CALLER OWNS CAPTURE SUSPENSION. This runs a real interaction in a live
+ * recording session, so every route to it must sit inside
+ * `withCaptureSuspended` (`verifyAndInsertSteps` wraps its whole loop; the
+ * public `tryStep` wraps the single try). It is not wrapped here because the
+ * helper is not counter-based: nesting would flap `replaying` off at the
+ * inner finally while an outer loop is still mid-run.
+ *
+ * `onInsert` fires immediately before the step is inserted — the lazy
+ * group-open hook, so a run whose FIRST step fails leaves the list exactly
+ * as it found it rather than holding an empty group.
+ */
+async function tryOneStep(input: unknown, onInsert?: () => void): Promise<TryStepOutcome> {
+  if (!session || !pageAlive()) return { status: "no-session" };
+  const page = pageWc();
+  if (!page) return { status: "no-session" };
+  const wc = pageExecutor(page);
+  const raw = normalizeRawStep(input);
+  if (!raw) return { status: "skipped" };
+  const candidate: Step = { id: randomUUID(), timestamp: Date.now(), ...raw };
+  // `desc`, not `label` — that name is the group's in the calling loop, and
+  // shadowing it once put the first step's description on the group row.
+  const desc = describeStep(candidate);
+  let outcome: ReplayStepResult;
+  try {
+    outcome = await runStep(wc, candidate);
+  } catch (err) {
+    outcome = { ok: false, error: String(err) };
+  }
+  if (!outcome.ok) {
+    // Everything the caller might run after this was written against a page
+    // state that never happened — it reports the failure and decides.
+    return {
+      status: "failed",
+      result: { label: desc, status: "failed", detail: outcome.error ?? "the step did not run" },
+    };
+  }
+  // `ok` with a note means the replayer declined rather than succeeded.
+  const result: VerifiedStepResult = outcome.error
+    ? { label: desc, status: "unchecked", detail: outcome.error }
+    : { label: desc, status: "ran" };
+  onInsert?.();
+  recorderService.insertStep(raw);
+  return { status: "inserted", result };
+}
+
 export const recorderService = {
   getState(): RecorderState {
     return currentState();
@@ -3190,52 +3256,104 @@ export const recorderService = {
   async verifyAndInsertSteps(raws: unknown[], label?: string): Promise<VerifiedStepsResult> {
     const results: VerifiedStepResult[] = [];
     if (!session) return { inserted: 0, results, error: "No active recording session." };
-    const page = pageWc();
-    if (!page) return { inserted: 0, results, error: "Recorder window is not open." };
-    const wc = pageExecutor(page);
+    if (!pageWc()) return { inserted: 0, results, error: "Recorder window is not open." };
     // Through the same boundary every other arrival goes through — per step,
-    // with `normalizeRawStep`, as `insertStep` does. These steps came from a
-    // model, which is not the page but is not the user either, and the
-    // generator cannot tell the difference. (The plural `normalizeRawSteps`
-    // is the PAGE channel's single ingest, pinned by check:capture-egress.)
+    // with `normalizeRawStep`, inside `tryOneStep` (the extracted gate this
+    // loop and the agent's `tryStep` share). These steps came from a model,
+    // which is not the page but is not the user either, and the generator
+    // cannot tell the difference. (The plural `normalizeRawSteps` is the PAGE
+    // channel's single ingest, pinned by check:capture-egress.)
     commitFlowScope();
 
     let inserted = 0;
     await withCaptureSuspended(async () => {
       for (const input of raws) {
-        if (!session || !pageAlive()) break;
-        const raw = normalizeRawStep(input);
-        if (!raw) continue;
-        const candidate: Step = { id: randomUUID(), timestamp: Date.now(), ...raw };
-        // `desc`, not `label` — that name is the group's, and shadowing it here
-        // once put the first step's description on the group row.
-        const desc = describeStep(candidate);
-        let outcome: ReplayStepResult;
-        try {
-          outcome = await runStep(wc, candidate);
-        } catch (err) {
-          outcome = { ok: false, error: String(err) };
-        }
-        if (!outcome.ok) {
+        const tried = await tryOneStep(input, () => {
+          if (inserted === 0 && label) recorderService.insertStep({ type: "group", label });
+        });
+        if (tried.status === "no-session") break;
+        if (tried.status === "skipped") continue;
+        results.push(tried.result);
+        if (tried.status === "failed") {
           // STOP. Everything after this was written against a page state that
           // never happened, so inserting it would fill the list with steps the
           // model believed in and nothing has stood behind.
-          results.push({ label: desc, status: "failed", detail: outcome.error ?? "the step did not run" });
           break;
         }
-        // `ok` with a note means the replayer declined rather than succeeded.
-        results.push(
-          outcome.error
-            ? { label: desc, status: "unchecked", detail: outcome.error }
-            : { label: desc, status: "ran" },
-        );
-        if (inserted === 0 && label) recorderService.insertStep({ type: "group", label });
-        recorderService.insertStep(raw);
         inserted++;
       }
     });
     if (inserted > 0 && label) recorderService.insertStep({ type: "endGroup" });
     return { inserted, results };
+  },
+
+  /**
+   * Try ONE step against the live page, inserting it only if it worked — the
+   * trainer agent's per-step entry to the same gate `verifyAndInsertSteps`
+   * loops over. Capture is suspended around the single try for the reason
+   * every replay path suspends it (a verified try is a real interaction in a
+   * live session); the agent puts LLM latency between calls, so the per-call
+   * focus/settle cost is noise. Pinned alongside the replay methods in
+   * check:replay-suspend.
+   */
+  async tryStep(input: unknown, onInsert?: () => void): Promise<TryStepOutcome> {
+    if (!session) return { status: "no-session" };
+    commitFlowScope();
+    return withCaptureSuspended(() => tryOneStep(input, onInsert));
+  },
+
+  /**
+   * The agent's bounded read of the live page — the interactables inventory
+   * from agent/page-summary.ts, normalized through its own ingest before it
+   * reaches a prompt. Null (never a throw) when there is no page to ask or
+   * the probe misbehaves: the agent plans blinder, it does not crash.
+   */
+  async agentPageSummary(): Promise<PageSummary | null> {
+    if (!session) return null;
+    const page = pageWc();
+    if (!page) return null;
+    try {
+      const result = await execWithTimeout(pageExecutor(page), buildPageSummaryScript(), 5_000);
+      return normalizePageSummary(result);
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * Probe the live page for what a FAILED step's locator could have meant —
+   * the Auto-Heal probe, reused as recovery evidence for the agent's next
+   * planning turn. Candidates are page JSON, so each locator is rebuilt
+   * through `normalizeRawStep` (as a bare click step) before anything is
+   * reported; a candidate the boundary refuses is dropped, not passed along.
+   */
+  async agentProbeStep(input: unknown): Promise<{ locator: Locator; description: string }[]> {
+    if (!session) return [];
+    const clean = normalizeRawStep(input);
+    if (!clean?.locator || (clean.locator.frame?.length ?? 0) > 0) return [];
+    const page = pageWc();
+    if (!page) return [];
+    const step: Step = { id: randomUUID(), timestamp: Date.now(), ...clean };
+    try {
+      const result = await execWithTimeout(pageExecutor(page), buildHealProbeScript(step, []), 5_000);
+      if (!Array.isArray(result)) return [];
+      const out: { locator: Locator; description: string }[] = [];
+      for (const cand of result) {
+        if (out.length >= 6) break;
+        if (!cand || typeof cand !== "object") continue;
+        const c = cand as { locator?: unknown; description?: unknown };
+        const rebuilt = normalizeRawStep({ type: "click", locator: c.locator })?.locator;
+        if (!rebuilt) continue;
+        out.push({
+          locator: rebuilt,
+          description:
+            typeof c.description === "string" ? c.description.replace(/\s+/g, " ").trim().slice(0, 120) : "",
+        });
+      }
+      return out;
+    } catch {
+      return [];
+    }
   },
 
   /**

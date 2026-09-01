@@ -2,6 +2,7 @@
 // never touches ipcRenderer directly.
 
 import type { Inspection, TextEdit, TsCompletion, TsDiagnostic, TsHover, TsServiceStatus } from "./ts-types";
+import type { AgentRunSnapshot } from "./agent-run";
 import type {
   BasicAuth,
   Annotation,
@@ -303,6 +304,19 @@ export const api = {
     /** Resolves when the user clicks an element in the live page; null if cancelled. */
     pick: () => ipc().invoke<LivePagePick | null>("livePage:pick"),
     cancelPick: () => ipc().invoke<void>("livePage:cancelPick"),
+  },
+  /** The trainer agent — drives the live session toward a typed goal through
+   *  the same verify gate as recorder.verifySteps. Progress arrives on the
+   *  `agent:event` push (reduced in lib/agent-run.ts); getRun seeds a window
+   *  that opened mid-run. */
+  agent: {
+    start: (goal: string) =>
+      ipc().invoke<{ ok: boolean; runId?: string; reason?: string }>("agent:start", { goal }),
+    say: (text: string) => ipc().invoke<boolean>("agent:say", { text }),
+    stop: () => ipc().invoke<boolean>("agent:stop"),
+    resolveProposal: (id: string, accept: boolean) =>
+      ipc().invoke<{ ok: boolean; detail?: string }>("agent:resolveProposal", { id, accept }),
+    getRun: () => ipc().invoke<AgentRunSnapshot>("agent:getRun"),
   },
   tests: {
     list: () => ipc().invoke<TestRecord[]>("tests:list"),

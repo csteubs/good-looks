@@ -71,6 +71,10 @@ const actions = {
   clearDebugEntry: vi.fn(),
   clearContextAction: vi.fn(),
   addVariable: vi.fn(async () => {}),
+  startAgent: vi.fn(async () => ({ ok: true, runId: "r1" })),
+  sayToAgent: vi.fn(async () => true),
+  stopAgent: vi.fn(async () => true),
+  resolveAgentProposal: vi.fn(async () => ({ ok: true })),
 };
 
 let store: Record<string, unknown> = {};
@@ -134,6 +138,7 @@ function setStore(over: Record<string, unknown> = {}) {
     picked: null,
     refiningStepId: null,
     contextAction: null,
+    agentRun: null,
     ...actions,
     ...over,
   };
@@ -472,6 +477,53 @@ describe("the context band", () => {
       expect(document.querySelector('[data-gl="step-composer"]')).toBeTruthy(),
     );
     expect(screen.getByDisplayValue("chris@example.com")).toBeTruthy();
+  });
+});
+
+// ── The command drawer, on this surface ────────────────────────────────────
+// The full matrix (parse routes, toast refusals, proposal outcomes) is the
+// main suite's; what these pin is that the PANEL is wired: the tile opens
+// the drawer, a goal reaches the agent, and a live run locks the bar while
+// the box redirects.
+describe("the command drawer (panel)", () => {
+  it("opens on the AI tile and sends a goal", () => {
+    setStore();
+    renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: /^ai$/i }));
+    const input = screen.getByLabelText("Tell the trainer what to do");
+    fireEvent.change(input, { target: { value: "log in and open settings" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(actions.startAgent).toHaveBeenCalledWith("log in and open settings");
+  });
+
+  it("a live run locks the bar here too, and the box redirects", () => {
+    setStore({
+      agentRun: {
+        runId: "r1",
+        running: true,
+        state: "acting",
+        items: [{ kind: "say", seq: 1, who: "user", text: "fill the cart" }],
+        lastSeq: 1,
+      },
+    });
+    renderPanel();
+    expect(screen.getByRole("button", { name: /^assert$/i }).hasAttribute("disabled")).toBe(true);
+    const input = screen.getByLabelText("Tell the trainer what to do");
+    fireEvent.change(input, { target: { value: "stop at the cart page" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(actions.sayToAgent).toHaveBeenCalledWith("stop at the cart page");
+    expect(actions.startAgent).not.toHaveBeenCalled();
+  });
+
+  it("an assert phrase arms the picker with this window's strictness", () => {
+    setStore();
+    renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: /^ai$/i }));
+    const input = screen.getByLabelText("Tell the trainer what to do");
+    fireEvent.change(input, { target: { value: "check the banner is hidden" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(actions.setAssert).toHaveBeenCalledWith("hidden", false);
+    expect(actions.startAgent).not.toHaveBeenCalled();
   });
 });
 

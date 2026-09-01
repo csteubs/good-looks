@@ -1499,6 +1499,20 @@ function parseBody(
       continue;
     }
 
+    // page.setDefaultTimeout(…) — the "Continue on Failure" timeout bracket
+    // (script-generator.ts emits one setter before the wrapper and a restore
+    // after it, so the wrapped step's failure THROWS while the test still
+    // has budget). Consumed WITHOUT counting as skipped, the console.log
+    // rule below: these are the generator's own furniture, and counting them
+    // would stamp stepsDiverged onto every test that uses the flag. A
+    // hand-written setter is not a step either, so the rule is safe on any
+    // spec.
+    const timeoutM = rest.match(/^[\s;]*(?:await\s+)?page\.setDefaultTimeout\s*\([^)]*\)\s*;?/);
+    if (timeoutM) {
+      i += timeoutM[0].length;
+      continue;
+    }
+
     // console.log(…) / .info / .warn / .error / .debug — diagnostics, not
     // steps. Consumed WITHOUT counting as skipped, for the same reason as the
     // variable header below: a skip sets TestRecord.stepsDiverged, and the
