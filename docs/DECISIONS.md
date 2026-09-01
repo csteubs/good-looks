@@ -10,6 +10,50 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-01 — Direction A lands: the tile strip over a reserved context band
+
+The trainer's tool row is now four `ToolTile`s (Assert, Add step, Replay, AI)
+over a fixed-height context band, on both surfaces — Direction A from the
+bar-lab, picked by the maintainer from the mock screenshots. The decision the
+architecture encodes: **the bar's geometry is a constant of the session.**
+The old row's occupant count swung five to nine as transients — the armed
+prompt, Hard/Soft, the replay result, the selection note, Create flow — 
+injected themselves inline, so the row reflowed exactly while the user was
+mid-reach; the same failure the 2026-08-17 entry banned on Visual's header,
+unguarded on the one surface where the user repeats the gesture hundreds of
+times per session. Now the strip never changes membership (disabled-gated,
+never render-gated) and never wraps (tiles are `flex: 1 1 0` + `min-width: 0`
+and SHRINK), and every transient lives in the band beneath, whose
+`min-height` is reserved whether or not anything occupies it. Arming an
+assertion changes what the band says, never where a tile is — measured for
+real in `e2e/panel-overflow.spec.ts`'s new row, pinned at source level by
+`check:narrow-layout` §5.
+
+Five defects died with the old row. Inline transients (above). The assert
+trigger's width changing when a kind armed — the kind's label renders in the
+band now, off the trigger. Create flow render-gated on selection — always
+mounted now, its disabled title carrying `extractableRange`'s LIVE verdict,
+so an invalid selection reads why before the click rather than in a
+six-second note after it. Hard/Soft holding permanent width for a choice
+that only matters while arming — it mounts inside the armed context only.
+And the panel's hard-coded `soft: false` — soft assertions were unreachable
+from the surface most sessions are driven from, which the shared band fixed
+as a side effect of having ONE armed-context implementation.
+
+Adaptations against the mock, all width-driven and found by looking at the
+built preview rather than the lab: the panel's tiles drop their carets and
+"Add step" shortens to "Add" (aria-label keeps the full name) — four tiles
+share ~332px, and a caret there is the difference between a name and an
+ellipsis; and folded tiles take `flex-basis: auto` where unfolded cards take
+`0` — equal-width folded tiles hand "AI"'s surplus to nobody and truncate
+"ASSERT". The tile marks keep the mock's cyan, knowingly against the
+"colour means outcome" rule — the argument is the insert caret's licence
+(the four entry points beside a live page), the counter-argument is that
+four cyan glyphs is chrome wearing the live colour; if palette discipline
+wins later, `.gl-tooltile-mark` is the one declaration to change. Shared
+LOGIC lives in `trainer-actions.ts` / `trainer-bar-controls.tsx`; markup and
+class names stay per-surface, which is 2026-08-12's rule left standing.
+
 ### 2026-09-01 — The action-bar reorganisation starts as a mockup lab, not a branch of the views
 
 The trainer tool-row reorganisation (the work the 2026-08-28 entry reserved

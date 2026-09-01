@@ -396,6 +396,15 @@ describe("the session-state chip", () => {
 });
 
 describe("the hard/soft assertion choice", () => {
+  // Hard/Soft lives INSIDE the armed-assert context band as of the 2026-09-01
+  // reorganisation — it used to hold permanent width in the tool row for a
+  // choice that only matters while arming. Every test here arms first.
+  it("mounts only while an assertion is armed", () => {
+    render(withAiDebug(<RecordingView />));
+    expect(screen.queryByRole("button", { name: "Soft" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Hard" })).toBeNull();
+  });
+
   it("can be driven by a plain click", () => {
     // WORTH ITS OWN TEST because it could not be done before B6. This was the
     // SDK's `SegmentedControl`, a Radix control that activates on pointer-down
@@ -404,6 +413,7 @@ describe("the hard/soft assertion choice", () => {
     // (CLAUDE.md). The theme's `Segmented` is plain buttons with
     // `aria-pressed`, so the choice is finally assertable at this level
     // instead of only at the IPC layer.
+    setStore({ state: state({ assertMode: "visible" }) });
     render(withAiDebug(<RecordingView />));
     fireEvent.click(screen.getByRole("button", { name: "Soft" }));
     expect(screen.getByRole("button", { name: "Soft" }).getAttribute("aria-pressed")).toBe("true");
@@ -422,6 +432,7 @@ describe("the hard/soft assertion choice", () => {
   });
 
   it("reports the current choice through aria-pressed", () => {
+    setStore({ state: state({ assertMode: "visible" }) });
     render(withAiDebug(<RecordingView />));
     expect(screen.getByRole("button", { name: "Hard" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Soft" }).getAttribute("aria-pressed")).toBe("false");
@@ -925,16 +936,30 @@ describe("multi-select and Create flow", () => {
     expect(screen.getByRole("button", { name: /create flow \(1\)/i })).toBeTruthy();
   });
 
-  it("refuses a gapped selection with a visible sentence instead of a dead dialog", () => {
+  it("refuses a gapped selection by disabling the button, with the reason as its title", () => {
+    // DISABLED-GATED, never render-gated, as of 2026-09-01: the verdict is
+    // computed live, so an invalid selection reads WHY before the click
+    // rather than in a six-second note after it — and the bar's geometry no
+    // longer changes at the moment of selection.
     setStore({ liveSteps: fourSteps() });
     render(withAiDebug(<RecordingView />));
     const rows = screen.getAllByRole("option");
     fireEvent.click(rows[0]);
     fireEvent.click(rows[2], { metaKey: true });
-    fireEvent.click(screen.getByRole("button", { name: /create flow/i }));
-    expect(screen.getByText(/contiguous run of steps/i)).toBeTruthy();
+    const btn = screen.getByRole("button", { name: /create flow \(2\)/i });
+    expect(btn.hasAttribute("disabled")).toBe(true);
+    expect(btn.getAttribute("title")).toMatch(/contiguous run of steps/i);
+    fireEvent.click(btn);
     // And the naming dialog did NOT open.
     expect(screen.queryByLabelText("Flow name")).toBeNull();
+  });
+
+  it("stays mounted with no selection, disabled, saying what a selection would earn", () => {
+    setStore({ liveSteps: fourSteps() });
+    render(withAiDebug(<RecordingView />));
+    const btn = screen.getByRole("button", { name: /^create flow$/i });
+    expect(btn.hasAttribute("disabled")).toBe(true);
+    expect(btn.getAttribute("title")).toMatch(/select two or more adjacent steps/i);
   });
 
   it("creates the flow through the dialog, in list order, and clears the selection", async () => {
@@ -951,9 +976,12 @@ describe("multi-select and Create flow", () => {
     await waitFor(() =>
       expect(actions.extractFlow).toHaveBeenCalledWith(["b", "c"], "Sign in"),
     );
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /create flow/i })).toBeNull(),
-    );
+    // The bar's button is ALWAYS mounted now — done means the selection
+    // cleared, so it reads bare "Create flow" again and is disabled.
+    await waitFor(() => {
+      const btn = screen.getByRole("button", { name: /^create flow$/i });
+      expect(btn.hasAttribute("disabled")).toBe(true);
+    });
   });
 
   it("shows the backend's refusal beside the name field", async () => {
