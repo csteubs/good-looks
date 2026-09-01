@@ -10,6 +10,52 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-01 — Next-action chips: mechanical suggestions, no model, no egress
+
+PR 2 of the bar plan: the context band's idle slot now offers the ONE
+suggestion the rules in `renderer/lib/next-action.ts` stand behind — a
+dismissible `.gl-context-chip` that opens the assertion composer prefilled.
+After a `fill`: assert that field's value. After a navigation: assert the URL
+path. A valid selection prefills the create-flow dialog's name field from its
+last named click. The decisions worth recording:
+
+**Mechanical means mechanical.** Every rule reads only the step list and the
+URL the trainer already displays; nothing leaves the app, so there is no
+settings flag and no egress gate. That line is drawn on purpose — the AI
+suggestion strip planned behind `aiSuggestionsEnabled` SENDS page content
+somewhere and gets the full insights treatment (off by default, disclosure
+copy, its own check). A rule-based chip that quietly grew a model call would
+inherit none of those guards, which is why the module's header says NO LLM in
+capitals and the ARCHITECTURE entry repeats it.
+
+**A navigation beats a fill.** When the page moves after a fill (a form that
+auto-submits), the element suggestion is not merely weaker — it is WRONG: the
+field left the page, and accepting would open a form whose assertion cannot
+pass. The navigation rule therefore wins whenever both apply. Same posture on
+prefills: a `sequential` fill appends rather than replaces, so its chip opens
+the value field EMPTY (the trainer-actions rule again — an empty field the
+user fills beats a plausible value they do not check), and a `goto` anchor
+prefills from its OWN url, never the live page an inserted goto has not
+navigated.
+
+**Passwords and variables are silent.** A value assertion transcribes the
+value into the step list and the generated spec, so a fill into
+`type="password"` or one interpolating `${...}` offers nothing at all. The
+node tests pin the silence as hard as the offers.
+
+**The chip is a band occupant, not a bar member.** It renders in the idle
+slot only — armed assert, refine and the replay note all outrank it, the
+views withhold it while the composer is open, and `check:narrow-layout` §5
+now refuses `suggestion` inside the tile-strip slice, so the reflow this
+architecture retired cannot come back wearing a suggestion. Dismissal is
+identity-keyed (`fill:<stepId>`; `url:<anchor>:<path>`) and per-window:
+waving off one offer does not silence the next, a redirect chain that
+settles on the same path stays dismissed, and a genuinely new path is a new
+offer. The one fact the pure module cannot compute — did the URL change
+after the anchor step landed — is tracked by `useNextAction` in
+`trainer-bar-controls.tsx`, which both trainers share so the rules cannot
+fire on one surface and not the other.
+
 ### 2026-09-01 — Direction A lands: the tile strip over a reserved context band
 
 The trainer's tool row is now four `ToolTile`s (Assert, Add step, Replay, AI)
