@@ -60,6 +60,12 @@ function forWire(entry, nameOf) {
     })),
     confidence: entry.confidence,
     reasons: Array.isArray(entry.reasons) ? entry.reasons : [],
+    // Exact identity, or a near miss — a locator keyed differently but pinned
+    // on the same identifier. A caller weighing whether to act on a proposal
+    // is weighing a different claim in each case, and the rebuild would drop
+    // the distinction silently. Absent on entries stored before near misses
+    // existed, which are the exact kind.
+    match: entry.match === "near-miss" ? "near-miss" : "exact",
     autoApplyEligible: entry.autoApplyEligible === true,
     applied: entry.applied === true,
     status: entry.status,

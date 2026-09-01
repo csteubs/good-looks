@@ -104,6 +104,11 @@ export interface Proposal {
   confidence: number;
   /** Codes from REASON_CODES; the renderer owns the copy. */
   reasons: string[];
+  /** How the target was matched. `exact`: its own locator IS the identity the
+   *  donor fixed. `near-miss`: keyed differently but pinned on the same
+   *  identifier, corroborated as the same element — suggest-only, never
+   *  auto-applied. */
+  match: "exact" | "near-miss";
   autoApplyEligible: boolean;
 }
 
@@ -166,6 +171,15 @@ export declare function donorFromEdit(input: {
 export declare function fingerprintsSimilar(
   a: FingerprintLike | undefined,
   b: FingerprintLike | undefined,
+): boolean;
+
+/** Whether a target's locator is keyed differently from the donor's old one
+ *  but pinned on the same identifier — the near-miss rule. Answers "does this
+ *  locator DEPEND on what changed", never "is this the same element", which
+ *  the fingerprint answers separately. */
+export declare function nearMissLocator(
+  donorFromLocator: LocatorLike | undefined,
+  targetLocator: LocatorLike | undefined,
 ): boolean;
 
 export declare function proposalsFor(input: {

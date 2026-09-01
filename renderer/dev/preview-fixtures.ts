@@ -714,6 +714,33 @@ export const PROPAGATIONS: PropagationListEntry[] = [
     at: NOW - 18 * MINUTE,
   },
   {
+    // THE NEAR MISS, and the only shape one can honestly take: pending, never
+    // applied. The engine refuses every near miss auto-apply eligibility, so
+    // the amber "Applied, unreviewed" state is unreachable for one — a
+    // fixture showing it would put a state on screen that cannot happen.
+    // Its `fromLocator` is keyed differently from the donor's old testid and
+    // pinned on the same identifier, which is what makes it a near miss at
+    // all rather than a proposal for an unrelated step.
+    id: "p-4",
+    testId: "t-legacy",
+    testName: "Legacy signup flow",
+    stepId: "s2",
+    stepLabel: 'click "Sign in"',
+    origin: "https://shop.example.test",
+    fromLocator: { k: "css", v: '[data-testid="signin"] > span' },
+    toLocator: { k: "role", role: "button", name: "Sign in" },
+    donors: [
+      { kind: "manual-edit", testId: "t-login", stepId: "s4", at: NOW - 25 * MINUTE },
+    ],
+    confidence: 0.75,
+    match: "near-miss",
+    reasons: ["donor-manual", "near-miss-selector", "fingerprint-similar"],
+    autoApplyEligible: false,
+    applied: false,
+    status: "pending",
+    at: NOW - 12 * MINUTE,
+  },
+  {
     id: "p-3",
     testId: "t-search",
     testName: "Search — filters narrow the results",

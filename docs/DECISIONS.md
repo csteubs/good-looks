@@ -10,6 +10,52 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-01 — Fuzzy matching, asked as "does this locator depend on what changed" rather than "do these look alike"
+
+**The obvious reading of the plan's Later item was the wrong one.** "Fuzzy
+fingerprint matching (near-miss selectors), suggest-only" invites: propose
+wherever the donor's element and the target's element resemble each other.
+That is quietly wrong. Two tests can click the same button through
+completely different locators — one on a testid, one on a role and name —
+and when the testid is renamed only the FIRST is broken. Proposing a
+rewrite to the second changes a locator that works: churn at best, a
+silent behaviour change at worst, in a feature whose whole premise is that
+what it offers can be trusted.
+
+So the question `nearMissLocator` answers is not "is this the same
+element" but **"does this locator DEPEND on the thing that just
+changed"**. A step written `css=[data-testid="pay-now"]` or
+`xpath=//*[@data-testid="pay-now"]` is exactly as broken as
+`testid=pay-now` when `pay-now` disappears, and got nothing before because
+its heal key differs — the common case in imported projects and
+hand-written specs, where one element is addressed a dozen ways. Sameness
+of element is then corroborated SEPARATELY and required (a fingerprint key
+match or `fingerprintsSimilar`), because a label and the input it names
+share an identifier and are not the same thing.
+
+**The rule is deliberately narrow, and each narrowing has a failure behind
+it.** Whole-token matching, or `pay-now` matches `pay-nowhere` and every
+proposal built on it is a guess. No `role` among the identifying values, or
+every button on a site is a near miss of every other. A three-character
+floor, because two characters collide by accident constantly. All four are
+mutation-verified: removing any one of them turns a row red.
+
+**Suggest-only is structural, not a threshold.** `autoApplyEligible` is
+false for every near miss whatever the confidence, because the claim is
+weaker in kind and not merely in degree: the step's own locator is not the
+one that was fixed. `check:propagation` §9 proves it end to end with apply
+mode ON and the strongest possible corroboration — the proposal appears
+and the test on disk is untouched. The surfaces say which kind they are
+asking about (a "Near miss" chip and its own reason sentence), because a
+person accepting one is answering a different question than for an exact
+match.
+
+**One latent bug fell out.** The dedupe triple was keyed on the DONOR
+group's key while the stored entry keys back by its own `fromLocator` —
+identical for exact matches, which is why it never mattered, and a
+duplicate proposal minted on every sweep the moment a near miss keys
+differently. It now keys on the target's own locator throughout.
+
 ### 2026-09-01 — CI heals come home: evidence travels, the journal is written by the machine that owns it
 
 **The gap, stated plainly.** `mcp/run-tests.mjs` COUNTED every heal an

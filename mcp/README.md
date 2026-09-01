@@ -456,6 +456,12 @@ tests**. That is what a site-wide change looks like from here, and it is the
 finding a list sorted by time hides: one proposal is an event, the same fix
 waiting on four tests of one origin is a release that moved a selector.
 
+Each row says how the target was matched. **`exact`**: the step's own locator
+IS the identity that was fixed. **`near-miss`**: it is written differently but
+pinned on the same identifier — `[data-testid="pay-now"]` beside a fixed
+`pay-now` — and corroborated as the same element. The two are different claims
+and only the first is ever applied without a person looking.
+
 Read-only, like everything else here. A proposal is applied in the app, by a
 person or by its auto-apply setting; this reports, it does not decide.
 

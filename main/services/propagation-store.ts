@@ -38,6 +38,11 @@ import {
   type Locator,
 } from "../recorder/types.js";
 
+/** Exact identity, or a near miss corroborated as the same element. A near
+ *  miss is SUGGEST-ONLY — the engine sets `autoApplyEligible` false for every
+ *  one, and the surfaces say which kind a proposal is. */
+export type PropagationMatch = "exact" | "near-miss";
+
 export type PropagationStatus =
   | "pending"
   | "accepted"
@@ -78,6 +83,12 @@ export interface PropagationEntry {
   confidence: number;
   /** codes from shared/propagation.mjs REASON_CODES; the renderer owns copy */
   reasons: string[];
+  /** how the target was matched: `exact` when its own locator IS the identity
+   *  the donor fixed, `near-miss` when it is keyed differently but pinned on
+   *  the same identifier and corroborated as the same element. A near miss is
+   *  SUGGEST-ONLY. Entries written before 2026-09-01 carry none and read as
+   *  `exact`, which is the only kind that existed. */
+  match: PropagationMatch;
   /** whether the engine judged this eligible for automatic application (the
    *  service still re-checks the mode and the live guards at apply time) */
   autoApplyEligible: boolean;
@@ -156,6 +167,10 @@ function normalizeEntry(input: unknown): PropagationEntry | null {
     donors,
     confidence,
     reasons,
+    // The two literals only. Anything else — including absent, on an entry
+    // stored before near misses existed — is the exact match that was then
+    // the only kind, never a value the file got to supply.
+    match: e.match === "near-miss" ? "near-miss" : "exact",
     autoApplyEligible: e.autoApplyEligible === true,
     applied: e.applied === true,
     status: e.status as PropagationStatus,

@@ -21,6 +21,7 @@ import {
   PROPOSE_ONLY_TYPES,
   proposalsFor,
   REASON_CODES,
+  nearMissLocator,
   seedsForTest,
   type Donor,
   type ExistingProposalLike,
@@ -630,5 +631,200 @@ describe("fingerprintsSimilar — every arm, both ways", () => {
   it("absent fingerprints are never similar", () => {
     expect(fingerprintsSimilar(undefined, { text: "x" })).toBe(false);
     expect(fingerprintsSimilar({ text: "x" }, undefined)).toBe(false);
+  });
+});
+
+describe("nearMissLocator — does this locator DEPEND on what changed", () => {
+  const donorOld = { k: "testid", v: "pay-now" };
+
+  it("matches a locator pinned on the same identifier through another strategy", () => {
+    // The case the whole feature is for: the same element addressed a dozen
+    // ways across a suite, all of them equally broken when the identifier
+    // goes. These get nothing today because their heal key differs.
+    expect(nearMissLocator(donorOld, { k: "css", v: '[data-testid="pay-now"]' })).toBe(true);
+    expect(nearMissLocator(donorOld, { k: "xpath", v: '//*[@data-testid="pay-now"]' })).toBe(true);
+    expect(nearMissLocator(donorOld, { k: "testid", v: "pay-now", attr: "data-test-id" })).toBe(
+      true,
+    );
+  });
+
+  it("matches on an accessible name as readily as on a testid", () => {
+    const byName = { k: "role", role: "button", name: "Place order" };
+    expect(nearMissLocator(byName, { k: "label", v: "Place order" })).toBe(true);
+    expect(nearMissLocator(byName, { k: "css", v: '[aria-label="Place order"]' })).toBe(true);
+  });
+
+  it("refuses a substring that is not a whole token", () => {
+    // `pay-now` inside `pay-nowhere` is a coincidence, and a proposal built
+    // on a coincidence is a locator rewritten for no reason.
+    expect(nearMissLocator(donorOld, { k: "css", v: '[data-testid="pay-nowhere"]' })).toBe(false);
+    expect(nearMissLocator(donorOld, { k: "testid", v: "pay-now-2" })).toBe(false);
+    expect(nearMissLocator({ k: "testid", v: "cart" }, { k: "testid", v: "cart-items" })).toBe(
+      false,
+    );
+  });
+
+  it("refuses a locator that shares only a ROLE", () => {
+    // A role is a category, not an identity. Matching on it would call every
+    // button on the site a near miss of every other one.
+    expect(
+      nearMissLocator(
+        { k: "role", role: "button", name: "Pay now" },
+        { k: "role", role: "button", name: "Cancel" },
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses values too short to identify anything", () => {
+    // Two characters match by accident constantly — an `id` of "ok", a class
+    // fragment. The bar is deliberately above the noise floor.
+    expect(nearMissLocator({ k: "testid", v: "ok" }, { k: "css", v: '[data-x="ok"]' })).toBe(false);
+  });
+
+  it("says nothing about locators it cannot read", () => {
+    expect(nearMissLocator(undefined, { k: "css", v: ".x" })).toBe(false);
+    expect(nearMissLocator(donorOld, undefined)).toBe(false);
+    expect(nearMissLocator({ k: "css" }, { k: "css" })).toBe(false);
+  });
+});
+
+describe("proposalsFor — near misses are suggested, never applied", () => {
+  const DONOR_OLD = { k: "testid", v: "pay-now" };
+  const DONOR_NEW = { k: "testid", v: "pay-now-v2" };
+  /** A target addressing the same element through CSS on the same testid. */
+  const NEAR = { k: "css", v: '[data-testid="pay-now"]' };
+
+  function healedDonor(): Donor[] {
+    return donorsFromJournal({
+      entries: [
+        entry({
+          status: "accepted",
+          originalLocator: DONOR_OLD,
+          appliedLocator: DONOR_NEW,
+        }),
+      ],
+      now: NOW,
+    });
+  }
+
+  /** The donor's test, whose step carries a fingerprint to corroborate with. */
+  function donorSide(): TestLike {
+    return makeTest("donor", {
+      steps: [step("d-s1", DONOR_OLD, { fingerprint: { text: "Pay now", attributes: {} } })],
+    });
+  }
+
+  it("proposes for a near-miss target when the fingerprint corroborates", () => {
+    const sibling = makeTest("sibling", {
+      steps: [step("s1", NEAR, { fingerprint: { text: "Pay now", attributes: {} } })],
+    });
+    const out = proposalsFor({ donors: healedDonor(), tests: [donorSide(), sibling] });
+    expect(out.create).toHaveLength(1);
+    expect(out.create[0].match).toBe("near-miss");
+    expect(out.create[0].reasons).toContain("near-miss-selector");
+    // The undo is the TARGET's own locator, not the donor's old one — a
+    // revert has to put back what this step actually had.
+    expect(out.create[0].fromLocator).toEqual(NEAR);
+    expect(out.create[0].toLocator).toEqual(DONOR_NEW);
+  });
+
+  it("refuses a near miss the fingerprint does not corroborate", () => {
+    // Same identifier in the locator, different element — a label and the
+    // input it names, say. Matching the string is only half the question.
+    const sibling = makeTest("sibling", {
+      steps: [step("s1", NEAR, { fingerprint: { text: "Something else", attributes: {} } })],
+    });
+    const out = proposalsFor({ donors: healedDonor(), tests: [donorSide(), sibling] });
+    expect(out.create).toEqual([]);
+  });
+
+  it("never marks a near miss auto-appliable, however strong the evidence", () => {
+    // The rule that makes this safe to ship: a near miss is a suggestion. Its
+    // step's locator is not the one that was fixed, so no amount of
+    // corroboration earns it a write nobody looked at.
+    const sibling = makeTest("sibling", {
+      steps: [
+        step("s1", NEAR, {
+          // Everything that would make an EXACT match auto-appliable: the
+          // recorder saw the new identity on this element at record time.
+          fingerprint: { candidates: [DONOR_NEW], text: "Pay now", attributes: {} },
+        }),
+      ],
+    });
+    const out = proposalsFor({
+      donors: healedDonor(),
+      tests: [donorSide(), sibling],
+      latestRunByTest: { sibling: { status: "failed" } },
+    });
+    expect(out.create).toHaveLength(1);
+    expect(out.create[0].confidence).toBeGreaterThanOrEqual(AUTO_APPLY_MIN);
+    expect(out.create[0].autoApplyEligible).toBe(false);
+  });
+
+  it("leaves an exact match exactly as it was", () => {
+    // The near-miss arm must not change what the engine already did: an exact
+    // target still says `exact`, still carries no near-miss reason, and is
+    // still eligible for auto-apply on the same terms.
+    const sibling = makeTest("sibling", {
+      steps: [step("s1", DONOR_OLD, { fingerprint: { candidates: [DONOR_NEW], attributes: {} } })],
+    });
+    const out = proposalsFor({ donors: healedDonor(), tests: [donorSide(), sibling] });
+    expect(out.create).toHaveLength(1);
+    expect(out.create[0].match).toBe("exact");
+    expect(out.create[0].reasons).not.toContain("near-miss-selector");
+    expect(out.create[0].autoApplyEligible).toBe(true);
+  });
+
+  it("does not re-create a near-miss proposal it already stored", () => {
+    // Dedupe keys on the TARGET's own locator. Keying on the donor's — which
+    // is what the code did before near misses existed, harmlessly, because
+    // they were the same — would make every sweep mint a duplicate.
+    const sibling = makeTest("sibling", {
+      steps: [step("s1", NEAR, { fingerprint: { text: "Pay now", attributes: {} } })],
+    });
+    const first = proposalsFor({ donors: healedDonor(), tests: [donorSide(), sibling] });
+    expect(first.create).toHaveLength(1);
+
+    const stored = {
+      id: "p1",
+      testId: "sibling",
+      stepId: "s1",
+      status: "pending",
+      fromLocator: NEAR,
+      toLocator: DONOR_NEW,
+      confidence: first.create[0].confidence,
+      reasons: first.create[0].reasons,
+      donors: first.create[0].donors,
+    };
+    const second = proposalsFor({
+      donors: healedDonor(),
+      tests: [donorSide(), sibling],
+      existing: [stored],
+    });
+    expect(second.create).toEqual([]);
+    expect(second.refresh).toEqual([]);
+    expect(second.stale).toEqual([]);
+  });
+
+  it("seeds a run from a near-miss proposal, keyed on the step's own locator", () => {
+    // A seed only fires when the step's locator ACTUALLY fails, so seeding a
+    // near miss cannot change a run that was working — and when the
+    // identifier really is gone, this is the one that gets the run past it.
+    const sibling = makeTest("sibling", { steps: [step("s1", NEAR)] });
+    const seeds = seedsForTest({
+      test: sibling,
+      proposals: [
+        {
+          id: "p1",
+          testId: "sibling",
+          stepId: "s1",
+          status: "pending",
+          fromLocator: NEAR,
+          toLocator: DONOR_NEW,
+          confidence: 0.7,
+        },
+      ],
+    });
+    expect(seeds[healKeyFor(NEAR)]).toEqual([DONOR_NEW]);
   });
 });

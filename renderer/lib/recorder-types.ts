@@ -905,6 +905,10 @@ export interface PropagationDonorRef {
   at: number;
 }
 
+/** Exact identity, or a near miss corroborated as the same element. A near
+ *  miss is suggest-only — never auto-applied, whatever the confidence. */
+export type PropagationMatch = "exact" | "near-miss";
+
 export interface PropagationEntry {
   id: string;
   testId: string;
@@ -919,6 +923,9 @@ export interface PropagationEntry {
   confidence: number;
   /** codes from shared/propagation.mjs REASON_CODES — copy lives renderer-side */
   reasons: string[];
+  /** how the target was matched; absent on entries stored before near misses
+   *  existed, which read as `exact` */
+  match?: PropagationMatch;
   autoApplyEligible: boolean;
   applied: boolean;
   status: PropagationStatus;

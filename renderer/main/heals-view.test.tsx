@@ -691,6 +691,35 @@ describe("HealsView — propagation proposals", () => {
     expect(await screen.findByText(/Confirmed in Login/)).toBeTruthy();
   });
 
+  it("marks a near miss as the weaker claim, and says why in words", async () => {
+    // A near miss proposes for a step whose locator is NOT the one that was
+    // fixed — only one pinned on the same identifier. It is never
+    // auto-applied, so this chip and this sentence are where a person learns
+    // which kind of claim they are being asked to judge.
+    proposals = [
+      proposal({
+        match: "near-miss",
+        reasons: ["donor-accepted", "near-miss-selector"],
+        autoApplyEligible: false,
+      }),
+    ];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+
+    expect(await screen.findByText("Near miss")).toBeTruthy();
+    expect(
+      screen.getByText(/pins on the same identifier the fix replaced/i),
+    ).toBeTruthy();
+  });
+
+  it("says nothing of the sort about an exact match", async () => {
+    proposals = [proposal({ match: "exact" })];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+    await screen.findByText("From another test");
+    expect(screen.queryByText("Near miss")).toBeNull();
+  });
+
   it("applies and dismisses through the propagation API, not the heal one", async () => {
     proposals = [proposal({ id: "p9" })];
     renderView();

@@ -528,6 +528,104 @@ function main(): void {
     );
   }
 
+
+  // ── 9. Near misses: stored, suggested, never written by a machine ────────
+  //
+  // A near miss proposes for a step whose locator is NOT the identity the
+  // donor fixed — only one pinned on the same identifier. That is a weaker
+  // claim, and the two properties that make it safe to ship live in different
+  // places: the engine refuses it auto-apply eligibility, and the store has to
+  // carry the distinction so the surfaces can say which kind they are asking
+  // about. This section is the integration half of both.
+  {
+    const NEAR_OLD: Locator = { k: "css", v: '[data-testid="near-btn"]' };
+    const NEAR_DONOR_OLD: Locator = { k: "testid", v: "near-btn" };
+    const NEAR_NEW: Locator = { k: "testid", v: "near-btn-v2" };
+
+    recorderSettingsStore.set({ autoHealApply: "apply", propagateFixes: true });
+    seedTest("near-donor", [step("nd1", NEAR_DONOR_OLD)]);
+    seedTest("near-target", [
+      step("nt1", NEAR_OLD, {
+        // Corroboration: the same element, seen by this test's own recorder.
+        fingerprint: { text: "Buy it", attributes: {}, depth: 1 } as never,
+      }),
+    ]);
+    // The donor's own step needs a fingerprint to corroborate AGAINST.
+    const donorRec = testStore.get("near-donor")!;
+    donorRec.steps[0] = {
+      ...donorRec.steps[0],
+      fingerprint: { text: "Buy it", attributes: {}, depth: 1 } as never,
+    };
+    testStore.save(donorRec);
+
+    const nearHeal = healJournalStore.record({
+      testId: "near-donor",
+      stepId: "nd1",
+      stepIndex: 0,
+      stepLabel: "click buy",
+      source: "run",
+      runId: "r-near",
+      originalLocator: NEAR_DONOR_OLD,
+      appliedLocator: NEAR_NEW,
+      candidates: [],
+      applied: true,
+    });
+    healJournalStore.setStatus(nearHeal.id, "accepted");
+    propagationService.noteHealAccepted();
+
+    const near = propagationStore.pending("near-target");
+    assertEqual(near.length, 1, "a near-miss target gets a proposal of its own");
+    assertEqual(near[0]?.match, "near-miss", "…marked as the weaker claim it is");
+    assert(
+      near[0]?.reasons.includes("near-miss-selector"),
+      "…carrying the reason code the renderer has copy for",
+    );
+    assertEqual(
+      near[0]?.fromLocator,
+      NEAR_OLD,
+      "…and the undo is the TARGET's own locator, not the donor's",
+    );
+    // THE ROW THAT MATTERS. Apply mode is ON, and this is still untouched.
+    assertEqual(
+      stepLoc("near-target", "nt1"),
+      NEAR_OLD,
+      "APPLY MODE DOES NOT WRITE A NEAR MISS — its step's locator is not the one that was fixed",
+    );
+    assertEqual(
+      near[0]?.autoApplyEligible,
+      false,
+      "…because the engine refused it eligibility, not because a guard happened to catch it",
+    );
+
+    // A person can still accept it, and then it behaves like any other.
+    const accepted = propagationService.applyEntry(near[0]!.id);
+    assertEqual(accepted.status, "accepted", "a person accepting a near miss settles it");
+    assertEqual(stepLoc("near-target", "nt1"), NEAR_NEW, "…and writes the proposed locator");
+    propagationService.revertEntry(near[0]!.id);
+    assertEqual(stepLoc("near-target", "nt1"), NEAR_OLD, "…with the revert restoring the original");
+    recorderSettingsStore.set({ autoHealApply: "suggest" });
+  }
+
+  // ── 10. An entry stored before `match` existed reads as the exact kind ────
+  //
+  // No migration, the propagation-store rule: the file is normalized on read,
+  // so an older entry has to mean something sensible rather than being dropped
+  // or read as a near miss it never was.
+  {
+    seedTest("legacy-t", [step("s1", OLD)]);
+    const legacy = proposalFor("legacy-t");
+    const file = path.join(userData, "recorder", "propagations.json");
+    const raw = JSON.parse(fs.readFileSync(file, "utf-8")) as Record<string, unknown>[];
+    for (const row of raw) {
+      if (row.id === legacy.id) delete row.match;
+    }
+    fs.writeFileSync(file, JSON.stringify(raw), "utf-8");
+
+    const readBack = propagationStore.get(legacy.id);
+    assert(!!readBack, "an entry written before the field existed is still readable");
+    assertEqual(readBack?.match, "exact", "…and reads as the exact match that was the only kind");
+  }
+
   fs.rmSync(userData, { recursive: true, force: true });
 
   if (failures > 0) {

@@ -184,6 +184,7 @@ describe("propagationDigest — what crosses to the client", () => {
         "donorTests",
         "fromLocator",
         "id",
+        "match",
         "origin",
         "reasons",
         "status",
@@ -195,6 +196,19 @@ describe("propagationDigest — what crosses to the client", () => {
       ].sort(),
     );
     expect(JSON.stringify(out)).not.toContain("not for the wire");
+  });
+
+  it("reports whether a proposal is an exact match or a near miss", () => {
+    // Different claims: a near miss targets a step whose locator is NOT the
+    // one that was fixed, only one pinned on the same identifier, and it is
+    // never auto-applied. A caller deciding whether to act on a proposal is
+    // deciding a different question in each case.
+    expect(propagationDigest([entry({ match: "near-miss" })]).entries[0].match).toBe("near-miss");
+    expect(propagationDigest([entry({ match: "exact" })]).entries[0].match).toBe("exact");
+    // Stored before the field existed, and before near misses could happen.
+    expect(propagationDigest([entry({ match: undefined })]).entries[0].match).toBe("exact");
+    // Never a value the file supplied.
+    expect(propagationDigest([entry({ match: "whatever" })]).entries[0].match).toBe("exact");
   });
 
   it("omits the absent optionals rather than sending nulls", () => {
