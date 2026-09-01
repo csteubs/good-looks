@@ -2127,6 +2127,26 @@ export function generateSpecDetailed(
       // applies to action/assert steps — structural `if`/`endif` are never wrapped.
       // The test.step sits INSIDE the try: a step that is allowed to fail is
       // still a step, and Playwright's report should show it failing.
+      //
+      // THE TIMEOUT BRACKET IS WHAT MAKES THE CATCH REACHABLE (2026-09-01).
+      // The emitted config sets no actionTimeout, so an action's effective
+      // patience is UNLIMITED — an action on an element that is not there
+      // never throws; it retries until the TEST timeout kills the whole run,
+      // and a test-timeout abort is not a failure the catch can swallow (the
+      // test is already marked failed). Measured for real: a wrapped click on
+      // a missing button ate the entire test budget, the report pinned "Test
+      // timeout exceeded" ON the wrapped step, and every step after it never
+      // ran — the flag looked simply ignored. Bounding the wrapped step to
+      // DEFAULT_WAIT_TIMEOUT_MS (the same 10s a conditional wait gets) turns
+      // "element not there" back into a thrown, catchable failure with test
+      // budget left to continue on. The restore is 0 — Playwright-test's own
+      // posture when the config sets no actionTimeout — and both setter
+      // lines sit OUTSIDE the try, as plain statements, so the parser reads
+      // the wrapper exactly as before and consumes the setters the way it
+      // consumes a viewport log line. Asserts inside the wrapper were never
+      // broken (expect() is bounded by the config's expect timeout) and a
+      // wrapped step's own explicit { timeout } still wins over the default.
+      body.push(indent + `page.setDefaultTimeout(${DEFAULT_WAIT_TIMEOUT_MS});`);
       body.push(indent + "try {");
       body.push(stepOpen(indent + "  ", step));
       record1(sourceIndex);
@@ -2134,6 +2154,7 @@ export function generateSpecDetailed(
       if (logLine) body.push(indent + "    " + logLine);
       body.push(stepClose(indent + "  "));
       body.push(indent + "} catch { /* continue on failure */ }");
+      body.push(indent + "page.setDefaultTimeout(0);");
     } else if (step.type === "if" || step.type === "endif") {
       record1(sourceIndex);
       body.push(indent + line);

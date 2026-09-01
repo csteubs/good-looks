@@ -10,6 +10,49 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-01 — Continue on Failure was unreachable for actions: the timeout bracket
+
+A field report with a screenshot: a click marked Continue on Failure failed,
+the run stopped there, and the whole test failed — the flag looked simply
+ignored. The generator HAS always wrapped the step in `try { … } catch`, and
+the wrapper was in the file. The catch was just unreachable.
+
+**The mechanism.** The emitted config sets a test timeout and an expect
+timeout and NO actionTimeout — so an action's effective patience under
+Playwright-test is unlimited. A click on an element that is not there never
+throws; it retries until the TEST timeout kills the run, and a test-timeout
+abort is not a failure a catch can swallow: the test is already marked
+failed, and the report pins "Test timeout exceeded" on the wrapped step.
+Measured twice: a probe with a 45s test budget showed the unwrapped click
+waiting all 45s ("locator.click: Test timeout of 45000ms exceeded"), and the
+report's own arithmetic closed exactly — goto 14s + click 7.6s + 7.7s into
+the wrapped step ≈ the 30s budget. Asserts were never broken (expect() is
+bounded by the config's 5s expect timeout, so a wrapped assertion throws and
+is caught); downloads were never broken (`waitForEvent` is armed with an
+explicit timeout). Only ACTIONS — the commonest thing the flag is put on —
+could never fail in a catchable way.
+
+**The fix is a bracket, not a config change.** The wrapper arm now emits
+`page.setDefaultTimeout(10000)` (DEFAULT_WAIT_TIMEOUT_MS — the same patience
+a conditional wait gets) before the try and `page.setDefaultTimeout(0)`
+after it. Restore-to-zero is deliberate: 0 IS the config's own posture
+(actionTimeout unset = unbounded, the test timeout governs), so unwrapped
+steps behave exactly as before — setting a global actionTimeout instead
+would have changed every step of every test to fix one flag. The setters
+sit OUTSIDE the try as plain statements, so the spec parser reads the
+wrapper unchanged and consumes them the way it consumes a viewport log line
+(counting them would stamp stepsDiverged onto every test using the flag —
+pinned in spec-parser-positions.test.ts).
+
+**The authority is `e2e/continue-on-failure.spec.ts`** — the real CLI over a
+real generated spec against a page missing the wrapped target: the wrapped
+run PASSES (the catch finally reached), and the same failure unwrapped still
+fails with "Test timeout", which is the premise stated out loud. Verified to
+fail by dropping the bracket. The blind spot this closes is the
+check:runtime-boot lesson again: the wrapper ships as emitted source, every
+unit test asserted its SHAPE, and nothing had ever executed it against the
+failure it exists for.
+
 ### 2026-09-01 — The trainer agent: the model proposes, the verify gate disposes
 
 PR 3 of the bar plan: the AI tile opens a COMMAND DRAWER on both trainers —
