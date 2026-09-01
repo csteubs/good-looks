@@ -94,6 +94,7 @@ import type {
   TestSpeed,
   TestVariable,
 } from "../recorder/types.js";
+import { normalizeHealPageUrl, normalizeHealRect } from "../recorder/types.js";
 
 // Module Playwright specs import test/expect from — redirected to the capture
 // fixture for a run that captures artifacts.
@@ -715,6 +716,12 @@ interface HealEvent {
   /** Present only on a heal — a failed attempt applied nothing. */
   appliedLocator?: Locator;
   candidates?: HealCandidate[];
+  /** The page URL and the healed element's viewport-normalized box at heal
+   *  time. Both are page-derived and best-effort, so both are `unknown` here —
+   *  `normalizeHealPageUrl` / `normalizeHealRect` are the narrowing, and a
+   *  value that fails them drops the field, never the event. */
+  url?: unknown;
+  rect?: unknown;
   at: number;
 }
 
@@ -864,6 +871,9 @@ export function collectRunHeals(
   const rec = persist ? testStore.get(testId) : null;
   let changed = false;
   for (const ev of events) {
+    // Narrowed here, not trusted: both originate on the page the run visited.
+    const pageUrl = normalizeHealPageUrl(ev.url);
+    const rect = normalizeHealRect(ev.rect);
     try {
       healJournalStore.record({
         testId,
@@ -878,6 +888,8 @@ export function collectRunHeals(
         // `applied` is whether the TEST ON DISK changed — false on a failing
         // apply-run, so the entry reads as a suggestion the user can apply.
         applied: persist,
+        ...(pageUrl ? { pageUrl } : {}),
+        ...(rect ? { rect } : {}),
       });
     } catch (err) {
       logger.warn("runner", "Could not journal a run heal", { err: String(err) });

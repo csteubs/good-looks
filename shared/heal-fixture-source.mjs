@@ -172,6 +172,23 @@ function isResolveFailure(err) {
   );
 }
 
+/** The page URL at the moment of an event, best-effort.
+ *
+ *  Evidence for cross-test propagation: a heal grouped by the page it actually
+ *  happened on beats grouping by the test's start URL, which mid-test
+ *  navigation makes a lie. The value is page-controlled text — the runner
+ *  validates and scrubs it before it reaches the journal; this side only has
+ *  to never let reading it change what the run does. Undefined simply drops
+ *  out of the JSON. */
+function safeUrl(loc) {
+  try {
+    const u = loc && typeof loc.page === "function" ? loc.page().url() : undefined;
+    return typeof u === "string" && u ? u : undefined;
+  } catch (e) {
+    return undefined;
+  }
+}
+
 function flush() {
   if (!HEAL_DIR || events.length === 0) return;
   try {
@@ -278,6 +295,7 @@ async function recordMatches(loc, entry, method) {
       originalLocator: entry.locator,
       matchCount: found.total,
       matches: (found.items || []).slice(0, MAX_MATCHES),
+      url: safeUrl(loc),
       at: Date.now(),
     });
     flushMatches();
@@ -306,7 +324,7 @@ async function recordMatches(loc, entry, method) {
  * Never throws and never alters control flow: every caller rethrows the
  * original error immediately after, exactly as it did before this existed.
  */
-function recordFailure(entry, method, outcome, candidates) {
+function recordFailure(entry, method, outcome, candidates, url) {
   try {
     events.push({
       outcome: outcome,
@@ -316,6 +334,7 @@ function recordFailure(entry, method, outcome, candidates) {
       method: method,
       originalLocator: entry.locator,
       candidates: (candidates || []).slice(0, 8),
+      url: url,
       at: Date.now(),
     });
     flush();
@@ -420,6 +439,11 @@ export function installHealing(page) {
         // address: rethrow untouched so the run fails exactly as it would have.
         if (!entry || !entry.probe || !isResolveFailure(err)) throw err;
 
+        // Read once, at failure time, for every event this failure produces —
+        // a successful heal may navigate, and the page it lands on is not the
+        // page the element went missing from.
+        const url = safeUrl(this);
+
         // Before anything is healed. A successful heal changes the page (it
         // clicks something), and what matched at the moment of failure is the
         // thing being described — recording it afterwards would describe the
@@ -439,7 +463,7 @@ export function installHealing(page) {
         // rank, and this had nothing. Rethrown exactly as before — recording
         // must never change what the run does.
         if (!candidates || candidates.length === 0) {
-          recordFailure(entry, method, "no-candidates", []);
+          recordFailure(entry, method, "no-candidates", [], url);
           throw err;
         }
 
@@ -450,6 +474,32 @@ export function installHealing(page) {
           try {
             const healed = fromModel(page, cand.locator);
             if (!healed) continue;
+            // The healed element's viewport box, measured BEFORE acting — a
+            // healed click that navigates away cannot erase the answer — and
+            // clipped to the viewport, because the screenshot this box will be
+            // drawn over shows exactly the viewport. Best-effort with a short
+            // wait: a page that will not answer costs the field, never the
+            // heal. Normalized 0-1, the same convention as the fingerprint's
+            // rect and the capture manifest's.
+            let rect;
+            try {
+              const box = await healed.boundingBox({ timeout: 500 });
+              const vp = typeof page.viewportSize === "function" ? page.viewportSize() : null;
+              if (box && vp && vp.width > 0 && vp.height > 0) {
+                const x0 = Math.max(0, box.x);
+                const y0 = Math.max(0, box.y);
+                const x1 = Math.min(vp.width, box.x + box.width);
+                const y1 = Math.min(vp.height, box.y + box.height);
+                if (x1 > x0 && y1 > y0) {
+                  rect = {
+                    x: x0 / vp.width,
+                    y: y0 / vp.height,
+                    w: (x1 - x0) / vp.width,
+                    h: (y1 - y0) / vp.height,
+                  };
+                }
+              }
+            } catch (rectErr) { /* best-effort */ }
             const result = await orig.apply(healed, args);
             events.push({
               outcome: "healed",
@@ -460,6 +510,8 @@ export function installHealing(page) {
               originalLocator: entry.locator,
               appliedLocator: cand.locator,
               candidates: candidates.slice(0, 8),
+              url: url,
+              rect: rect,
               at: Date.now(),
             });
             flush();
@@ -475,7 +527,7 @@ export function installHealing(page) {
         // Every candidate was tried and every one failed. The element could be
         // ranked but could not be acted on under ANY locator — see
         // recordFailure for why this is worth writing down.
-        recordFailure(entry, method, "exhausted", candidates);
+        recordFailure(entry, method, "exhausted", candidates, url);
         throw err;
       }
     };

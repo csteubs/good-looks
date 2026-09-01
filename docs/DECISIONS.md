@@ -10,6 +10,60 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-01 — Heal evidence gains the page URL and the healed element's box; three run fields stop being dropped
+
+First slice of [plans/preemptive-updates.md](plans/preemptive-updates.md):
+cross-test propagation needs donor evidence that can be grouped by the page a
+heal actually happened on, and a box the evidence screenshot's highlight can
+be drawn from. Neither existed — no heal record anywhere carried a URL, and
+the probe computed the healed element's geometry, consumed it for scoring,
+and discarded it.
+
+**What the fixture now records.** Every heal event — healed, exhausted,
+no-candidates, and the match sets — carries `url`, read through the failing
+locator's OWN page (`loc.page().url()`, so a popup's locator reports the
+popup's address), once, at failure time: a successful heal may navigate, and
+the page it lands on is not the page the element went missing from. Healed
+events additionally carry `rect`: the healed element's bounding box, measured
+BEFORE the healed action runs (a click that navigates away cannot erase the
+answer), clipped to the viewport (the screenshot this box will be drawn over
+shows exactly the viewport, so the visible intersection is the honest
+region), and normalized 0-1 — the same convention as `ElementFingerprint.rect`
+and the capture manifest. Everything is best-effort: a page that will not
+answer costs the field, never the event, and never the heal.
+
+**Narrowed at the journal, not trusted.** Both values originate on an
+untrusted page, so `HealEvent` types them `unknown` and two validators in
+`main/recorder/types.ts` are the narrowing. `normalizeHealPageUrl`: http(s)
+only; control characters refused BEFORE parsing, because `new URL()` silently
+strips tab and newline per the URL spec, so a post-parse check would pass
+exactly the values it exists to catch; over-long (>2048) rejected whole,
+never truncated — run-provenance's rule, a cut URL is a plausible URL for
+somewhere else; sensitive query VALUES elided by name through the network
+log's own `SENSITIVE_QUERY_PARAMS` denylist, so a token-bearing address does
+not land in a store that outlives the run. `normalizeHealRect`: four finite
+numbers on the 0-1 scale, REBUILT from named keys, zero-area refused — a
+doubtful rect drops the box rather than drawing a wrong one. In every case
+the field is dropped, never the entry. Trainer heals gain `pageUrl` through
+the same gate from `currentPageUrl()`.
+
+**Three run fields were silently dropped, and the mechanism is worth
+remembering.** `run-history-store.append` never persisted `hasTrace`,
+`attempt` or `passedOnRetry`, though the runner has passed all three since
+R24: the parameter type did not declare them and the record literal names
+every persisted field explicitly — and an object spread at the call site
+(`...retryFields(...)`, `...(hasTrace ? … : {})`) defeats TypeScript's
+excess-property checking, so it compiled clean. The symptoms were quiet: the
+Open Trace button gated on a field that was never true, and `flakeSignal`
+never saw a retried pass from an app run — so a test that only ever passes by
+retrying read "stable", the precise signal ROUTINES.md's retry paragraph
+exists to protect. Fixed by declaring and persisting them spread-conditionally
+(absent stays absent; `attempt: 0` on every row would be indistinguishable
+from a row predating the field). The general shape: a record literal that
+names every field is drift-proof against smuggled keys and drift-PRONE
+against new legitimate ones, and the type system will not say so — the test
+now pinning it was verified to fail against the old store.
+
 ### 2026-09-01 — Continue on Failure was unreachable for actions: the timeout bracket
 
 A field report with a screenshot: a click marked Continue on Failure failed,
