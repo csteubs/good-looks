@@ -10,6 +10,50 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-01 — The propagation core: what may count as evidence, and what may never auto-apply
+
+PR 2 of [plans/preemptive-updates.md](plans/preemptive-updates.md):
+`shared/propagation.mjs`, the pure engine that turns confirmed locator fixes
+into proposals for sibling tests on the same origin, plus `shared/origin.mjs`
+(`originOf`/`isOnOrigin`, moved from `origin-variable.ts` so the MCP/CLI
+runner can derive the same grouping from plain `.mjs`). Decisions worth the
+ink, each pinned by a test that was verified by MUTATION — eleven single-rule
+deletions, eleven red suites:
+
+- **A reverted heal is anti-evidence.** The user looked at the substitution
+  and put it back; treating it as a donor would relitigate their answer test
+  by test. Likewise a pending run heal counts only when its run PASSED — the
+  same "a mis-heal usually succeeds at the step" rule `collectRunHeals`
+  applies before writing to disk, read from the other side. The first
+  mutation run caught a weak test here: the reverted row used a shape a
+  LATER gate also refused, so deleting the reverted rule went green. The row
+  now uses shapes that qualify under every other gate, which is the
+  verify-a-test-can-fail rule doing its job on the test itself.
+- **Conflicted donors propose nothing.** Two confirmed fixes that disagree
+  about one element on one origin mean the element's story is not settled; a
+  proposal would just be the engine picking a side with a confident face.
+  Surfaced as `conflicts` for logging, never as proposals.
+- **Settled decisions are respected.** A dismissed (or applied-then-reverted)
+  proposal for the same step + from + to is asked-and-answered and never
+  recreated; `superseded`/`stale` do not block, because both were the
+  engine's own housekeeping rather than a person's answer.
+- **`PROPOSE_ONLY_TYPES` widens the plan's "assertions are never
+  auto-applied" to `assert`, `if` and `capture`, on the property they share:
+  these steps consume the element SILENTLY — an assert against the wrong
+  element checks something nobody asked (the heal fixture refuses assertion
+  healing for exactly this reason), an `if` silently reroutes the test, a
+  `capture` reads the wrong value into a variable. An action, by contrast,
+  fails loudly when it lands wrong — and has review machinery for when it
+  does not.
+- **The undo is the TARGET's own locator**, not the donor's `fromLocator`:
+  same heal key, possibly a different spelling (`nth`, context), and a revert
+  must restore the step byte-for-byte.
+- **Auto-apply needs more than a number.** `AUTO_APPLY_MIN` alone can be
+  reached by one donor plus weak similarity; eligibility additionally
+  requires the target fingerprint's own recorded candidates to contain the
+  fix (the target's recorder saw this exact identity on this element) or two
+  independent agreeing donors.
+
 ### 2026-09-01 — Heal evidence gains the page URL and the healed element's box; three run fields stop being dropped
 
 First slice of [plans/preemptive-updates.md](plans/preemptive-updates.md):

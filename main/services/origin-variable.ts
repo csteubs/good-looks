@@ -38,6 +38,7 @@ import {
   type Step,
   type TestVariable,
 } from "../recorder/types.js";
+import { isOnOrigin, originOf } from "../../shared/origin.mjs";
 
 /** The variable a test gets when nothing is chosen. Uppercase because it names
  *  an environment-ish value and reads as one in `${SITE_URL}/cart`. */
@@ -50,30 +51,12 @@ export interface OriginUsage {
   count: number;
 }
 
-/**
- * The origin of a URL, or null.
- *
- * `URL.origin` rather than a regex: it normalises case and the default port, so
- * `https://Shop.Example.com:443/` and `https://shop.example.com/` are one
- * origin rather than two entries the user has to pick between.
- */
-export function originOf(text: string): string | null {
-  if (!/^https?:\/\//i.test(text)) return null;
-  try {
-    const url = new URL(text);
-    return url.origin;
-  } catch {
-    return null;
-  }
-}
-
-/** Whether `text` is a URL sitting on `origin` — see the header for the two
- *  cases the boundary check rules out. */
-export function isOnOrigin(text: string, origin: string): boolean {
-  if (!text.startsWith(origin)) return false;
-  const rest = text.slice(origin.length);
-  return rest === "" || rest.startsWith("/") || rest.startsWith("?") || rest.startsWith("#");
-}
+// Moved to shared/origin.mjs (2026-09-01): cross-test propagation and the
+// MCP/CLI runner's heal-map seeding need the same "same site" answer this
+// file derives, and they are plain .mjs that cannot import compiled
+// TypeScript. Re-exported here so every existing caller keeps its import
+// path; the header's boundary-check reasoning lives with the implementation.
+export { isOnOrigin, originOf };
 
 /**
  * Every origin the steps refer to, the test's OWN site first.
