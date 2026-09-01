@@ -2,6 +2,12 @@
 
 Written 2026-09-01, against `main` at `d9b0c4d`.
 
+> **Amended 2026-09-01, same day (maintainer follow-up):** the evidence pane
+> highlights the healed element on the step screenshot — the trainer's
+> pick-an-element bounding-box idiom, restyled to the theme, subtly animated,
+> with "no screenshot" an acceptable state. §0 gains the decision, §2.9 the
+> design, PR 1 the heal-event `rect`, PR 4 the `shot-highlight` primitive.
+
 Goal: when a site change breaks a locator, the suite should need the fix
 **once**. Today every test that touches the shared page fails — or heals —
 alone: a heal is journalled per test, an accepted fix stays in the test it was
@@ -32,6 +38,7 @@ later readers don't relitigate them:
 | Review home | **The Heals view.** Counts/badges on Home, Stats' Auto-Heal category and per-test tabs; a link from the Routines outcome panel. No new rail entry |
 | Donors | **Confirmed heals + manual locator fixes.** Exact selector identity (`healKeyFor`) on the same origin. No fuzzy matching in v1 |
 | Engine | **Deterministic only.** No LLM, no new egress. Screenshots are shown to the user as evidence, never sent anywhere |
+| Evidence figure *(follow-up, same day)* | **The step screenshot with the healed element highlighted**, when a shot exists — the trainer's element-picking bounding-box idiom, restyled to the app theme, with subtle animation to denote the change. "No screenshot" is an acceptable state, honestly rendered (§2.9) |
 
 ---
 
@@ -325,9 +332,9 @@ from revert, exactly the existing vocabulary.
   **Dismissed** / **Reverted** / **Stale**. The detail pane shows was/now via
   `formatLocator`, the origin and donor page URL, each donor ("healed in
   ‹test›, run passed", "you fixed this in ‹test›"), reason copy from codes,
-  and — when artifacts survive retention — the donor's step screenshot from
-  its healed run beside the target's most recent one (`replay.json`
-  `stepId → actionIndex` join). Actions: **Apply** (`go` tone) / **Dismiss**
+  and the evidence figure of §2.9 — the donor's after-heal screenshot beside
+  the target's most recent one, each with the element highlighted when its
+  rect is known. Actions: **Apply** (`go` tone) / **Dismiss**
   (`ghost`), and "Apply all N pending on ‹origin›" behind an `AlertDialog`
   that names the tests it will touch.
 - **Per-test**: the Heals tab's "Needs review" section and the tab badge count
@@ -356,7 +363,84 @@ from revert, exactly the existing vocabulary.
   Three-place registration (`settings-schema.ts` + pane + `SETTING_INDEX`);
   the `autoHealApply` row's copy gains a sentence saying propagation obeys it.
 
-### 2.9 What stays honest (security, egress, signal)
+### 2.9 Evidence screenshots — the healed element, highlighted
+
+Requirement (maintainer follow-up, 2026-09-01): when the evidence pane has a
+screenshot, show the healed or identified element **highlighted on it** — the
+same bounding-box idiom the user already knows from picking an element in the
+trainer — as a stylized box that fits the application theme, with subtle
+animation to denote change. "No screenshot" is an acceptable state; it will
+usually exist, but nothing may depend on it.
+
+**The visual reference is the refine box.** The trainer already draws exactly
+this on live pages: `main/recorder/capture-script.ts:830-865` — a floating
+overlay with a 2px accent border, a translucent fill, a white halo shadow and
+a small label pill riding the top edge, tracking
+`getBoundingClientRect()`. The evidence highlight is that idiom re-drawn over
+a *screenshot*, in the theme's own vocabulary instead of injected page CSS.
+
+**Where the box comes from.** Every rect is normalized 0-1 — the one
+convention `ElementFingerprint.rect`, the capture manifest's per-step rect and
+`VisualMask`/`DiffRegion` already share — so the overlay math is one rule.
+
+- *Donor shot* (the after-heal screenshot from the donor's run): PR 1 grows
+  the fixture's healed event by `rect` beside `url` — the healed element's
+  bounding box, normalized against the viewport, measured **before** the
+  healed action runs (a healed click that navigates away cannot erase the
+  answer). Best-effort like `url`: a page that won't answer costs the field,
+  never the event. Journal entries from before PR 1 carry no rect and render
+  their shot unhighlighted.
+- *Target shot* (the target's most recent retained capture run): the
+  `replay.json` step's own `rect`; when absent, the step's recorded
+  `fingerprint.rect` — a **remembered** position from record time, drawn in a
+  visibly different treatment (dashed, not solid) so a measured box and a
+  remembered one never read as the same claim.
+- Screenshots join as already stated: `stepId → actionIndex` through
+  `replay.json`, shot files by action index.
+
+**The degradation ladder, every rung acceptable**: measured box on shot →
+remembered box on shot (dashed) → shot alone → no shot. At the bottom rung the
+pane simply omits the figure — a proposal is complete without it, and nothing
+renders as an empty frame or a spinner. Retention makes the lower rungs
+ordinary rather than exceptional: artifacts age out per test, capture is
+per-test opt-in, and ingested CI runs never carry shots at all.
+
+**The component.** A theme primitive — working name
+`renderer/theme/primitives/shot-highlight.tsx`, rules in `primitives.css` —
+taking an image and a normalized rect, following the shape `tool-tile.tsx`
+just established (primitive + colocated `.test.tsx` + specimen rows).
+Constraints, each pinned by an existing gate:
+
+- `--gl-*` tokens and `gl-*` classes only — `check:theme-tokens` proves every
+  token resolves, `check:renderer-classes` that every class emits a rule.
+- The box is an overlay scaled off the **rendered image's** box (a rect is
+  0-1 of the image, never of the viewport), with the refine box's anatomy —
+  border, soft glow, and the label pill carrying the locator's short form.
+- The surround outside the box dims slightly so a small element stays
+  findable on a busy page; the box itself never occludes what it points at
+  (outline + glow, no fill opaque enough to hide content).
+
+**Animation — subtle, and decoration only.** On reveal the box settles with
+one soft glow pulse (a `gl-*` keyframe in `primitives.css`, beside
+`gl-holo-drift`), drawing the eye to the changed element; at rest it may keep
+a very-low-amplitude shimmer consistent with the atmosphere's calm tier.
+The house rule applies unchanged: `prefers-reduced-motion` clamps motion and
+never deletes information (`renderer/theme/shell/boot-plate.tsx:18`, and the
+atmosphere's reduced-motion floor, `renderer/theme/atmosphere.tsx:18`) — under
+it the box renders static and full, and nothing about *where the element is*
+ever depends on the motion. Position and size never animate: a box easing
+toward its rect would briefly draw a claim about geometry that isn't true.
+
+**Seen and tested where a box can actually be seen.** jsdom has no layout
+engine, so: the primitive joins `?view=specimen` in every state (measured,
+remembered/dashed, boxless shot, reduced-motion static) — the only place a
+rendered primitive can be looked at; the PR 4 dev:web heals fixture carries a
+shot and rect so the whole pane renders in a tab; and unit rows cover the pure
+parts — the rect→overlay geometry and the fallback ladder (which rect wins,
+and that a missing shot yields no figure rather than an empty frame) — each
+reverted once to prove it can fail.
+
+### 2.10 What stays honest (security, egress, signal)
 
 - **Every locator on this path is page-authored once removed** (heal
   candidates came from the probe). `normalizeLocator` at store write, at
@@ -392,11 +476,15 @@ scoring.
 **Changes**
 
 - `shared/heal-fixture-source.mjs`: the healed, failure and match-set events
-  gain `url` from `page.url()`, best-effort (a page that throws on `url()`
-  costs the field, never the event).
-- `main/services/playwright-runner.ts`: `HealEvent` gains `url`; the journal
-  write passes it through a validator (http(s), ≤2048, reject-not-truncate,
-  sensitive-params scrub) into a new `HealEntry.pageUrl?`.
+  gain `url` from `page.url()`, and the healed event additionally gains
+  `rect` — the healed element's bounding box normalized against the viewport,
+  measured before the healed action runs (§2.9). Both best-effort: a page
+  that won't answer costs the field, never the event.
+- `main/services/playwright-runner.ts`: `HealEvent` gains `url` and `rect`;
+  the journal write passes them through validators — http(s), ≤2048,
+  reject-not-truncate, sensitive-params scrub for the URL; four finite
+  numbers in 0-1 for the rect, dropped whole otherwise — into new
+  `HealEntry.pageUrl?` / `HealEntry.rect?` fields.
 - `main/services/run-history-store.ts`: `append` declares and persists
   `hasTrace`, `attempt`, `passedOnRetry` — the fields
   `playwright-runner.ts:2001,2011` already passes and the store silently
@@ -406,9 +494,10 @@ scoring.
 
 **Tests**: a run-history-store row proving the three fields persist —
 verified to fail against the current store; heal-fixture rows for `url` on
-all three event shapes; a journal row for the validator in both directions
-(a 3000-char URL and a `javascript:` scheme are dropped whole, the field
-only, never the entry).
+all three event shapes and `rect` on the healed one; journal rows for both
+validators in both directions (a 3000-char URL, a `javascript:` scheme, and
+a rect carrying a string or an out-of-range number are each dropped whole —
+the field only, never the entry).
 
 **Docs**: DECISIONS entry for the dropped-fields bug (the spread-defeats-
 excess-property-checking shape is worth recording); ARCHITECTURE unchanged.
@@ -482,19 +571,26 @@ rather than around it, why assertions are propose-only).
 
 ### PR 4 — Surfaces
 
-**Changes**: everything in §2.8 — Heals view third kind + detail + bulk
-apply, per-test tab/badge counts, Home `toReview`, the Stats Auto-Heal facet,
-the Routines outcome line, `["propagations"]` in `RUN_DERIVED_KEYS` +
-`propagations:changed` subscribed in `RecorderProvider`, and the Settings row
-with its three-place registration.
+**Changes**: everything in §2.8 and §2.9 — Heals view third kind + detail +
+bulk apply, per-test tab/badge counts, Home `toReview`, the Stats Auto-Heal
+facet, the Routines outcome line, `["propagations"]` in `RUN_DERIVED_KEYS` +
+`propagations:changed` subscribed in `RecorderProvider`, the Settings row
+with its three-place registration, and the `shot-highlight` theme primitive
+(image + normalized rect → the themed, subtly animated box; the
+`tool-tile.tsx` shape — primitive + colocated test + specimen rows +
+`primitives.css` rules, reduced-motion floor included).
 
 **Tests**: `heals-view.test.tsx` rows (a proposal renders with the right chip
 per status; Apply and Dismiss call the api; the bulk dialog names its tests;
 mock the `api` module, not the bridge); `heals-panel` and Home count rows;
-`check:derived-cache`, `check:push-consumers`, `check:stats-categories` and
-the settings-search label test all pick up their halves; a
-`renderer/dev` fixture so `npm run dev:web` shows a populated proposal in the
-Heals view (the only way an agent can look at it).
+`check:derived-cache`, `check:push-consumers`, `check:stats-categories`,
+`check:theme-tokens`, `check:renderer-classes` and the settings-search label
+test all pick up their halves; `shot-highlight` unit rows for the overlay
+geometry and the §2.9 fallback ladder (which rect wins; a missing shot yields
+no figure, never an empty frame); the primitive's specimen states; and a
+`renderer/dev` fixture carrying a shot + rect so `npm run dev:web` shows a
+populated proposal — highlight included — in the Heals view (the only way an
+agent can look at it).
 
 **Docs**: ARCHITECTURE (heals-view entry, settings pane row); DECISIONS
 (default-on with suggest semantics; the Routines line rather than a Routines
@@ -530,6 +626,12 @@ review UI). `docs/MCP-GUIDE.md` untouched — no MCP surface in v1.
 - **No `metrics.db` column.** Proposals are primary data; the DB drops and
   replays. If a rollup is ever wanted, the journal's `seeded` flag is the
   re-derivable source.
+- **No heal-time screenshot.** The capture fixture's one-screenshot rule
+  stands ("a healed action should produce one screenshot of the successful
+  result, not one per failed attempt" — `shared/capture-fixture-source.mjs`),
+  and heals must stay free when capture is off. The evidence figure reuses
+  the ordinary step shot and highlights *within* it (§2.9) — which is also
+  why "no screenshot" is a first-class state rather than a failure.
 - **No new env vars, no new fixture files.** Seeds ride inside the heal map;
   the R49 class of half-wired capability gets no new members.
 - **No Routines review UI and no new rail entry** — decided in §0.
@@ -546,8 +648,9 @@ plus, for PR 3, one real run in `npm run dev` against a page whose locator
 was renamed after a sibling test healed: the run heals through the seed, the
 Heals view shows the seeded heal AND the standing proposal, accepting the
 proposal rewrites the sibling, and reverting puts it back. For PR 4,
-`npm run dev:web` with the new fixture, and the real app for the Settings row
-and the Routines line.
+`npm run dev:web` with the new fixture (`?view=specimen` for the
+`shot-highlight` states, the Heals view for the populated evidence pane),
+and the real app for the Settings row and the Routines line.
 
 ## 6. Risks
 
@@ -558,4 +661,5 @@ and the Routines line.
 | Feedback loops (propagation feeding itself) | donor hooks live in the user-facing handlers; the apply path bypasses them by construction; `check:propagation` pins it |
 | Masking the "site changed" signal | seeds fire only on real failures and route through the existing heal journal/metrics pipeline (§2.5) |
 | Heal-journal consumers miscounting propagations | separate store; source-level assertion in `check:propagation` |
+| A remembered (record-time) box drawn as if measured | measured rects preferred at every join; the fallback renders dashed — a different visual claim (§2.9); a doubtful rect drops the box, never draws a wrong one |
 | Donor corpus missing CI heals | named in §1.3; export/ingest extension recorded under Later rather than implied |
