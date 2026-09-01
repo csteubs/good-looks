@@ -893,3 +893,70 @@ describe("evidence: page URL and healed-element rect on events", () => {
     expect(written[0].url).toBe("https://shop.example.test/checkout?step=2");
   });
 });
+
+// ── Seeds: propagation's fixes, tried before the probe ───────────────
+// A pending cross-test proposal rides the map entry as `seeds`. It runs only
+// once the recorded locator has ACTUALLY failed, it spends no probe when it
+// works, and it records an ordinary healed event flagged `seeded` — so the
+// journal still shows that the page changed.
+
+describe("seeded healing", () => {
+  beforeEach(() => {
+    fs.rmSync(healDir, { recursive: true, force: true });
+  });
+
+  it("tries a seed before spending a probe, and flags the event", async () => {
+    const mod = await loadFixture({
+      "testid|submit": entry({ seeds: [{ k: "testid", v: "submit-v2" }] }),
+    });
+    const page = makePage();
+    page.failures.set("testid=submit", "Timeout 30000ms exceeded waiting for locator");
+    // The probe WOULD offer something else — it must not even be consulted.
+    page.probeResult = [{ locator: { k: "testid", v: "probe-answer" } }];
+    mod.installHealing(page);
+
+    const result = await page.getByTestId("submit").click();
+
+    expect(result).toBe("testid=submit-v2:click");
+    expect(page.evaluatedProbes).toHaveLength(0);
+    const written = JSON.parse(fs.readFileSync(path.join(healDir, "heals.json"), "utf-8"));
+    expect(written).toHaveLength(1);
+    expect(written[0].outcome).toBe("healed");
+    expect(written[0].seeded).toBe(true);
+    expect(written[0].appliedLocator).toEqual({ k: "testid", v: "submit-v2" });
+    expect(written[0].originalLocator).toEqual({ k: "testid", v: "submit" });
+  });
+
+  it("a failing seed costs one attempt and falls through to the probe", async () => {
+    const mod = await loadFixture({
+      "testid|submit": entry({ seeds: [{ k: "testid", v: "stale-seed" }] }),
+    });
+    const page = makePage();
+    page.failures.set("testid=submit", "Timeout 30000ms exceeded waiting for locator");
+    page.failures.set("testid=stale-seed", "Timeout 30000ms exceeded waiting for locator");
+    page.probeResult = [{ locator: { k: "testid", v: "probe-answer" } }];
+    mod.installHealing(page);
+
+    const result = await page.getByTestId("submit").click();
+
+    expect(result).toBe("testid=probe-answer:click");
+    expect(page.evaluatedProbes).toHaveLength(1);
+    const written = JSON.parse(fs.readFileSync(path.join(healDir, "heals.json"), "utf-8"));
+    // One event, from the probe path, not flagged as seeded.
+    expect(written).toHaveLength(1);
+    expect("seeded" in written[0]).toBe(false);
+    expect(written[0].appliedLocator).toEqual({ k: "testid", v: "probe-answer" });
+  });
+
+  it("a passing action never consults its seeds", async () => {
+    const mod = await loadFixture({
+      "testid|submit": entry({ seeds: [{ k: "testid", v: "submit-v2" }] }),
+    });
+    const page = makePage();
+    mod.installHealing(page);
+
+    const result = await page.getByTestId("submit").click();
+    expect(result).toBe("testid=submit:click");
+    expect(fs.existsSync(path.join(healDir, "heals.json"))).toBe(false);
+  });
+});

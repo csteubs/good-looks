@@ -73,6 +73,7 @@ import {
   isHealFailure,
 } from "../shared/heal-artifacts.mjs";
 import { buildHealMap } from "../shared/heal-map.mjs";
+import { seedsForTest } from "../shared/propagation.mjs";
 import { dismissEnv } from "../shared/dismiss-fixture-names.mjs";
 import { armedRulesFor } from "../shared/overlay-rules.mjs";
 import { userPageEnv } from "../shared/user-page-fixture-source.mjs";
@@ -703,8 +704,30 @@ export function createRunner({
         // by a flag, since a writeback would edit a tests.json that dies with
         // the container.
         env.GLAZE_HEAL_DIR = path.join(scriptsDir, healDirName(runId));
+        // Seeds: pending cross-test proposals for this test, read from the
+        // app's store the same read-only way everything else here reads app
+        // data ("suggest, never apply" holds — a seed heals in memory and
+        // writes evidence; nothing reads a heal back into a test). A file
+        // that is absent, unreadable or hostile yields no seeds, never a
+        // failed run: seedsForTest re-derives eligibility per step and the
+        // fixture rebuilds every seed through its own factories.
+        let seedsByKey = {};
         try {
-          fs.writeFileSync(env.GLAZE_HEAL_MAP, JSON.stringify(buildHealMap(test.steps)), "utf-8");
+          const raw = JSON.parse(
+            fs.readFileSync(path.join(dataDir, "recorder", "propagations.json"), "utf-8"),
+          );
+          if (Array.isArray(raw)) {
+            seedsByKey = seedsForTest({ test, proposals: raw });
+          }
+        } catch {
+          seedsByKey = {};
+        }
+        try {
+          fs.writeFileSync(
+            env.GLAZE_HEAL_MAP,
+            JSON.stringify(buildHealMap(test.steps, { seedsByKey })),
+            "utf-8",
+          );
         } catch {
           // A map that could not be written is a run that does not heal, which
           // is the state this path was already in. It must never take the run

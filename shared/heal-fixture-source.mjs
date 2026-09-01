@@ -189,6 +189,36 @@ function safeUrl(loc) {
   }
 }
 
+/** The healed element's viewport box, measured BEFORE acting — a healed
+ *  click that navigates away cannot erase the answer — and clipped to the
+ *  viewport, because the screenshot this box will be drawn over shows
+ *  exactly the viewport. Best-effort with a short wait; a page that will
+ *  not answer costs the field, never the heal. Normalized 0-1, the same
+ *  convention as the fingerprint's rect and the capture manifest's. */
+async function measuredBox(loc, page) {
+  try {
+    const box = await loc.boundingBox({ timeout: 500 });
+    const vp = typeof page.viewportSize === "function" ? page.viewportSize() : null;
+    if (box && vp && vp.width > 0 && vp.height > 0) {
+      const x0 = Math.max(0, box.x);
+      const y0 = Math.max(0, box.y);
+      const x1 = Math.min(vp.width, box.x + box.width);
+      const y1 = Math.min(vp.height, box.y + box.height);
+      if (x1 > x0 && y1 > y0) {
+        return {
+          x: x0 / vp.width,
+          y: y0 / vp.height,
+          w: (x1 - x0) / vp.width,
+          h: (y1 - y0) / vp.height,
+        };
+      }
+    }
+  } catch (e) {
+    /* best-effort */
+  }
+  return undefined;
+}
+
 function flush() {
   if (!HEAL_DIR || events.length === 0) return;
   try {
@@ -450,6 +480,46 @@ export function installHealing(page) {
         // page the heal left behind.
         await recordMatches(this, entry, method);
 
+        // ── Seeds: fixes already confirmed elsewhere, tried before the probe ──
+        //
+        // Cross-test propagation puts pending proposals' locators on the map
+        // entry. They only run once the recorded locator has ACTUALLY failed
+        // on this page — a seed never fires pre-emptively — and a working
+        // seed records an ordinary healed event below, so the journal still
+        // shows the page changed. A seed that fails costs one attempt and
+        // falls through to the probe exactly as before.
+        const seedList = Array.isArray(entry.seeds) ? entry.seeds : [];
+        for (let s = 0; s < seedList.length && s < 3; s++) {
+          try {
+            const seeded = fromModel(page, seedList[s]);
+            if (!seeded) continue;
+            const seededRect = await measuredBox(seeded, page);
+            const result = await orig.apply(seeded, args);
+            events.push({
+              outcome: "healed",
+              seeded: true,
+              stepId: entry.stepId,
+              stepIndex: entry.stepIndex,
+              stepLabel: entry.stepLabel,
+              method: method,
+              originalLocator: entry.locator,
+              appliedLocator: seedList[s],
+              candidates: [],
+              url: url,
+              rect: seededRect,
+              at: Date.now(),
+            });
+            flush();
+            process.stderr.write(
+              "[glaze-heal] healed via seed " + (entry.stepLabel || entry.stepId) + " -> " +
+              JSON.stringify(seedList[s]) + "\\n"
+            );
+            return result;
+          } catch (seedErr) {
+            // Try the next seed, then the probe.
+          }
+        }
+
         let candidates = [];
         try {
           candidates = await page.evaluate(entry.probe);
@@ -474,32 +544,7 @@ export function installHealing(page) {
           try {
             const healed = fromModel(page, cand.locator);
             if (!healed) continue;
-            // The healed element's viewport box, measured BEFORE acting — a
-            // healed click that navigates away cannot erase the answer — and
-            // clipped to the viewport, because the screenshot this box will be
-            // drawn over shows exactly the viewport. Best-effort with a short
-            // wait: a page that will not answer costs the field, never the
-            // heal. Normalized 0-1, the same convention as the fingerprint's
-            // rect and the capture manifest's.
-            let rect;
-            try {
-              const box = await healed.boundingBox({ timeout: 500 });
-              const vp = typeof page.viewportSize === "function" ? page.viewportSize() : null;
-              if (box && vp && vp.width > 0 && vp.height > 0) {
-                const x0 = Math.max(0, box.x);
-                const y0 = Math.max(0, box.y);
-                const x1 = Math.min(vp.width, box.x + box.width);
-                const y1 = Math.min(vp.height, box.y + box.height);
-                if (x1 > x0 && y1 > y0) {
-                  rect = {
-                    x: x0 / vp.width,
-                    y: y0 / vp.height,
-                    w: (x1 - x0) / vp.width,
-                    h: (y1 - y0) / vp.height,
-                  };
-                }
-              }
-            } catch (rectErr) { /* best-effort */ }
+            const rect = await measuredBox(healed, page);
             const result = await orig.apply(healed, args);
             events.push({
               outcome: "healed",

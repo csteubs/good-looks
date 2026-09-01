@@ -243,6 +243,20 @@ const appRunner = code("main/services/playwright-runner.ts");
       /from "\.\.\/shared\/heal-map\.mjs"/.test(runner),
       "…from the shared builder, so the key and the probe are the app's own",
     );
+    // And the map carries propagation's seeds when the store has them —
+    // anchored on the CALL, the buildHealMap lesson above applied to its
+    // second argument: an import of seedsForTest alone must not satisfy this.
+    // Written-but-unwired is R49's shape; a seed list nothing passes to the
+    // builder is the same silence one layer up.
+    assert(
+      /JSON\.stringify\(buildHealMap\(test\.steps,\s*\{\s*seedsByKey\s*\}\)\)/.test(runner),
+      "…with propagation's seeds passed into the builder, not merely imported",
+    );
+    assert(
+      /seedsForTest\(\{\s*test,\s*proposals:/.test(runner) &&
+        /propagations\.json/.test(runner),
+      "…derived through shared/propagation.mjs from the app's own proposals file",
+    );
   } else {
     // Off, wholly. Each of these being absent is what makes turning it back on
     // a decision someone has to make on purpose.

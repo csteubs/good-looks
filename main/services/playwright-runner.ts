@@ -95,6 +95,7 @@ import type {
   TestVariable,
 } from "../recorder/types.js";
 import { normalizeHealPageUrl, normalizeHealRect } from "../recorder/types.js";
+import { propagationService } from "./propagation-service.js";
 
 // Module Playwright specs import test/expect from — redirected to the capture
 // fixture for a run that captures artifacts.
@@ -1500,9 +1501,19 @@ export const playwrightRunner = {
           healDir = path.join(getScriptsDir(), healDirName(recordId));
           healMapPath = path.join(scriptsDir, healMapFileName(recordId));
           try {
+            // Seeds: pending cross-test proposals for this test's keys, so a
+            // failing locator tries the already-confirmed fix before spending
+            // a probe. Best-effort — a seed failure is a run without seeds,
+            // never a run that does not heal.
+            let seedsByKey: Record<string, object[]> = {};
+            try {
+              seedsByKey = propagationService.seedsFor(rec.id);
+            } catch {
+              seedsByKey = {};
+            }
             fs.writeFileSync(
               healMapPath,
-              JSON.stringify(buildHealMap(runSteps, { describeStep })),
+              JSON.stringify(buildHealMap(runSteps, { describeStep, seedsByKey })),
               "utf-8",
             );
           } catch (err) {
@@ -1889,6 +1900,10 @@ export const playwrightRunner = {
             /* ignore */
           }
         }
+        // Fresh journal entries may be donors for sibling tests. Best-effort
+        // by the service's own contract — nothing here may throw into
+        // teardown.
+        propagationService.noteRunHealsCollected();
 
         // When this run captured artifacts, persist the canonical replay model
         // (per-step outcome + screenshot mapping) alongside them, keyed by the

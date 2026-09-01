@@ -112,7 +112,14 @@ describe("the label an unattended run cannot build", () => {
 
 describe("the map and the fixture agree on the entry's shape", () => {
   it("provides every field the fixture reads", () => {
-    const map = buildHealMap(steps, { describeStep: () => "x" });
+    // Built with every option ON — `seeds` is only present when propagation
+    // supplied some, and the fixture's read of an optional field still has to
+    // be a field this builder can provide.
+    const bare = buildHealMap(steps, { describeStep: () => "x" });
+    const seedsByKey = Object.fromEntries(
+      Object.keys(bare).map((key) => [key, [{ k: "testid", v: "seeded" }]]),
+    );
+    const map = buildHealMap(steps, { describeStep: () => "x", seedsByKey });
     const [entry] = Object.values(map) as Record<string, unknown>[];
     // Read off the fixture SOURCE rather than listed by hand: a field the
     // fixture starts reading is a field this map has to start providing, and a
@@ -122,5 +129,31 @@ describe("the map and the fixture agree on the entry's shape", () => {
     for (const field of new Set(read)) {
       expect(Object.keys(entry), `fixture reads entry.${field}`).toContain(field);
     }
+  });
+});
+
+describe("seeds — propagation's half of the map", () => {
+  it("rides the entry for its key, capped, and stays absent when empty", () => {
+    const bare = buildHealMap(steps) as Record<string, { seeds?: unknown[] }>;
+    for (const entry of Object.values(bare)) {
+      // Absent, not [] — an empty list would round-trip and make every
+      // pre-seed map compare unequal to its regenerated self.
+      expect("seeds" in entry).toBe(false);
+    }
+    const keys = Object.keys(bare);
+    const four = [
+      { k: "testid", v: "a" },
+      { k: "testid", v: "b" },
+      { k: "testid", v: "c" },
+      { k: "testid", v: "d" },
+    ];
+    const map = buildHealMap(steps, { seedsByKey: { [keys[0]]: four } }) as Record<
+      string,
+      { seeds?: unknown[] }
+    >;
+    expect(map[keys[0]].seeds).toHaveLength(3);
+    expect(map[keys[0]].seeds?.[0]).toEqual({ k: "testid", v: "a" });
+    // Other keys are untouched by one key's seeds.
+    for (const key of keys.slice(1)) expect("seeds" in map[key]).toBe(false);
   });
 });

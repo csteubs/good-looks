@@ -10,6 +10,49 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-01 — Propagation lands in the app: seeds before probes, one apply path, and hooks that cannot loop
+
+PR 3 of [plans/preemptive-updates.md](plans/preemptive-updates.md) — the
+store, the service, the IPC and the seeding. Decisions worth the ink:
+
+- **Seeds run BEFORE the probe, and only after a real failure.** A pending
+  proposal's locator rides the heal-map entry (`seeds`, capped at
+  `MAX_MAP_SEEDS`); the fixture tries it once the recorded locator has
+  actually failed, before spending a probe — the already-confirmed fix beats
+  a fresh ranking, and a working seed costs one action instead of an
+  evaluate + rank + up-to-three attempts. It records an ordinary healed
+  event flagged `seeded`, so Stability still sees that the page changed, and
+  the writeback question stays with the existing outcome gate. A failing
+  seed costs one attempt and falls through to the probe byte-for-byte.
+- **Donor hooks live in the handlers; the apply path writes around them.**
+  `tests:updateSteps` and `recorder:updateStep` diff locators per step id to
+  mint manual-edit donors; `recorder:applyHeal` travels its own channel (a
+  heal apply is already journalled — hooking the service method would mint
+  every heal twice), and `propagationService.applyEntry` writes through
+  `testStore` directly. Feedback loops are impossible by construction, not
+  by flag.
+- **The recording probe is injected, not imported.** recorder-service calls
+  `noteTrainerHeal` into the propagation service; the service needing
+  `sessionTestId` back would be a cycle. `main/index.ts` wires the probe at
+  launch, and until it does, every apply is refused — the conservative
+  default for the launch window.
+- **The check's own fixtures had to learn the conflict rule, twice.** The
+  manual-edit section and the kill-switch section both first shared a
+  from-key with an earlier section's accepted heal, so the conflict rule
+  refused their proposals and the rows passed (or survived a mutation)
+  vacuously. Both now use isolated keys, and the kill-switch section proves
+  the same evidence proposes with the switch back on — the
+  verify-a-test-can-fail rule catching the TEST again, this time in a
+  standalone check. Six mutations (auto-apply mode, stale guard, prune
+  pending-protection, kill switch, MCP seeds unwired, plus PR 2's eleven)
+  each turned a gate red before landing.
+- **The MCP runner reads `propagations.json`, and that stays read-only.**
+  "Suggest, never apply" holds by construction: a seed heals in memory and
+  writes evidence; nothing in that process reads a heal back into a test.
+  `check:ci-fixtures` pins the seeds at the CALL (`buildHealMap(test.steps,
+  { seedsByKey })`), the R49 lesson — an import alone must never satisfy the
+  gate.
+
 ### 2026-09-01 — The propagation core: what may count as evidence, and what may never auto-apply
 
 PR 2 of [plans/preemptive-updates.md](plans/preemptive-updates.md):

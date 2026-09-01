@@ -47,6 +47,8 @@ import { aiDebugStore } from "./services/ai-debug-store.js";
 import { aiDebugHistoryStore } from "./services/ai-debug-history-store.js";
 import { metricsStore } from "./services/metrics-store.js";
 import { insightsService } from "./services/insights/insights-service.js";
+import { propagationService } from "./services/propagation-service.js";
+import { recorderService } from "./services/recorder-service.js";
 import { setPrunePreflight } from "./services/artifact-store.js";
 
 // ── Data directory ────────────────────────────────────────────────────
@@ -600,6 +602,16 @@ app.whenReady().then(async () => {
   // closed. First evaluation is one tick (~60s) after ready; a period missed
   // while the app was closed is still due then and generates quietly.
   insightsService.start();
+
+  // ── Cross-test propagation ─────────────────────────────────────────
+  // The recording probe is injected rather than imported, because
+  // recorder-service calls back into the propagation service when a trainer
+  // heal lands — an import both ways would be a cycle. Until init runs, every
+  // apply is refused, which is the right default for the launch window.
+  propagationService.init({
+    isRecording: (testId) => recorderService.sessionTestId() === testId,
+  });
+  propagationService.start();
 
   await setupApplicationMenu();
   await setupDebugScreenshots();

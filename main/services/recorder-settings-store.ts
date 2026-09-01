@@ -225,6 +225,10 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   // rarely throws — so silently rewriting the stored test is the failure mode
   // with no signal. The user opts into that; they do not get it by default.
   autoHealApply: "suggest",
+  // On by default because the default posture writes nothing: proposals wait
+  // for an accept, and only apply-mode users get automatic writes. Off is a
+  // real kill switch — no proposals computed, no seeds emitted.
+  propagateFixes: true,
   defaultCaptureArtifacts: false,
   defaultA11yChecks: false,
   defaultRecordLogs: false,
@@ -373,6 +377,10 @@ function read(): RecorderSettings {
         parsed.autoHealApply === "apply" || parsed.autoHealApply === "suggest"
           ? parsed.autoHealApply
           : DEFAULT_SETTINGS.autoHealApply,
+      propagateFixes:
+        typeof parsed.propagateFixes === "boolean"
+          ? parsed.propagateFixes
+          : DEFAULT_SETTINGS.propagateFixes,
       defaultA11yChecks:
         typeof parsed.defaultA11yChecks === "boolean"
           ? parsed.defaultA11yChecks
@@ -608,6 +616,8 @@ export const recorderSettingsStore = {
         update.autoHealApply === "apply" || update.autoHealApply === "suggest"
           ? update.autoHealApply
           : current.autoHealApply,
+      propagateFixes:
+        update.propagateFixes !== undefined ? update.propagateFixes : current.propagateFixes,
       defaultA11yChecks:
         update.defaultA11yChecks !== undefined
           ? update.defaultA11yChecks
