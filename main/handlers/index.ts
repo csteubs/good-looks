@@ -65,6 +65,8 @@ import {
 } from "../services/origin-variable.js";
 import { testSecretsStore } from "../services/test-secrets-store.js";
 import { healJournalStore } from "../services/heal-journal-store.js";
+import { propagationStore } from "../services/propagation-store.js";
+import { propagationService } from "../services/propagation-service.js";
 import {
   normalizeScriptChangeOrigin,
   scriptChangeStore,
@@ -237,8 +239,29 @@ export function registerHandlers(): void {
   );
   ipcMain.handle(
     "recorder:updateStep",
-    async (_e, params: { stepId: string; patch: Partial<Step> }) =>
-      recorderService.updateStep(params.stepId, params.patch),
+    async (_e, params: { stepId: string; patch: Partial<Step> }) => {
+      // Manual-edit donors for propagation: a hand-changed locator is the
+      // strongest evidence a fix is right. Diffed around the service call at
+      // THIS handler, deliberately — the heal menu's applies travel their own
+      // channel (recorder:applyHeal) and so never mint a donor twice, and
+      // propagation's own writes go through testStore directly and never
+      // reach here at all. Best-effort: the edit lands whatever the note does.
+      const editedTestId = recorderService.sessionTestId();
+      const before = editedTestId ? recorderService.getSteps() : [];
+      const out = recorderService.updateStep(params.stepId, params.patch);
+      if (editedTestId && params.patch && "locator" in params.patch) {
+        try {
+          propagationService.noteManualEdits({
+            testId: editedTestId,
+            before,
+            after: recorderService.getSteps(),
+          });
+        } catch {
+          /* best-effort */
+        }
+      }
+      return out;
+    },
   );
   // Declare a variable mid-session. Unvalidated on this side on purpose: the
   // service throws a message the trainer shows verbatim, and duplicating the
@@ -477,6 +500,10 @@ export function registerHandlers(): void {
     await refreshSecretSnapshot();
     healJournalStore.deleteTest(params.id);
     scriptChangeStore.deleteTest(params.id);
+    // Proposals TARGETING the deleted test are moot; entries in other tests
+    // whose DONOR was this test keep their snapshot fields and render
+    // "(deleted test)" the way the Heals view already does for heals.
+    propagationStore.deleteTest(params.id);
     // Tombstone the history: records kept for the aggregates, raw logs deleted.
     runHistoryStore.markTestDeleted(params.id);
     batchHistoryStore.markTestDeleted(params.id);
@@ -1093,7 +1120,11 @@ export function registerHandlers(): void {
     rec.updatedAt = Date.now();
     if (!rec.scriptEdited) rec.scriptPath = testStore.regenerateScript(rec);
     testStore.save(rec);
-    return healJournalStore.setStatus(params.id, "accepted");
+    const settled = healJournalStore.setStatus(params.id, "accepted");
+    // An accepted heal is propagation's strongest donor kind. Best-effort by
+    // the service's own contract.
+    propagationService.noteHealAccepted();
+    return settled;
   });
 
   /** Put a step's locator back to what it was before the heal. */
@@ -1114,6 +1145,35 @@ export function registerHandlers(): void {
     }
     return healJournalStore.setStatus(params.id, "reverted");
   });
+
+  // ── Cross-test propagation proposals ─────────────────────────────────
+  // Same shape as the heals handlers directly above: list with test names
+  // attached (a proposal outlives the test it targets), and the settle
+  // actions delegate to the ONE apply path in propagation-service, so the
+  // guards cannot be forgotten per call site.
+  ipcMain.handle("propagation:listAll", async () => {
+    const names = new Map(testStore.list().map((t) => [t.id, t.name]));
+    return propagationStore.listAll().map((entry) => ({
+      ...entry,
+      testName: names.get(entry.testId) ?? null,
+    }));
+  });
+  ipcMain.handle("propagation:list", async (_e, params: { testId: string }) =>
+    propagationStore.list(String(params?.testId ?? "")),
+  );
+  ipcMain.handle(
+    "propagation:accept",
+    async (_e, params: { id: string; locator?: unknown }) =>
+      propagationService.applyEntry(String(params?.id ?? ""), params?.locator),
+  );
+  ipcMain.handle("propagation:dismiss", async (_e, params: { id: string }) => {
+    const settled = propagationStore.setStatus(String(params?.id ?? ""), "dismissed");
+    if (!settled) throw new Error("Proposal not found: " + String(params?.id ?? ""));
+    return settled;
+  });
+  ipcMain.handle("propagation:revert", async (_e, params: { id: string }) =>
+    propagationService.revertEntry(String(params?.id ?? "")),
+  );
 
   ipcMain.handle("heals:clearSettled", async (_e, params: { testId: string }) =>
     healJournalStore.clearSettled(params.testId),
@@ -1500,6 +1560,11 @@ export function registerHandlers(): void {
       refuseIfRecording(params.id);
       const rec = testStore.get(params.id);
       if (!rec) throw new Error("Test not found: " + params.id);
+      // For propagation's manual-edit donors: the step list as it was, so a
+      // hand-changed locator can be diffed per step id after the save. This
+      // HANDLER is the hook on purpose — propagation's own apply writes
+      // through testStore directly, so its writes can never mint donors.
+      const stepsBefore = rec.steps;
       // The second way a step list reaches the generator, so it gets the same
       // treatment as the capture queue. A step that can't be normalized is
       // dropped rather than failing the save — the alternative is an edit that
@@ -1534,6 +1599,15 @@ export function registerHandlers(): void {
       }
       rec.updatedAt = Date.now();
       testStore.save(rec);
+      try {
+        propagationService.noteManualEdits({
+          testId: rec.id,
+          before: stepsBefore,
+          after: rec.steps,
+        });
+      } catch {
+        /* best-effort — the edit is saved whatever the note does */
+      }
       return rec;
     },
   );

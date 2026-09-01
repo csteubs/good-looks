@@ -60,6 +60,7 @@ import { buildPageSummaryScript, normalizePageSummary, type PageSummary } from "
 // argument again.
 import { dropClicksSupersededBy } from "./dblclick-supersede.js";
 import { healJournalStore } from "./heal-journal-store.js";
+import { propagationService } from "./propagation-service.js";
 import { shopifySignatureStore } from "./shopify-signature-store.js";
 import { createTrainerWindowGate } from "./trainer-window-gate.js";
 import {
@@ -322,6 +323,9 @@ function recordHeal(
       applied,
       ...(pageUrl ? { pageUrl } : {}),
     });
+    // A fresh trainer heal may be a donor for sibling tests. Best-effort by
+    // the service's own contract; recordHeal's rule (never throw) holds.
+    propagationService.noteTrainerHeal();
   } catch (err) {
     logger.warn("recorder", "Could not journal a heal", { stepId: step.id, error: String(err) });
   }

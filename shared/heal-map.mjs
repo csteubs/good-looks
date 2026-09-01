@@ -36,14 +36,27 @@
 import { healKeyFor } from "./heal-key.mjs";
 import { buildHealProbeScript } from "./heal-probe.mjs";
 
+/** Seeds a map entry may carry, at most. The fixture tries at most three
+ *  probe candidates for the same reason: a longer list only delays the
+ *  rethrow. Re-applied here so a hand-edited proposals file cannot hand the
+ *  fixture an unbounded list. */
+export const MAX_MAP_SEEDS = 3;
+
 /**
  * Build the map for one run's steps.
  *
+ * `seedsByKey` (optional) is cross-test propagation's half: known-good
+ * locators for a key, from pending proposals, which the fixture tries BEFORE
+ * spending a probe when that key actually fails on the live page. A seed
+ * that works records an ordinary healed event — the map carries it, it never
+ * touches the stored test, and the journal still shows that the page
+ * changed.
+ *
  * @param {Array<object>} steps
- * @param {{ describeStep?: (step: object) => string }} [options]
+ * @param {{ describeStep?: (step: object) => string, seedsByKey?: Record<string, Array<object>> }} [options]
  * @returns {Record<string, unknown>}
  */
-export function buildHealMap(steps, { describeStep } = {}) {
+export function buildHealMap(steps, { describeStep, seedsByKey } = {}) {
   const map = {};
   (steps ?? []).forEach((step, index) => {
     if (!step?.locator || step.disabled) return;
@@ -55,12 +68,14 @@ export function buildHealMap(steps, { describeStep } = {}) {
     // First step wins on a collision. Two steps with an identical locator act
     // on the same element, so they would share a fingerprint anyway.
     if (map[key]) return;
+    const seeds = Array.isArray(seedsByKey?.[key]) ? seedsByKey[key].slice(0, MAX_MAP_SEEDS) : [];
     map[key] = {
       stepId: step.id,
       stepIndex: index,
       stepLabel: describeStep ? describeStep(step) : "",
       locator: step.locator,
       probe: buildHealProbeScript(step, []),
+      ...(seeds.length > 0 ? { seeds } : {}),
     };
   });
   return map;

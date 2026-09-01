@@ -14,8 +14,17 @@
  * `describeStep` supplies the human phrase in a heal artifact. Omitted, entries
  * carry an empty label and the fixture falls back to the step id — which is what
  * an unattended run does, because `describeStep` is still app-side.
+ *
+ * `seedsByKey` is cross-test propagation's half: pending proposals' locators
+ * per key, tried by the fixture BEFORE the probe when the key actually fails.
+ * Capped at MAX_MAP_SEEDS per key on the way in.
  */
+export declare const MAX_MAP_SEEDS: number;
+
 export declare function buildHealMap(
   steps: readonly unknown[],
-  options?: { describeStep?: (step: never) => string },
+  options?: {
+    describeStep?: (step: never) => string;
+    seedsByKey?: Record<string, readonly object[]>;
+  },
 ): Record<string, unknown>;

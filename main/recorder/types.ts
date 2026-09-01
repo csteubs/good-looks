@@ -2974,6 +2974,15 @@ export interface RecorderSettings {
    *  Governs BOTH the trainer and run-time heal paths from one place, so the
    *  two can't drift into different answers to the same question. */
   autoHealApply: HealApplyMode;
+  /** Cross-test propagation (default true): confirmed locator fixes propose
+   *  the same fix for sibling tests on the same site, and pending proposals
+   *  seed every run's heal map so runs stay green before anyone reviews
+   *  anything. Safe on by default because the default posture writes nothing
+   *  to disk — stored tests change only on an explicit accept, or, for users
+   *  who set `autoHealApply: "apply"`, for high-confidence proposals
+   *  (journalled and revertable). Off means fully off: no proposals computed,
+   *  no seeds emitted. See docs/plans/preemptive-updates.md. */
+  propagateFixes: boolean;
   /** default value of the per-test "Capture screenshots" toggle for tests
    *  that haven't set their own preference (default false). */
   defaultCaptureArtifacts: boolean;
