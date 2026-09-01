@@ -445,6 +445,26 @@ times, which is the finding a chronological list hides.
 | `testId` | string | no — filter to one test |
 | `limit` | number (1–200) | no — defaults to 50 |
 
+### `list_propagations`
+
+Fixes the app has proposed for **other** tests, from a locator fix confirmed on
+one of them: which step each would change, from what locator to what, how
+confident the engine is and why, and whether it is still waiting on a decision.
+
+Also reports `sitesChanging` — origins where a proposal waits on **two or more
+tests**. That is what a site-wide change looks like from here, and it is the
+finding a list sorted by time hides: one proposal is an event, the same fix
+waiting on four tests of one origin is a release that moved a selector.
+
+Read-only, like everything else here. A proposal is applied in the app, by a
+person or by its auto-apply setting; this reports, it does not decide.
+
+| Arg | Type | Required |
+|---|---|---|
+| `testId` | string | no — only proposals targeting this test |
+| `status` | enum | no — `pending`, `accepted`, `dismissed`, `reverted`, `superseded`, `stale`. Omit for all |
+| `limit` | number (1–200) | no — defaults to 50 |
+
 ### `list_batches`
 
 Past batch runs, newest first: the aggregate summary and each failing test,
@@ -702,6 +722,7 @@ past runs and their logs — stays readable from here.
 - "Which steps changed visually in the last run of the homepage test, and by how much?"
 - "Compare the last two captured runs of the checkout test and tell me what moved."
 - "Which locators has Auto-Heal been changing repeatedly? Those are the ones worth rewriting."
+- "Did something ship on the shop site? Show me the fixes waiting on other tests."
 - "Screenshot the app and tell me if the Variables tab looks right."
 - "I just pressed the capture shortcut — grab the screenshot and tell me what's wrong with this dialog."
 
@@ -710,6 +731,7 @@ past runs and their logs — stays readable from here.
 - Read-only tools (`list_tests`, `get_test`, `list_runs`, `get_run_log`,
   `list_routines`,
   `get_visual_report`, `get_a11y_report`, `get_run_logs`, `list_heals`,
+  `list_propagations`,
   `list_batches`, `compare_runs`, `triage_run`, `get_step_health`,
   `get_suite_cost`, `get_browser_matrix`, `get_flake_report`, `get_step_matches`,
   `get_screenshot`)

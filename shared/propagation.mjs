@@ -57,6 +57,20 @@ export const MAX_SEEDS_PER_KEY = 3;
  *  machinery already exists for when it doesn't. */
 export const PROPOSE_ONLY_TYPES = Object.freeze(["assert", "if", "capture"]);
 
+/** Every status a proposal can hold, in lifecycle order. HERE rather than in
+ *  the store because two processes now read it: the app normalizes an entry
+ *  against this list (an unknown status DROPS the entry), and the MCP's
+ *  `list_propagations` filters by it. Two spellings would mean a status the
+ *  app writes and the MCP silently reports nothing for. */
+export const PROPAGATION_STATUSES = Object.freeze([
+  "pending",
+  "accepted",
+  "dismissed",
+  "reverted",
+  "superseded",
+  "stale",
+]);
+
 /** Every reason code a proposal may carry. Codes, not copy: the renderer maps
  *  each to a fixed sentence (the insights-view rule — the engine contributes
  *  facts, never labels), and a code outside this list is a bug. */

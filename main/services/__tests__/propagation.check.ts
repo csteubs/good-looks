@@ -466,13 +466,17 @@ function main(): void {
     assertEqual(twice, once, "generate → parse → generate is a FIXED POINT for written locators");
   }
 
-  // ── 8. The heal journal's five consumers never read this store ───────────
+  // ── 8. No heal-counting path ever reads this store ───────────────────────
+  //
+  // The hazard, unchanged since PR 3: five consumers read heal-journal.json
+  // and key its entries on stepId/runId, so a proposal reaching one of them
+  // is counted as a healed step. Three of them have no business with
+  // proposals at ANY granularity, and the file-level rule says so.
   {
     const consumers = [
       "main/services/metrics-store.ts",
       "shared/rollup.mjs",
       "main/services/flake-source.ts",
-      "mcp/server.mjs",
     ];
     for (const file of consumers) {
       const src = fs.readFileSync(file, "utf-8");
@@ -485,6 +489,43 @@ function main(): void {
     // exist, so a green run above means absence, not blindness.
     const own = fs.readFileSync("main/services/propagation-store.ts", "utf-8");
     assert(own.includes("propagations.json"), "the scan target string exists where expected");
+  }
+
+  // ── 8b. …and in the MCP server, no ONE TOOL blends the two ───────────────
+  //
+  // mcp/server.mjs is the fourth consumer and, since `list_propagations`, it
+  // legitimately reads both stores — so the file-level rule above became too
+  // coarse to state the hazard. The hazard was never "this file mentions both
+  // files"; it is a single answer built from both, where a proposal is
+  // reported as something that happened. Tool registrations are the unit a
+  // caller actually sees, so that is the unit this is asserted over.
+  {
+    const src = fs.readFileSync("mcp/server.mjs", "utf-8");
+    const regions = src.split("server.registerTool(").slice(1);
+    // Vacuity guard FIRST: a rename of registerTool would leave zero regions
+    // and make every assertion below trivially true, which is the exact shape
+    // of a check that passes while measuring nothing.
+    assert(regions.length >= 20, `the tool registrations are findable (${regions.length})`);
+    const nameOf = (region: string) => region.match(/^\s*"([a-z_]+)"/)?.[1] ?? "(unnamed)";
+    const readsHeals = (region: string) => region.includes("heal-journal.json");
+    const readsProposals = (region: string) =>
+      region.includes("propagations.json") || region.includes("propagationDigest");
+
+    const blended = regions.filter((r) => readsHeals(r) && readsProposals(r)).map(nameOf);
+    assertEqual(blended, [], "no MCP tool reports heals and proposals from one payload");
+
+    const proposalTools = regions.filter(readsProposals).map(nameOf);
+    assertEqual(
+      proposalTools,
+      ["list_propagations"],
+      "…and exactly one tool reads the propagation store, the one named for it",
+    );
+    // Both halves of the split have to be real, or "no blending" is a fact
+    // about a scanner that found nothing.
+    assert(
+      regions.filter(readsHeals).length >= 1,
+      "the scan sees the tools that DO read the heal journal",
+    );
   }
 
   fs.rmSync(userData, { recursive: true, force: true });

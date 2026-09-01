@@ -10,6 +10,46 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-01 — `list_propagations`, and a separation rule that had to get sharper rather than looser
+
+**The MCP reports the aggregate, not just the rows.** The plan called this
+tool trivial once the store existed, and the listing half is. What earns it
+its place is `sitesChanging`: origins where a pending proposal waits on two
+or more distinct TESTS. That is the shape of "a release moved a selector",
+and it is exactly what a list sorted by time hides — the same argument
+`list_heals` makes with `chronicSteps`, asked about origins instead of
+steps. Two proposals inside one test is deliberately not that finding (it is
+a test that needs a look, not a site that shipped), and settled proposals
+are not counted at all: a site whose proposals were all dismissed is a
+question already answered, and reporting it as a finding is how a caller
+learns to skim the field.
+
+**The deciding half lives outside `server.mjs` because nothing there can be
+tested.** That file resolves a data directory and opens a stdio transport at
+module scope, so a test cannot import it — which is why `check:mcp-boot`
+exists at all. `mcp/propagations.mjs` follows `artifacts.mjs`/`metrics.mjs`:
+pure in, value out, with `mcp/propagations.test.ts` driving the picking, the
+aggregate and the wire shape. The entries are REBUILT from named keys, the
+`export-bundle.mjs` rule applied to a different exit — this is app data on
+its way to a model over a wire the repo does not own, and a spread would
+ship the next `PropagationEntry` field to it because nobody looked.
+
+**`check:propagation` §8 was right and became too coarse, and the fix was to
+make it sharper.** The rule said: none of the heal journal's consumers ever
+mentions `propagations.json`, because a proposal reaching a heal-counting
+path is counted as a healed step. `mcp/server.mjs` is one of those
+consumers, so the new tool turned the check red — correctly, in the sense
+that the file-level statement was now false. The temptation was to drop
+`server.mjs` from the list. What the rule is actually about is not a file
+mentioning two stores; it is ONE ANSWER built from both, where a proposal is
+reported as something that happened. So the file-level rule stays verbatim
+for the three consumers with no business here at all, and `server.mjs` gets
+a tool-level one: split the source on `server.registerTool(`, and no
+registration may read both stores — with the count of regions asserted
+first, because a rename of `registerTool` would otherwise leave zero regions
+and a check that passes while measuring nothing. Verified by blending the
+two stores inside `list_heals` and watching it go red.
+
 ### 2026-09-01 — Propagation's surfaces: one review door, evidence you can look at, and an auto apply that stays pending
 
 **The review lives in ONE place, and everything else points at it.** The

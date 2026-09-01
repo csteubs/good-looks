@@ -27,7 +27,11 @@ import { randomUUID } from "crypto";
 
 import { app, logger } from "@shell/backend";
 
-import { REASON_CODES, type ProposalDonorRef } from "../../shared/propagation.mjs";
+import {
+  PROPAGATION_STATUSES,
+  REASON_CODES,
+  type ProposalDonorRef,
+} from "../../shared/propagation.mjs";
 import {
   normalizeHealPageUrl,
   normalizeLocator,
@@ -42,14 +46,11 @@ export type PropagationStatus =
   | "superseded"
   | "stale";
 
-const STATUSES: readonly PropagationStatus[] = [
-  "pending",
-  "accepted",
-  "dismissed",
-  "reverted",
-  "superseded",
-  "stale",
-];
+// The vocabulary lives in shared/propagation.mjs — the MCP filters by the same
+// list, and a second spelling here would be a status the app writes and the
+// MCP reports nothing for. Cast because the shared module is plain .mjs and
+// declares it as strings; this file owns the union type.
+const STATUSES = PROPAGATION_STATUSES as readonly PropagationStatus[];
 
 const DONOR_KINDS = ["heal-accepted", "heal-run-passed", "heal-trainer", "manual-edit"] as const;
 

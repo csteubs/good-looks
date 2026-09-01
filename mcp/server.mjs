@@ -23,6 +23,8 @@ import { summarizeResults, UNGROUPED, UNTAGGED } from "./select-tests.mjs";
 import { clampParallel, MAX_PARALLEL, runPool } from "./run-pool.mjs";
 import { listSessions, readShots, requestCapture } from "./debug-shots.mjs";
 import { readReplay, readRunLogs, readStepStructures } from "./artifacts.mjs";
+import { propagationDigest } from "./propagations.mjs";
+import { PROPAGATION_STATUSES } from "../shared/propagation.mjs";
 import { readHandle } from "./metrics.mjs";
 import {
   consoleNetworkWithheldReason,
@@ -1262,6 +1264,41 @@ server.registerTool(
         healsForThisStep: perStep.get(`${e.testId}:${e.stepId}`) ?? 1,
       })),
     });
+  },
+);
+
+server.registerTool(
+  "list_propagations",
+  {
+    title: "List proposed cross-test fixes",
+    description:
+      "Fixes the app has proposed for OTHER tests, from a locator fix confirmed on one of them: " +
+      "which step it would change, from what locator to what, how confident the engine is and " +
+      "why, and whether it is still waiting on a decision. Also reports `sitesChanging` — the " +
+      "origins where a proposal is waiting on two or more tests, which is what a site-wide " +
+      "change looks like from here and what a list sorted by time hides. " +
+      "Read-only: a proposal is applied in the app, by a person (or by its auto-apply setting); " +
+      "nothing here writes.",
+    inputSchema: {
+      testId: z.string().optional().describe("Only proposals targeting this test."),
+      status: z
+        .enum(PROPAGATION_STATUSES)
+        .optional()
+        .describe("Only proposals in this state. Omit for all; `pending` is what awaits review."),
+      limit: z.number().int().min(1).max(200).optional(),
+    },
+  },
+  async ({ testId, status, limit }) => {
+    const entries = readJsonFile(dataDir, "recorder/propagations.json", []);
+    const names = new Map(listTests().map((t) => [t.id, t.name]));
+    return jsonResult(
+      propagationDigest(entries, {
+        testId,
+        status,
+        limit: limit ?? 50,
+        nameOf: (id) => names.get(id) ?? null,
+      }),
+    );
   },
 );
 

@@ -384,6 +384,7 @@ mcp/                 standalone MCP server exposing the test library to external
                      (list_tests, get_test, list_runs, get_run_log, run_test, run_batch, run_group,
                       list_routines, run_routine,
                       get_visual_report, get_a11y_report, get_run_logs, list_heals,
+                      list_propagations,
                       list_batches, compare_runs, triage_run, get_step_health,
                       get_suite_cost, get_browser_matrix, get_flake_report,
                       get_step_matches, capture_app, get_screenshot)

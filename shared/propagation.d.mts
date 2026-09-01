@@ -142,6 +142,7 @@ export declare const AUTO_APPLY_MIN: number;
 export declare const MAX_SEEDS_PER_KEY: number;
 export declare const PROPOSE_ONLY_TYPES: readonly string[];
 export declare const REASON_CODES: readonly string[];
+export declare const PROPAGATION_STATUSES: readonly string[];
 
 export declare function donorsFromJournal(input: {
   entries: JournalEntryLike[];
