@@ -37,12 +37,13 @@ import {
   StepRow,
   TagStack,
   Temp,
+  ToolTile,
   TypeChip,
   Verdict,
 } from "../theme";
 import type { TempMode } from "../theme";
 import type { StepType } from "../lib/recorder-types";
-import { GitBranch } from "lucide-react";
+import { CheckSquare, GitBranch, Plus, RotateCcw, Wand2 } from "lucide-react";
 import { buildBranchMenu, type BranchMenuInput } from "../lib/branch-menu";
 import { BranchMenu } from "../main/branch-menu";
 // Not a primitive, and here anyway. §6.1's five panels are the same problem
@@ -308,6 +309,35 @@ export function Specimen(): React.ReactElement {
               <Btn tone="ghost" disabled>
                 Generate
               </Btn>
+            </Row>
+          </div>
+        </Panel>
+
+        <Panel title="ToolTile" id="mark, name, and what it does" pad={12}>
+          {/* The trainer action bar's tile (Direction A). Folded is the strip's
+              steady state and the 360px panel's only one; unfolded is the
+              posture that teaches. The fold is passed to every tile at once —
+              a strip where one tile is tall reflows mid-reach. */}
+          <div style={{ display: "grid", gap: 10 }}>
+            <Row label="folded strip">
+              <div style={{ display: "flex", gap: 6, width: 340 }}>
+                <ToolTile folded caret mark={<CheckSquare />} name="Assert" what="Pin what must be true on the page" />
+                <ToolTile folded caret mark={<Plus />} name="Add step" what="Insert a manual step at the cursor" />
+                <ToolTile folded mark={<RotateCcw />} name="Replay" what="Re-run from the selected step" />
+                <ToolTile folded tone="ai" mark={<Wand2 />} name="AI" what="Describe steps in words" />
+              </div>
+            </Row>
+            <Row label="unfolded">
+              <div style={{ display: "flex", gap: 6, width: 420 }}>
+                <ToolTile caret mark={<CheckSquare />} name="Assert" what="Pin what must be true" />
+                <ToolTile tone="ai" mark={<Wand2 />} name="AI" what="Describe steps in words" />
+              </div>
+            </Row>
+            <Row label="disabled">
+              <div style={{ display: "flex", gap: 6, width: 340 }}>
+                <ToolTile folded caret disabled mark={<CheckSquare />} name="Assert" what="Pin what must be true" />
+                <ToolTile folded disabled tone="ai" mark={<Wand2 />} name="AI" what="Describe steps in words" />
+              </div>
             </Row>
           </div>
         </Panel>

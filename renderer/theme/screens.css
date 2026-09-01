@@ -3626,18 +3626,60 @@
   border-bottom: 1px solid var(--gl-line);
 }
 
-/* Wraps, because this row holds up to seven controls and the trainer is the
-   narrowest surface in the app — it sits beside a real browser window. Wrapping
-   is what stops the trailing pair (Add step / AI steps) being pushed out of the
-   viewport with no horizontal scroll to reach them. */
-.gl-trainer-tools {
+/* The tile strip (Direction A, 2026-09-01). NO WRAP, deliberately, where the
+   old `.gl-trainer-tools` wrapped: the four tiles are `flex: 1 1 0` with
+   `min-width: 0` (primitives.css), so at a narrow pane they SHRINK and
+   truncate their own text instead of wrapping — the strip's height and the
+   position of every tile are constants of the session. The old row wrapped
+   because its membership was variable; this one's never is, which is what
+   check:narrow-layout's trainer section pins. */
+.gl-trainer-tiles {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+  align-items: stretch;
+  gap: 6px;
   flex: 0 0 auto;
   padding: 6px 12px;
   border-bottom: 1px solid var(--gl-line);
+}
+
+/* The fold toggle rides the strip's right edge at both tile heights. */
+.gl-trainer-fold {
+  align-self: center;
+  flex: 0 0 auto;
+}
+
+/* The RESERVED context band — the whole point of the architecture. Its
+   `min-height` is there whether or not a transient occupies it, so arming an
+   assert, a replay finishing, or a selection appearing changes what this band
+   SAYS and never where the tiles above it ARE. Everything the old tool row
+   injected inline lives here now (see trainer-bar-controls.tsx). NO WRAP,
+   and the e2e measured why: a wrap container wraps its occupants to a second
+   line BEFORE a truncatable one shrinks, so the armed content grew the band
+   34→69px at panel width and moved the list — the reflow returning one band
+   down. The prompt truncates instead; that is the give. */
+.gl-trainer-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/* The refine crosshair — cyan for the armed-picker licence the prompt line
+   beneath it already holds. */
+.gl-trainer-context-mark {
+  flex: 0 0 auto;
+  color: var(--gl-cyan);
+}
+
+/* The idle line. Tertiary, because it is furniture: the band never collapses,
+   so when nothing is armed it says something quietly true. */
+.gl-trainer-context-hint {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-tx-3);
 }
 
 /* "Click an element in the browser…" — cyan, which the palette declares as
@@ -3650,12 +3692,8 @@
   color: var(--gl-cyan);
 }
 
-.gl-trainer-refine {
-  align-items: center;
-  flex: 0 0 auto;
-  border-inline: 0;
-  border-top: 0;
-}
+/* `.gl-trainer-refine` is retired (2026-09-01): the refine notice is a
+   context-band occupant now, not its own banner. */
 
 /* The trainer's three-tab console. Its own rule rather than the run panel's,
    because they are different things wearing the same clothes: this one holds
@@ -3739,24 +3777,37 @@
   border-bottom: 1px solid var(--gl-line);
 }
 
-/* An armed picker — assert mode or refine mode. Cyan-keyed, matching
-   `.gl-trainer-prompt` in the main window: the app is waiting on the user,
-   which the palette spends cyan on ("running / live / focus"). The tinted
-   background is the panel surface, NOT a cyan wash: a coloured band this size
-   in a 360px column would be the loudest thing on either screen. */
-.gl-panelwin-armed {
+/* The tile strip (Direction A, 2026-09-01), above the list as in the main
+   trainer. No wrap for the same reason `.gl-trainer-tiles` has none — the
+   four tiles are `flex: 1 1 0` and SHRINK; the strip's geometry is a
+   constant of the session. Narrower gaps and padding than the main strip,
+   the deliberate rule everything in this section follows. */
+.gl-panelwin-tiles {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: stretch;
+  gap: 4px;
   flex: 0 0 auto;
-  padding: 7px 10px;
+  padding: 6px 8px;
   border-bottom: 1px solid var(--gl-line);
-  background: var(--gl-panel);
 }
 
-.gl-panelwin-armed-icon {
+/* The reserved context band — the armed banners (`.gl-panelwin-armed`) and
+   the replay-status band (`.gl-panelwin-status`) both retired into this one
+   fixed-height home, 2026-09-01. Its `min-height` is the contract: a
+   transient arriving changes what the band says, never where the tiles are.
+   NO WRAP, for .gl-trainer-context's measured reason — at this width it is
+   not theoretical. The panel surface tint the armed banners wore stays, for
+   their reason: a cyan wash this size in a 360px column would be the loudest
+   thing on either screen. */
+.gl-panelwin-context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
   flex: 0 0 auto;
-  color: var(--gl-cyan);
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--gl-line);
+  background: var(--gl-panel);
 }
 
 /* The docked panel's step list is `.gl-step-list` (shared.css) — this only
@@ -3772,24 +3823,9 @@
   padding: 10px 6px;
 }
 
-/* Replay's one-line result, between the list and the tools. */
-.gl-panelwin-status {
-  flex: 0 0 auto;
-  padding: 5px 10px;
-  border-top: 1px solid var(--gl-line);
-}
-
-/* The icon strip. `flex-wrap` for the same reason `.gl-trainer-tools` wraps and
-   more urgently: this row is half the width of that one. */
-.gl-panelwin-tools {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  flex: 0 0 auto;
-  padding: 6px 8px;
-  border-top: 1px solid var(--gl-line);
-}
+/* `.gl-panelwin-status` and `.gl-panelwin-tools` are retired (2026-09-01):
+   the replay result is a context-band occupant and the tool row became the
+   tile strip, both above the list. */
 
 .gl-panelwin-foot {
   display: flex;

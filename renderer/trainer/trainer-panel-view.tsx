@@ -24,18 +24,8 @@
 
 import * as React from "react";
 import { Dialog, ScrollArea, Tooltip, TooltipContent, TooltipTrigger } from "@ui";
-import { Btn, StatusChip } from "../theme";
-import {
-  CheckSquare,
-  ChevronDown,
-  Crosshair,
-  Plus,
-  RotateCcw,
-  Shrink,
-  Wand2,
-  Workflow,
-  X,
-} from "lucide-react";
+import { Btn, StatusChip, ToolTile } from "../theme";
+import { CheckSquare, Plus, RotateCcw, Shrink, Wand2 } from "lucide-react";
 
 import { api } from "../lib/api";
 import type { AssertKind, PickedElement, RawStep, WaitDialogMode } from "../lib/recorder-types";
@@ -44,17 +34,18 @@ import { usePlayStepShortcut } from "../lib/use-play-step-shortcut";
 import { prettyKey } from "../lib/editor-keymap-table";
 import { urlAssertPrefill } from "../../shared/url-assert.mjs";
 import { useRecorder } from "../main/recorder-store";
+import { createFlowGate, pickAddStepFromMenu, pickAssertFromMenu } from "../main/trainer-actions";
+import { BarContextZone, TILE_COPY } from "../main/trainer-bar-controls";
 import { CursorGap, INSERT_HERE, StepRow } from "../main/step-row";
 import { CreateFlowDialog } from "../main/create-flow-dialog";
 import { FlowStepsPreview } from "../main/flow-steps-preview";
 import { FlowScopeEditor } from "../main/flow-scope-editor";
 import {
   emptySelection,
-  extractableRange,
   pruneSelection,
   selectionAfterClick,
 } from "../lib/step-selection";
-import { StepComposer, ADD_STEP_LABEL, type AddStepKind } from "../main/step-composer";
+import { StepComposer, type AddStepKind } from "../main/step-composer";
 import { GenerateStepsDialog } from "../main/generate-steps-dialog";
 import { RefineSelectorDialog } from "../main/refine-selector-dialog";
 import { useViewportNarrowedNotice } from "../main/viewport-narrowed-notice";
@@ -75,124 +66,13 @@ export const DOCK_TOOLTIP = {
   noRoom: "No room to dock at this window size — the display is too narrow for both windows",
 } as const;
 
-/** Assertions capturable by clicking an element — same set as the main trainer. */
-const ASSERT_PICKABLE: { kind: AssertKind; label: string }[] = [
-  { kind: "visible", label: "Is visible" },
-  { kind: "hidden", label: "Is hidden" },
-  { kind: "text", label: "Contains text" },
-  { kind: "exactText", label: "Has exact text" },
-  { kind: "enabled", label: "Is enabled" },
-  { kind: "disabled", label: "Is disabled" },
-  { kind: "checked", label: "Is checked" },
-  { kind: "unchecked", label: "Is unchecked" },
-];
-
-/**
- * URL assertions, which need a typed value rather than an element click.
- *
- * The panel had no URL assertion at all until now — its assert menu offered
- * only the element kinds above, so the one trainer sitting against the training
- * browser was the one place you could not assert on the location. Offered here
- * with the live URL prefilled, same as the main window and the browser's own
- * URL strip.
- */
-const ASSERT_PAGE: { kind: AssertKind; label: string }[] = [
-  // "URL path is" first: the robust default. The other URL kinds compare the
-  // full URL, which query-string noise fails between runs.
-  { kind: "urlPathIs", label: "URL path is" },
-  { kind: "url", label: "URL contains" },
-  { kind: "urlEndsWith", label: "URL ends with" },
-  { kind: "urlIs", label: "URL is" },
-  // Prefill EMPTY, deliberately — this panel tracks the live URL but not the
-  // live title, and `urlAssertPrefill` answers "" for any kind it cannot stand
-  // behind. See the same note in renderer/main/recording-view.tsx.
-  { kind: "title", label: "Page title is" },
-  { kind: "titleContains", label: "Page title contains" },
-];
-
-/** Order matters: index === commandId in the native "+ Add step" menu. */
-const ADD_STEP_KINDS: AddStepKind[] = [
-  "assertion",
-  "elementState",
-  "condition",
-  "loop",
-  "wait",
-  "goto",
-  "reload",
-  "echo",
-  "dblclick",
-  "rightclick",
-  "press",
-  "find",
-  "viewport",
-  "scroll",
-  "capture",
-  "download",
-  "runFlow",
-  "a11y",
-  "upload",
-  "api",
-  "aiCheck",
-  "emailCode",
-  "group",
-  "teardown",
-  "dialog",
-  // Last, and deliberately: the discoverable route to it is the training
-  // browser's right-click menu on the field being filled, which arrives here
-  // as a `fill` context action with the element already resolved. This entry is
-  // the keyboard-free fallback for someone already in the list.
-  "fill",
-];
-
-interface MenuPopupItem {
-  label?: string;
-  type?: "normal" | "separator";
-  commandId?: number;
-}
-interface NativeMenu {
-  popup: (options: {
-    items: MenuPopupItem[];
-    x?: number;
-    y?: number;
-    coordinateSpace?: "screen" | "view";
-  }) => Promise<{ commandId?: number }>;
-}
-function nativeMenu(): NativeMenu {
-  return (window as unknown as { glazeAPI: { Menu: NativeMenu } }).glazeAPI.Menu;
-}
-
-/** Icon button with a tooltip — the tool row is icon-only to fit the width, so
- *  every control needs a name that is discoverable without one.
- *
- *  `tone` rather than a second component for the AI button: `Btn`'s `ai` tone
- *  is the holo border, and AI-adjacent chrome wears a treatment rather than a
- *  colour here (colour means outcome — see tokens.css). The main window's
- *  trainer makes the same call on its "AI steps" button, and the two rows are
- *  one hairline apart when docked, so they have to agree. */
-function ToolButton({
-  label,
-  onClick,
-  disabled,
-  tone,
-  children,
-}: {
-  label: string;
-  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
-  disabled?: boolean;
-  tone?: "ai";
-  children: React.ReactNode;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Btn tone={tone} onClick={onClick} disabled={disabled} aria-label={label}>
-          {children}
-        </Btn>
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
-  );
-}
+// The assert and add-step vocabularies and the native menus live in
+// ../main/trainer-actions now — ONE copy for both trainers, retiring this
+// file's hand-synced duplicates and the comment that asked the next person to
+// keep the commandId encodings agreeing. The URL-assert group's history is
+// worth keeping: the panel had NO URL assertion until 2026-08-27, and NO soft
+// assertions until the 2026-09-01 reorganisation put the Hard/Soft control in
+// the shared context band.
 
 export function TrainerPanelView() {
   const {
@@ -236,6 +116,10 @@ export function TrainerPanelView() {
   const [addKind, setAddKind] = React.useState<AddStepKind | null>(null);
   const [aiOpen, setAiOpen] = React.useState(false);
   const [exitOpen, setExitOpen] = React.useState(false);
+  // Hard/Soft, REAL state here at last: this view hard-coded `soft: false`
+  // into its assert menu handler for its whole life, which made soft
+  // assertions unreachable from the surface most sessions are driven from.
+  const [soft, setSoft] = React.useState(false);
   // Multi-selection shared with the main trainer through lib/step-selection —
   // the anchor is what the single-selection code called selectedStepId.
   const [selection, setSelection] = React.useState(emptySelection());
@@ -403,53 +287,34 @@ export function TrainerPanelView() {
   };
 
   const openAssertMenu = async (e: React.MouseEvent<HTMLButtonElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const res = await nativeMenu().popup({
-      x: Math.round(rect.left),
-      y: Math.round(rect.bottom),
-      // View-relative, not screen: absolute coordinates put the menu on the
-      // primary display regardless of which one the panel is on.
-      coordinateSpace: "view",
-      // Offset by 100 for the URL group, the same encoding `recording-view.tsx`
-      // uses — the two menus stay readable against each other, and a commandId
-      // cannot silently mean an element assert in one and a URL assert in the
-      // other.
-      items: [
-        ...ASSERT_PICKABLE.map((a, i) => ({ label: a.label, commandId: i })),
-        { type: "separator" as const },
-        ...ASSERT_PAGE.map((a, i) => ({ label: a.label, commandId: 100 + i })),
-      ],
-    });
-    if (typeof res.commandId !== "number") return;
-    if (res.commandId < 100) {
-      const chosen = ASSERT_PICKABLE[res.commandId];
-      if (chosen) setAssert(chosen.kind, false);
+    const choice = await pickAssertFromMenu(e);
+    if (!choice) return;
+    if (choice.group === "element") {
+      setAssert(choice.kind, soft);
       return;
     }
-    const urlKind = ASSERT_PAGE[res.commandId - 100];
-    if (!urlKind) return;
     // A URL assertion takes a typed value, so it opens the Add-step dialog
     // rather than arming the element picker — prefilled from where the page is
     // now, via the one helper all three surfaces share.
     setContextPick({
       picked: null,
-      assert: urlKind.kind,
-      prefillValue: urlAssertPrefill(urlKind.kind, state.liveUrl ?? state.url ?? ""),
+      assert: choice.kind,
+      prefillValue: urlAssertPrefill(choice.kind, state.liveUrl ?? state.url ?? ""),
     });
     setAddKind("assertion");
   };
 
   const openAddStepMenu = async (e: React.MouseEvent<HTMLButtonElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const res = await nativeMenu().popup({
-      x: Math.round(rect.left),
-      y: Math.round(rect.bottom),
-      coordinateSpace: "view",
-      items: ADD_STEP_KINDS.map((k, i) => ({ label: ADD_STEP_LABEL[k], commandId: i })),
-    });
-    if (typeof res.commandId === "number" && ADD_STEP_KINDS[res.commandId]) {
-      setAddKind(ADD_STEP_KINDS[res.commandId]);
-    }
+    const kind = await pickAddStepFromMenu(e);
+    if (kind) setAddKind(kind);
+  };
+
+  const onSoftChange = (next: boolean) => {
+    setSoft(next);
+    // Re-arm a live assert with the new strictness, the same move the main
+    // trainer makes — flipping the toggle mid-arm must change the step that
+    // is about to be captured, not the one after it.
+    if (state.assertMode) setAssert(state.assertMode, next);
   };
 
   const onReplayFromCurrent = async () => {
@@ -469,6 +334,11 @@ export function TrainerPanelView() {
   };
 
   const stepDepths = computeStepDepths(liveSteps);
+
+  // The create-flow gate, live rather than click-time — the button is always
+  // mounted in the context band and disabled-gated, never render-gated. See
+  // trainer-actions.createFlowGate.
+  const flowGate = createFlowGate(liveSteps, selection.ids);
 
   // The composer, at the cursor rather than over the list (§6.2). Same shape as
   // the main window's — see recording-view.tsx for why it is a function of the
@@ -602,34 +472,73 @@ export function TrainerPanelView() {
         <div className="gl-mono-value">{state.liveUrl ?? state.url}</div>
       </div>
 
-      {state.assertMode ? (
-        <div className="gl-panelwin-armed">
-          <span className="gl-trainer-prompt min-w-0">Click an element in the browser…</span>
-          <button
-            type="button"
-            className="gl-icon-btn ml-auto"
-            onClick={() => setAssert(null)}
-            aria-label="Cancel assertion"
-          >
-            <X className="size-3.5" />
-          </button>
-        </div>
-      ) : null}
+      {/* THE TILE STRIP (Direction A, 2026-09-01), above the list as in the
+          main trainer — the two dock edge to edge and must agree on where the
+          tools live. ALWAYS FOLDED: at 360px the unfolded posture has no room,
+          which is exactly what the folded one is for. No carets, deliberately:
+          four tiles share ~332px here, and the caret is the difference between
+          a name and an ellipsis — the menus still open, and the folded tile's
+          hover title carries the description. Membership and order never
+          change; disabled-gated only. The replay tile keeps its long-standing
+          accessible name and the return-arrow glyph the main trainer wears. */}
+      <div className="gl-panelwin-tiles">
+        <ToolTile
+          folded
+          mark={<CheckSquare />}
+          name={TILE_COPY.assert.name}
+          what={TILE_COPY.assert.what}
+          onClick={openAssertMenu}
+          disabled={controlsDisabled}
+        />
+        <ToolTile
+          folded
+          mark={<Plus />}
+          name={TILE_COPY.add.shortName}
+          what={TILE_COPY.add.what}
+          aria-label={TILE_COPY.add.name}
+          onClick={openAddStepMenu}
+          disabled={controlsDisabled}
+        />
+        <ToolTile
+          folded
+          mark={<RotateCcw />}
+          name={TILE_COPY.replay.name}
+          what={TILE_COPY.replay.what}
+          aria-label="Replay from the current step"
+          onClick={() => void onReplayFromCurrent()}
+          disabled={controlsDisabled}
+        />
+        <ToolTile
+          folded
+          tone="ai"
+          mark={<Wand2 />}
+          name={TILE_COPY.ai.name}
+          what={TILE_COPY.ai.what}
+          onClick={() => setAiOpen(true)}
+          disabled={controlsDisabled}
+        />
+      </div>
 
-      {state.refineMode ? (
-        <div className="gl-panelwin-armed">
-          <Crosshair className="gl-panelwin-armed-icon size-3.5" />
-          <span className="gl-trainer-prompt min-w-0">Pick a component in the browser.</span>
-          <button
-            type="button"
-            className="gl-icon-btn ml-auto"
-            onClick={endRefine}
-            aria-label="Cancel selector refine"
-          >
-            <X className="size-3.5" />
-          </button>
-        </div>
-      ) : null}
+      {/* The reserved context band — every transient this panel used to spread
+          over three conditional bands (armed assert, armed refine, the replay
+          status line) lives here now, over a height that never changes. Also
+          where Hard/Soft finally becomes reachable from this surface. */}
+      <BarContextZone
+        className="gl-panelwin-context"
+        assertMode={state.assertMode ?? null}
+        soft={soft}
+        onSoftChange={onSoftChange}
+        onCancelAssert={() => setAssert(null)}
+        refineMode={state.refineMode}
+        onCancelRefine={endRefine}
+        note={replayStatus}
+        createFlow={{
+          ...flowGate,
+          disabled: flowGate.disabled || controlsDisabled,
+          onClick: () => setCreateFlowOpen(true),
+          shortLabel: true,
+        }}
+      />
 
       <ScrollArea
         className="min-h-0 flex-1"
@@ -750,67 +659,6 @@ export function TrainerPanelView() {
           )}
         </div>
       </ScrollArea>
-
-      {replayStatus ? (
-        <div className="gl-panelwin-status">
-          <div className="gl-note truncate">{replayStatus}</div>
-        </div>
-      ) : null}
-
-      {/* Tool row — mabl's icon strip. Ordered by how often it is reached for. */}
-      <div className="gl-panelwin-tools">
-        {/* Icons follow mabl's strip: ☑ assert, + add step, wand for AI. */}
-        <ToolButton label="Add assertion" onClick={openAssertMenu} disabled={controlsDisabled}>
-          <CheckSquare className="size-3.5" />
-          <ChevronDown className="size-3" />
-        </ToolButton>
-        <ToolButton label="Add step" onClick={openAddStepMenu} disabled={controlsDisabled}>
-          <Plus className="size-3.5" />
-          <ChevronDown className="size-3" />
-        </ToolButton>
-        {selection.ids.length > 0 ? (
-          <ToolButton
-            label={`Create a flow from the ${selection.ids.length} selected step${selection.ids.length === 1 ? "" : "s"}`}
-            onClick={() => {
-              const verdict = extractableRange(liveSteps, selection.ids);
-              if (!verdict.ok) {
-                setReplayStatus(verdict.reason);
-                window.setTimeout(() => setReplayStatus(null), 6000);
-                return;
-              }
-              setCreateFlowOpen(true);
-            }}
-            disabled={controlsDisabled}
-          >
-            <Workflow className="size-3.5" />
-          </ToolButton>
-        ) : null}
-        <ToolButton
-          label="Generate steps with AI"
-          onClick={() => setAiOpen(true)}
-          disabled={controlsDisabled}
-          tone="ai"
-        >
-          <Wand2 className="size-3.5" />
-        </ToolButton>
-        <div className="ml-auto flex shrink-0 items-center gap-1">
-          {/* Replay is a RETURN arrow, not a play triangle, and that glyph
-              choice has outlived its first reason. The pause/resume TOGGLE
-              that used to sit beside it — whose paused state wore the play
-              triangle this arrow must not be confused with — is gone: the
-              Recording/Paused chip in the header is the toggle now. The
-              return arrow stays because the trainer's other replay control
-              (the main window's labelled button) wears it too, and the same
-              action must not wear a different glyph in the two trainers. */}
-          <ToolButton
-            label="Replay from the current step"
-            onClick={onReplayFromCurrent}
-            disabled={controlsDisabled}
-          >
-            <RotateCcw className="size-3.5" />
-          </ToolButton>
-        </div>
-      </div>
 
       <div className="gl-panelwin-foot">
         {/* `stop` for Discard, `go` for Save: the two footer buttons are the

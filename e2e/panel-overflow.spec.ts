@@ -178,3 +178,83 @@ test("the Add-step dialog's Target element list fits the trainer panel", async (
     await page.close();
   }
 });
+
+test("the tile strip fits the 360pt panel and does not move when an assert arms", async ({
+  app,
+  window,
+}) => {
+  // The 2026-09-01 reorganisation's contract, measured for real: the four
+  // ToolTiles fit the panel's width without wrapping, and arming an assertion
+  // — which used to inject a prompt, a strictness toggle and a cancel button
+  // INLINE into the tool row — moves nothing. check:narrow-layout §5 pins the
+  // same contract at source level; only a real layout engine can measure it.
+  const page = await servePage();
+  try {
+    await window.evaluate(async () => {
+      const api = (window as unknown as { glazeAPI: Invoke }).glazeAPI;
+      await api.glaze.ipc.invoke("recorder:setSettings", { trainerPanelEnabled: true });
+    });
+    await window.evaluate(async (url) => {
+      const api = (window as unknown as { glazeAPI: Invoke }).glazeAPI;
+      await api.glaze.ipc.invoke("recorder:start", { url, name: "tile strip e2e", viewport: null });
+    }, page.url);
+
+    const panelPage = await expect
+      .poll(
+        () => app.windows().find((p) => p.url().includes("trainer-window")) ?? null,
+        { timeout: 20_000 },
+      )
+      .not.toBeNull()
+      .then(() => app.windows().find((p) => p.url().includes("trainer-window"))!);
+
+    await panelPage.locator(".gl-panelwin-tiles").waitFor({ timeout: 10_000 });
+
+    const measure = () =>
+      panelPage.evaluate(() => {
+        const doc = document.documentElement;
+        const tiles = Array.from(document.querySelectorAll(".gl-panelwin-tiles .gl-tooltile")).map(
+          (t) => {
+            const r = t.getBoundingClientRect();
+            return { left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top) };
+          },
+        );
+        const zone = document.querySelector(".gl-panelwin-context")!.getBoundingClientRect();
+        return {
+          clientWidth: doc.clientWidth,
+          tiles,
+          zoneTop: Math.round(zone.top),
+          zoneHeight: Math.round(zone.height),
+        };
+      });
+
+    const before = await measure();
+    expect(before.tiles, "four tiles render").toHaveLength(4);
+    for (const t of before.tiles) {
+      expect(t.left, "no tile starts off the left edge").toBeGreaterThanOrEqual(0);
+      expect(t.right, "no tile runs off the right edge").toBeLessThanOrEqual(before.clientWidth);
+    }
+    expect(
+      new Set(before.tiles.map((t) => t.top)).size,
+      "the strip does not wrap — all four tiles share one row",
+    ).toBe(1);
+
+    // Arm an assertion the way the menu handler does, then measure again: the
+    // armed prompt and the Hard/Soft toggle land in the context band, and the
+    // band's reserved height means NOTHING moved.
+    await window.evaluate(async () => {
+      const api = (window as unknown as { glazeAPI: Invoke }).glazeAPI;
+      await api.glaze.ipc.invoke("recorder:setAssert", { mode: "visible", soft: false });
+    });
+    await panelPage.getByRole("button", { name: "Soft" }).waitFor({ timeout: 10_000 });
+
+    const after = await measure();
+    expect(after.tiles, "arming an assert moved no tile").toEqual(before.tiles);
+    expect(after.zoneTop, "the context band did not move").toBe(before.zoneTop);
+    expect(
+      after.zoneHeight,
+      "the armed content fits the band's reserved height — growth here is the reflow returning one band down",
+    ).toBe(before.zoneHeight);
+  } finally {
+    await page.close();
+  }
+});

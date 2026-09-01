@@ -65,6 +65,8 @@ export { Btn } from "./primitives/btn";
 export type { BtnProps, BtnTone } from "./primitives/btn";
 export { StatusChip } from "./primitives/status-chip";
 export type { StatusChipProps } from "./primitives/status-chip";
+export { ToolTile } from "./primitives/tool-tile";
+export type { ToolTileProps } from "./primitives/tool-tile";
 export { Segmented } from "./primitives/segmented";
 export type { SegmentedProps, SegmentedOption } from "./primitives/segmented";
 export { Temp, tempColor, formatDuration, formatDev, RAMP } from "./primitives/temp";

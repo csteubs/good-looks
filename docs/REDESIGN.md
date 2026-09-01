@@ -625,10 +625,14 @@ them is an outcome. And Hard/Soft moved to the theme's `Segmented`, which is
 plain buttons with `aria-pressed` rather than a pointer-down Radix control, so
 the choice is assertable in a test for the first time.
 
-Still Phase C, and deliberately: the four **`ToolTile`s**, the **inline composer**
-that replaces the 1,170-line add-step modal, the **assertion bottom sheet**, and
+**The four `ToolTile`s landed 2026-09-01** (Direction A of the action-bar
+reorganisation, picked from the `?view=bar-lab` mocks), adapted: folded by
+default as specified, pinned between the status row and the list, over a
+RESERVED-height context band that took every transient the old tools row
+injected inline — see DECISIONS 2026-09-01. Still Phase C, and deliberately:
+the **assertion bottom sheet**, and
 `InsertGap` between every pair of steps (the existing `CursorGap` already covers
-the cursor half of that). The tab strip's rules moved from `.gl-detail-tabs` to
+the cursor half of that; the inline composer itself shipped as §6.2). The tab strip's rules moved from `.gl-detail-tabs` to
 `.gl-tabs` in `shared.css` when this screen became their second consumer —
 that is the rule the four-stylesheet split states, applied.
 
