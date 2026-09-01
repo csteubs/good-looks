@@ -1,4 +1,5 @@
-// The run Output panel's "Debug with AI" icon.
+// The run Output panel's "Debug with AI" icon, and the tabbed console it
+// became.
 //
 // Two things here are easy to get wrong and silent when wrong. First, the icon
 // used to render ONLY for a failed run — which meant a minimized job vanished
@@ -8,11 +9,11 @@
 
 import * as React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 
 import { toneFor } from "../lib/ai-debug-status";
-import type { AiDebugStatus } from "../lib/recorder-types";
+import type { AiDebugStatus, Step } from "../lib/recorder-types";
 import { RunOutput } from "./run-output";
 import { summariseRun } from "../lib/run-summary";
 import type { RunInfo } from "./recorder-store";
@@ -20,11 +21,17 @@ import type { RunInfo } from "./recorder-store";
 // The panel now carries a triage line and a failure-reason row, both of which
 // query on mount. Mocked to "no verdict" and an empty history so these tests
 // stay about the AI debug icon — run-triage.test.tsx covers the line and
-// run-failure-reason.test.tsx the row.
+// run-failure-reason.test.tsx the row. The artifacts arm feeds the History
+// tab, whose own behaviour lives in run-history-panel.test.tsx.
 vi.mock("../lib/api", () => ({
   api: {
     runs: { triage: async () => null, list: async () => [] },
     failureReasons: { list: async () => ({ builtin: [], custom: [] }) },
+    artifacts: {
+      list: async () => [],
+      getReplay: async () => null,
+      readShot: async () => null,
+    },
   },
 }));
 
@@ -55,6 +62,13 @@ const debugButton = () =>
   screen
     .queryAllByRole("button")
     .find((b) => (b.getAttribute("aria-label") ?? "").match(/Debug with AI|AI /)) ?? null;
+
+// A dragged height persists in localStorage (the SplitView idiom), and jsdom's
+// localStorage persists across tests in a file — so a resize in one test would
+// silently reseed every panel rendered after it.
+beforeEach(() => {
+  window.localStorage.removeItem("runpanel:height");
+});
 
 describe("the AI debug icon", () => {
   it("appears for a failed run with no session yet", () => {
@@ -176,6 +190,214 @@ describe("the log drawer", () => {
     // only once the log happens to overflow is one nobody learns is there.
     render(<Panel info={info({ lines: [], running: true, code: null })} />);
     expect(expander()).toBeTruthy();
+  });
+});
+
+// ── The tabbed console (2026-09-01) ───────────────────────────────────
+//
+// The panel now wears the trainer console's clothes: a tab strip in the head
+// (Console / Step details / History), a status bar over the log with the same
+// "Done — N/M passed" reading and hit-rate pill, and the auto-scroll toggle.
+// What these pin is the parts that would fail silently: a bar that counts
+// wrong, a step row that reports the wrong verdict, and the compact-panel rule
+// that used to key on `:has(.gl-run-log)` and would collapse the strip under
+// the other tabs now that the log unmounts with its tab.
+
+/** Switch tabs. Radix's TabsTrigger activates on pointer-down/focus rather
+ *  than a bare click — fireEvent.click alone leaves the tab unchanged and the
+ *  assertions silently run against the previous tab's content. */
+function selectTab(name: RegExp | string) {
+  const tab = screen.getByRole("tab", { name });
+  fireEvent.mouseDown(tab);
+  fireEvent.focus(tab);
+  fireEvent.click(tab);
+  return tab;
+}
+
+let stepSeq = 0;
+function step(over: Partial<Step> = {}): Step {
+  stepSeq += 1;
+  return {
+    id: `s${stepSeq}`,
+    timestamp: stepSeq,
+    type: "click",
+    locator: { k: "role", role: "button", name: "Submit" },
+    ...over,
+  } as Step;
+}
+
+describe("the console tabs", () => {
+  it("carries the trainer console's strip: Console, Step details, and History", () => {
+    render(<Panel info={info()} />);
+    expect(screen.getByRole("tab", { name: "Console" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Step details" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "History" })).toBeTruthy();
+  });
+
+  it("reads a finished run over the log the way the trainer does", () => {
+    render(
+      <Panel
+        info={info({ code: 0, stepStatus: { 0: "passed", 1: "passed" } })}
+        steps={[step(), step()]}
+      />,
+    );
+    expect(screen.getByText("Done — 2/2 passed")).toBeTruthy();
+    expect(screen.getByText("100% hit rate").className).toContain("text-support-green");
+  });
+
+  it("names the step a failed run stopped at, and grades the hit rate", () => {
+    render(
+      <Panel
+        info={info({ code: 1, stepStatus: { 0: "passed", 1: "failed" } })}
+        steps={[step(), step()]}
+      />,
+    );
+    expect(screen.getByText("Stopped at step 2 — 1/2 passed")).toBeTruthy();
+    expect(screen.getByText("50% hit rate").className).toContain("text-support-yellow");
+  });
+
+  it("says so when a run reported no steps at all, instead of 0/0", () => {
+    // A spec that failed to load settles nothing; "Done — 0/0 passed" would
+    // read as an empty suite that passed.
+    render(<Panel info={info({ code: 1, stepStatus: {} })} steps={[step()]} />);
+    expect(screen.getByText(/No per-step results/)).toBeTruthy();
+  });
+
+  it("offers Auto-scroll on the Console tab only", () => {
+    render(<Panel info={info()} />);
+    expect(screen.getByLabelText("Auto-scroll console")).toBeTruthy();
+    selectTab("Step details");
+    expect(screen.queryByLabelText("Auto-scroll console")).toBeNull();
+  });
+});
+
+describe("the Step details tab", () => {
+  const rows = () => document.querySelectorAll('[data-gl="step-detail"]');
+
+  it("reports each step's outcome beside its locator", () => {
+    render(
+      <Panel
+        info={info({ code: 1, stepStatus: { 0: "passed", 1: "failed" } })}
+        steps={[step(), step()]}
+      />,
+    );
+    selectTab("Step details");
+    expect(rows()).toHaveLength(2);
+    expect(rows()[0].getAttribute("data-status")).toBe("passed");
+    expect(rows()[1].getAttribute("data-status")).toBe("failed");
+    expect(rows()[0].textContent).toContain("Step 1");
+    // The locator the step stands on, in the app's own spelling.
+    expect(rows()[0].textContent).toContain('getByRole("button"');
+  });
+
+  it("shows a dash, not a verdict, for steps the run never reached", () => {
+    render(<Panel info={info({ code: 1, stepStatus: { 0: "passed" } })} steps={[step(), step()]} />);
+    selectTab("Step details");
+    expect(rows()[1].getAttribute("data-status")).toBe("idle");
+  });
+});
+
+describe("the panel without a live run", () => {
+  function ColdPanel({ testId }: { testId?: string }) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <RunOutput
+          summary={summariseRun({ testId: "t1", runs: [], heals: [], stepCount: 3, live: null, now: 0 })}
+          testId={testId}
+          runs={[]}
+        />
+      </QueryClientProvider>
+    );
+  }
+  const panel = () => document.querySelector('[data-gl="run-panel"]') as HTMLElement;
+
+  it("keeps the console surface: a bar saying why it is empty, over the log area", () => {
+    render(<ColdPanel />);
+    expect(screen.getByText(/output streams here/i)).toBeTruthy();
+    expect(document.querySelector(".gl-run-log")).toBeTruthy();
+    // The expand drawer stays too — every tab has the strip to hand over now.
+    expect(screen.getByRole("button", { name: /the run output/i })).toBeTruthy();
+  });
+
+  it("holds ONE height across all three tabs", () => {
+    // The first cut shrank the Console tab to its summary when nothing was
+    // live, which made the three tabs three different panels — and the
+    // console the cramped one. The panel must not change size under the
+    // pointer when a tab is clicked.
+    render(<ColdPanel testId="t1" />);
+    expect(panel().hasAttribute("data-compact")).toBe(false);
+    const resting = panel().style.flexBasis;
+    expect(resting).toBe("224px");
+    selectTab("History");
+    expect(panel().style.flexBasis).toBe(resting);
+    expect(screen.getByText("No runs recorded yet")).toBeTruthy();
+    selectTab("Step details");
+    expect(panel().style.flexBasis).toBe(resting);
+    selectTab("Console");
+    expect(panel().style.flexBasis).toBe(resting);
+  });
+});
+
+describe("resizing the console", () => {
+  const handle = () => screen.getByRole("separator", { name: /resize the console/i });
+  const panel = () => document.querySelector('[data-gl="run-panel"]') as HTMLElement;
+
+  function drag(fromY: number, toY: number) {
+    fireEvent.pointerDown(handle(), { clientY: fromY, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientY: toY });
+    fireEvent.pointerUp(window, { clientY: toY });
+  }
+
+  it("drags the top edge, and remembers where it was dropped", () => {
+    render(<Panel info={info()} />);
+    // jsdom has no layout, so the drag starts from the state height (224).
+    drag(500, 440);
+    expect(panel().style.flexBasis).toBe("284px");
+    expect(window.localStorage.getItem("runpanel:height")).toBe("284");
+  });
+
+  it("restores the remembered height on the next mount", () => {
+    window.localStorage.setItem("runpanel:height", "300");
+    render(<Panel info={info()} />);
+    expect(panel().style.flexBasis).toBe("300px");
+  });
+
+  it("cannot be dragged away entirely, nor over the step list", () => {
+    render(<Panel info={info()} />);
+    drag(100, 5000);
+    expect(panel().style.flexBasis).toBe("140px");
+    drag(500, -5000);
+    // The ceiling leaves the toolbar and tab strip their room, whatever the
+    // window height is — jsdom's included.
+    expect(panel().style.flexBasis).toBe(`${Math.max(140, window.innerHeight - 220)}px`);
+  });
+
+  it("resizes from the keyboard", () => {
+    render(<Panel info={info()} />);
+    fireEvent.keyDown(handle(), { key: "ArrowUp" });
+    expect(panel().style.flexBasis).toBe("248px");
+    fireEvent.keyDown(handle(), { key: "ArrowDown" });
+    expect(panel().style.flexBasis).toBe("224px");
+  });
+
+  it("double-click puts the resting height back", () => {
+    window.localStorage.setItem("runpanel:height", "400");
+    render(<Panel info={info()} />);
+    expect(panel().style.flexBasis).toBe("400px");
+    fireEvent.doubleClick(handle());
+    expect(panel().style.flexBasis).toBe("224px");
+    expect(window.localStorage.getItem("runpanel:height")).toBe("224");
+  });
+
+  it("a drag from the expanded panel leaves expanded and lands where dropped", () => {
+    // Grabbing an edge means "put it where I drop it" — staying expanded
+    // would make the drag a no-op and the handle a lie.
+    render(<Panel info={info()} />);
+    fireEvent.click(screen.getByRole("button", { name: /expand the run output/i }));
+    expect(panel().className).toContain("gl-run-panel-expanded");
+    drag(300, 320);
+    expect(panel().className).not.toContain("gl-run-panel-expanded");
+    expect(panel().style.flexBasis).toBe("204px");
   });
 });
 

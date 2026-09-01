@@ -2923,16 +2923,14 @@
 /* ── Test detail (B5a) ─────────────────────────────────────────────────── */
 
 /*
- * The run panel. A fixed strip at the bottom of the screen, and an EXPANDED
- * state that hands it the whole pane.
- *
- * 224px is about eight lines of console, which is enough to see that something
- * failed and never enough to read the stack that says why. Before B5a that was
- * the only size it had, so diagnosing a failure meant scrolling a viewport the
- * size of a business card while the step list above it sat idle. The expanded
- * state is `flex: 1 1 auto` rather than a height: the panel's siblings give up
- * their space, so the log grows to whatever the window actually has instead of
- * to a number written here.
+ * The run panel. A strip at the bottom of the screen — resting height 224px,
+ * about eight lines of console — with an EXPANDED state that hands it the
+ * whole pane, and a drag handle on its top edge (`.gl-run-resize` below) that
+ * lets the user put it anywhere between the two. The component writes the
+ * dragged height as an inline `flex-basis` over the resting value here.
+ * The expanded state is `flex: 1 1 auto` rather than a height: the panel's
+ * siblings give up their space, so the log grows to whatever the window
+ * actually has instead of to a number written here.
  */
 .gl-run-panel {
   display: flex;
@@ -2956,10 +2954,30 @@
   border-bottom: 1px solid var(--gl-line);
 }
 
-/* Pushed to the trailing edge, so the expand control is in the same place
-   whether or not the AI sparkle and the copy button are showing. */
-.gl-run-expand {
+/* Everything that is not the tab strip, pushed to the trailing edge as one
+   cluster — the verdict chip, the failure actions, the auto-scroll toggle and
+   the expand control — so the head reads tabs-then-status the way the
+   trainer's console head reads tabs-then-toggle. */
+.gl-run-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   margin-inline-start: auto;
+}
+
+/* The status line over the log — "Done — 12/15 passed", the hit-rate pill —
+   mirroring `.gl-trainer-console-bar` because the two consoles are the same
+   surface in the user's head. Its own rule for the same reason the trainer's
+   is: the containers behave differently (this one expands), so sharing a class
+   would couple what only happens to match today. */
+.gl-run-console-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--gl-line);
 }
 
 /* The log fills the scroller rather than sitting in it as a card: the panel
@@ -3100,30 +3118,67 @@
  * five things to learn.
  */
 .gl-run-summary {
-  flex: 0 0 auto;
+  /* `0 1 auto`, not `0 0 auto`: the panel is a fixed-height strip, and a
+     summary that refuses to shrink (a healed run's journal, a cold open's
+     KeyValue grid plus a callout) painted straight past the panel's bottom
+     edge — the console bar and log under it clipped at the window with no
+     scrollbar to say so. Shrinking instead hands the overflow to this rule's
+     own `overflow-y: auto`, and the log area's floor (its min-height, set
+     where it is laid out) keeps the console surface visible under it. */
+  flex: 0 1 auto;
   padding: 8px 12px;
   border-bottom: 1px solid var(--gl-line);
   overflow-y: auto;
   /* Bounded, because the healed panel's journal list is as long as the run
      healed steps. Past this it would push the log out of the strip they share,
      and the log is the evidence.
-     `vh` AND NOT `%`. The panel is `flex: 0 0 auto` when there is no log, so
-     its own height is content-driven and indefinite — against which a
-     percentage max-height resolves to `none` and silently does nothing. The
-     symptom is a panel that renders correctly and is cut off at the window's
-     edge, with the scrollbar that would have revealed the rest never appearing.
-     Viewport units are definite everywhere, which is what this needs. */
+     `vh` AND NOT `%`, a rule kept from when it bit: the panel used to be
+     `flex: 0 0 auto` with no log, making its height indefinite — against
+     which a percentage max-height resolves to `none` and silently does
+     nothing. The panel is always definite-height now (the resize handle's
+     inline flex-basis), but viewport units are definite EVERYWHERE, so this
+     spelling cannot regress if the sizing story changes again. */
   max-height: 40vh;
 }
 
-/* Without a live run there is no log, so the fixed 224px strip has nothing to
-   fill it and the panel is as tall as the summary inside it. */
-.gl-run-panel:not(:has(.gl-run-log)) {
+/* No shrunken no-log state any more, on purpose. The panel used to collapse
+   to its summary when nothing had run (first as `:not(:has(.gl-run-log))`,
+   then as a data attribute once the tabs made the log unmount with its tab) —
+   which left the Console tab shorter than Step details and History, three
+   different panels wearing one tab strip. One height for all three now, and
+   the height is the user's: the component writes its dragged `flex-basis`
+   inline, over the resting 224px above. */
+
+/* The drag edge along the panel's top. It straddles the border the way
+   SplitView's divider straddles its gutter (negative margins), so the grab
+   target is 7px tall without costing the strip any content height. At rest
+   the panel's own border-top is the visible edge; the line lights cyan on
+   hover and keyboard focus — cyan is this palette's "live / focus", and it
+   doubles as the focus indicator, so no outline. */
+.gl-run-resize {
+  position: relative;
+  z-index: 10;
   flex: 0 0 auto;
+  height: 7px;
+  margin-top: -4px;
+  margin-bottom: -3px;
+  cursor: row-resize;
+  user-select: none;
+  outline: none;
 }
 
-.gl-run-panel:not(:has(.gl-run-log)) .gl-run-summary {
-  border-bottom: 0;
+.gl-run-resize::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 3px;
+  height: 1px;
+  background: transparent;
+}
+
+.gl-run-resize:hover::after,
+.gl-run-resize:focus-visible::after {
+  background: var(--gl-cyan);
 }
 
 /* Trailing, and mono: a qualifier on the sentence it follows, in the same

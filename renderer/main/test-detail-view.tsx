@@ -1930,6 +1930,10 @@ export function TestDetailView() {
       <RunOutput
         info={runInfo}
         summary={runSummary}
+        testId={id}
+        steps={test.steps}
+        runs={runsQuery.data ?? []}
+        onOpenVisual={() => navigate({ to: "/visual" })}
         onDebug={openAiDebug}
         onReview={test.sourceDir ? undefined : () => setTab("heals")}
         onSendToTracker={setFailureRunId}

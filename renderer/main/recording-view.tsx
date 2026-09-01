@@ -20,6 +20,7 @@ import { Bug, Check, CheckSquare, ChevronDown, ChevronUp, ListPlus, Loader2, Plu
 import { Btn, StatusChip, TONE, ToolTile } from "../theme";
 import type { AiDebugStatus, AssertKind, DebugEntry, HealSuggestion, Locator, PickedElement, RawStep, Step, WaitDialogMode } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
+import { hitRateTone } from "../lib/hit-rate";
 import { usePlayStepShortcut } from "../lib/use-play-step-shortcut";
 import { prettyKey } from "../lib/editor-keymap-table";
 import { urlAssertPrefill } from "../../shared/url-assert.mjs";
@@ -87,13 +88,6 @@ function locatorSummary(step: Step): string | null {
   if (l.name) parts.push(`“${l.name}”`);
   if (l.v) parts.push(l.v);
   return parts.join(" ");
-}
-
-/** Percent hit-rate pill color by score. */
-function hitRateTone(rate: number): string {
-  if (rate >= 100) return "text-support-green";
-  if (rate >= 50) return "text-support-yellow";
-  return "text-support-red";
 }
 
 /** Inline list of Auto-Heal candidate locators for a failed step. The user can
