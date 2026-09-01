@@ -19,8 +19,22 @@ import { useSettingsController } from "../settings-controller";
 import { SettingRow } from "../setting-row";
 import { PaneSection } from "../pane-section";
 
+/** The suggestion strip's disclosure — the alerts pane's riskFor shape: one
+ *  sentence of what goes, one of what never goes, one naming the
+ *  destination. `risk`, not `details`, because it has no closed state to
+ *  hide in, and check:agent-egress is what keeps the first two sentences
+ *  true. */
+function suggestionRiskFor(provider: string): string {
+  const payload =
+    "After each recorded step, this sends the step list's descriptions and a bounded inventory of the page's visible controls — tags, roles, labels, visible text — to the configured AI provider, without a per-send review. Never what you type into a field, page HTML, run logs, script sources, headers, or secret values.";
+  if (provider === "anthropic") {
+    return `${payload} With Claude selected, that goes to api.anthropic.com.`;
+  }
+  return `${payload} With a local provider selected, it goes to your own server on this machine.`;
+}
+
 export function RecordingPane() {
-  const { settings, save } = useSettingsController();
+  const { settings, save, provider } = useSettingsController();
   const [cssDraft, setCssDraft] = React.useState<string | null>(null);
   const [jsDraft, setJsDraft] = React.useState<string | null>(null);
 
@@ -111,6 +125,20 @@ export function RecordingPane() {
           id="trainer-panel"
           checked={settings.trainerPanelEnabled ?? false}
           onCheckedChange={(checked) => void save({ trainerPanelEnabled: checked })}
+        />
+      </SettingRow>
+
+      <SettingRow
+        id="ai-suggestions-enabled"
+        label="AI step suggestions"
+        summary="Offer suggested next steps as chips in the trainer after each recorded step. A taken suggestion is tried on the live page before it is inserted."
+        risk={suggestionRiskFor(provider)}
+        flag="sends page summaries"
+      >
+        <Switch
+          id="ai-suggestions-enabled"
+          checked={settings.aiSuggestionsEnabled ?? false}
+          onCheckedChange={(checked) => void save({ aiSuggestionsEnabled: checked })}
         />
       </SettingRow>
 

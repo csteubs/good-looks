@@ -114,6 +114,14 @@ export interface FlowInfo {
   paramDefaults: Record<string, string>;
 }
 
+/** What the suggestion strip shows: label and id only. The raw step stays in
+ *  the main process — accepting sends the id back and the verify gate judges
+ *  the step, so model output never becomes renderer-held structure. Mirrors
+ *  `SuggestionsPayload` in main/services/agent/suggestion-service.ts. */
+export interface SuggestionsPayload {
+  suggestions: { id: string; label: string }[];
+}
+
 export interface ImportResult {
   imported: number;
   names: string[];
@@ -317,6 +325,18 @@ export const api = {
     resolveProposal: (id: string, accept: boolean) =>
       ipc().invoke<{ ok: boolean; detail?: string }>("agent:resolveProposal", { id, accept }),
     getRun: () => ipc().invoke<AgentRunSnapshot>("agent:getRun"),
+  },
+  /** The AI suggestion strip — next-step offers made after a captured step,
+   *  only while Settings → Recording's aiSuggestionsEnabled is on. Offers
+   *  arrive on the `suggest:changed` push ({ suggestions: [{id, label}] });
+   *  get seeds a window that opened mid-session. Accepting sends the id
+   *  back and the step runs through the same verify gate as everything
+   *  else — the raw step never crosses into the renderer. */
+  suggest: {
+    accept: (id: string) =>
+      ipc().invoke<{ ok: boolean; detail?: string }>("suggest:accept", { id }),
+    dismiss: (id: string) => ipc().invoke<boolean>("suggest:dismiss", { id }),
+    get: () => ipc().invoke<SuggestionsPayload>("suggest:get"),
   },
   tests: {
     list: () => ipc().invoke<TestRecord[]>("tests:list"),

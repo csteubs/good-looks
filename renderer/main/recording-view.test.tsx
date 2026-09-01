@@ -72,6 +72,8 @@ const actions = {
   sayToAgent: vi.fn(async () => true),
   stopAgent: vi.fn(async () => true),
   resolveAgentProposal: vi.fn(async () => ({ ok: true })),
+  acceptSuggestion: vi.fn(async () => {}),
+  dismissSuggestion: vi.fn(),
 };
 
 let store: Record<string, unknown> = {};
@@ -136,6 +138,7 @@ function setStore(over: Record<string, unknown> = {}) {
     contextAction: null,
     flowScope: null,
     agentRun: null,
+    aiSuggestions: [],
     ...actions,
     ...over,
   };
@@ -1103,6 +1106,75 @@ describe("the next-action chip", () => {
     });
     render(withAiDebug(<RecordingView />));
     expect(screen.queryByRole("button", { name: /assert this field/i })).toBeNull();
+    expect(screen.getByText("Act on the page, or pick a tool.")).toBeTruthy();
+  });
+});
+
+// ── The AI suggestion strip ────────────────────────────────────────────────
+//
+// The store owns membership (empty while the setting is off — the flag gates
+// the SEND, in the main process); what these pin is the view's wiring: the
+// chips share the idle slot with the mechanical chip, taking one goes through
+// the store's verified-accept action, one X clears every shown offer, and
+// anything that owns the band (an armed assert, the composer) hides them.
+describe("the AI suggestion strip", () => {
+  const CHIPS = [
+    { id: "sg-1", label: "Assert “Order placed” is visible" },
+    { id: "sg-2", label: "Click “View receipt”" },
+  ];
+  const FILLED = step("f1", {
+    type: "fill",
+    locator: { k: "label", v: "Email" },
+    value: "chris@example.com",
+    fingerprint: {
+      tag: "input",
+      description: 'input "Email"',
+      candidates: [{ k: "testid", v: "email" }],
+      attributes: { type: "email" },
+      depth: 3,
+    },
+  });
+
+  it("renders each offer as a chip; taking one calls the store's verified accept", () => {
+    setStore({ aiSuggestions: CHIPS });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: /order placed/i }));
+    expect(actions.acceptSuggestion).toHaveBeenCalledWith("sg-1");
+  });
+
+  it("one X dismisses every shown offer", () => {
+    setStore({ aiSuggestions: CHIPS });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: /dismiss suggestions/i }));
+    expect(actions.dismissSuggestion).toHaveBeenCalledWith("sg-1");
+    expect(actions.dismissSuggestion).toHaveBeenCalledWith("sg-2");
+  });
+
+  it("stands beside the mechanical chip rather than replacing it", () => {
+    setStore({ liveSteps: [FILLED], state: state({ cursor: 1 }), aiSuggestions: CHIPS });
+    render(withAiDebug(<RecordingView />));
+    expect(screen.getByRole("button", { name: /assert this field/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /order placed/i })).toBeTruthy();
+  });
+
+  it("is moot while the composer is open", async () => {
+    setStore({ liveSteps: [FILLED], state: state({ cursor: 1 }), aiSuggestions: CHIPS });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: /assert this field/i }));
+    await waitFor(() => screen.getByRole("form", { name: /add assertion/i }));
+    expect(screen.queryByRole("button", { name: /order placed/i })).toBeNull();
+  });
+
+  it("waits while an armed assertion owns the band", () => {
+    setStore({ aiSuggestions: CHIPS, state: state({ assertMode: "visible" }) });
+    render(withAiDebug(<RecordingView />));
+    expect(screen.queryByRole("button", { name: /order placed/i })).toBeNull();
+  });
+
+  it("shows the idle hint, not a dismiss X, when nothing is on offer", () => {
+    setStore();
+    render(withAiDebug(<RecordingView />));
+    expect(screen.queryByRole("button", { name: /dismiss suggestions/i })).toBeNull();
     expect(screen.getByText("Act on the page, or pick a tool.")).toBeTruthy();
   });
 });

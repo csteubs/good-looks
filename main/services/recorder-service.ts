@@ -1583,6 +1583,21 @@ async function drainPicked(): Promise<void> {
 }
 
 /**
+ * Told AFTER a batch of page-captured steps has landed in the session — the
+ * suggestion strip's debounce is the consumer. After, and with NO payload:
+ * a listener learns that the step list moved, never what the page sent, so
+ * the capture boundary stays exactly where it is.
+ */
+const captureListeners = new Set<() => void>();
+
+export function onCaptureRecorded(listener: () => void): () => void {
+  captureListeners.add(listener);
+  return () => {
+    captureListeners.delete(listener);
+  };
+}
+
+/**
  * Record steps the ledger has released.
  *
  * THE ONE PLACE page-captured steps enter the session, whichever channel
@@ -1594,6 +1609,7 @@ async function drainPicked(): Promise<void> {
  */
 function recordCaptured(steps: unknown[]): void {
   if (steps.length === 0 || !session) return;
+  let recorded = 0;
   for (const raw of normalizeRawSteps(steps)) {
     // A captured double-click withdraws the two clicks the browser fired
     // before it. Done here rather than in `addStep` because that funnel also
@@ -1614,7 +1630,9 @@ function recordCaptured(steps: unknown[]): void {
       }
     }
     addStep(raw);
+    recorded++;
   }
+  if (recorded > 0) for (const listener of captureListeners) listener();
 }
 
 /** Take one arrival from either channel. */

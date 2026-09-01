@@ -3770,6 +3770,26 @@
   border-color: var(--gl-tx-3);
 }
 
+/* The AI variant — the suggestion strip's offers (PR 4). Violet, the
+   palette's AI-machinery mark, so a model's offer can never be mistaken for
+   the mechanical chip standing beside it. Same geometry as the base chip:
+   an occupant of the band's reserved height, never a frame. Doubled with
+   the base class so the resting violet outranks `.gl-context-chip:hover`'s
+   neutral lift; the hover rule below then only firms the border, through
+   currentColor — check:selection-neutral bans naming a hue in a hover rule,
+   and it is right to here: the hue is the chip's identity, not its hover. */
+.gl-context-chip.gl-context-chip-ai {
+  color: var(--gl-violet);
+  border-color: color-mix(in srgb, var(--gl-violet) 45%, transparent);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.gl-context-chip.gl-context-chip-ai:hover {
+  border-color: currentColor;
+}
+
 /* ── The command drawer (the AI tile's surface, PR 3) ──────────────────
    Frame per surface, the band rule; the gl-agent-* occupants are shared the
    way gl-trainer-prompt is. It mounts BETWEEN the context band and the step

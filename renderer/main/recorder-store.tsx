@@ -7,7 +7,7 @@ import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@ui";
 
-import { api } from "../lib/api";
+import { api, type SuggestionsPayload } from "../lib/api";
 import {
   applyAgentEvent,
   reduceAgentEvents,
@@ -249,6 +249,15 @@ interface RecorderContextValue {
   /** Resolve an assertion-proposal card. Accepting TRIES the assertion on
    *  the live page through the same gate as everything else. */
   resolveAgentProposal: (id: string, accept: boolean) => Promise<{ ok: boolean; detail?: string }>;
+  /** The AI suggestion strip's standing offers — empty when the setting is
+   *  off, no session is live, or nothing is on offer. Label and id only:
+   *  the raw step never crosses into the renderer. */
+  aiSuggestions: SuggestionsPayload["suggestions"];
+  /** Take a suggestion. The step is TRIED on the live page through the same
+   *  verify gate as everything else and inserted only on success; a failure
+   *  is toasted here so both trainers get it for free. */
+  acceptSuggestion: (id: string) => Promise<void>;
+  dismissSuggestion: (id: string) => void;
   reorderStep: (id: string, toIndex: number) => void;
   updateStep: (id: string, patch: Partial<Step>) => void;
   /** Declare a variable on the live session, so a step composed here can
@@ -398,6 +407,10 @@ export function RecorderProvider({
   // lib/agent-run.ts for why a reducer, and the effect below for the seed a
   // late-opening window needs.
   const [agentRun, setAgentRun] = React.useState<AgentRunView | null>(null);
+  // The suggestion strip's offers, replaced WHOLESALE by every
+  // `suggest:changed` push — the main-process service owns membership and
+  // staleness; this is a mirror, never a merge.
+  const [aiSuggestions, setAiSuggestions] = React.useState<SuggestionsPayload["suggestions"]>([]);
   // See the interface: the rail selects it, the Batch view edits it.
   const [openRoutineId, setOpenRoutineId] = React.useState<string | null>(null);
   // Per-step status for an in-flight trainer replayAll (auto-run on Edit in
@@ -774,7 +787,23 @@ export function RecorderProvider({
       })
       .catch(() => {});
 
+    // The suggestion strip: pushes replace the offers wholesale, and the ask
+    // seeds a window that opened while offers were standing. Same resolved-
+    // promise hardening as the agent seed — a bridge without the call means
+    // "no offers", not a crashed provider.
+    const offSuggest = api.on<SuggestionsPayload>("suggest:changed", (payload) => {
+      setAiSuggestions(payload?.suggestions ?? []);
+    });
+    void Promise.resolve()
+      .then(() => api.suggest.get())
+      .then((payload) => {
+        const seeded = payload?.suggestions ?? [];
+        if (seeded.length > 0) setAiSuggestions((prev) => (prev.length > 0 ? prev : seeded));
+      })
+      .catch(() => {});
+
     return () => {
+      offSuggest();
       offAgent();
       offState();
       offSteps();
@@ -1049,6 +1078,35 @@ export function RecorderProvider({
     [],
   );
 
+  // A session ending strands whatever offers were showing — the page they
+  // describe is gone, and the service only clears its own copy on the next
+  // capture. Mirror-side cleanup, so the next session never opens on chips
+  // from the last one.
+  const recording = state.recording;
+  React.useEffect(() => {
+    if (!recording) setAiSuggestions([]);
+  }, [recording]);
+
+  const acceptSuggestion = React.useCallback(async (id: string) => {
+    const result = await api.suggest
+      .accept(id)
+      .catch(() => ({ ok: false, detail: undefined as string | undefined }));
+    // Only the failure is toasted: success shows itself as the inserted step.
+    if (!result.ok) {
+      toast.error(
+        result.detail
+          ? `That suggestion didn't work: ${result.detail}`
+          : "That suggestion didn't work on the live page.",
+      );
+    }
+  }, []);
+  const dismissSuggestion = React.useCallback((id: string) => {
+    // Optimistic: a dismissed chip must not linger under the click while the
+    // round-trip settles; the confirming push replaces the list anyway.
+    setAiSuggestions((prev) => prev.filter((s) => s.id !== id));
+    void api.suggest.dismiss(id).catch(() => {});
+  }, []);
+
   const value: RecorderContextValue = {
     state,
     liveSteps,
@@ -1103,6 +1161,9 @@ export function RecorderProvider({
     sayToAgent,
     stopAgent,
     resolveAgentProposal,
+    aiSuggestions,
+    acceptSuggestion,
+    dismissSuggestion,
   };
 
   return <RecorderContext.Provider value={value}>{children}</RecorderContext.Provider>;
