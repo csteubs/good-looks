@@ -1572,7 +1572,8 @@
  * same two attributes every test in this repo drives a switch through — so
  * they are the stable surface here, not an implementation detail.
  */
-.gl-setting-group [role="switch"] {
+.gl-setting-group [role="switch"],
+.gl-var-group [role="switch"] {
   background: rgba(255, 255, 255, 0.05);
   border-color: var(--gl-line);
   border-radius: 2px;
@@ -1587,19 +1588,22 @@
    the knob's x-position alone, which is a coin-flip at 20px. Still hueless —
    the rule the palette actually makes is that selection carries NO COLOUR, not
    that it is always the same alpha. */
-.gl-setting-group [role="switch"][data-state="checked"] {
+.gl-setting-group [role="switch"][data-state="checked"],
+.gl-var-group [role="switch"][data-state="checked"] {
   background: rgba(255, 255, 255, 0.3);
   border-color: var(--gl-sel-ring);
 }
 
 /* The knob. Square, and dimmed while off — a full-white knob on a dark track
    reads as ON at a glance, which is the one thing a switch must never do. */
-.gl-setting-group [role="switch"] > span {
+.gl-setting-group [role="switch"] > span,
+.gl-var-group [role="switch"] > span {
   border-radius: 1px;
   background: var(--gl-tx-3);
 }
 
-.gl-setting-group [role="switch"][data-state="checked"] > span {
+.gl-setting-group [role="switch"][data-state="checked"] > span,
+.gl-var-group [role="switch"][data-state="checked"] > span {
   background: var(--gl-tx-1);
 }
 
@@ -3522,7 +3526,8 @@
  * are a real surface rather than an implementation detail. Both are scoped
  * under a `gl-*` ancestor so nothing outside this screen is touched.
  */
-.gl-run-options [role="checkbox"] {
+.gl-run-options [role="checkbox"],
+.gl-var-group [role="checkbox"] {
   border-radius: 1px;
   border-color: var(--gl-line);
   background: var(--gl-ink);
@@ -3532,7 +3537,8 @@
 /* Checked is neutral too, and legible: the box fills white and its glyph goes
    dark, rather than taking the SDK's accent. `--gl-tx-1` and not pure white so
    it sits on the same ramp as the label beside it. */
-.gl-run-options [role="checkbox"][data-state="checked"] {
+.gl-run-options [role="checkbox"][data-state="checked"],
+.gl-var-group [role="checkbox"][data-state="checked"] {
   border-color: var(--gl-tx-1);
   background: var(--gl-tx-1);
   color: var(--gl-ink);
@@ -6623,4 +6629,295 @@
   gap: 4px;
   padding-top: 6px;
   border-top: 1px solid var(--gl-line);
+}
+
+/* ── Variables tab ────────────────────────────────────────────────────
+ *
+ * The redesign of a test's Variables tab (2026-09-01). Five concerns used to
+ * sit on one scroll with nothing between them but whitespace, each one's
+ * control flushed to the far right edge — so `Add variable`, the flow switch
+ * and `Run sweep` all landed in the same column with nothing tying any of them
+ * to the section that owned it. Everything below exists to draw the boundary
+ * that was missing.
+ *
+ * THE GROUP IS THE UNIT, not the row. A variable's KIND decides what may be
+ * done to it — a secret's value can only be replaced, a generated one has no
+ * value at all, a dataset row may never carry either — so the kinds are drawn
+ * as separate boxes with one value affordance each, rather than as one list
+ * whose rows happen to differ. Inside a group there is only one thing a
+ * control can mean, which is the property the old flat list could not offer.
+ *
+ * Drawn at `--gl-line-2`, one weight below the `Panel` that holds it: a nested
+ * box at its parent's strength reads as a table rather than as a box inside a
+ * box, which is the whole reason the second hairline exists.
+ */
+.gl-var-group {
+  border: 1px solid var(--gl-line-2);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* The legend. Not a fixed height like `.gl-panel-head`: this one carries the
+   group's storage rule as body copy beside the title, and that sentence is
+   allowed to wrap on a narrow window. The panel header's height contract is
+   about two panels starting their bodies on one line — a group has no sibling
+   to line up with. */
+.gl-var-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 9px;
+  background: rgba(255, 255, 255, 0.012);
+  border-bottom: 1px solid var(--gl-line-2);
+  flex-wrap: wrap;
+}
+
+.gl-var-group-title {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-2);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/* WHERE THE OLD CALLOUT WENT. The plaintext warning used to be one standing
+   amber box above the whole list, which asked for nothing and was true whether
+   or not the user was about to make the mistake. Each kind now states its own
+   storage rule here, in the ordinary note voice, at the moment the kind is
+   being chosen — and the amber is kept for the two notices that actually
+   require an action. */
+.gl-var-group-note {
+  font-family: var(--gl-sans);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--gl-tx-3);
+  min-width: 0;
+  flex: 1 1 240px;
+}
+
+.gl-var-group-right {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.gl-var-group-body {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 9px;
+  min-width: 0;
+}
+
+/* One skeleton for every kind: name, the kind's single value affordance, what
+   reads it, and the row menu. The columns do not move between groups, so a
+   column of names stays a column of names down the whole panel even though
+   what sits beside them differs. */
+.gl-var-row {
+  display: grid;
+  /* The usage column is a FIXED width rather than `auto`, and holds an empty
+     span when nothing reads the variable. Sized to content it collapsed on the
+     rows with no chip, which moved the value field's right edge by ~90px from
+     one row to the next — the exact raggedness the groups exist to remove. */
+  grid-template-columns: 176px minmax(0, 1fr) 96px 22px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The row and anything it has to say, as one block — so the between-rows rule
+   falls between variables rather than between a variable and its own warning. */
+.gl-var-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px 0;
+  min-width: 0;
+}
+
+.gl-var-entry + .gl-var-entry {
+  border-top: 1px solid var(--gl-line-2);
+}
+
+/* The value column's cluster, for the kinds whose affordance is more than one
+   control (a secret is an input plus a Save, or a chip plus a Replace). */
+.gl-var-cell {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+/*
+ * THE ONLY COLOURED THING LEFT ON THIS TAB, and it appears only when there is
+ * something to do about it.
+ *
+ * Two tiers, and the difference is whether the app can still save the row.
+ * `blocking` is red: the name is invalid or already taken, so the list will not
+ * round-trip and the row is being held locally until it is fixed. `action` is
+ * amber: everything is saved and a run will still go ahead, but it will go
+ * ahead wrong — a secret with no stored value sends an empty string to the
+ * steps that read it.
+ *
+ * Anything that is merely true — that values are plain text, that a session is
+ * stale, that a flow parameter no longer matches a variable — is body copy in
+ * `.gl-var-note`, with no colour and no icon. A notice that is always on screen
+ * teaches the eye to skip the notices that are not.
+ */
+.gl-var-flag {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-family: var(--gl-sans);
+  font-size: 11.5px;
+  line-height: 1.45;
+  padding-inline-start: 1px;
+}
+
+.gl-var-flag-blocking {
+  color: var(--gl-red);
+}
+
+.gl-var-flag-action {
+  color: var(--gl-amber);
+}
+
+.gl-var-flag svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* The panel's own prose: how references work, what a sweep does, what a
+   session is for. Same voice as `.gl-note`, restated here so the tab's copy can
+   be retuned without touching every other screen that reads that one. */
+.gl-var-note {
+  font-family: var(--gl-sans);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--gl-tx-3);
+  margin: 0;
+  max-width: 96ch;
+}
+
+.gl-var-note code {
+  font-family: var(--gl-mono);
+  font-size: 11.5px;
+  color: var(--gl-tx-2);
+}
+
+/* A statement the user can act on but does not have to — the re-point offer,
+   the saved-session readout, the session-source picker.
+ *
+ * THE CONTROL SITS UNDER ITS COPY, BOTH ON THE LEFT MARGIN. Laid out as two
+ * columns it inherited the defect this whole tab was redrawn to remove: the
+ * sentence took the width and pushed its one control to the far right edge,
+ * where it read as belonging to the panel rather than to the paragraph it
+ * answers. Stacked, the control starts on the same margin as the words that
+ * explain it and the eye never crosses the panel to find it. */
+.gl-var-offer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+}
+
+/* The flow-parameter list: many things, one control type, so a checkbox is
+   right here and nowhere else on the tab. */
+.gl-var-params {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-block: 6px;
+}
+
+.gl-var-param {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.gl-var-param-name {
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  color: var(--gl-tx-2);
+}
+
+.gl-var-param-default {
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  color: var(--gl-tx-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/*
+ * DATASETS AS A TABLE, not a card per row.
+ *
+ * A row IS a row: the same variables in the same order, once per run. Drawn as
+ * a stack of bordered cards with a wrapping field cluster inside each, the one
+ * question the section exists to answer — what is `email` on every row — could
+ * only be answered by reading four boxes and holding them in your head. The
+ * table answers it by looking down a column.
+ *
+ * It scrolls in its own container, because the column count is the number of
+ * non-secret variables the test declares and nothing caps that.
+ */
+.gl-var-table-scroll {
+  overflow-x: auto;
+  min-width: 0;
+}
+
+.gl-var-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.gl-var-table th {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  text-align: left;
+  padding: 0 6px 6px;
+  border-bottom: 1px solid var(--gl-line-2);
+  white-space: nowrap;
+}
+
+.gl-var-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--gl-line-2);
+  vertical-align: middle;
+}
+
+.gl-var-table tr:last-child td {
+  border-bottom: 0;
+}
+
+/* The row-name column and the value columns get floors rather than a fixed
+   width: a name like "Preview build" and a value like a full preview URL want
+   very different room, and one width for both wastes half the table. */
+.gl-var-table-name {
+  min-width: 168px;
+}
+
+.gl-var-table-value {
+  min-width: 176px;
+}
+
+.gl-var-table-actions {
+  width: 30px;
 }
