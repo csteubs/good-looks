@@ -9,7 +9,7 @@
 
 import * as React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 
 import { toneFor } from "../lib/ai-debug-status";
@@ -62,6 +62,13 @@ const debugButton = () =>
   screen
     .queryAllByRole("button")
     .find((b) => (b.getAttribute("aria-label") ?? "").match(/Debug with AI|AI /)) ?? null;
+
+// A dragged height persists in localStorage (the SplitView idiom), and jsdom's
+// localStorage persists across tests in a file — so a resize in one test would
+// silently reseed every panel rendered after it.
+beforeEach(() => {
+  window.localStorage.removeItem("runpanel:height");
+});
 
 describe("the AI debug icon", () => {
   it("appears for a failed run with no session yet", () => {
@@ -302,25 +309,95 @@ describe("the panel without a live run", () => {
       </QueryClientProvider>
     );
   }
+  const panel = () => document.querySelector('[data-gl="run-panel"]') as HTMLElement;
 
-  it("shrinks to its summary on the Console tab, as before the tabs", () => {
+  it("keeps the console surface: a bar saying why it is empty, over the log area", () => {
     render(<ColdPanel />);
-    const panel = document.querySelector('[data-gl="run-panel"]') as HTMLElement;
-    expect(panel.hasAttribute("data-compact")).toBe(true);
-    // Nothing to expand onto — the drawer control goes with the strip.
-    expect(screen.queryByRole("button", { name: /the run output/i })).toBeNull();
+    expect(screen.getByText(/output streams here/i)).toBeTruthy();
+    expect(document.querySelector(".gl-run-log")).toBeTruthy();
+    // The expand drawer stays too — every tab has the strip to hand over now.
+    expect(screen.getByRole("button", { name: /the run output/i })).toBeTruthy();
   });
 
-  it("keeps the strip on the other tabs, which have content of their own", () => {
-    // The old `:has(.gl-run-log)` spelling collapsed the panel under Step
-    // details and History, because the unmounted Console tab took the log's
-    // class with it.
+  it("holds ONE height across all three tabs", () => {
+    // The first cut shrank the Console tab to its summary when nothing was
+    // live, which made the three tabs three different panels — and the
+    // console the cramped one. The panel must not change size under the
+    // pointer when a tab is clicked.
     render(<ColdPanel testId="t1" />);
-    const panel = document.querySelector('[data-gl="run-panel"]') as HTMLElement;
+    expect(panel().hasAttribute("data-compact")).toBe(false);
+    const resting = panel().style.flexBasis;
+    expect(resting).toBe("224px");
     selectTab("History");
-    expect(panel.hasAttribute("data-compact")).toBe(false);
-    expect(screen.getByRole("button", { name: /the run output/i })).toBeTruthy();
+    expect(panel().style.flexBasis).toBe(resting);
     expect(screen.getByText("No runs recorded yet")).toBeTruthy();
+    selectTab("Step details");
+    expect(panel().style.flexBasis).toBe(resting);
+    selectTab("Console");
+    expect(panel().style.flexBasis).toBe(resting);
+  });
+});
+
+describe("resizing the console", () => {
+  const handle = () => screen.getByRole("separator", { name: /resize the console/i });
+  const panel = () => document.querySelector('[data-gl="run-panel"]') as HTMLElement;
+
+  function drag(fromY: number, toY: number) {
+    fireEvent.pointerDown(handle(), { clientY: fromY, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientY: toY });
+    fireEvent.pointerUp(window, { clientY: toY });
+  }
+
+  it("drags the top edge, and remembers where it was dropped", () => {
+    render(<Panel info={info()} />);
+    // jsdom has no layout, so the drag starts from the state height (224).
+    drag(500, 440);
+    expect(panel().style.flexBasis).toBe("284px");
+    expect(window.localStorage.getItem("runpanel:height")).toBe("284");
+  });
+
+  it("restores the remembered height on the next mount", () => {
+    window.localStorage.setItem("runpanel:height", "300");
+    render(<Panel info={info()} />);
+    expect(panel().style.flexBasis).toBe("300px");
+  });
+
+  it("cannot be dragged away entirely, nor over the step list", () => {
+    render(<Panel info={info()} />);
+    drag(100, 5000);
+    expect(panel().style.flexBasis).toBe("140px");
+    drag(500, -5000);
+    // The ceiling leaves the toolbar and tab strip their room, whatever the
+    // window height is — jsdom's included.
+    expect(panel().style.flexBasis).toBe(`${Math.max(140, window.innerHeight - 220)}px`);
+  });
+
+  it("resizes from the keyboard", () => {
+    render(<Panel info={info()} />);
+    fireEvent.keyDown(handle(), { key: "ArrowUp" });
+    expect(panel().style.flexBasis).toBe("248px");
+    fireEvent.keyDown(handle(), { key: "ArrowDown" });
+    expect(panel().style.flexBasis).toBe("224px");
+  });
+
+  it("double-click puts the resting height back", () => {
+    window.localStorage.setItem("runpanel:height", "400");
+    render(<Panel info={info()} />);
+    expect(panel().style.flexBasis).toBe("400px");
+    fireEvent.doubleClick(handle());
+    expect(panel().style.flexBasis).toBe("224px");
+    expect(window.localStorage.getItem("runpanel:height")).toBe("224");
+  });
+
+  it("a drag from the expanded panel leaves expanded and lands where dropped", () => {
+    // Grabbing an edge means "put it where I drop it" — staying expanded
+    // would make the drag a no-op and the handle a lie.
+    render(<Panel info={info()} />);
+    fireEvent.click(screen.getByRole("button", { name: /expand the run output/i }));
+    expect(panel().className).toContain("gl-run-panel-expanded");
+    drag(300, 320);
+    expect(panel().className).not.toContain("gl-run-panel-expanded");
+    expect(panel().style.flexBasis).toBe("204px");
   });
 });
 

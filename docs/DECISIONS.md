@@ -14223,11 +14223,25 @@ view's own query keys, so the two screens share a cache; the "latest
 captured run" comes from the replay index, not run history, because
 retention can prune the JSON while the replay is still on disk.
 
-**The compact rule changed spelling because the old one became a bug.**
-The no-live-run panel used to shrink via `:not(:has(.gl-run-log))`, which
-was correct while the log's absence meant there was nothing to show. With
-tabs, the log unmounts WITH its tab — so the `:has` spelling collapsed
-the 224px strip under Step details and History, which have content of
-their own. The component now sets `data-compact` only on the Console tab
-with no live run; the CSS keys on that. The expand drawer follows the
-same rule: hidden only where expanding would open onto nothing.
+**One height, and the user drags it.** The panel used to shrink to its
+summary when no run was live (first as `:not(:has(.gl-run-log))` — which
+the tabs broke outright, since the log unmounts WITH its tab and the
+strip collapsed under Step details and History — then as a component-set
+compact state on the Console tab only). Both spellings had the same
+user-facing result: the Console tab was shorter than its siblings, three
+different panels wearing one tab strip, and the shortest one was the
+console. The shrink is retired. The Console tab keeps its bar-plus-log
+surface even before a run — the bar says why the log is empty, because a
+black console saying "no run yet" reads as a console while bare panel
+background reads as a rendering bug — and the panel holds one height on
+every tab.
+
+That height is the user's: the top edge is a drag handle (SplitView's
+pointer idiom, plus arrow keys and a double-click reset), clamped so the
+panel can neither vanish nor evict the step list, written as an inline
+`flex-basis` over the resting 224px, and remembered in localStorage the
+way SplitView remembers its pane widths. The EXPAND toggle deliberately
+stays unpersisted — a panel that stayed expanded would hide the step
+list on the next test opened, for a run nobody had looked at — but a
+dragged height is a layout preference, not a glance at one failure, so
+it survives.
