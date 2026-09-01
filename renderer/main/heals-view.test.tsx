@@ -19,12 +19,20 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import type { HealListEntry, ScriptChangeListEntry } from "../lib/recorder-types";
+import type {
+  HealListEntry,
+  PropagationEvidence,
+  PropagationListEntry,
+  ScriptChangeListEntry,
+} from "../lib/recorder-types";
 import { PAGE_SIZE } from "../lib/paginate";
 import { HealsView } from "./heals-view";
 
 let journal: HealListEntry[] = [];
 let changes: ScriptChangeListEntry[] = [];
+let proposals: PropagationListEntry[] = [];
+let evidence: PropagationEvidence | null = null;
+let testsList: { id: string; name: string }[] = [];
 const accept = vi.fn(async (_id: string, _locator?: unknown) => null);
 const revert = vi.fn(async (_id: string) => null);
 const remove = vi.fn(async (_id: string) => ({ removed: 1 }));
@@ -33,6 +41,9 @@ const acceptChange = vi.fn(async (_id: string) => null);
 const revertChange = vi.fn(async (_id: string) => null);
 const removeChange = vi.fn(async (_id: string) => ({ removed: 1 }));
 const clearAllSettledChanges = vi.fn(async () => ({ removed: 0 }));
+const acceptProposal = vi.fn(async (_id: string, _locator?: unknown) => null);
+const dismissProposal = vi.fn(async (_id: string) => null);
+const revertProposal = vi.fn(async (_id: string) => null);
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -50,6 +61,15 @@ vi.mock("../lib/api", () => ({
       remove: (id: string) => removeChange(id),
       clearAllSettled: () => clearAllSettledChanges(),
     },
+    propagation: {
+      listAll: async () => proposals,
+      accept: (id: string, locator?: unknown) => acceptProposal(id, locator),
+      dismiss: (id: string) => dismissProposal(id),
+      revert: (id: string) => revertProposal(id),
+      evidence: async (_id: string) => evidence,
+    },
+    // ProposalDetail names donors off the tests cache the rail already fills.
+    tests: { list: async () => testsList },
   },
 }));
 
@@ -91,6 +111,36 @@ function heal(partial: Partial<HealListEntry> = {}): HealListEntry {
   };
 }
 
+function proposal(partial: Partial<PropagationListEntry> = {}): PropagationListEntry {
+  return {
+    id: "p1",
+    testId: "t2",
+    testName: "Account",
+    stepId: "s1",
+    stepLabel: 'getByTestId("submit-v1").click()',
+    origin: "https://shop.example.com",
+    fromLocator: { k: "testid", v: "submit-v1" },
+    toLocator: { k: "testid", v: "submit-v2" },
+    donors: [
+      {
+        kind: "heal-accepted",
+        testId: "t1",
+        stepId: "d1",
+        healEntryId: "h1",
+        runId: "r1",
+        at: 1_700_000_000_000,
+      },
+    ],
+    confidence: 0.9,
+    reasons: ["donor-accepted", "fingerprint-key-match"],
+    autoApplyEligible: true,
+    applied: false,
+    status: "pending",
+    at: 1_700_000_000_500,
+    ...partial,
+  };
+}
+
 /** `n` heals, newest first, as the backend returns them. */
 function manyHeals(n: number): HealListEntry[] {
   return Array.from({ length: n }, (_, i) =>
@@ -126,6 +176,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   journal = [];
   changes = [];
+  proposals = [];
+  evidence = null;
+  testsList = [];
 });
 
 describe("HealsView", () => {
@@ -566,6 +619,172 @@ describe("HealsView — script changes", () => {
     // reads as a control that didn't work.
     await waitFor(() => expect(clearAllSettled).toHaveBeenCalled());
     expect(clearAllSettledChanges).toHaveBeenCalled();
+  });
+});
+
+describe("HealsView — propagation proposals", () => {
+  it("gives each proposal state its own chip, reusing the journal's tones", async () => {
+    // `Proposed` is the open item (cyan), `Applied` means the stored test has
+    // already changed and nobody has looked (amber — the loudest state on the
+    // board), and the settled states report without a hue. Asserted on
+    // `data-tone` because the dom project runs `css: false`.
+    proposals = [
+      proposal({ id: "a", status: "pending", applied: false }),
+      proposal({ id: "b", status: "pending", applied: true }),
+      proposal({ id: "c", status: "accepted", applied: true }),
+      proposal({ id: "d", status: "dismissed" }),
+    ];
+    renderView();
+    await screen.findByText("Proposed");
+
+    const tones = new Map(
+      [...document.querySelectorAll('[data-gl="status-chip"]')].map((el) => [
+        el.textContent ?? "",
+        (el as HTMLElement).dataset.tone,
+      ]),
+    );
+    expect(tones.get("Proposed")).toBe("cyan");
+    expect(tones.get("Applied")).toBe("amber");
+    expect(tones.get("Accepted")).toBe("phos");
+    expect(tones.get("Dismissed")).toBe("neutral");
+  });
+
+  it("shows both locators, the reason copy, and the donor's name", async () => {
+    testsList = [{ id: "t1", name: "Login" }];
+    proposals = [proposal()];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+
+    await screen.findByText("was");
+    expect(screen.getByText("now")).toBeTruthy();
+    expect(screen.getAllByText(/submit-v1/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/submit-v2/)).toBeTruthy();
+    // Reason CODES cross the boundary; every sentence is the renderer's own.
+    expect(screen.getByText("You accepted this exact fix on another test.")).toBeTruthy();
+    expect(
+      screen.getByText(/recording lists the new locator among the element's candidates/i),
+    ).toBeTruthy();
+    // The donor is named from the tests cache, not shown as a bare id.
+    // (findBy: the tests query resolves after the detail renders.)
+    expect(await screen.findByText(/Confirmed in Login/)).toBeTruthy();
+  });
+
+  it("applies and dismisses through the propagation API, not the heal one", async () => {
+    proposals = [proposal({ id: "p9" })];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+
+    fireEvent.click(await screen.findByRole("button", { name: /^apply$/i }));
+    await waitFor(() => expect(acceptProposal).toHaveBeenCalledWith("p9", undefined));
+    fireEvent.click(screen.getByRole("button", { name: /^dismiss$/i }));
+    await waitFor(() => expect(dismissProposal).toHaveBeenCalledWith("p9"));
+    expect(accept).not.toHaveBeenCalled();
+    expect(revert).not.toHaveBeenCalled();
+  });
+
+  it("warns on an applied-unreviewed proposal and offers Keep / Revert", async () => {
+    // The auto-apply landing state: the test on disk has already changed.
+    proposals = [proposal({ id: "p2", applied: true })];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+
+    expect(await screen.findByText(/already changed this step/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^keep$/i }));
+    await waitFor(() => expect(acceptProposal).toHaveBeenCalledWith("p2", undefined));
+    fireEvent.click(screen.getByRole("button", { name: /^revert$/i }));
+    await waitFor(() => expect(revertProposal).toHaveBeenCalledWith("p2"));
+  });
+
+  it("offers bulk apply only across the SAME origin, and names its tests", async () => {
+    proposals = [
+      proposal({ id: "p1", testId: "t2", testName: "Account" }),
+      proposal({ id: "p2", testId: "t3", testName: "Search" }),
+      proposal({
+        id: "p3",
+        testId: "t4",
+        testName: "Other site",
+        origin: "https://docs.example.com",
+      }),
+    ];
+    renderView();
+    const rows = await screen.findAllByText('getByTestId("submit-v1").click()');
+    fireEvent.click(rows[0]);
+
+    // 2, not 3 — the docs.example.com proposal is another site's question.
+    fireEvent.click(await screen.findByRole("button", { name: /apply all 2 on this site/i }));
+    const dialog = await screen.findByRole("alertdialog");
+    // The dialog names what it will touch: the count is the user's only
+    // preview of a bulk write to their tests.
+    expect(within(dialog).getByText(/Apply 2 proposals on https:\/\/shop\.example\.com/)).toBeTruthy();
+    expect(within(dialog).getByText(/Account/)).toBeTruthy();
+    expect(within(dialog).getByText(/Search/)).toBeTruthy();
+    expect(within(dialog).queryByText(/Other site/)).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /^apply all$/i }));
+    await waitFor(() => expect(acceptProposal).toHaveBeenCalledTimes(2));
+    expect(acceptProposal.mock.calls.map((c) => c[0]).sort()).toEqual(["p1", "p2"]);
+  });
+
+  it("renders the evidence figures when the join answers, and no frame when it doesn't", async () => {
+    evidence = {
+      donor: {
+        shot: "data:image/png;base64,ZG9ub3I=",
+        rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.1 },
+      },
+      target: {
+        shot: "data:image/png;base64,dGFyZ2V0",
+        rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.1 },
+        approximate: true,
+      },
+    };
+    proposals = [proposal()];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+
+    await screen.findByText("On screen");
+    expect(document.querySelectorAll('[data-gl="shothl"]')).toHaveLength(2);
+    // The donor's box is a measurement; the target's is a record-time memory
+    // and must say so — both in the caption and in the weaker drawing.
+    expect(document.querySelectorAll(".gl-shothl-box")).toHaveLength(2);
+    expect(document.querySelectorAll(".gl-shothl-box-approx")).toHaveLength(1);
+    expect(screen.getByText(/Where it healed/)).toBeTruthy();
+    expect(screen.getByText(/box from the recording, not measured/i)).toBeTruthy();
+  });
+
+  it("omits the evidence section entirely when nothing was retained", async () => {
+    // "No screenshot" is an acceptable state — a broken or empty frame is not.
+    proposals = [proposal()];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+    await screen.findByText("was");
+    expect(screen.queryByText("On screen")).toBeNull();
+    expect(document.querySelector('[data-gl="shothl"]')).toBeNull();
+  });
+
+  it("counts pending proposals with the other journals, one door for review", async () => {
+    journal = [heal({ id: "h1", status: "accepted" })];
+    proposals = [proposal({ id: "p1", status: "pending" })];
+    renderView();
+    expect(await screen.findByText(/2 records · 1 needing review/i)).toBeTruthy();
+  });
+
+  it("offers no actions on a dismissed proposal, and only Revert on an accepted one", async () => {
+    proposals = [proposal({ id: "a", status: "dismissed", stepLabel: "step dismissed" })];
+    renderView();
+    fireEvent.click(await screen.findByText("step dismissed"));
+    await screen.findByText("was");
+    // Anchored: the ROW button's accessible name contains its chip word
+    // ("Dismissed"), which an unanchored /dismiss/i would match.
+    expect(screen.queryByRole("button", { name: /^apply$|^keep$|^dismiss$/i })).toBeNull();
+  });
+
+  it("still offers Revert on an accepted proposal — the record is the undo", async () => {
+    proposals = [proposal({ id: "b", status: "accepted", applied: true })];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+    fireEvent.click(await screen.findByRole("button", { name: /^revert$/i }));
+    await waitFor(() => expect(revertProposal).toHaveBeenCalledWith("b"));
+    expect(screen.queryByRole("button", { name: /^apply$|^keep$/i })).toBeNull();
   });
 });
 

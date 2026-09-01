@@ -418,6 +418,7 @@ describe("the reset footer", () => {
     expect(setSettings).toHaveBeenCalledWith({
       autoHealEnabled: true,
       autoHealApply: "suggest",
+      propagateFixes: true,
       autoHealRetries: 3,
       autoHealAttemptTimeoutMs: 4000,
     });

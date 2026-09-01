@@ -20,6 +20,7 @@ import type {
   Routine,
   BatchTestResult,
   HealListEntry,
+  PropagationListEntry,
   InsightReport,
   InsightsState,
   PickedElement,
@@ -668,6 +669,70 @@ export const RUN_LOG = [
  *  `heals:list` (`HealEntry[]`) and `heals:listAll` (`HealListEntry[]`).
  *  `status: "pending"` is the state the Heals view exists to resolve, so it is
  *  the one worth having on screen. */
+/** Cross-test propagation proposals — one pending with full evidence (the
+ *  populated path the Heals view's third kind renders, ShotHighlight
+ *  included), one auto-applied awaiting review, one dismissed for history. */
+export const PROPAGATIONS: PropagationListEntry[] = [
+  {
+    id: "p-1",
+    testId: "t-checkout",
+    testName: "Checkout — pay with saved card",
+    stepId: "s2",
+    stepLabel: 'click "Sign in"',
+    origin: "https://shop.example.test",
+    donorPageUrl: "https://shop.example.test/login",
+    fromLocator: { k: "testid", v: "signin" },
+    toLocator: { k: "role", role: "button", name: "Sign in" },
+    donors: [
+      { kind: "heal-accepted", testId: "t-login", stepId: "s4", healEntryId: "h-1", runId: "r-2", at: NOW - 30 * MINUTE },
+    ],
+    confidence: 0.95,
+    reasons: ["donor-accepted", "fingerprint-key-match"],
+    autoApplyEligible: true,
+    applied: false,
+    status: "pending",
+    at: NOW - 20 * MINUTE,
+  },
+  {
+    id: "p-2",
+    testId: "t-account",
+    testName: "Account — update shipping address",
+    stepId: "s7",
+    stepLabel: 'click "Sign in"',
+    origin: "https://shop.example.test",
+    fromLocator: { k: "testid", v: "signin" },
+    toLocator: { k: "role", role: "button", name: "Sign in" },
+    donors: [
+      { kind: "heal-run-passed", testId: "t-login", stepId: "s4", healEntryId: "h-1", runId: "r-2", at: NOW - 30 * MINUTE },
+      { kind: "manual-edit", testId: "t-login", stepId: "s4", at: NOW - 25 * MINUTE },
+    ],
+    confidence: 0.9,
+    reasons: ["donor-manual", "donors-agree"],
+    autoApplyEligible: true,
+    applied: true,
+    status: "pending",
+    at: NOW - 18 * MINUTE,
+  },
+  {
+    id: "p-3",
+    testId: "t-search",
+    testName: "Search — filters narrow the results",
+    stepId: "s3",
+    stepLabel: 'click "Sign in"',
+    origin: "https://shop.example.test",
+    fromLocator: { k: "testid", v: "signin" },
+    toLocator: { k: "css", v: "header .signin" },
+    donors: [{ kind: "heal-trainer", testId: "t-login", stepId: "s4", at: NOW - 3 * 60 * MINUTE }],
+    confidence: 0.65,
+    reasons: ["donor-trainer", "fingerprint-similar"],
+    autoApplyEligible: false,
+    applied: false,
+    status: "dismissed",
+    at: NOW - 2 * 60 * MINUTE,
+    decidedAt: NOW - 60 * MINUTE,
+  },
+];
+
 export const HEALS: HealListEntry[] = [
   {
     id: "h-1",
@@ -977,6 +1042,7 @@ export const SETTINGS: RecorderSettings = {
   autoHealRetries: 3,
   autoHealAttemptTimeoutMs: 4_000,
   autoHealApply: "suggest",
+  propagateFixes: true,
   defaultA11yChecks: false,
   debugScreenshots: false,
   defaultCaptureArtifacts: true,

@@ -87,6 +87,7 @@ let settings: Partial<RecorderSettings> = {};
 // Stored batch history, same idiom as `library`: resolved inside the mock so a
 // test can reassign it before the view mounts.
 let history: BatchRecord[] = [];
+let proposals: import("../lib/recorder-types").PropagationListEntry[] = [];
 // Live backend pushes, so a test can put the view into a mid-batch state
 // without a backend. Keyed by channel, same shape as the real api.on.
 const listeners = new Map<string, ((payload: unknown) => void)[]>();
@@ -94,6 +95,7 @@ const listeners = new Map<string, ((payload: unknown) => void)[]>();
 vi.mock("../lib/api", () => ({
   api: {
     tests: { list: async () => library },
+    propagation: { listAll: async () => proposals },
     recorder: {
       // batchTestOptions defaults to "every test ticked on one engine" — the
       // state a user who has used this view before has stored. Most tests below
@@ -312,6 +314,7 @@ function testSteps(steps: readonly RoutineStep[]): RoutineTestStep[] {
 }
 
 beforeEach(() => {
+  proposals = [];
   vi.clearAllMocks();
   listeners.clear();
   library = [test_("a", "Alpha"), test_("b", "Beta"), test_("c", "Gamma")];
@@ -1705,6 +1708,39 @@ describe("BatchView finished-batch verdict", () => {
     const chip = await waitFor(() => verdictChip("Routine passed"));
     expect(chip.getAttribute("data-tone")).toBe("phos");
     expect(chip.textContent).toBe("3 passed");
+  });
+
+  it("mentions pending cross-test proposals once the batch settles, with one door", async () => {
+    // The routine's runs can mint proposals for OTHER tests. The editor grows
+    // no review UI — one line, one door to the Heals view where the evidence
+    // is (docs/plans/preemptive-updates.md).
+    proposals = [
+      {
+        id: "p1",
+        testId: "t9",
+        testName: "Account",
+        stepId: "s1",
+        stepLabel: "click",
+        origin: "https://example.test",
+        fromLocator: { k: "testid", v: "a" },
+        toLocator: { k: "testid", v: "b" },
+        donors: [],
+        confidence: 0.9,
+        reasons: [],
+        autoApplyEligible: false,
+        applied: false,
+        status: "pending",
+        at: 1_700_000_000_000,
+      },
+    ];
+    renderView();
+    await rowNames();
+    emit("batch:done", done(3, 0));
+
+    expect(
+      await screen.findByText(/1 suggested update for other tests waits on review/i),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: /review them/i })).toBeTruthy();
   });
 
   it("claims no verdict for a batch the user stopped mid-flight", async () => {

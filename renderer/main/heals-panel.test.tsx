@@ -13,11 +13,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import type { HealEntry, ScriptChangeEntry, TestRecord } from "../lib/recorder-types";
+import type {
+  HealEntry,
+  PropagationEntry,
+  ScriptChangeEntry,
+  TestRecord,
+} from "../lib/recorder-types";
 import { HealsPanel } from "./heals-panel";
 
 let journal: HealEntry[] = [];
 let changes: ScriptChangeEntry[] = [];
+let proposals: PropagationEntry[] = [];
 const accept = vi.fn(async (_id: string, _locator?: unknown) => null);
 const revert = vi.fn(async (_id: string) => null);
 const clearSettled = vi.fn(async (_testId: string) => ({ removed: 0 }));
@@ -39,6 +45,7 @@ vi.mock("../lib/api", () => ({
       revert: (id: string) => revertChange(id),
       clearSettled: (testId: string) => clearSettledChanges(testId),
     },
+    propagation: { list: async () => proposals },
   },
 }));
 
@@ -101,12 +108,59 @@ beforeEach(() => {
   vi.clearAllMocks();
   journal = [];
   changes = [];
+  proposals = [];
 });
 
 describe("HealsPanel", () => {
   it("explains itself when there is nothing to review", async () => {
     renderPanel();
     expect(await screen.findByText(/Nothing to review/i)).toBeTruthy();
+  });
+
+  it("counts pending propagation proposals in the review chip, and points at Heals", async () => {
+    // The proposals themselves live in the Heals view (one review surface,
+    // beside the evidence figures); this tab's job is to not let the count
+    // lie about them, and to say where they are.
+    proposals = [
+      {
+        id: "p1",
+        testId: "t1",
+        stepId: "s9",
+        stepLabel: "click",
+        origin: "https://example.test",
+        fromLocator: { k: "testid", v: "a" },
+        toLocator: { k: "testid", v: "b" },
+        donors: [],
+        confidence: 0.9,
+        reasons: [],
+        autoApplyEligible: false,
+        applied: false,
+        status: "pending",
+        at: 1_700_000_000_000,
+      },
+      {
+        id: "p2",
+        testId: "t1",
+        stepId: "s9",
+        stepLabel: "click",
+        origin: "https://example.test",
+        fromLocator: { k: "testid", v: "a" },
+        toLocator: { k: "testid", v: "c" },
+        donors: [],
+        confidence: 0.9,
+        reasons: [],
+        autoApplyEligible: false,
+        applied: false,
+        status: "dismissed",
+        at: 1_700_000_000_000,
+      },
+    ];
+    renderPanel();
+
+    // Only the pending one counts, and the pointer names the Heals view.
+    expect(await screen.findByText(/1 propagated fix from sibling tests/i)).toBeTruthy();
+    const review = screen.getByText("Needs review").closest("div");
+    expect(review?.textContent).toContain("1");
   });
 
   it("shows both the old and the new locator", async () => {

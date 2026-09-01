@@ -26,9 +26,9 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertDialog, ScrollArea, toast } from "@ui";
-import { Check, FileCode2, RotateCcw, Trash2, Wand2 } from "lucide-react";
+import { Check, FileCode2, RotateCcw, Share2, Trash2, Wand2 } from "lucide-react";
 
-import { Btn, Panel, StatusChip, TONE, insetRail, toneSurface } from "../theme";
+import { Btn, Panel, ShotHighlight, StatusChip, TONE, insetRail, toneSurface } from "../theme";
 import { api } from "../lib/api";
 import { clampPage, pageSlice, PAGE_SIZE } from "../lib/paginate";
 import { DiffView } from "../components/diff-view";
@@ -36,16 +36,38 @@ import { diffLines } from "../lib/line-diff";
 import { formatLocator } from "./refine-selector-dialog";
 import { ChangeCounts, originLabel } from "./script-change-row";
 import { Pager } from "./pager";
-import type { HealListEntry, Locator, ScriptChangeListEntry } from "../lib/recorder-types";
+import type {
+  HealListEntry,
+  Locator,
+  PropagationListEntry,
+  ScriptChangeListEntry,
+} from "../lib/recorder-types";
 
-/** One record in the journal, of either kind.
+/** One record in the journal, of any kind.
  *
  *  Discriminated on `kind` rather than on a field only one of them has: every
- *  branch in this file is then a compile error the day a third kind lands,
- *  instead of a row that silently renders as the wrong thing. */
+ *  branch in this file is then a compile error the day a new kind lands,
+ *  instead of a row that silently renders as the wrong thing — which is
+ *  exactly how the third kind (cross-test propagation proposals) arrived. */
 export type JournalEntry =
   | { kind: "heal"; entry: HealListEntry }
-  | { kind: "script"; entry: ScriptChangeListEntry };
+  | { kind: "script"; entry: ScriptChangeListEntry }
+  | { kind: "proposal"; entry: PropagationListEntry };
+
+/** Fixed copy per engine reason code — the insights-view rule: the engine
+ *  contributes codes, the renderer owns every sentence, so nothing the engine
+ *  emits can relabel a control. A code this map does not know is skipped. */
+const REASON_COPY: Record<string, string> = {
+  "donor-accepted": "You accepted this exact fix on another test.",
+  "donor-manual": "You made this exact fix by hand on another test.",
+  "donor-run-passed": "Auto-Heal made this fix during a run that passed.",
+  "donor-trainer": "Auto-Heal made this fix in the trainer, while you watched.",
+  "donors-agree": "More than one confirmed fix agrees on it.",
+  "fingerprint-key-match":
+    "This step's own recording lists the new locator among the element's candidates.",
+  "fingerprint-similar": "The recorded elements look alike.",
+  "target-failing": "This test is already going red.",
+};
 
 function fmtWhen(ms: number): string {
   return new Date(ms).toLocaleString(undefined, {
@@ -99,6 +121,38 @@ function scriptStatusChip(entry: ScriptChangeListEntry): React.ReactElement {
       Applied
     </StatusChip>
   );
+}
+
+/** A proposal's states, mapped the same way. `Proposed` takes the heals'
+ *  `Suggested` cyan — the open item waiting on you — and `Applied` reuses the
+ *  amber word exactly, because it means exactly what it means on a heal: the
+ *  stored test has changed and nobody has looked. The engine's housekeeping
+ *  states (`Superseded`, `Stale`) get no tone: there is nothing to decide. */
+function proposalStatusChip(entry: PropagationListEntry): React.ReactElement {
+  if (entry.status === "accepted") return <StatusChip tone="phos">Accepted</StatusChip>;
+  if (entry.status === "pending" && entry.applied) {
+    return (
+      <StatusChip tone="amber" title="Propagation already changed the stored test">
+        Applied
+      </StatusChip>
+    );
+  }
+  if (entry.status === "pending") {
+    return (
+      <StatusChip tone="cyan" title="Recorded only — the stored test is unchanged">
+        Proposed
+      </StatusChip>
+    );
+  }
+  const word =
+    entry.status === "dismissed"
+      ? "Dismissed"
+      : entry.status === "reverted"
+        ? "Reverted"
+        : entry.status === "superseded"
+          ? "Superseded"
+          : "Stale";
+  return <StatusChip>{word}</StatusChip>;
 }
 
 /** One row in the list. Deliberately terse — the detail pane carries the rest,
@@ -454,6 +508,204 @@ function ScriptChangeDetail({
   );
 }
 
+/** The proposal row. Same anatomy as the two above — one glyph, two lines, a
+ *  chip and a time. Plain glyph, not violet: the engine is deterministic
+ *  machinery, and violet is the AI mark. */
+function ProposalRow({
+  entry,
+  selected,
+  onSelect,
+}: {
+  entry: PropagationListEntry;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-current={selected ? "true" : undefined}
+      data-selected={selected ? "" : undefined}
+      className="gl-heals-row"
+    >
+      <span className="gl-heals-row-icon gl-heals-row-icon-plain">
+        <Share2 aria-hidden="true" />
+      </span>
+      <span className="gl-heals-row-text">
+        <span className="gl-heals-row-step">
+          {entry.stepLabel || "Propagated fix"}
+        </span>
+        <span className="gl-heals-row-test">{entry.testName ?? "(deleted test)"}</span>
+      </span>
+      <span className="gl-heals-row-meta">
+        {proposalStatusChip(entry)}
+        <span className="gl-heals-row-when">{fmtWhen(entry.at)}</span>
+      </span>
+    </button>
+  );
+}
+
+function ProposalDetail({
+  entry,
+  sameOriginPending,
+  onAccept,
+  onDismiss,
+  onRevert,
+  onAcceptAll,
+  busy,
+}: {
+  entry: PropagationListEntry;
+  /** Every OTHER pending proposal on this origin — the bulk apply's scope. */
+  sameOriginPending: PropagationListEntry[];
+  onAccept: () => void;
+  onDismiss: () => void;
+  onRevert: () => void;
+  onAcceptAll: () => void;
+  busy: boolean;
+}) {
+  const settled = entry.status !== "pending";
+  // Donor names come from the tests cache the rail already fills; a donor
+  // whose test is gone renders the way every deleted test does here.
+  const tests = useQuery({ queryKey: ["tests"], queryFn: api.tests.list }).data;
+  const nameOf = (testId: string) =>
+    tests?.find((t) => t.id === testId)?.name ?? "(deleted test)";
+  // The evidence figure — joined backend-side; every absent side is a rung of
+  // the honest ladder, so an empty result simply renders no figures.
+  const evidence = useQuery({
+    queryKey: ["propagations", "evidence", entry.id],
+    queryFn: () => api.propagation.evidence(entry.id),
+  }).data;
+  const reasons = entry.reasons.map((code) => REASON_COPY[code]).filter(Boolean);
+  const bulkNames = [...new Set(sameOriginPending.map((p) => p.testName ?? "(deleted test)"))];
+
+  return (
+    <ScrollArea className="min-h-0 flex-1">
+      <div className="gl-heals-detail-body">
+        {!settled && entry.applied ? (
+          <p className="gl-notice" style={{ boxShadow: insetRail(TONE.amber) }}>
+            Propagation has already changed this step. A fix confirmed on another test is not
+            the same as a fix confirmed on this one — read both locators before you keep it.
+          </p>
+        ) : null}
+
+        <div className="gl-heals-section">
+          <span className="gl-section-title">{entry.stepLabel || "Propagated fix"}</span>
+          <div className="gl-heal-head">
+            <span className="gl-chip">From another test</span>
+            {proposalStatusChip(entry)}
+            <span className="gl-heal-when">{fmtWhen(entry.at)}</span>
+          </div>
+          <span className="gl-note">
+            {entry.testName ?? "The test this targets has been deleted."}
+          </span>
+        </div>
+
+        <div className="gl-heals-section">
+          <span className="gl-section-title">Locator</span>
+          <div className="gl-heal-locs">
+            <div className="gl-heal-loc">
+              <span className="gl-heal-loc-key">was</span>
+              <code className="gl-mono-value gl-heal-was">{formatLocator(entry.fromLocator)}</code>
+            </div>
+            <div className="gl-heal-loc">
+              <span className="gl-heal-loc-key">now</span>
+              <code className="gl-mono-value gl-heal-now">{formatLocator(entry.toLocator)}</code>
+            </div>
+          </div>
+        </div>
+
+        <div className="gl-heals-section">
+          <span className="gl-section-title">Why</span>
+          <p className="gl-note">
+            {entry.origin}
+            {entry.donorPageUrl ? ` · seen on ${entry.donorPageUrl}` : ""}
+          </p>
+          {reasons.map((sentence) => (
+            <p key={sentence} className="gl-note">
+              {sentence}
+            </p>
+          ))}
+          {entry.donors.length > 0 ? (
+            <p className="gl-note">
+              {entry.donors.length === 1 ? "Confirmed in " : "Confirmed in: "}
+              {[...new Set(entry.donors.map((d) => nameOf(d.testId)))].join(", ")}
+            </p>
+          ) : null}
+        </div>
+
+        {evidence?.donor?.shot || evidence?.target?.shot ? (
+          <div className="gl-heals-section">
+            <span className="gl-section-title">On screen</span>
+            <div className="gl-prop-evidence">
+              {evidence?.donor?.shot ? (
+                <ShotHighlight
+                  shot={evidence.donor.shot}
+                  rect={evidence.donor.rect}
+                  approximate={evidence.donor.approximate}
+                  label={formatLocator(entry.toLocator)}
+                  caption="Where it healed — the donor's run, after the fix"
+                />
+              ) : null}
+              {evidence?.target?.shot ? (
+                <ShotHighlight
+                  shot={evidence.target.shot}
+                  rect={evidence.target.rect}
+                  approximate={evidence.target.approximate}
+                  caption={
+                    evidence.target.approximate
+                      ? "This test's step — box from the recording, not measured"
+                      : "This test's step, on its most recent captured run"
+                  }
+                />
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="gl-heal-actions">
+          {!settled ? (
+            <>
+              <Btn tone="go" disabled={busy} onClick={onAccept}>
+                <Check aria-hidden="true" />
+                {entry.applied ? "Keep" : "Apply"}
+              </Btn>
+              <Btn tone="ghost" disabled={busy} onClick={entry.applied ? onRevert : onDismiss}>
+                <RotateCcw aria-hidden="true" />
+                {entry.applied ? "Revert" : "Dismiss"}
+              </Btn>
+              {sameOriginPending.length > 0 ? (
+                <AlertDialog
+                  trigger={
+                    <Btn tone="ghost" disabled={busy}>
+                      Apply all {sameOriginPending.length + 1} on this site
+                    </Btn>
+                  }
+                  title={`Apply ${sameOriginPending.length + 1} proposals on ${entry.origin}?`}
+                  description={`This writes the proposed locator into each test and regenerates its script: ${[
+                    entry.testName ?? "(deleted test)",
+                    ...bulkNames,
+                  ]
+                    .slice(0, 6)
+                    .join(", ")}${
+                    bulkNames.length + 1 > 6 ? ` and ${bulkNames.length + 1 - 6} more` : ""
+                  }. Every change lands in this journal with a one-click revert.`}
+                  confirmLabel="Apply all"
+                  onConfirm={onAcceptAll}
+                />
+              ) : null}
+            </>
+          ) : entry.status === "accepted" ? (
+            <Btn tone="ghost" disabled={busy} onClick={onRevert}>
+              <RotateCcw aria-hidden="true" />
+              Revert
+            </Btn>
+          ) : null}
+        </div>
+      </div>
+    </ScrollArea>
+  );
+}
+
 export function HealsView() {
   const qc = useQueryClient();
   const [page, setPage] = React.useState(1);
@@ -467,16 +719,21 @@ export function HealsView() {
     queryKey: ["script-changes", "all"],
     queryFn: () => api.scriptChanges.listAll(),
   });
-  // One list, both kinds, newest first — the question this screen answers is
+  const propagations = useQuery({
+    queryKey: ["propagations", "all"],
+    queryFn: () => api.propagation.listAll(),
+  });
+  // One list, every kind, newest first — the question this screen answers is
   // "what has been changing my tests", and splitting it by mechanism would
-  // make the user read two lists to answer it once.
+  // make the user read three lists to answer it once.
   const entries = React.useMemo<JournalEntry[]>(
     () =>
       [
         ...(heals.data ?? []).map((entry): JournalEntry => ({ kind: "heal", entry })),
         ...(scriptChanges.data ?? []).map((entry): JournalEntry => ({ kind: "script", entry })),
+        ...(propagations.data ?? []).map((entry): JournalEntry => ({ kind: "proposal", entry })),
       ].sort((a, b) => b.entry.at - a.entry.at),
-    [heals.data, scriptChanges.data],
+    [heals.data, scriptChanges.data, propagations.data],
   );
 
   // Clamp rather than trust: accepting the last record on the last page shrinks
@@ -489,6 +746,7 @@ export function HealsView() {
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["heals"] });
     void qc.invalidateQueries({ queryKey: ["script-changes"] });
+    void qc.invalidateQueries({ queryKey: ["propagations"] });
     void qc.invalidateQueries({ queryKey: ["tests"] });
     // A reverted script change rewrites a spec and re-parses its steps.
     void qc.invalidateQueries({ queryKey: ["script"] });
@@ -542,6 +800,48 @@ export function HealsView() {
     },
     onError: (err: unknown) => toast.error(String(err)),
   });
+  const acceptProposal = useMutation({
+    mutationFn: (p: { id: string; locator?: Locator }) => api.propagation.accept(p.id, p.locator),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Applied to the test");
+    },
+    onError: (err: unknown) => toast.error(String(err)),
+  });
+  const dismissProposal = useMutation({
+    mutationFn: (id: string) => api.propagation.dismiss(id),
+    onSuccess: invalidate,
+    onError: (err: unknown) => toast.error(String(err)),
+  });
+  const revertProposal = useMutation({
+    mutationFn: (id: string) => api.propagation.revert(id),
+    onSuccess: invalidate,
+    onError: (err: unknown) => toast.error(String(err)),
+  });
+  const acceptAllProposals = useMutation({
+    // Sequential, not Promise.all: each accept regenerates a spec, and every
+    // refusal (a step gone stale mid-batch) must count without failing the
+    // rest. The summary says both numbers, because "applied some of them" is
+    // the honest outcome of a bulk action over live tests.
+    mutationFn: async (ids: string[]) => {
+      let applied = 0;
+      for (const id of ids) {
+        try {
+          await api.propagation.accept(id);
+          applied += 1;
+        } catch {
+          // Left pending or marked stale by the service — visible in the list.
+        }
+      }
+      return { applied, of: ids.length };
+    },
+    onSuccess: (res) => {
+      invalidate();
+      if (res.applied === res.of) toast.success(`Applied ${res.applied} proposals`);
+      else toast.warning(`Applied ${res.applied} of ${res.of} — the rest need a look`);
+    },
+    onError: (err: unknown) => toast.error(String(err)),
+  });
   const clearSettled = useMutation({
     // Both journals, one button — "Clear history" that emptied half the list
     // would read as a control that didn't work.
@@ -568,7 +868,11 @@ export function HealsView() {
     remove.isPending ||
     keepChange.isPending ||
     revertChange.isPending ||
-    removeChange.isPending;
+    removeChange.isPending ||
+    acceptProposal.isPending ||
+    dismissProposal.isPending ||
+    revertProposal.isPending ||
+    acceptAllProposals.isPending;
 
   const clearHistory =
     settledCount > 0 ? (
@@ -607,9 +911,9 @@ export function HealsView() {
       >
         {entries.length === 0 ? (
           <p className="gl-heals-empty gl-note">
-            {heals.isLoading || scriptChanges.isLoading
+            {heals.isLoading || scriptChanges.isLoading || propagations.isLoading
               ? "Loading…"
-              : "Nothing yet. Every locator Auto-Heal changes and every rewrite of a test's script is recorded here, with a way to put it back."}
+              : "Nothing yet. Every locator Auto-Heal changes, every rewrite of a test's script, and every fix proposed from a sibling test is recorded here, with a way to put it back."}
           </p>
         ) : (
           <>
@@ -623,8 +927,15 @@ export function HealsView() {
                       selected={row.entry.id === selectedId}
                       onSelect={() => setSelectedId(row.entry.id)}
                     />
-                  ) : (
+                  ) : row.kind === "script" ? (
                     <ScriptChangeListRow
+                      key={row.entry.id}
+                      entry={row.entry}
+                      selected={row.entry.id === selectedId}
+                      onSelect={() => setSelectedId(row.entry.id)}
+                    />
+                  ) : (
+                    <ProposalRow
                       key={row.entry.id}
                       entry={row.entry}
                       selected={row.entry.id === selectedId}
@@ -656,13 +967,40 @@ export function HealsView() {
             onRevert={() => revert.mutate(selected.entry.id)}
             onDelete={() => remove.mutate(selected.entry.id)}
           />
-        ) : (
+        ) : selected.kind === "script" ? (
           <ScriptChangeDetail
             entry={selected.entry}
             busy={busy}
             onAccept={() => keepChange.mutate(selected.entry.id)}
             onRevert={() => revertChange.mutate(selected.entry.id)}
             onDelete={() => removeChange.mutate(selected.entry.id)}
+          />
+        ) : (
+          <ProposalDetail
+            entry={selected.entry}
+            busy={busy}
+            sameOriginPending={(propagations.data ?? []).filter(
+              (p) =>
+                p.id !== selected.entry.id &&
+                p.status === "pending" &&
+                p.origin === selected.entry.origin,
+            )}
+            onAccept={() => acceptProposal.mutate({ id: selected.entry.id })}
+            onDismiss={() => dismissProposal.mutate(selected.entry.id)}
+            onRevert={() => revertProposal.mutate(selected.entry.id)}
+            onAcceptAll={() =>
+              acceptAllProposals.mutate([
+                selected.entry.id,
+                ...(propagations.data ?? [])
+                  .filter(
+                    (p) =>
+                      p.id !== selected.entry.id &&
+                      p.status === "pending" &&
+                      p.origin === selected.entry.origin,
+                  )
+                  .map((p) => p.id),
+              ])
+            }
           />
         )}
       </Panel>

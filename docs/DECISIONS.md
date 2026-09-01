@@ -10,6 +10,60 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-01 — Propagation's surfaces: one review door, evidence you can look at, and an auto apply that stays pending
+
+**The review lives in ONE place, and everything else points at it.** The
+plan put proposals in the Heals view (its `JournalEntry` union was built
+for a third kind), and PR 4 held that line everywhere it was tempting to
+bend: the per-test Heals tab and `heals-panel` count pending proposals
+into their badges but render a POINTER ("N propagated fixes… wait in the
+Heals view, beside the evidence") rather than rows; the Routines outcome
+panel gets one line and a `gl-linklike` to `/heals`; Home's `Heals to
+review` and Stats' Auto-Heal tile fold proposals into the same number a
+heal takes (`summariseHeals` gained a third argument rather than a second
+tile). Every alternative was a second review surface — and two surfaces
+for one queue is how a badge and its destination come to disagree, the
+exact drift the one-door rule in `stats-categories.ts` already names.
+
+**The evidence figure is a primitive, and the box states its confidence.**
+`ShotHighlight` redraws the trainer's refine-box idiom (border, halo,
+label pill riding the top edge — `capture-script.ts`'s picker) over a step
+screenshot in `--gl-*` vocabulary, because the user has already learned
+what that box means: "this element, here." Two claims are kept visually
+distinct on purpose: a MEASURED rect (PR 1's `boundingBox` at heal time,
+or a replay step's) draws solid with a spotlight — a 100vmax box-shadow
+the stage clips, so the page dims around the element — while an
+APPROXIMATE rect (the recording-time fingerprint, all the target side may
+have) draws dashed with no spotlight. Collapsing them would let a
+years-old fingerprint rect make the same statement as a measurement taken
+during the healing run. Motion is decoration only — one 700ms settle
+pulse, static under reduced motion, and position/size never animate
+because a box easing toward its rect briefly draws a geometry claim that
+is not true. "No screenshot" renders no frame at all: an empty bezel
+would read as a broken figure, and absence is an acceptable state the
+plan promised to keep honest. The join runs backend-side in ONE
+`propagation:evidence` IPC (journal rect + replay manifest + shot file →
+data URLs) because the artifact layer owns those joins; three renderer
+round-trips would re-derive them per render.
+
+**An auto apply is a write, not a decision.** Found while writing the UI
+tests against the merged PR 3: `applyEntry` settled a `via: "auto"` apply
+straight to `accepted`, so the amber "Applied, unreviewed" state the plan
+specified — and the UI, the counts and the settings copy all describe —
+was unreachable, and an unattended mode change would have settled its own
+reviews. Three coordinated fixes: `markApplied` stamps pending+`applied`
+(no `decidedAt` — nobody decided anything), the sweep skips applied
+entries, and the shared stale rule holds an applied pending entry while
+its step carries `toLocator` (staling it would ALSO settle a review
+nobody did — the step's key no longer matches `fromLocator`, which is
+what stale means everywhere else). `applyEntry` then recognises the
+applied-in-place case so Keep — and a bulk apply that swept an applied
+entry up — settles without rewriting the step, instead of tripping the
+staleness guard and marking a correct entry stale, which is what the
+first implementation did the moment Keep was pressed. The mutation run
+that pinned this (`check:propagation` §4) is the reason the rule "verify
+a test can fail" applies to checks too.
+
 ### 2026-09-01 — Propagation lands in the app: seeds before probes, one apply path, and hooks that cannot loop
 
 PR 3 of [plans/preemptive-updates.md](plans/preemptive-updates.md) — the

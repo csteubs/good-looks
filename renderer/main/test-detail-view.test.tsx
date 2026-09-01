@@ -87,6 +87,7 @@ const getScript = vi.fn(async (_id: string) => "import { test } from '@playwrigh
 /** The live page (a Playwright browser the editor owns). Closed unless a
  *  test opens it. */
 let livePage: { open: boolean; url?: string; title?: string; picking?: boolean; closedReason?: string } = { open: false };
+let proposals: import("../lib/recorder-types").PropagationEntry[] = [];
 const livePageOpen = vi.fn(async (url: string, _browser?: string) => {
   livePage = { open: true, url, title: "Live" };
   return livePage;
@@ -191,6 +192,7 @@ vi.mock("../lib/api", () => ({
       list: async () => runs,
     },
     heals: { list: async () => [] },
+    propagation: { list: async () => proposals },
     shopify: { list: async () => signatures },
     artifacts: { getReplay: async () => null },
     aiDebug: {
@@ -262,6 +264,7 @@ beforeEach(() => {
   routeId = "t1";
   library = {};
   runs = [];
+  proposals = [];
   signatures = [];
   flowUsage = [];
   settings = {
@@ -1948,5 +1951,34 @@ describe("the Script tab's live page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Record here" }));
     await waitFor(() => expect(startRecording).toHaveBeenCalledWith("https://shop.example.com/${path}", "Checkout", "t1"));
     await waitFor(() => expect(setCursor).toHaveBeenCalledWith(2));
+  });
+});
+
+describe("the Heals tab badge", () => {
+  it("counts a pending propagation proposal with the other reviews", async () => {
+    // One badge for heals, script changes and propagated fixes alike: three
+    // stores, three routes to the same hazard — a change to this test nobody
+    // has read.
+    proposals = [
+      {
+        id: "p1",
+        testId: "t1",
+        stepId: "s1",
+        stepLabel: "click",
+        origin: "https://example.test",
+        fromLocator: { k: "testid", v: "a" },
+        toLocator: { k: "testid", v: "b" },
+        donors: [],
+        confidence: 0.9,
+        reasons: [],
+        autoApplyEligible: false,
+        applied: false,
+        status: "pending",
+        at: 1_700_000_000_000,
+      },
+    ];
+    renderView();
+    const tab = await screen.findByRole("tab", { name: /Heals \(1\)/ });
+    expect(tab).toBeTruthy();
   });
 });

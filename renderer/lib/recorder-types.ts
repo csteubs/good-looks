@@ -883,6 +883,63 @@ export interface HealListEntry extends HealEntry {
   testName: string | null;
 }
 
+/** Cross-test propagation (mirror of main/services/propagation-store.ts). */
+export type PropagationStatus =
+  | "pending"
+  | "accepted"
+  | "dismissed"
+  | "reverted"
+  | "superseded"
+  | "stale";
+
+export interface PropagationDonorRef {
+  kind: "heal-accepted" | "heal-run-passed" | "heal-trainer" | "manual-edit";
+  testId: string;
+  stepId: string;
+  healEntryId?: string;
+  runId?: string;
+  at: number;
+}
+
+export interface PropagationEntry {
+  id: string;
+  testId: string;
+  stepId: string;
+  stepLabel: string;
+  origin: string;
+  donorPageUrl?: string;
+  /** the target step's own locator at proposal time — the undo */
+  fromLocator: Locator;
+  toLocator: Locator;
+  donors: PropagationDonorRef[];
+  confidence: number;
+  /** codes from shared/propagation.mjs REASON_CODES — copy lives renderer-side */
+  reasons: string[];
+  autoApplyEligible: boolean;
+  applied: boolean;
+  status: PropagationStatus;
+  at: number;
+  decidedAt?: number;
+}
+
+export interface PropagationListEntry extends PropagationEntry {
+  testName: string | null;
+}
+
+/** One side of the evidence figure `propagation:evidence` assembles: the shot
+ *  as a data URL (null when retention took it), the box when one is known,
+ *  and whether that box is a record-time memory rather than a measurement. */
+export interface PropagationEvidenceSide {
+  shot: string | null;
+  rect?: { x: number; y: number; w: number; h: number };
+  approximate?: boolean;
+}
+
+export interface PropagationEvidence {
+  donor?: PropagationEvidenceSide;
+  target?: PropagationEvidenceSide;
+}
+
 /** Where a whole-script change came from (mirror of script-change-store.ts). */
 export type ScriptChangeOrigin = "ai-debug" | "ai-inline" | "manual";
 /** Which AI affordance wrote a change (mirror of `AFFORDANCES`). */
@@ -1440,6 +1497,9 @@ export interface RecorderSettings {
   /** What a successful heal may do to the stored test (mirror of main types).
    *  "suggest" (default) records it for review; "apply" writes it immediately. */
   autoHealApply: HealApplyMode;
+  /** Cross-test propagation (default true): confirmed fixes propose the same
+   *  fix for sibling tests and seed runs' heal maps. Off is fully off. */
+  propagateFixes: boolean;
   /** default value of the per-test "Check accessibility" toggle. */
   defaultA11yChecks: boolean;
   /** listen for screenshot requests from an MCP client (default false). */

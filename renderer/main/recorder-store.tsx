@@ -632,6 +632,16 @@ export function RecorderProvider({
       void qc.invalidateQueries({ queryKey: ["insight-report"] });
       void qc.invalidateQueries({ queryKey: ["insights-status"] });
     });
+    // A propagation proposal was created, refreshed, applied, dismissed or
+    // reverted by a writer no run drives — a trainer heal, a manual edit, an
+    // accept in another window. The run-driven writes ride `runs:changed`
+    // above (["propagations"] is in RUN_DERIVED_KEYS); this channel covers
+    // the rest, and it is subscribed HERE because the readers that matter are
+    // Home's review count and the test tabs' badges, which render on routes a
+    // route-level subscription would be unmounted from.
+    const offPropagations = api.on("propagations:changed", () => {
+      void qc.invalidateQueries({ queryKey: ["propagations"] });
+    });
     // A batch already running when this window opened. `batch:progress` fires
     // on every test transition so it would self-seed within seconds, but "the
     // ticker is blank until the next test finishes" is a blank ticker during
@@ -822,6 +832,7 @@ export function RecorderProvider({
       offAiDebugHistory();
       offFailureReasons();
       offInsights();
+      offPropagations();
       offBatchProgress();
       offBatchDone();
       offDebug();

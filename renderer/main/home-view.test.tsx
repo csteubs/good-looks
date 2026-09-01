@@ -19,12 +19,18 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import type { HealListEntry, RunRecord, TestRecord } from "../lib/recorder-types";
+import type {
+  HealListEntry,
+  PropagationListEntry,
+  RunRecord,
+  TestRecord,
+} from "../lib/recorder-types";
 import { HomeView, greenRate } from "./home-view";
 
 let tests: TestRecord[] = [];
 let runs: RunRecord[] = [];
 let heals: HealListEntry[] = [];
+let proposals: PropagationListEntry[] = [];
 
 const navigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigate }));
@@ -34,6 +40,7 @@ vi.mock("../lib/api", () => ({
     tests: { list: async () => tests },
     runs: { list: async () => runs },
     heals: { listAll: async () => heals },
+    propagation: { listAll: async () => proposals },
     recorder: { getSettings: async () => ({ disabledAestheticEnhancements: [] }) },
   },
 }));
@@ -114,6 +121,7 @@ beforeEach(() => {
   tests = [];
   runs = [];
   heals = [];
+  proposals = [];
   navigate.mockClear();
 });
 
@@ -188,6 +196,51 @@ describe("the readouts", () => {
     expect(statValue("Green · 7d")).toBe("50%");
     // Only the pending one — a heal already accepted is not waiting on anybody.
     expect(statValue("Heals to review")).toBe("1");
+  });
+
+  it("counts pending propagation proposals into the review queue", async () => {
+    // One door: the readout answers "how much is waiting on me in Heals",
+    // whichever journal the wait lives in.
+    heals = [heal({ id: "h1" })];
+    proposals = [
+      {
+        id: "p1",
+        testId: "t2",
+        testName: "Account",
+        stepId: "s1",
+        stepLabel: "click",
+        origin: "https://example.test",
+        fromLocator: { k: "testid", v: "a" },
+        toLocator: { k: "testid", v: "b" },
+        donors: [],
+        confidence: 0.9,
+        reasons: [],
+        autoApplyEligible: false,
+        applied: false,
+        status: "pending",
+        at: Date.now(),
+      },
+      // Settled — must not count.
+      {
+        id: "p2",
+        testId: "t3",
+        testName: "Search",
+        stepId: "s1",
+        stepLabel: "click",
+        origin: "https://example.test",
+        fromLocator: { k: "testid", v: "a" },
+        toLocator: { k: "testid", v: "b" },
+        donors: [],
+        confidence: 0.9,
+        reasons: [],
+        autoApplyEligible: false,
+        applied: true,
+        status: "accepted",
+        at: Date.now(),
+      },
+    ];
+    renderHome();
+    await waitFor(() => expect(statValue("Heals to review")).toBe("2"));
   });
 
   it("shows an em dash rather than a zero before the data arrives", () => {

@@ -255,6 +255,13 @@ export function StatsView() {
   // and ["replays"] is the Visual view's — so the board costs a round trip only
   // on the first visit, and drilling into a category costs none at all.
   const healsQuery = useQuery({ queryKey: ["heals", "all"], queryFn: () => api.heals.listAll() });
+  // The Auto-Heal tile's other half: propagated proposals wait in the same
+  // queue behind the same door, so the tile counts both. Shares the Heals
+  // view's key, like ["heals","all"] above.
+  const propagationsQuery = useQuery({
+    queryKey: ["propagations", "all"],
+    queryFn: () => api.propagation.listAll(),
+  });
   const replaysQuery = useQuery({ queryKey: ["replays"], queryFn: api.artifacts.list });
 
   // The AI Debug tile's three sources. `["ai-debug-history"]` is its own key
@@ -320,6 +327,7 @@ export function StatsView() {
         runTotals: totalsQuery.data,
         flake: flakeQuery.data,
         heals: healsQuery.data,
+        propagations: propagationsQuery.data,
         replays: replaysQuery.data,
         stepHealth: stepHealthQuery.data,
         slowness: slownessQuery.data,
@@ -330,6 +338,7 @@ export function StatsView() {
       totalsQuery.data,
       flakeQuery.data,
       healsQuery.data,
+      propagationsQuery.data,
       replaysQuery.data,
       stepHealthQuery.data,
       slownessQuery.data,

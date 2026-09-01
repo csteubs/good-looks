@@ -196,7 +196,7 @@ describe("search", () => {
       settings: { ...SETTINGS_DEFAULTS, autoHealRetries: 9 },
     });
     const autoHeal = row("Auto-Heal");
-    expect(autoHeal.textContent).toContain("4");
+    expect(autoHeal.textContent).toContain("5");
     expect(within(autoHeal).queryByLabelText(/changed from default/i)).toBeNull();
   });
 

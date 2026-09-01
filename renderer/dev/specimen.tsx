@@ -32,6 +32,7 @@ import {
   RailFlyout,
   RailRow,
   Segmented,
+  ShotHighlight,
   SiteIcon,
   StatusChip,
   StepRow,
@@ -52,6 +53,11 @@ import { BranchMenu } from "../main/branch-menu";
 // would first be seen by a user rather than by us.
 import { RunSummaryPanel } from "../main/run-summary-panel";
 import type { RunSummary } from "../lib/run-summary";
+// The evidence figure's shots. Generated SVG data URIs, same coin as the
+// Visual screen's frames and for the same three reasons (diffable, no
+// binary, no egress) — and the frame draws a button whose position the
+// specimen's rect can point at.
+import { visualFrame } from "./preview-fixtures";
 
 /** The six run states, in the order a test tends to meet them. `failed` is
  *  absent because its panel is `RunTriage`, which needs a backend query. */
@@ -155,6 +161,49 @@ const ALL_TYPES: StepType[] = [
   "capture",
   "runFlow",
   "state",
+];
+
+/** The evidence figure's three states. The rect is `visualFrame`'s own drawn
+ *  button (x 24, y 300, 260×44 on a 960×600 canvas), normalized — so the
+ *  measured box demonstrably wraps a real element, and a geometry mistake
+ *  reads as a box around nothing. */
+const SHOT_BUTTON = { x: 24 / 960, y: 300 / 600, w: 260 / 960, h: 44 / 600 };
+const SHOT_HIGHLIGHT_SPECIMENS: { key: string; node: React.ReactNode }[] = [
+  {
+    key: "measured",
+    node: (
+      <ShotHighlight
+        shot={visualFrame("after-heal.png")}
+        rect={SHOT_BUTTON}
+        label={'getByTestId("pay-now")'}
+        caption="Measured — the run's own bounding box, settling once"
+        alt="Screenshot with the healed element boxed"
+      />
+    ),
+  },
+  {
+    key: "approximate",
+    node: (
+      <ShotHighlight
+        shot={visualFrame("target-step.png")}
+        rect={SHOT_BUTTON}
+        approximate
+        label={'getByRole("button", { name: "Pay now" })'}
+        caption="Approximate — where it sat when the step was recorded"
+        alt="Screenshot with the recorded position dashed"
+      />
+    ),
+  },
+  {
+    key: "boxless",
+    node: (
+      <ShotHighlight
+        shot={visualFrame("no-rect-kept.png")}
+        caption="No box — this run kept no rectangle, and that is fine"
+        alt="Screenshot with no highlight"
+      />
+    ),
+  },
 ];
 
 /** The branch flyout's states. Built from real `buildBranchMenu` inputs rather
@@ -646,6 +695,25 @@ export function Specimen(): React.ReactElement {
           <div className="gl-run-panel" style={{ flex: "0 0 auto" }}>
             {RUN_SUMMARIES.map((summary, i) => (
               <RunSummaryPanel key={i} summary={summary} onReview={() => {}} />
+            ))}
+          </div>
+        </Panel>
+
+        {/* THE ONLY PLACE THE EVIDENCE FIGURE CAN BE SEEN LIT. The dom suite
+            runs with `css: false`, so the spotlight — a 100vmax box-shadow the
+            stage clips to the shot — and the one-shot settle animation exist
+            only here. The box sits over the frame's own drawn button, so a
+            geometry mistake reads as a box around nothing. Three states:
+            measured (solid, spotlight, settles once), approximate (dashed, no
+            spotlight — the box is a hint, not a measurement), and no box at
+            all, which is an acceptable state and must read as a screenshot
+            rather than a broken figure. */}
+        <Panel title="ShotHighlight" id="the box is the claim" pad={12}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+            {SHOT_HIGHLIGHT_SPECIMENS.map(({ key, node }) => (
+              <div key={key} style={{ flex: "1 1 240px", maxWidth: 320 }}>
+                {node}
+              </div>
             ))}
           </div>
         </Panel>

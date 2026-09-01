@@ -181,6 +181,15 @@ export function HealsPanel({ test }: { test: TestRecord }) {
     queryKey: ["script-changes", test.id],
     queryFn: () => api.scriptChanges.list(test.id),
   });
+  // Fixes proposed for this test from its siblings. Counted and pointed at
+  // here; the review actions live in the cross-test Heals view, where the
+  // donors and the evidence screenshots are — a second accept surface would
+  // be a second set of guards to keep in step.
+  const proposals = useQuery({
+    queryKey: ["propagations", test.id],
+    queryFn: () => api.propagation.list(test.id),
+  });
+  const pendingProposals = (proposals.data ?? []).filter((p) => p.status === "pending").length;
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["heals", test.id] });
@@ -299,8 +308,18 @@ export function HealsPanel({ test }: { test: TestRecord }) {
 
         <div className="flex items-center gap-2">
           <span className="gl-section-title">Needs review</span>
-          {pending.length > 0 ? <span className="gl-chip">{pending.length}</span> : null}
+          {pending.length + pendingProposals > 0 ? (
+            <span className="gl-chip">{pending.length + pendingProposals}</span>
+          ) : null}
         </div>
+
+        {pendingProposals > 0 ? (
+          <p className="gl-note">
+            {pendingProposals} propagated fix{pendingProposals === 1 ? "" : "es"} from sibling
+            tests on this site {pendingProposals === 1 ? "waits" : "wait"} in the Heals view,
+            beside the evidence.
+          </p>
+        ) : null}
 
         {heals.isLoading || scriptChanges.isLoading ? (
           <p className="gl-note">Loading…</p>

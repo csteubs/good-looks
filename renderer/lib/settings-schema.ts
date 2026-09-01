@@ -489,6 +489,13 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     key: "autoHealApply",
   },
   {
+    id: "auto-heal-propagate",
+    pane: "auto-heal",
+    label: "Propagate confirmed fixes",
+    keywords: "propagation cross-test sibling shared site preemptive seeds proposals",
+    key: "propagateFixes",
+  },
+  {
     id: "auto-heal-retries",
     pane: "auto-heal",
     label: "Heal attempts",
@@ -1013,6 +1020,7 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   autoHealRetries: 3,
   autoHealAttemptTimeoutMs: 4000,
   autoHealApply: "suggest",
+  propagateFixes: true,
   defaultA11yChecks: false,
   debugScreenshots: false,
   disabledAestheticEnhancements: [],

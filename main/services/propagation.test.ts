@@ -490,6 +490,40 @@ describe("proposalsFor — dedupe, supersede, settled decisions, staleness", () 
     const out = proposalsFor({ donors: [], tests: [sibling()], existing: [pending()] });
     expect(out.stale).toEqual([]);
   });
+
+  it("an APPLIED pending entry holds while its step carries the fix", () => {
+    // The auto-apply landing state: the step carries `toLocator` by design,
+    // and the entry is the review queue's record of the unreviewed write.
+    // Staling it would settle a review nobody did.
+    const written = makeTest("sibling", { steps: [step("s", NEW)] });
+    const out = proposalsFor({
+      donors: [],
+      tests: [written],
+      existing: [pending({ applied: true })],
+    });
+    expect(out.stale).toEqual([]);
+  });
+
+  it("an applied entry whose step matches neither spelling still goes stale", () => {
+    // `applied` is not immunity — a hand edit on top of the auto write means
+    // both the undo and the fix are gone, and the entry describes nothing.
+    const movedOn = makeTest("sibling", { steps: [step("s", OTHER_NEW)] });
+    const out = proposalsFor({
+      donors: [],
+      tests: [movedOn],
+      existing: [pending({ applied: true })],
+    });
+    expect(out.stale).toEqual(["p1"]);
+  });
+
+  it("an UNAPPLIED pending entry whose step somehow carries the fix goes stale", () => {
+    // Only the applied bit earns the toLocator exception: an unapplied entry
+    // whose step already carries the fix was fixed by hand — nothing left to
+    // propose, and applying it would be a no-op claiming credit.
+    const handFixed = makeTest("sibling", { steps: [step("s", NEW)] });
+    const out = proposalsFor({ donors: [], tests: [handFixed], existing: [pending()] });
+    expect(out.stale).toEqual(["p1"]);
+  });
 });
 
 describe("seedsForTest — protecting runs without touching tests", () => {
