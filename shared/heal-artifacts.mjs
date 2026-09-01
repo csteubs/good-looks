@@ -68,10 +68,33 @@ export function isHealFailure(event) {
   return event?.outcome === "exhausted" || event?.outcome === "no-candidates";
 }
 
-/** The envelope both `heal-failures.json` and `step-matches.json` are written
- *  in. Spelled once because the app writes it through its artifact store and an
- *  unattended run writes it directly — and `mcp/artifacts.mjs` reads whichever
- *  produced it, so a second shape is a run whose evidence is simply not found. */
+/**
+ * What an unattended run writes its SUCCESSFUL heals into, beside the run's
+ * other evidence.
+ *
+ * The app has somewhere to put these — its heal journal, which is what makes a
+ * heal reviewable and what the propagation engine reads donors from. An
+ * unattended run has nowhere: journalling on a CI runner writes into a library
+ * that dies with the container, which is why `collectHealEvidence` counted
+ * these events and then dropped them. So every heal a CI run performed was
+ * invisible to the machine that owns the library — including to the donor
+ * corpus, which is the gap `docs/plans/preemptive-updates.md` recorded under
+ * Later.
+ *
+ * They travel as EVIDENCE, in the run's artifact directory, and become journal
+ * entries only on the machine that ingests them (`good-looks ingest`, through
+ * `shared/heal-ingest.mjs`). That split is deliberate: a container writing a
+ * primary store it does not own is the thing the original comment was right to
+ * refuse. Failures already travel this way as `heal-failures.json`; this is the
+ * other half of the same run's story.
+ */
+export const RUN_HEALS_FILE = "run-heals.json";
+
+/** The envelope `heal-failures.json`, `step-matches.json` and `run-heals.json`
+ *  are written in. Spelled once because the app writes it through its artifact
+ *  store and an unattended run writes it directly — and `mcp/artifacts.mjs`
+ *  reads whichever produced it, so a second shape is a run whose evidence is
+ *  simply not found. */
 export function healArtifactEnvelope(testId, runId, entries) {
   return { testId, runId, entries };
 }

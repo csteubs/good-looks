@@ -10,6 +10,67 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-01 — CI heals come home: evidence travels, the journal is written by the machine that owns it
+
+**The gap, stated plainly.** `mcp/run-tests.mjs` COUNTED every heal an
+unattended run performed and then dropped it — the code said so out loud
+("journalling means writing back into a library that dies with the
+container"), and it was right at the time. The consequence was not obvious
+until propagation existed: the runs that meet a site most often were the
+ones teaching the app least about it, and a CI-heavy team's donor corpus
+was built from the handful of runs somebody triggered by hand.
+
+**Evidence travels; the journal does not.** The temptation was to have the
+CI runner write `heal-journal.json` itself — the file format is right
+there. Refused, and the original comment's instinct is why: a container
+writing a primary store it does not own is a second writer of the app's
+review queue, in another language, that nobody can see. Instead the runner
+writes `run-heals.json` beside the `heal-failures.json` it already wrote,
+and `good-looks ingest` promotes those events into the journal on the
+machine that owns it. One writer per store, and the CI half stays what CI
+is good at: producing evidence.
+
+**A heal is more dangerous to ingest than a run record.** R12's gate exists
+because a run record carries a path that gets read. A heal carries a
+LOCATOR, which is one accepted click from being generated source Playwright
+executes in Node (`ingested heal → donor → proposal → accept →
+step.locator → generateSpec`). So `shared/heal-ingest.mjs` rebuilds every
+locator value by value inside depth and width bounds — nothing survives
+that the walk did not copy, which is what makes "no functions, no prototype
+keys" true rather than promised — and four fields are the ingesting
+machine's rather than the container's: the `id` (a foreign one collides,
+and every accept/revert is keyed by it), `testId` and `runId` (from the
+envelope, so an event cannot attach a heal to a test it never touched), and
+`applied`, which is always false because nothing here changed and a revert
+that writes a locator the user's test never had is worse than no button.
+`candidates` are dropped outright: the Heals view offers them as locators
+to write into a test, and a foreign menu is a wider door than the fix
+itself for no gain the engine can use.
+
+**The journal now normalizes on READ, and that is the real find.** It was a
+bare `as HealEntry[]`, defensible for exactly as long as the app was its
+only writer. Ingest ended that. Fixing only the writer would have repeated
+the mistake the capture-boundary section already names — entries written
+before a guard are already on disk, and the file is hand-editable — so
+`readAll` rebuilds each entry, runs every locator (candidates included)
+through `normalizeLocator`, and DROPS what it cannot narrow rather than
+repairing it. A half-repaired heal is one nobody ever reviewed.
+
+**Two normalizers moved rather than being copied.**
+`normalizeHealPageUrl`/`normalizeHealRect` went to
+`shared/heal-evidence.mjs`, re-exported from `main/recorder/types.ts` so
+every caller is unchanged. Eliding a token-bearing checkout URL is a
+privacy rule that must not depend on which machine healed, and a copy in
+the CLI would have been right the day it was written. Writing that module
+also re-proved `main/services/frame-escape.test.ts`: the first draft's
+control-character class was silently mangled into literal bytes, the guard
+went red, and the rule is now a scan rather than a regex literal.
+
+**Dedupe is per run and step, deliberately not per locator.** Collapsing a
+step that heals on every CI run into one entry would hide exactly what
+`list_heals` reports as a chronic step — the signal that says a locator is
+worth rewriting by hand rather than healing forever.
+
 ### 2026-09-01 — `list_propagations`, and a separation rule that had to get sharper rather than looser
 
 **The MCP reports the aggregate, not just the rows.** The plan called this

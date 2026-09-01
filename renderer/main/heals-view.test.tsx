@@ -349,6 +349,28 @@ describe("HealsView", () => {
     );
   });
 
+  it("says when a heal happened on another machine", async () => {
+    // A CI heal reads as "During a run" like any other, and the run it names
+    // may not exist in this library at all. The chip is what keeps that from
+    // reading as a run the user did — and it appears only for heals that were
+    // actually carried back.
+    journal = [heal({ ingested: true })];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+    expect(await screen.findByText("On another machine")).toBeTruthy();
+  });
+
+  it("says nothing of the sort about a heal that happened here", async () => {
+    // Its own test rather than a second render in the one above: Testing
+    // Library cleans up BETWEEN tests, so a second `render` in one body leaves
+    // the first tree mounted and the negative assertion reads the old chip.
+    journal = [heal()];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+    await screen.findByText("During a run");
+    expect(screen.queryByText("On another machine")).toBeNull();
+  });
+
   it("names a deleted test rather than showing a bare id", async () => {
     // A heal outlives the test it came from. "(deleted test)" is information;
     // a uuid is not.

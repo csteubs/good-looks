@@ -20,9 +20,24 @@ import { Buffer } from "node:buffer";
 import fs from "node:fs";
 import path from "node:path";
 
+import { randomUUID } from "node:crypto";
+
 import { listRuns, saveRunRecords } from "../mcp/run-history.mjs";
 import { planIngest } from "../shared/run-ingest.mjs";
+import { RUN_HEALS_FILE } from "../shared/heal-artifacts.mjs";
+import { healIngestKey, planHealIngest } from "../shared/heal-ingest.mjs";
 import { EXIT } from "./exit.mjs";
+
+/** Where the app keeps its heal journal, relative to `recorder/`. Named here
+ *  rather than imported because the store that owns it is compiled TypeScript
+ *  behind an Electron shim this process cannot load — the same reason
+ *  `run-history.mjs` exists at all. */
+const HEAL_JOURNAL_FILE = "heal-journal.json";
+
+/** Cap per test, matching `heal-journal-store.ts`. A CI suite ingesting week
+ *  after week is exactly the writer that would grow this file without bound,
+ *  and the app's own cap is applied on ITS writes, not on this one. */
+const MAX_HEALS_PER_TEST = 200;
 
 /**
  * The two shapes an unpacked artifact turns up in.
@@ -58,6 +73,118 @@ function readRecords(file) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Promote the heal evidence beside the runs just ingested into this library's
+ * journal.
+ *
+ * WHY THIS IS A SEPARATE PASS, and why it runs only over runs that were
+ * actually ingested: a heal entry names a run, and every reader joins the two
+ * (the Heals view shows the run, the propagation engine reads the run's
+ * outcome to decide whether the heal is trustworthy evidence). A heal whose
+ * run this library refused — or already had — would be an entry pointing at
+ * nothing, which is worse than an absent one.
+ *
+ * Best-effort by contract. The runs are already stored by the time this is
+ * called; a heal file that is missing, unreadable or full of nonsense must
+ * cost the user nothing but the heals it could not read.
+ *
+ * @param {{recorderDir: string, localRecorder: string, records: Record<string, unknown>[]}} io
+ * @returns {{ingested: number, duplicate: number, unusable: number, runs: number}}
+ */
+function ingestHeals({ recorderDir, localRecorder, records }) {
+  const out = { ingested: 0, duplicate: 0, unusable: 0, runs: 0 };
+  const journalFile = path.join(localRecorder, HEAL_JOURNAL_FILE);
+
+  /** @type {Record<string, unknown>[]} */
+  let journal = [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(journalFile, "utf-8"));
+    if (Array.isArray(parsed)) journal = parsed;
+  } catch {
+    // No journal yet, or an unreadable one. Either way this pass adds to what
+    // it can read — it must never truncate a file it failed to parse, which
+    // would trade a CI heal for every heal the user already had.
+    if (fs.existsSync(journalFile)) return out;
+  }
+
+  const keys = new Set(journal.map((e) => healIngestKey(/** @type {never} */ (e))));
+  /** @type {Record<string, unknown>[]} */
+  const added = [];
+
+  for (const record of records) {
+    const testId = String(record.testId ?? "");
+    const runId = String(record.id ?? "");
+    if (!testId || !runId) continue;
+    // Derived from validated ids, never from a path the record carried —
+    // the `logFile` rule, applied to the artifact directory.
+    const file = path.join(recorderDir, "artifacts", testId, runId, RUN_HEALS_FILE);
+    let envelope;
+    try {
+      envelope = JSON.parse(fs.readFileSync(file, "utf-8"));
+    } catch {
+      continue;
+    }
+    const entries = Array.isArray(envelope?.entries) ? envelope.entries : [];
+    if (entries.length === 0) continue;
+    out.runs++;
+    const plan = planHealIngest(keys, entries, { testId, runId });
+    out.duplicate += plan.duplicate;
+    out.unusable += plan.unusable;
+    for (const entry of plan.fresh) {
+      keys.add(healIngestKey(entry));
+      // The id is minted HERE, like the log path is: a foreign id can collide
+      // with a local entry's, and every accept and revert in the app is keyed
+      // by it.
+      added.push({ ...entry, id: randomUUID() });
+    }
+  }
+
+  if (added.length === 0) return out;
+
+  // Cap per test — SETTLED entries first, oldest first, and never a pending
+  // one. That is `heal-journal-store.ts`'s own rule and it is not a detail: a
+  // pending heal is the only stored copy of the locator its step used to have,
+  // so dropping one to make room for a CI import would destroy the undo for a
+  // change already made to a test. Dropping by age alone (the first draft
+  // here) would have done exactly that.
+  const merged = [...journal, ...added];
+  const byTest = new Map();
+  for (const entry of merged) {
+    const testId = String(entry.testId ?? "");
+    const list = byTest.get(testId) ?? [];
+    list.push(entry);
+    byTest.set(testId, list);
+  }
+  const dropped = new Set();
+  for (const list of byTest.values()) {
+    if (list.length <= MAX_HEALS_PER_TEST) continue;
+    list
+      .filter((e) => e.status === "accepted" || e.status === "reverted")
+      .sort((a, b) => Number(a.at ?? 0) - Number(b.at ?? 0))
+      .slice(0, list.length - MAX_HEALS_PER_TEST)
+      .forEach((e) => dropped.add(e));
+  }
+
+  try {
+    fs.mkdirSync(localRecorder, { recursive: true });
+    fs.writeFileSync(
+      journalFile,
+      JSON.stringify(
+        merged.filter((e) => !dropped.has(e)),
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    out.ingested = added.length;
+  } catch {
+    // A journal this process could not write is a library that is exactly as
+    // it was. The runs are already in; say nothing was carried rather than
+    // claiming heals that are not there.
+  }
+  return out;
 }
 
 /**
@@ -137,11 +264,27 @@ export function ingestCommand({ dir, dryRun, json }, { out, err, dataDir, now = 
 
   if (!dryRun && entries.length > 0) saveRunRecords(dataDir, entries);
 
+  // The heals those runs performed, promoted into this library's journal —
+  // which is what puts a CI heal in front of the user for review AND into the
+  // donor corpus the propagation engine reads. Only for runs actually stored:
+  // a heal pointing at a run this library does not have is an entry pointing
+  // at nothing. Never on a dry run, which must leave the library untouched.
+  const heals =
+    !dryRun && entries.length > 0
+      ? ingestHeals({
+          recorderDir: found.recorderDir,
+          localRecorder,
+          records: entries.map((e) => e.record),
+        })
+      : { ingested: 0, duplicate: 0, unusable: 0, runs: 0 };
+
   const summary = {
     ingested: entries.length,
     alreadyPresent: duplicate,
     unusable,
     withLogs,
+    heals: heals.ingested,
+    healsFromRuns: heals.runs,
     from: found.recorderDir,
     into: dataDir,
     dryRun,
@@ -160,6 +303,13 @@ export function ingestCommand({ dir, dryRun, json }, { out, err, dataDir, now = 
       // is a different event from one it already had, and only the first is a
       // reason to look at what produced the directory.
       out(`  ${unusable} could not be read and were refused`);
+    }
+    if (heals.ingested > 0) {
+      // Said out loud because it changes what the app shows: these land in the
+      // Heals view awaiting review, and feed proposals for sibling tests.
+      out(
+        `  ${heals.ingested} Auto-Heal event(s) from ${heals.runs} run(s) — in the Heals view now`,
+      );
     }
     if (entries.length === 0 && duplicate > 0) {
       out("Nothing new — this directory has been ingested already.");
@@ -185,6 +335,10 @@ Options:
 
 Runs are matched by id, so ingesting the same directory twice is safe and
 ingests nothing the second time.
+
+Auto-Heal events those runs recorded are carried too, into the Heals view for
+review and into the evidence the app proposes cross-test fixes from. They are
+matched per run and step, so they dedupe the same way.
 `;
 
 /** @param {string} message */

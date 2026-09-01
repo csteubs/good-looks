@@ -257,6 +257,31 @@ const appRunner = code("main/services/playwright-runner.ts");
         /propagations\.json/.test(runner),
       "…derived through shared/propagation.mjs from the app's own proposals file",
     );
+
+    // ── The heals a CI run performed reach the machine that owns the library ──
+    //
+    // R49's shape a third time, and the reason it keeps recurring: two
+    // processes joined by a filename and nothing else. The runner WRITES the
+    // successful heals into the run's artifacts; `good-looks ingest` READS
+    // that file and promotes them into the journal. Rename it in one place and
+    // nothing fails — heals are written where nobody looks, or ingest looks
+    // where nobody writes, and in both cases the app silently learns nothing
+    // from every CI run. So the name has to come from the shared module on
+    // both sides, and BOTH sides have to exist.
+    const ingest = readFileSync("cli/ingest.mjs", "utf-8");
+    assert(
+      /write\(RUN_HEALS_FILE,\s*events\.filter\(isHeal\)\)/.test(runner),
+      "the runner writes its successful heals as evidence, rather than counting and dropping them",
+    );
+    assert(
+      /RUN_HEALS_FILE/.test(ingest) && /from "\.\.\/shared\/heal-artifacts\.mjs"/.test(ingest),
+      "…and ingest reads that same name, from the shared module rather than a second spelling",
+    );
+    assert(
+      /planHealIngest\(/.test(ingest) &&
+        /from "\.\.\/shared\/heal-ingest\.mjs"/.test(ingest),
+      "…through the gate, so a foreign locator is narrowed before it is stored",
+    );
   } else {
     // Off, wholly. Each of these being absent is what makes turning it back on
     // a decision someone has to make on purpose.

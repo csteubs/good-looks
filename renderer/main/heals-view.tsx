@@ -303,6 +303,13 @@ function HealDetail({
             <span className="gl-chip">
               {entry.source === "run" ? "During a run" : "In the trainer"}
             </span>
+            {/* Where it RAN, which is not the same question as what it did.
+                A heal carried back by `good-looks ingest` happened in a
+                container that no longer exists, so the run's log and
+                screenshots may not have travelled with it — and it was never
+                applied to anything here. Saying so is what stops "During a
+                run" from reading as "during a run you did". */}
+            {entry.ingested ? <span className="gl-chip">On another machine</span> : null}
             {statusChip(entry)}
             <span className="gl-heal-when">{fmtWhen(entry.at)}</span>
           </div>

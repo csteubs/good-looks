@@ -112,6 +112,22 @@ describe("donorsFromJournal — the evidence gates", () => {
     expect(donorsFromJournal({ entries: [entry()], now: NOW })).toEqual([]);
   });
 
+  it("a heal carried back from CI is a donor on its run's outcome alone", () => {
+    // THE PROPERTY THE INGEST SLICE DEPENDS ON. An ingested heal is never
+    // `applied` — nothing on this machine changed — so its only route to
+    // donorhood is its run having passed, and the run record travels with it.
+    // Tightening this gate to require `applied` would silently switch off
+    // every CI donor while every test here still passed, which is why the
+    // ingested shape is stated as its own row rather than left implied.
+    const donors = donorsFromJournal({
+      entries: [entry({ applied: false, ingested: true })],
+      runsById: { r1: { status: "passed" } },
+      now: NOW,
+    });
+    expect(donors).toHaveLength(1);
+    expect(donors[0].kind).toBe("heal-run-passed");
+  });
+
   it("an applied run heal carries its own gate — apply-mode only writes on a passing run", () => {
     const donors = donorsFromJournal({ entries: [entry({ applied: true })], now: NOW });
     expect(donors).toHaveLength(1);

@@ -834,6 +834,10 @@ export interface HealEntry {
   candidates: HealCandidate[];
   /** whether the stored test was actually changed. False under "suggest". */
   applied: boolean;
+  /** true when this heal happened on another machine and was carried back by
+   *  `good-looks ingest` — a CI runner's heal. Never `applied`: nothing here
+   *  changed, so it is a suggestion to read rather than a rewrite to undo. */
+  ingested?: true;
   status: HealStatus;
   at: number;
 }

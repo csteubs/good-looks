@@ -51,6 +51,11 @@ export interface JournalEntryLike {
   applied?: boolean;
   status?: string;
   pageUrl?: string;
+  /** true when the heal was carried back from another machine by
+   *  `good-looks ingest`. The engine deliberately does NOT read it: a CI
+   *  heal earns donorhood the same way a local one does, through its run's
+   *  outcome. Declared so the shape is honest about what reaches here. */
+  ingested?: boolean;
   at: number;
 }
 
