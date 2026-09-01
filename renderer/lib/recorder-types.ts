@@ -1505,6 +1505,10 @@ export interface RecorderSettings {
    *  (default false). This is the consent switch for the app's only
    *  UNATTENDED AI send — the Alerts pane row states exactly what goes. */
   aiInsightsEnabled: boolean;
+  /** offer AI-suggested next steps in the trainer after each captured step
+   *  (default false) — the trainer's one unattended AI send; the settings
+   *  row states exactly what goes (mirror of main types). */
+  aiSuggestionsEnabled: boolean;
   /** how often the insights report generates (default "weekly"). */
   aiInsightsCadence: InsightsCadence;
   /** post a macOS notification when an insights report is ready (default

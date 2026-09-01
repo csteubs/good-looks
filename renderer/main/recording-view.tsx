@@ -437,6 +437,9 @@ export function RecordingView() {
     sayToAgent,
     stopAgent,
     resolveAgentProposal,
+    aiSuggestions,
+    acceptSuggestion,
+    dismissSuggestion: dismissAiSuggestion,
   } = useRecorder();
 
   const [soft, setSoft] = React.useState(false);
@@ -997,6 +1000,21 @@ export function RecordingView() {
                   setAddKind("assertion");
                 },
                 onDismiss: dismissSuggestion,
+              }
+            : null
+        }
+        aiSuggestions={
+          // Same gate as the mechanical chip: an offer is moot while the
+          // controls are disabled or the composer already has the band's
+          // attention. The store list is already empty when the setting is
+          // off — the flag gates the SEND, in the main process.
+          !controlsDisabled && addKind === null
+            ? {
+                chips: aiSuggestions,
+                onAccept: (id) => void acceptSuggestion(id),
+                onDismissAll: () => {
+                  for (const chip of aiSuggestions) dismissAiSuggestion(chip.id);
+                },
               }
             : null
         }

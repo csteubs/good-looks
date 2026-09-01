@@ -120,6 +120,9 @@ export function TrainerPanelView() {
     sayToAgent,
     stopAgent,
     resolveAgentProposal,
+    aiSuggestions,
+    acceptSuggestion,
+    dismissSuggestion: dismissAiSuggestion,
   } = useRecorder();
 
   const [addKind, setAddKind] = React.useState<AddStepKind | null>(null);
@@ -614,6 +617,19 @@ export function TrainerPanelView() {
                   setAddKind("assertion");
                 },
                 onDismiss: dismissSuggestion,
+              }
+            : null
+        }
+        aiSuggestions={
+          // Same gate as the mechanical chip — see recording-view.tsx; the
+          // list itself is already empty while the setting is off.
+          !controlsDisabled && addKind === null
+            ? {
+                chips: aiSuggestions,
+                onAccept: (id) => void acceptSuggestion(id),
+                onDismissAll: () => {
+                  for (const chip of aiSuggestions) dismissAiSuggestion(chip.id);
+                },
               }
             : null
         }

@@ -2478,6 +2478,16 @@ let fakeAgentRunning = false;
 let fakeAgentState = "idle";
 const fakeAgentEvents: unknown[] = [];
 
+// ── The AI suggestion strip, faked ───────────────────────────────────
+// Two standing offers so ?view=recorder shows the strip with no model and
+// no page. Accepting cannot insert here (the preview's step list is a
+// fixture), so it answers ok and clears the offers the way the real
+// service does after a take; dismiss removes one chip.
+let previewSuggestions: { id: string; label: string }[] = [
+  { id: "sg-1", label: "Assert “Order placed” is visible" },
+  { id: "sg-2", label: "Click “View receipt”" },
+];
+
 function agentRecord(
   emit: (channel: string, value: unknown) => void,
   event: Record<string, unknown>,
@@ -2684,6 +2694,20 @@ export function installPreviewBridge(options: PreviewBridgeOptions = {}): Previe
         state: fakeAgentState,
         events: [...fakeAgentEvents],
       };
+    }
+    // The suggestion strip, faked — see previewSuggestions above.
+    if (channel === "suggest:get") return { suggestions: [...previewSuggestions] };
+    if (channel === "suggest:accept") {
+      previewSuggestions = [];
+      setTimeout(() => emit("suggest:changed", { suggestions: [] }), 0);
+      return { ok: true };
+    }
+    if (channel === "suggest:dismiss") {
+      const id = (args[0] as Payload)?.id;
+      const before = previewSuggestions.length;
+      previewSuggestions = previewSuggestions.filter((s) => s.id !== id);
+      setTimeout(() => emit("suggest:changed", { suggestions: [...previewSuggestions] }), 0);
+      return previewSuggestions.length < before;
     }
     // Refine mode, which in the real app pauses the session and waits for the
     // user to click an element in the training browser. There is no training

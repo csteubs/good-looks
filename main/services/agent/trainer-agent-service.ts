@@ -480,8 +480,9 @@ import { sendToMain } from "../app-window.js";
 
 /** Page-value assert kinds whose whole meaning is their value — an empty one
  *  generates nothing and asserts nothing, so a proposal shaped that way is
- *  refused here the way the composer and parse-llm-response refuse it. */
-const PAGE_VALUE_ASSERTS = new Set(["url", "urlEndsWith", "urlIs", "urlPathIs", "title", "titleContains"]);
+ *  refused here the way the composer and parse-llm-response refuse it.
+ *  Exported for the suggestion strip's bindings, which apply the same rule. */
+export const PAGE_VALUE_ASSERTS = new Set(["url", "urlEndsWith", "urlIs", "urlPathIs", "title", "titleContains"]);
 
 export const trainerAgentService: TrainerAgentService = createTrainerAgentService({
   completeJson: (params, opts) => llmService.completeJson(params, opts),

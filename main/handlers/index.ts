@@ -17,6 +17,7 @@ import {
 import { mcpServerInfo } from "../services/mcp-install.js";
 import { recorderService } from "../services/recorder-service.js";
 import { trainerAgentService } from "../services/agent/trainer-agent-service.js";
+import { trainerSuggestionService } from "../services/agent/suggestion-service.js";
 import { batchRunner } from "../services/batch-runner.js";
 import { batchHistoryStore } from "../services/batch-history-store.js";
 import { routineStore } from "../services/routine-store.js";
@@ -300,6 +301,17 @@ export function registerHandlers(): void {
     trainerAgentService.resolveProposal(params?.id, params?.accept),
   );
   ipcMain.handle("agent:getRun", async () => trainerAgentService.snapshot());
+  // ── The AI suggestion strip ─────────────────────────────────────────
+  // Offers ride the `suggest:changed` push; a late-opening window seeds
+  // from suggest:get. Accepting goes through the same verify gate as
+  // everything else — the id is `unknown` and the service judges it.
+  ipcMain.handle("suggest:accept", async (_e, params: { id?: unknown }) =>
+    trainerSuggestionService.accept(params?.id),
+  );
+  ipcMain.handle("suggest:dismiss", async (_e, params: { id?: unknown }) =>
+    trainerSuggestionService.dismiss(params?.id),
+  );
+  ipcMain.handle("suggest:get", async () => trainerSuggestionService.current());
   ipcMain.handle("recorder:replayStep", async (_e, params: { stepId: string }) =>
     recorderService.replayStep(params.stepId),
   );

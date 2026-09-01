@@ -75,6 +75,8 @@ const actions = {
   sayToAgent: vi.fn(async () => true),
   stopAgent: vi.fn(async () => true),
   resolveAgentProposal: vi.fn(async () => ({ ok: true })),
+  acceptSuggestion: vi.fn(async () => {}),
+  dismissSuggestion: vi.fn(),
 };
 
 let store: Record<string, unknown> = {};
@@ -139,6 +141,7 @@ function setStore(over: Record<string, unknown> = {}) {
     refiningStepId: null,
     contextAction: null,
     agentRun: null,
+    aiSuggestions: [],
     ...actions,
     ...over,
   };
@@ -477,6 +480,32 @@ describe("the context band", () => {
       expect(document.querySelector('[data-gl="step-composer"]')).toBeTruthy(),
     );
     expect(screen.getByDisplayValue("chris@example.com")).toBeTruthy();
+  });
+
+  // The AI suggestion strip reaches this surface through the same shared
+  // band. The full matrix (accept path, dismiss-all, gating) is the main
+  // suite's; what these pin is that the PANEL is wired at all.
+  it("renders AI offers beside the mechanical chip; taking one goes through the verified accept", () => {
+    setStore({
+      liveSteps: [FILLED],
+      state: state({ cursor: 1 }),
+      aiSuggestions: [{ id: "sg-1", label: "Click “View receipt”" }],
+    });
+    renderPanel();
+    expect(screen.getByRole("button", { name: /assert this field/i })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /view receipt/i }));
+    expect(actions.acceptSuggestion).toHaveBeenCalledWith("sg-1");
+    fireEvent.click(screen.getByRole("button", { name: /dismiss suggestions/i }));
+    expect(actions.dismissSuggestion).toHaveBeenCalledWith("sg-1");
+  });
+
+  it("AI offers wait while an armed assertion owns the band", () => {
+    setStore({
+      aiSuggestions: [{ id: "sg-1", label: "Click “View receipt”" }],
+      state: state({ assertMode: "visible" }),
+    });
+    renderPanel();
+    expect(screen.queryByRole("button", { name: /view receipt/i })).toBeNull();
   });
 });
 

@@ -271,6 +271,11 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   // OFF by default, and this one is load-bearing: enabling it is the consent
   // for the app's only unattended AI send.
   aiInsightsEnabled: false,
+  // OFF by default for the same reason: the trainer's suggestion strip sends
+  // a bounded page inventory after each captured step with no per-send
+  // review, and turning it on is the consent. check:agent-egress pins what
+  // may leave.
+  aiSuggestionsEnabled: false,
   aiInsightsCadence: "weekly",
   // ON by default like notifyOnBatchDone, and gated behind aiInsightsEnabled
   // in practice: a report that generates unattended and announces nothing is
@@ -466,6 +471,10 @@ function read(): RecorderSettings {
         typeof parsed.aiInsightsEnabled === "boolean"
           ? parsed.aiInsightsEnabled
           : DEFAULT_SETTINGS.aiInsightsEnabled,
+      aiSuggestionsEnabled:
+        typeof parsed.aiSuggestionsEnabled === "boolean"
+          ? parsed.aiSuggestionsEnabled
+          : DEFAULT_SETTINGS.aiSuggestionsEnabled,
       aiInsightsCadence: isInsightsCadence(parsed.aiInsightsCadence)
         ? parsed.aiInsightsCadence
         : DEFAULT_SETTINGS.aiInsightsCadence,
@@ -696,6 +705,10 @@ export const recorderSettingsStore = {
           : current.notifyOnAiDebugDone,
       aiInsightsEnabled:
         update.aiInsightsEnabled !== undefined ? update.aiInsightsEnabled : current.aiInsightsEnabled,
+      aiSuggestionsEnabled:
+        update.aiSuggestionsEnabled !== undefined
+          ? update.aiSuggestionsEnabled
+          : current.aiSuggestionsEnabled,
       // Same allowlist as `read()`, on the standing principle: a value refused
       // on load but accepted on save is written to disk and then silently
       // ignored forever, which reads as "the setting does not work".
@@ -830,6 +843,7 @@ export const recorderSettingsStore = {
       notifyOnBatchDone: next.notifyOnBatchDone,
       notifyOnAiDebugDone: next.notifyOnAiDebugDone,
       aiInsightsEnabled: next.aiInsightsEnabled,
+      aiSuggestionsEnabled: next.aiSuggestionsEnabled,
       aiInsightsCadence: next.aiInsightsCadence,
       notifyOnInsightsReady: next.notifyOnInsightsReady,
       insightsSlackEnabled: next.insightsSlackEnabled,

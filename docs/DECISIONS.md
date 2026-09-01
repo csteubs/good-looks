@@ -14448,3 +14448,62 @@ stays unpersisted — a panel that stayed expanded would hide the step
 list on the next test opened, for a run nobody had looked at — but a
 dragged height is a layout preference, not a glance at one failure, so
 it survives.
+
+## 2026-09-01 — The suggestion strip: consent first, offers only, one gate
+
+PR 4 of the bar plan is the AI suggestion strip: after a captured step, the
+trainer may offer up to two next steps as violet chips in the context band.
+It is the smallest feature in the plan and it got the most security
+scaffolding, because it is the trainer's first UNATTENDED send — every other
+AI affordance (the command box, Generate Steps, per-step debug) fires from an
+explicit user action somebody just reviewed, while this one fires on a
+debounce with nobody looking at the individual payload.
+
+Four decisions, each refusing a simpler version:
+
+**Off by default, and the flag is read at send time — twice.** The
+`aiInsightsEnabled` argument applies verbatim: a continuous egress of page
+content is something the user opts into, not out of, and the Recording pane's
+row carries an always-visible `risk` disclosure (what goes, what never goes,
+where it goes) rather than a collapsible one. The simpler version checks the
+flag when the debounce is scheduled. Wrong twice over: a toggle flipped off
+mid-debounce must win (the setting is the consent, and consent was withdrawn),
+and a toggle flipped off while the model was already answering must ALSO win
+— the reply is discarded unshown, the insights service's discard-at-settle
+rule. `check:agent-egress` counts both guards in the source, and the unit
+tests prove each one's absence is a red test.
+
+**Offers, never actions — and the raw step never crosses the boundary.** A
+suggestion is a chip; nothing runs until the user takes one, and a taken step
+goes through `recorderService.tryStep`, the same verify gate every other step
+arrival crosses — tried on the live page, inserted only once it has worked.
+The renderer sees `{id, label}` and nothing else, so model output never
+becomes renderer-held structure; accepting sends the id back and the step it
+names is the one THIS process normalized and stored. The allowlist of step
+types a suggestion may carry (`click`, `check`, `select`, `wait`, `scroll`,
+`assert` — never `fill` or `press`, whose values the model would have to
+invent) is enforced in the service, not delegated to the prompt: the prompt
+also says it, but model output is untrusted text and the rule holds whatever
+the model was told.
+
+**The capture funnel learned nothing about AI.** The trigger is a new
+`onCaptureRecorded` hook at the end of `recordCaptured` — a listener registry
+that carries NO payload. The suggestion service learns "the step list moved"
+and reads everything else through its own deps, so the capture boundary's
+one-ingest rule is untouched and `check:capture-egress` stayed green through
+the change by design (its excision-by-boundary rewrite, made after the check
+once fired on recordCaptured growing a second statement, is what made that
+possible).
+
+**One egress check for the whole directory.** `check:agent-egress` clones the
+insights three-way pin — source scan over `main/services/agent/`, a planted
+secret pushed through BOTH prompt builders and `redactWithSnapshot` with the
+both-directions assertion (secret gone AND marker present, so a plant that
+never entered the payload cannot pass vacuously), and the wiring regexes
+(redact → `redactWithSnapshot` before `deps.completeJson` in both services,
+the store-bound flag, the false default). It adds one rule the insights check
+has no need for: `page-summary.ts` may never read an element's `.value`,
+because the inventory describes inputs the user may just have typed a
+password into. Proven fail-able by three mutations: the redact call removed,
+the post-answer guard removed, the default flipped to true — each turned
+exactly its own row red.
