@@ -39,6 +39,9 @@ import { StepComposer, type AddStepKind } from "./step-composer";
 import { createFlowGate, pickAddStepFromMenu, pickAssertFromMenu } from "./trainer-actions";
 import { BarContextZone, TILE_COPY, useNextAction } from "./trainer-bar-controls";
 import { suggestFlowName } from "../lib/next-action";
+import { parseCommand } from "../lib/command-parse";
+import { AgentPanel } from "./agent-panel";
+import { toast } from "@ui";
 import { stepSessionKey, useAiDebug } from "./ai-debug-store";
 import { parseSessionKey } from "../lib/ai-debug-sessions";
 import { toneFor } from "../lib/ai-debug-status";
@@ -429,11 +432,29 @@ export function RecordingView() {
     addVariable,
     contextAction,
     clearContextAction,
+    agentRun,
+    startAgent,
+    sayToAgent,
+    stopAgent,
+    resolveAgentProposal,
+    aiSuggestions,
+    acceptSuggestion,
+    dismissSuggestion: dismissAiSuggestion,
   } = useRecorder();
 
   const [soft, setSoft] = React.useState(false);
   const [addKind, setAddKind] = React.useState<AddStepKind | null>(null);
   const [aiOpen, setAiOpen] = React.useState(false);
+  // The command drawer (the AI tile's surface). Opens on the tile, and once
+  // more whenever a run STARTS — a run begun in the other window would
+  // otherwise disable this window's controls with nothing on screen saying
+  // who is driving. Closing it mid-run stays possible: the effect fires on
+  // the transition, not the state.
+  const [agentOpen, setAgentOpen] = React.useState(false);
+  const agentBusy = !!agentRun?.running;
+  React.useEffect(() => {
+    if (agentBusy) setAgentOpen(true);
+  }, [agentBusy]);
   const [replayStatus, setReplayStatus] = React.useState<string | null>(null);
   // Multi-selection over the rows: plain click, ⌘/ctrl toggle, shift range —
   // shared with the docked panel through lib/step-selection. The ANCHOR is
@@ -526,12 +547,53 @@ export function RecordingView() {
     elementState?: "hover" | "focus";
     prefillText?: string;
     prefillValue?: string;
+    /** duration prefill for the wait form — the command box's "wait 2s" */
+    waitMs?: number;
   } | null>(null);
 
   // Docking the panel narrows the training browser. This window is the one that
   // can be relied on to hear about it: the push is sent before the panel's page
   // loads, so the panel misses it on the ordinary path. See the notice module.
   useViewportNarrowedNotice();
+
+  // The command box's send. The mechanical parse goes first (lib/
+  // command-parse): a phrase the trainer's own controls can honor never
+  // costs a model call — an assert phrase arms the picker, a page assert or
+  // a wait opens the composer prefilled. Everything else is the agent's: a
+  // running run reads it as a redirection (the mailbox), otherwise it starts
+  // a run, and a refusal (no session, run already live) surfaces as a toast
+  // rather than a silent swallow.
+  const submitCommand = React.useCallback(
+    (text: string) => {
+      const parsed = parseCommand(text);
+      if (parsed?.kind === "arm-assert") {
+        setAssert(parsed.assert, soft);
+        return;
+      }
+      if (parsed?.kind === "compose-assert") {
+        setContextPick({
+          picked: null,
+          assert: parsed.assert,
+          prefillValue: urlAssertPrefill(parsed.assert, state.liveUrl ?? state.url ?? ""),
+        });
+        setAddKind("assertion");
+        return;
+      }
+      if (parsed?.kind === "compose-wait") {
+        setContextPick({ picked: null, waitMode: "time", waitMs: parsed.waitMs });
+        setAddKind("wait");
+        return;
+      }
+      if (agentRun?.running) {
+        void sayToAgent(text);
+        return;
+      }
+      void startAgent(text).then((res) => {
+        if (!res.ok && res.reason) toast.error(res.reason);
+      });
+    },
+    [agentRun?.running, sayToAgent, setAssert, soft, startAgent, state.liveUrl, state.url],
+  );
 
   // A right-click test-tools action arrives from the backend: open the Add-step
   // dialog prefilled. "refine" opens the Refine Selector flow for that element
@@ -620,8 +682,10 @@ export function RecordingView() {
   // flight. The steps clause matters for a window that opened mid-session and
   // missed the initial `recorder:steps` push: editing against a list you have
   // not received yet inserts at the wrong position, and the insert cursor the
-  // backend sent means nothing without the rows it points between.
-  const controlsDisabled = !state.pageReady || !stepsLoaded || running;
+  // backend sent means nothing without the rows it points between. A live
+  // AGENT run locks them too: the agent is driving the same page and list,
+  // and the user's channel while it works is the command box, not the bar.
+  const controlsDisabled = !state.pageReady || !stepsLoaded || running || agentBusy;
 
   // ⌘P plays the selected step. Renderer-side because WHICH step is selected
   // is this window's own state; its sibling ⌘R (pause/resume) is claimed in
@@ -755,6 +819,7 @@ export function RecordingView() {
         initialState={contextPick?.elementState}
         prefillText={contextPick?.prefillText}
         prefillValue={contextPick?.prefillValue}
+        initialWaitMs={contextPick?.waitMs}
         variables={state.variables ?? []}
         onCreateVariable={addVariable}
       />
@@ -895,8 +960,12 @@ export function RecordingView() {
           mark={<Wand2 />}
           name={TILE_COPY.ai.name}
           what={TILE_COPY.ai.what}
-          onClick={() => setAiOpen(true)}
-          disabled={controlsDisabled}
+          // The tile opens the COMMAND DRAWER (PR 3); the classic Generate
+          // Steps dialog is one click further, inside it. NOT disabled while
+          // the agent runs: the drawer is how a run is watched and redirected,
+          // and the tile is the only way back to it once closed.
+          onClick={() => setAgentOpen(true)}
+          disabled={!state.pageReady || !stepsLoaded || running}
         />
         <button
           type="button"
@@ -934,12 +1003,40 @@ export function RecordingView() {
               }
             : null
         }
+        aiSuggestions={
+          // Same gate as the mechanical chip: an offer is moot while the
+          // controls are disabled or the composer already has the band's
+          // attention. The store list is already empty when the setting is
+          // off — the flag gates the SEND, in the main process.
+          !controlsDisabled && addKind === null
+            ? {
+                chips: aiSuggestions,
+                onAccept: (id) => void acceptSuggestion(id),
+                onDismissAll: () => {
+                  for (const chip of aiSuggestions) dismissAiSuggestion(chip.id);
+                },
+              }
+            : null
+        }
         createFlow={{
           ...flowGate,
           disabled: flowGate.disabled || controlsDisabled,
           onClick: () => setCreateFlowOpen(true),
         }}
       />
+
+      {agentOpen ? (
+        <AgentPanel
+          className="gl-trainer-ai"
+          run={agentRun}
+          inputDisabled={!state.pageReady || !stepsLoaded}
+          onSubmit={submitCommand}
+          onStop={() => void stopAgent()}
+          onResolveProposal={(id, accept) => void resolveAgentProposal(id, accept)}
+          onClose={() => setAgentOpen(false)}
+          onOpenGenerate={() => setAiOpen(true)}
+        />
+      ) : null}
 
       <ScrollArea
         className="min-h-0 flex-1"

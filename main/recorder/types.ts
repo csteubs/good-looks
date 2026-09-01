@@ -3078,6 +3078,14 @@ export interface RecorderSettings {
    *  the individual send. Off by default for exactly that reason, and the
    *  Alerts pane row states what goes. */
   aiInsightsEnabled: boolean;
+  /** Offer AI-suggested next steps in the trainer after each captured step
+   *  (default false). The trainer's one UNATTENDED AI send: while it is on,
+   *  the step tail and a bounded element inventory — never logs, scripts,
+   *  headers or a field's value — go to the configured provider on a
+   *  debounce, with nobody reviewing the individual send. Off by default
+   *  for exactly that reason; check:agent-egress pins what may leave and
+   *  the settings row states it. */
+  aiSuggestionsEnabled: boolean;
   /** How often the insights report generates (default "weekly"). */
   aiInsightsCadence: InsightsCadence;
   /** Post a macOS notification when an insights report is ready (default

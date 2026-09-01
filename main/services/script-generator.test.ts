@@ -175,6 +175,28 @@ describe("generateSpecDetailed line map", () => {
       ['await page.getByTestId("b").click();', 1],
     ]);
   });
+
+  it("bounds a continue-on-failure step's patience, and restores it after the wrapper", () => {
+    // The catch is only reachable if the wrapped step's failure THROWS: with
+    // no actionTimeout in the emitted config, an action on a missing element
+    // retries until the TEST timeout kills the run — an abort no catch can
+    // swallow, which read as "Continue on Failure is ignored". The bracket
+    // (10s in, 0 = the config's own unlimited posture out) is the fix; the
+    // run-time proof is e2e/continue-on-failure.spec.ts.
+    const steps = [
+      step({ type: "click", locator: { k: "testid", v: "a" }, continueOnFailure: true }),
+      step({ type: "click", locator: { k: "testid", v: "b" } }),
+    ];
+    const { source } = generateSpecDetailed({ name: "t", url: "u", steps });
+    const lines = source.split("\n").map((l) => l.trim());
+    const tryAt = lines.indexOf("try {");
+    expect(lines[tryAt - 1]).toBe("page.setDefaultTimeout(10000);");
+    const catchAt = lines.findIndex((l) => l.startsWith("} catch { /* continue on failure */ }"));
+    expect(lines[catchAt + 1]).toBe("page.setDefaultTimeout(0);");
+    // The UNWRAPPED step gets no bracket — the default posture is the
+    // config's, and only the step that is allowed to fail pays for a bound.
+    expect(lines.filter((l) => l.startsWith("page.setDefaultTimeout"))).toHaveLength(2);
+  });
 });
 
 describe("flow variable binding", () => {

@@ -669,6 +669,7 @@ export function StepComposer({
   initialState,
   prefillText,
   prefillValue,
+  initialWaitMs,
   currentTestId,
   variables = [],
   onCreateVariable,
@@ -700,6 +701,10 @@ export function StepComposer({
   /** When opened from the right-click menu: prefilled value (the element's
    *  current value) for value asserts. */
   prefillValue?: string;
+  /** When opened by the command box's "wait 2 seconds": the duration the
+   *  wait form opens holding. Only meaningful with `initialWaitMode:
+   *  "time"`, which that caller always sends alongside. */
+  initialWaitMs?: number;
   /** Variables the owning test declares, for the "Fill with a variable" kind.
    *  Supplied by the host because the three of them read it from different
    *  places — the trainer from the live session, Edit Steps from the record. */
@@ -871,7 +876,9 @@ export function StepComposer({
       setWaitTime(!initialWaitMode || initialWaitMode === "time");
       setWaitUntil(initialWaitMode === "hidden" ? "hidden" : "visible");
       setWaitTimeout(String(DEFAULT_WAIT_TIMEOUT_MS));
-      setWaitMs("1000");
+      // The command box's "wait 2 seconds" opens the form holding the stated
+      // duration; every other opener keeps the long-standing default.
+      setWaitMs(initialWaitMs != null && initialWaitMs >= 0 ? String(initialWaitMs) : "1000");
       setPressTarget("page");
       setViewport("desktop");
       setVw("1280");
@@ -890,7 +897,7 @@ export function StepComposer({
       setFillVar("");
       setCreatingVar(false);
     }
-  }, [kind, initialAssert, initialWaitMode, initialState, prefillText, prefillValue]);
+  }, [kind, initialAssert, initialWaitMode, initialState, prefillText, prefillValue, initialWaitMs]);
 
   // Flows available to call from here. Fetched on mount rather than held by the
   // parent, so a flow created in another window shows up without a reload.

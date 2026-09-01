@@ -1003,6 +1003,9 @@ export const SETTINGS: RecorderSettings = {
   // one with surface to review (Generate now, the dependent Alerts rows), and
   // the off-state explainer is covered by insights-view.test.tsx.
   aiInsightsEnabled: true,
+  // Same argument as aiInsightsEnabled above: ON here so ?view=recorder can
+  // show the suggestion strip, while the shipped default stays off.
+  aiSuggestionsEnabled: true,
   aiInsightsCadence: "weekly",
   notifyOnInsightsReady: true,
   insightsSlackEnabled: false,

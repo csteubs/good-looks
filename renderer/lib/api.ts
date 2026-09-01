@@ -2,6 +2,7 @@
 // never touches ipcRenderer directly.
 
 import type { Inspection, TextEdit, TsCompletion, TsDiagnostic, TsHover, TsServiceStatus } from "./ts-types";
+import type { AgentRunSnapshot } from "./agent-run";
 import type {
   BasicAuth,
   Annotation,
@@ -111,6 +112,14 @@ export interface FlowInfo {
   /** Per-parameter fallback (the flow's own variable value): what a caller
    *  gets for any argument it leaves blank. Placeholder text, not data. */
   paramDefaults: Record<string, string>;
+}
+
+/** What the suggestion strip shows: label and id only. The raw step stays in
+ *  the main process — accepting sends the id back and the verify gate judges
+ *  the step, so model output never becomes renderer-held structure. Mirrors
+ *  `SuggestionsPayload` in main/services/agent/suggestion-service.ts. */
+export interface SuggestionsPayload {
+  suggestions: { id: string; label: string }[];
 }
 
 export interface ImportResult {
@@ -303,6 +312,31 @@ export const api = {
     /** Resolves when the user clicks an element in the live page; null if cancelled. */
     pick: () => ipc().invoke<LivePagePick | null>("livePage:pick"),
     cancelPick: () => ipc().invoke<void>("livePage:cancelPick"),
+  },
+  /** The trainer agent — drives the live session toward a typed goal through
+   *  the same verify gate as recorder.verifySteps. Progress arrives on the
+   *  `agent:event` push (reduced in lib/agent-run.ts); getRun seeds a window
+   *  that opened mid-run. */
+  agent: {
+    start: (goal: string) =>
+      ipc().invoke<{ ok: boolean; runId?: string; reason?: string }>("agent:start", { goal }),
+    say: (text: string) => ipc().invoke<boolean>("agent:say", { text }),
+    stop: () => ipc().invoke<boolean>("agent:stop"),
+    resolveProposal: (id: string, accept: boolean) =>
+      ipc().invoke<{ ok: boolean; detail?: string }>("agent:resolveProposal", { id, accept }),
+    getRun: () => ipc().invoke<AgentRunSnapshot>("agent:getRun"),
+  },
+  /** The AI suggestion strip — next-step offers made after a captured step,
+   *  only while Settings → Recording's aiSuggestionsEnabled is on. Offers
+   *  arrive on the `suggest:changed` push ({ suggestions: [{id, label}] });
+   *  get seeds a window that opened mid-session. Accepting sends the id
+   *  back and the step runs through the same verify gate as everything
+   *  else — the raw step never crosses into the renderer. */
+  suggest: {
+    accept: (id: string) =>
+      ipc().invoke<{ ok: boolean; detail?: string }>("suggest:accept", { id }),
+    dismiss: (id: string) => ipc().invoke<boolean>("suggest:dismiss", { id }),
+    get: () => ipc().invoke<SuggestionsPayload>("suggest:get"),
   },
   tests: {
     list: () => ipc().invoke<TestRecord[]>("tests:list"),

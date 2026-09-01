@@ -12,7 +12,7 @@
 // start/step/done events that can be interleaved or cut short.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { RecorderState, Step } from "../lib/recorder-types";
@@ -83,6 +83,29 @@ vi.mock("../lib/api", () => ({
       discardExit: async () => {},
     },
     runner: { run: async () => ({ runId: "t1" }), stop: async () => {}, replayRun: async () => ({ runId: "t1" }) },
+    // The store seeds the trainer-agent run on mount, the getSteps argument
+    // again. A null runId is "no run has ever happened", the ordinary case.
+    agent: {
+      getRun: async () => ({ runId: null, running: false, state: "idle", events: [] }),
+      start: async () => ({ ok: true, runId: "agent-1" }),
+      say: async () => true,
+      stop: async () => true,
+      resolveProposal: async () => ({ ok: true }),
+    },
+    // The suggestion strip seeds the same way the agent run does; offers are
+    // mutable so a test can stand in for a window that opened while chips
+    // were standing.
+    suggest: {
+      get: async () => ({ suggestions: seededSuggestions }),
+      accept: async (id: string) => {
+        acceptedIds.push(id);
+        return acceptOutcome;
+      },
+      dismiss: async (id: string) => {
+        dismissedIds.push(id);
+        return true;
+      },
+    },
     // The store asks for a batch already running when this window opened —
     // §6.8 moved the live batch here so every screen can see it, not just the
     // batch view. Null is "nothing running", which is the ordinary case.
@@ -111,6 +134,8 @@ let actionsUnderTest: {
   verifyGeneratedSteps: (steps: never[], label: string) => Promise<{ inserted: number }>;
   deleteStep: (id: string) => void;
   run: (id: string) => void;
+  acceptSuggestion: (id: string) => Promise<void>;
+  dismissSuggestion: (id: string) => void;
 } | null = null;
 
 /** Renders the store's state as text so tests can assert on it. */
@@ -130,10 +155,13 @@ function Probe() {
     runEpoch,
     lastAddedStepId,
     liveBatch,
+    aiSuggestions,
+    acceptSuggestion,
+    dismissSuggestion,
   } = useRecorder();
   // Stashed for the tests that need to invoke an action rather than observe
   // state; a button per action would drown the markup the other suites read.
-  actionsUnderTest = { verifyGeneratedSteps, deleteStep, run };
+  actionsUnderTest = { verifyGeneratedSteps, deleteStep, run, acceptSuggestion, dismissSuggestion };
   return (
     <div>
       <span data-testid="recording">{String(state.recording)}</span>
@@ -179,6 +207,7 @@ function Probe() {
           .sort()
           .join("|")}
       </span>
+      <span data-testid="ai-suggestions">{aiSuggestions.map((s) => s.label).join("|")}</span>
     </div>
   );
 }
@@ -210,6 +239,13 @@ let verifyOutcome: { inserted: number; results: { label: string; status: string 
 let holdInserts = false;
 let releaseInsert: Array<() => void> = [];
 
+/** The suggestion strip's fixtures — what `suggest:get` seeds, and what the
+ *  accept/dismiss round-trips saw and answer. */
+let seededSuggestions: { id: string; label: string }[] = [];
+let acceptedIds: string[] = [];
+let dismissedIds: string[] = [];
+let acceptOutcome: { ok: boolean; detail?: string } = { ok: true };
+
 beforeEach(() => {
   handlers.clear();
   fetchedSteps = [];
@@ -219,6 +255,10 @@ beforeEach(() => {
   holdInserts = false;
   releaseInsert = [];
   actionsUnderTest = null;
+  seededSuggestions = [];
+  acceptedIds = [];
+  dismissedIds = [];
+  acceptOutcome = { ok: true };
   clearToastCalls();
 });
 
@@ -873,5 +913,64 @@ describe("which step just arrived", () => {
     // And the FIRST list of the next session is an arrival-free load again.
     emit("recorder:steps", [{ id: "p" }, { id: "q" }] as Step[]);
     expect(text("last-added")).toBe("null");
+  });
+});
+
+describe("the AI suggestion strip", () => {
+  const CHIPS = [
+    { id: "sg-1", label: "Assert “Order placed” is visible" },
+    { id: "sg-2", label: "Click “View receipt”" },
+  ];
+
+  it("adopts pushed offers wholesale — the backend owns membership", () => {
+    renderStore();
+    emit("recorder:state", { ...baseState(), recording: true });
+    emit("suggest:changed", { suggestions: CHIPS });
+    expect(text("ai-suggestions")).toContain("Order placed");
+    emit("suggest:changed", { suggestions: [CHIPS[1]] });
+    expect(text("ai-suggestions")).toBe(CHIPS[1].label);
+    emit("suggest:changed", { suggestions: [] });
+    expect(text("ai-suggestions")).toBe("");
+  });
+
+  it("seeds from suggest:get for a window that opened while offers stood", async () => {
+    seededSuggestions = [CHIPS[0]];
+    renderStore();
+    emit("recorder:state", { ...baseState(), recording: true });
+    await waitFor(() => expect(text("ai-suggestions")).toBe(CHIPS[0].label));
+  });
+
+  it("clears the strip when the session ends — the page the chips describe is gone", () => {
+    renderStore();
+    emit("recorder:state", { ...baseState(), recording: true });
+    emit("suggest:changed", { suggestions: CHIPS });
+    expect(text("ai-suggestions")).not.toBe("");
+    emit("recorder:state", { ...baseState(), recording: false });
+    expect(text("ai-suggestions")).toBe("");
+  });
+
+  it("dismiss removes the chip under the click immediately, then tells the backend", async () => {
+    renderStore();
+    emit("recorder:state", { ...baseState(), recording: true });
+    emit("suggest:changed", { suggestions: CHIPS });
+    act(() => actionsUnderTest!.dismissSuggestion("sg-1"));
+    // Optimistic — gone before any confirming push.
+    expect(text("ai-suggestions")).toBe(CHIPS[1].label);
+    await waitFor(() => expect(dismissedIds).toEqual(["sg-1"]));
+  });
+
+  it("a failed accept toasts the gate's detail; success shows itself as the step", async () => {
+    acceptOutcome = { ok: false, detail: "matched nothing" };
+    renderStore();
+    emit("recorder:state", { ...baseState(), recording: true });
+    emit("suggest:changed", { suggestions: CHIPS });
+    await act(() => actionsUnderTest!.acceptSuggestion("sg-1"));
+    expect(acceptedIds).toEqual(["sg-1"]);
+    expect(toastTexts().some((x) => x.title.includes("matched nothing"))).toBe(true);
+
+    clearToastCalls();
+    acceptOutcome = { ok: true };
+    await act(() => actionsUnderTest!.acceptSuggestion("sg-2"));
+    expect(toastTexts()).toEqual([]);
   });
 });

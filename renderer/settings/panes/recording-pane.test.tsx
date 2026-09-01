@@ -61,6 +61,36 @@ describe("trainer panel", () => {
   });
 });
 
+describe("AI step suggestions", () => {
+  // The trainer's one unattended AI send — off is the SECURITY default, the
+  // aiInsightsEnabled argument: enabling it is the consent.
+  it("is off by default", () => {
+    renderPane(<RecordingPane />);
+    const sw = screen.getByRole("switch", { name: /ai step suggestions/i });
+    expect(sw.getAttribute("aria-checked") ?? sw.getAttribute("data-state")).toMatch(
+      /false|unchecked/i,
+    );
+  });
+
+  it("saves the enable toggle", () => {
+    const { controller } = renderPane(<RecordingPane />);
+    fireEvent.click(screen.getByRole("switch", { name: /ai step suggestions/i }));
+    expect(savedPatch(controller)).toEqual({ aiSuggestionsEnabled: true });
+  });
+
+  it("discloses what a suggestion sends, always visible, naming the local server", () => {
+    // `risk`, not `details`: the disclosure must be readable WITHOUT a
+    // "More" click, and it names both halves — what goes, what never goes —
+    // plus the destination for the configured provider (the harness default
+    // is a local one).
+    renderPane(<RecordingPane />);
+    expect(screen.getByText(/bounded inventory of the page's visible controls/i)).toBeTruthy();
+    expect(screen.getByText(/never what you type into a field/i)).toBeTruthy();
+    expect(screen.getByText(/your own server on this machine/i)).toBeTruthy();
+    expect(screen.queryByText(/api\.anthropic\.com/)).toBeNull();
+  });
+});
+
 describe("default window size", () => {
   // NOT TESTED: picking a size. The SDK's Select is native-menu-backed, so its
   // options never enter the DOM. The displayed value is asserted instead, and

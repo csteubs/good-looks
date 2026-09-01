@@ -66,6 +66,14 @@ const actions = {
   enterFlowScope: vi.fn(async () => {}),
   exitFlowScope: vi.fn(async () => {}),
   setFlowCursor: vi.fn(),
+  startAgent: vi.fn(
+    async (): Promise<{ ok: boolean; runId?: string; reason?: string }> => ({ ok: true, runId: "r1" }),
+  ),
+  sayToAgent: vi.fn(async () => true),
+  stopAgent: vi.fn(async () => true),
+  resolveAgentProposal: vi.fn(async () => ({ ok: true })),
+  acceptSuggestion: vi.fn(async () => {}),
+  dismissSuggestion: vi.fn(),
 };
 
 let store: Record<string, unknown> = {};
@@ -129,6 +137,8 @@ function setStore(over: Record<string, unknown> = {}) {
     refiningStepId: null,
     contextAction: null,
     flowScope: null,
+    agentRun: null,
+    aiSuggestions: [],
     ...actions,
     ...over,
   };
@@ -904,6 +914,114 @@ describe("the fill context action", () => {
   });
 });
 
+// ── The command drawer (PR 3) ──────────────────────────────────────────────
+//
+// The AI tile's surface: a command box whose mechanical parse
+// (lib/command-parse) is tried before anything reaches the agent, the run
+// transcript, and the assertion-proposal cards. The agent LOOP is pinned in
+// main/services/agent/trainer-agent-service.test.ts; what these pin is the
+// WIRING — which control reaches which action, and that a live run locks
+// the bar while the box stays open for redirection.
+describe("the command drawer", () => {
+  const runView = (over: Record<string, unknown> = {}) => ({
+    runId: "r1",
+    running: true,
+    state: "acting",
+    items: [
+      { kind: "say", seq: 1, who: "user", text: "add the item to the cart" },
+      { kind: "step", seq: 2, label: "Click “Add to cart”", status: "ran" },
+    ],
+    lastSeq: 2,
+    ...over,
+  });
+
+  it("opens on the AI tile — the Generate Steps dialog is one click further, inside it", async () => {
+    setStore();
+    render(withAiDebug(<RecordingView />));
+    expect(screen.queryByLabelText("Tell the trainer what to do")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^ai$/i }));
+    expect(screen.getByLabelText("Tell the trainer what to do")).toBeTruthy();
+    expect(screen.queryByText("Generate steps with AI")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /generate steps…/i }));
+    expect(await screen.findByText("Generate steps with AI")).toBeTruthy();
+  });
+
+  it("handles an assert phrase locally — arming the picker, never the agent", () => {
+    setStore();
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: /^ai$/i }));
+    const input = screen.getByLabelText("Tell the trainer what to do");
+    fireEvent.change(input, { target: { value: "assert the heading is visible" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(actions.setAssert).toHaveBeenCalledWith("visible", false);
+    expect(actions.startAgent).not.toHaveBeenCalled();
+    expect((input as HTMLInputElement).value).toBe("");
+  });
+
+  it("opens the wait form holding the stated duration", async () => {
+    setStore();
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: /^ai$/i }));
+    const input = screen.getByLabelText("Tell the trainer what to do");
+    fireEvent.change(input, { target: { value: "wait 2 seconds" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    const form = await screen.findByRole("form", { name: /add wait/i });
+    expect(within(form).getByDisplayValue("2000")).toBeTruthy();
+    expect(actions.startAgent).not.toHaveBeenCalled();
+  });
+
+  it("sends a goal to the agent, and a refusal surfaces as a toast", async () => {
+    actions.startAgent.mockResolvedValueOnce({ ok: false, reason: "No recording session is running." });
+    setStore();
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: /^ai$/i }));
+    const input = screen.getByLabelText("Tell the trainer what to do");
+    fireEvent.change(input, { target: { value: "add the vitamin to the cart and check out" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(actions.startAgent).toHaveBeenCalledWith("add the vitamin to the cart and check out");
+    await waitFor(() =>
+      expect(toastTexts()).toContainEqual(
+        expect.objectContaining({ type: "error", title: "No recording session is running." }),
+      ),
+    );
+  });
+
+  it("a live run locks the bar, auto-opens the drawer, and the box redirects instead of starting", () => {
+    setStore({ agentRun: runView() });
+    render(withAiDebug(<RecordingView />));
+    // Auto-opened: the transcript is on screen without a tile click.
+    expect(screen.getByText("add the item to the cart")).toBeTruthy();
+    expect(screen.getByText(/acting on the page/i)).toBeTruthy();
+    // The bar is the agent's while it runs…
+    expect(screen.getByRole("button", { name: /^assert$/i }).hasAttribute("disabled")).toBe(true);
+    // …but the box is not: a message mid-run is the mailbox.
+    const input = screen.getByLabelText("Tell the trainer what to do");
+    fireEvent.change(input, { target: { value: "use the search box instead" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(actions.sayToAgent).toHaveBeenCalledWith("use the search box instead");
+    expect(actions.startAgent).not.toHaveBeenCalled();
+    // And Stop reaches the run.
+    fireEvent.click(screen.getByRole("button", { name: /stop the agent run/i }));
+    expect(actions.stopAgent).toHaveBeenCalled();
+  });
+
+  it("resolves a proposal card through the store, both ways", () => {
+    setStore({
+      agentRun: runView({
+        state: "awaiting-user",
+        items: [
+          { kind: "proposal", seq: 3, id: "p1", label: "Assert “Added” is visible", resolved: false },
+        ],
+      }),
+    });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: /^add it$/i }));
+    expect(actions.resolveAgentProposal).toHaveBeenCalledWith("p1", true);
+    fireEvent.click(screen.getByRole("button", { name: /^dismiss$/i }));
+    expect(actions.resolveAgentProposal).toHaveBeenCalledWith("p1", false);
+  });
+});
+
 // ── The next-action chip ───────────────────────────────────────────────────
 //
 // The context band's idle slot offers the ONE mechanical suggestion the rules
@@ -988,6 +1106,75 @@ describe("the next-action chip", () => {
     });
     render(withAiDebug(<RecordingView />));
     expect(screen.queryByRole("button", { name: /assert this field/i })).toBeNull();
+    expect(screen.getByText("Act on the page, or pick a tool.")).toBeTruthy();
+  });
+});
+
+// ── The AI suggestion strip ────────────────────────────────────────────────
+//
+// The store owns membership (empty while the setting is off — the flag gates
+// the SEND, in the main process); what these pin is the view's wiring: the
+// chips share the idle slot with the mechanical chip, taking one goes through
+// the store's verified-accept action, one X clears every shown offer, and
+// anything that owns the band (an armed assert, the composer) hides them.
+describe("the AI suggestion strip", () => {
+  const CHIPS = [
+    { id: "sg-1", label: "Assert “Order placed” is visible" },
+    { id: "sg-2", label: "Click “View receipt”" },
+  ];
+  const FILLED = step("f1", {
+    type: "fill",
+    locator: { k: "label", v: "Email" },
+    value: "chris@example.com",
+    fingerprint: {
+      tag: "input",
+      description: 'input "Email"',
+      candidates: [{ k: "testid", v: "email" }],
+      attributes: { type: "email" },
+      depth: 3,
+    },
+  });
+
+  it("renders each offer as a chip; taking one calls the store's verified accept", () => {
+    setStore({ aiSuggestions: CHIPS });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: /order placed/i }));
+    expect(actions.acceptSuggestion).toHaveBeenCalledWith("sg-1");
+  });
+
+  it("one X dismisses every shown offer", () => {
+    setStore({ aiSuggestions: CHIPS });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: /dismiss suggestions/i }));
+    expect(actions.dismissSuggestion).toHaveBeenCalledWith("sg-1");
+    expect(actions.dismissSuggestion).toHaveBeenCalledWith("sg-2");
+  });
+
+  it("stands beside the mechanical chip rather than replacing it", () => {
+    setStore({ liveSteps: [FILLED], state: state({ cursor: 1 }), aiSuggestions: CHIPS });
+    render(withAiDebug(<RecordingView />));
+    expect(screen.getByRole("button", { name: /assert this field/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /order placed/i })).toBeTruthy();
+  });
+
+  it("is moot while the composer is open", async () => {
+    setStore({ liveSteps: [FILLED], state: state({ cursor: 1 }), aiSuggestions: CHIPS });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: /assert this field/i }));
+    await waitFor(() => screen.getByRole("form", { name: /add assertion/i }));
+    expect(screen.queryByRole("button", { name: /order placed/i })).toBeNull();
+  });
+
+  it("waits while an armed assertion owns the band", () => {
+    setStore({ aiSuggestions: CHIPS, state: state({ assertMode: "visible" }) });
+    render(withAiDebug(<RecordingView />));
+    expect(screen.queryByRole("button", { name: /order placed/i })).toBeNull();
+  });
+
+  it("shows the idle hint, not a dismiss X, when nothing is on offer", () => {
+    setStore();
+    render(withAiDebug(<RecordingView />));
+    expect(screen.queryByRole("button", { name: /dismiss suggestions/i })).toBeNull();
     expect(screen.getByText("Act on the page, or pick a tool.")).toBeTruthy();
   });
 });

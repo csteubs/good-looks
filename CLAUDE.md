@@ -33,8 +33,30 @@ main/services/      business logic (recorder, playwright-runner, llm, spec-parse
                     and hard-deleted with its test), the second holds facts about each attempt
                     and no content at all — which is what lets it outlive both the cap and the
                     test, and tombstone rather than erase when a test is deleted
-main/services/insights/  the scheduled AI report (Settings → Alerts, off by default) — the
-                    app's only UNATTENDED LLM egress, which is why its facts builder reads
+main/services/agent/ the TRAINER AGENT (PR 3 of the bar plan): drives a live
+                    recording session toward a typed goal, one verified step at
+                    a time — the model proposes, recorderService.tryStep (the
+                    same gate verifyAndInsertSteps loops over) disposes. State
+                    machine + user-turn mailbox in trainer-agent-service.ts
+                    (deps-injected, insights-style), prompt builders deriving
+                    their vocabulary from main/recorder/types.ts constants in
+                    agent-prompts.ts, and the bounded page inventory (never
+                    HTML, never a field's value) in page-summary.ts. The agent
+                    is ATTENDED — every run starts from an explicit send.
+                    suggestion-service.ts (PR 4) is the UNATTENDED one: the AI
+                    suggestion strip, debounced off recorder-service's
+                    onCaptureRecorded hook, gated by aiSuggestionsEnabled (OFF
+                    by default; the flag is re-read at send time AND after the
+                    model answers), offers-only (labels cross to the renderer,
+                    never raw steps; fill/press refused by a service-side
+                    allowlist; accepting goes through tryStep). check:agent-
+                    egress pins the whole directory the way insights-egress
+                    pins the report. e2e/agent-loop.spec.ts is the assembled
+                    authority
+main/services/insights/  the scheduled AI report (Settings → Alerts, off by default) — one
+                    of the app's TWO unattended LLM egress paths (the other is the trainer's
+                    suggestion strip, main/services/agent/suggestion-service.ts), which is
+                    why its facts builder reads
                     only indexes and aggregates (never a log, script or header value) and
                     `check:insights-egress` pins that with a planted secret. Release notes
                     ship as typed data in release-notes.ts: bump `package.json` version ⇒
@@ -440,9 +462,9 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 6124 Vitest tests across 337 files and 94 checks in the chain as of 2026-08-26 (96 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 6313 Vitest tests across 349 files and 95 checks in the chain as of 2026-09-01 (97 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
 
-**A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS — or a real navigation — gets checked: `click-navigation.spec.ts` (a click that changes route is recorded, including one a client-side router intercepts; the failure it was written against loses six clicks out of six and jsdom cannot host it, because nothing there has a navigation that destroys the document mid-read), `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `dialog-lifecycle.spec.ts` (whether the dialog that started a recording is still on top of the app afterwards — the existing recording spec invokes `recorder:start` over IPC, so it opens no dialog and could never see one left behind), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app), `verified-steps.spec.ts` (that an AI-proposed step is actually TRIED on the live page before it is inserted, that the first failure stops the rest, and that capture does not record the try a second time — a live session acting on a real page, which nothing in jsdom can host), `ts-service.spec.ts` (that the app forks the TypeScript service through a real `utilityProcess` and it answers — the child path, the node_modules resolution and `process.parentPort` exist nowhere else; `check:ts-service` boots the same built file under plain Node), `recorder-shortcuts.spec.ts` (that ⌘R pauses/resumes a live session INSTEAD of the View menu's Reload winning the chord and reloading the window — only a real menu, a real webContents and a real key event can say who wins, and the key must go through `sendInputEvent`, because CDP-synthesized input never reaches `before-input-event`). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
+**A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS — or a real navigation — gets checked: `click-navigation.spec.ts` (a click that changes route is recorded, including one a client-side router intercepts; the failure it was written against loses six clicks out of six and jsdom cannot host it, because nothing there has a navigation that destroys the document mid-read), `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `dialog-lifecycle.spec.ts` (whether the dialog that started a recording is still on top of the app afterwards — the existing recording spec invokes `recorder:start` over IPC, so it opens no dialog and could never see one left behind), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app), `verified-steps.spec.ts` (that an AI-proposed step is actually TRIED on the live page before it is inserted, that the first failure stops the rest, and that capture does not record the try a second time — a live session acting on a real page, which nothing in jsdom can host), `ts-service.spec.ts` (that the app forks the TypeScript service through a real `utilityProcess` and it answers — the child path, the node_modules resolution and `process.parentPort` exist nowhere else; `check:ts-service` boots the same built file under plain Node), `recorder-shortcuts.spec.ts` (that ⌘R pauses/resumes a live session INSTEAD of the View menu's Reload winning the chord and reloading the window — only a real menu, a real webContents and a real key event can say who wins, and the key must go through `sendInputEvent`, because CDP-synthesized input never reaches `before-input-event`), `agent-loop.spec.ts` (that the trainer agent's proposed steps are TRIED on the live page through the same verify gate as everything else — a scripted Ollama-protocol server, pointed at via `llm:setConfig`'s `baseUrls` override, proposes one click that resolves and one that cannot: one insertion, the failure fed back as prompt evidence, the goal's group bracketing what landed, no double-capture, and an assertion card inserting only on accept — the loop's state machine is unit-tested with stubbed deps, but only the real llm-service, page executor and step list can prove the assembled thing). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
 
 **Six specs there are not about windows at all.** `assert-parity.spec.ts`,
 `context-parity.spec.ts`, `shadow-parity.spec.ts`, `step-progress.spec.ts`,

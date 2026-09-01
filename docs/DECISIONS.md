@@ -10,6 +10,119 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-01 — Continue on Failure was unreachable for actions: the timeout bracket
+
+A field report with a screenshot: a click marked Continue on Failure failed,
+the run stopped there, and the whole test failed — the flag looked simply
+ignored. The generator HAS always wrapped the step in `try { … } catch`, and
+the wrapper was in the file. The catch was just unreachable.
+
+**The mechanism.** The emitted config sets a test timeout and an expect
+timeout and NO actionTimeout — so an action's effective patience under
+Playwright-test is unlimited. A click on an element that is not there never
+throws; it retries until the TEST timeout kills the run, and a test-timeout
+abort is not a failure a catch can swallow: the test is already marked
+failed, and the report pins "Test timeout exceeded" on the wrapped step.
+Measured twice: a probe with a 45s test budget showed the unwrapped click
+waiting all 45s ("locator.click: Test timeout of 45000ms exceeded"), and the
+report's own arithmetic closed exactly — goto 14s + click 7.6s + 7.7s into
+the wrapped step ≈ the 30s budget. Asserts were never broken (expect() is
+bounded by the config's 5s expect timeout, so a wrapped assertion throws and
+is caught); downloads were never broken (`waitForEvent` is armed with an
+explicit timeout). Only ACTIONS — the commonest thing the flag is put on —
+could never fail in a catchable way.
+
+**The fix is a bracket, not a config change.** The wrapper arm now emits
+`page.setDefaultTimeout(10000)` (DEFAULT_WAIT_TIMEOUT_MS — the same patience
+a conditional wait gets) before the try and `page.setDefaultTimeout(0)`
+after it. Restore-to-zero is deliberate: 0 IS the config's own posture
+(actionTimeout unset = unbounded, the test timeout governs), so unwrapped
+steps behave exactly as before — setting a global actionTimeout instead
+would have changed every step of every test to fix one flag. The setters
+sit OUTSIDE the try as plain statements, so the spec parser reads the
+wrapper unchanged and consumes them the way it consumes a viewport log line
+(counting them would stamp stepsDiverged onto every test using the flag —
+pinned in spec-parser-positions.test.ts).
+
+**The authority is `e2e/continue-on-failure.spec.ts`** — the real CLI over a
+real generated spec against a page missing the wrapped target: the wrapped
+run PASSES (the catch finally reached), and the same failure unwrapped still
+fails with "Test timeout", which is the premise stated out loud. Verified to
+fail by dropping the bracket. The blind spot this closes is the
+check:runtime-boot lesson again: the wrapper ships as emitted source, every
+unit test asserted its SHAPE, and nothing had ever executed it against the
+failure it exists for.
+
+### 2026-09-01 — The trainer agent: the model proposes, the verify gate disposes
+
+PR 3 of the bar plan: the AI tile opens a COMMAND DRAWER on both trainers —
+a box that reads "Tell the trainer what to do — or click the page" — and
+behind it, `main/services/agent/` drives the live session toward a typed
+goal. The decisions that shaped it:
+
+**One verify gate, two callers.** The per-step body of
+`verifyAndInsertSteps` became `tryOneStep` (normalize through the ingest
+boundary → run against the live page → insert only what worked), with
+`verifyAndInsertSteps` looping over it unchanged and the agent's public
+`tryStep` wrapping a single try. The alternative — an agent with its own
+execute-and-insert path — is a second boundary to forget; this way a step
+proposed by the agent's model enters the list through EXACTLY the code the
+Generate Steps dialog uses, and `e2e/verified-steps.spec.ts` stayed green
+across the refactor as the proof. `tryStep` is pinned in
+`check:replay-suspend` beside the replay methods, because an unsuspended
+verified try records the step it just inserted.
+
+**The mailbox is the interruption model.** A user message mid-run
+(`agent:say`) queues; the loop drains the queue between steps and before
+every planning turn, so a redirection lands before the next step and never
+inside one. `stop()` is the one flag every stage checks. Three straight
+failures park the run in `awaiting-user` — and the park LOOP only returns
+on a message, a stop or a dead session, never on its poll tick, because a
+tick that replanned would burn the whole turn budget while the user was at
+lunch (caught in review before it shipped).
+
+**Failure feeds evidence, not retries.** A failed try is probed with the
+Auto-Heal machinery (`agentProbeStep` — candidates rebuilt through
+`normalizeRawStep` before anything reaches a prompt) and the next planning
+turn carries FAILED STEP / ERROR / CANDIDATE lines. The model is told to
+change approach, not the loop to try again: "3 attempts per step" is a
+consecutive-failure budget, and an identical fourth guess teaches nothing
+the evidence has not.
+
+**The page reaches the model as a bounded inventory, never HTML.**
+`agent/page-summary.ts` collects up to 40 visible interactables (tag, role,
+aria-label, capped text, id, testid, placeholder, type) and NEVER an
+element's value — a live form holds whatever the user typed, passwords
+included. The summary is page JSON, so `normalizePageSummary` rebuilds it
+from named keys like every other arrival from the capture boundary. The
+prompt marks both the inventory and the evidence as untrusted page DATA,
+mirroring ai-log-payload's framing.
+
+**Assertion proposals are cards, not steps.** The model may propose up to
+two assertions per turn; they render as cards and run ONLY on the user's
+accept — through the same `tryStep`, so an accepted assertion that does not
+hold on the live page reports "didn't hold" on the card instead of
+inserting a red step. Everything the run inserts is bracketed
+`group`/`endGroup` under the goal, lazily, so a run that achieved nothing
+leaves the list untouched.
+
+**Attended, deliberately.** Every run starts from an explicit send, so the
+agent carries no settings flag and no egress check — that treatment is
+reserved for the unattended suggestion strip (PR 4). The context builder is
+still held to the unattended standard (no logs, no headers, no raw HTML, no
+values), because context builders outlive their callers. The mechanical
+parse in `lib/command-parse.ts` goes FIRST at the box: an assert phrase
+arms the picker and "wait 2 seconds" opens the composer prefilled, so a
+phrase the trainer's own controls can honor never costs a model call.
+
+**The e2e authority** is `e2e/agent-loop.spec.ts`: a scripted Ollama
+endpoint (turn one proposes a click that resolves and one that cannot; turn
+two claims done and proposes a card) against the real app — one insertion,
+the second /api/chat body carrying the evidence, the group bracketing, no
+double-capture, and the card inserting only on accept. Verified to fail by
+making the gate insert regardless of outcome, which turned three e2e rows
+red across both specs.
+
 ### 2026-09-01 — Next-action chips: mechanical suggestions, no model, no egress
 
 PR 2 of the bar plan: the context band's idle slot now offers the ONE
@@ -14335,3 +14448,62 @@ stays unpersisted — a panel that stayed expanded would hide the step
 list on the next test opened, for a run nobody had looked at — but a
 dragged height is a layout preference, not a glance at one failure, so
 it survives.
+
+## 2026-09-01 — The suggestion strip: consent first, offers only, one gate
+
+PR 4 of the bar plan is the AI suggestion strip: after a captured step, the
+trainer may offer up to two next steps as violet chips in the context band.
+It is the smallest feature in the plan and it got the most security
+scaffolding, because it is the trainer's first UNATTENDED send — every other
+AI affordance (the command box, Generate Steps, per-step debug) fires from an
+explicit user action somebody just reviewed, while this one fires on a
+debounce with nobody looking at the individual payload.
+
+Four decisions, each refusing a simpler version:
+
+**Off by default, and the flag is read at send time — twice.** The
+`aiInsightsEnabled` argument applies verbatim: a continuous egress of page
+content is something the user opts into, not out of, and the Recording pane's
+row carries an always-visible `risk` disclosure (what goes, what never goes,
+where it goes) rather than a collapsible one. The simpler version checks the
+flag when the debounce is scheduled. Wrong twice over: a toggle flipped off
+mid-debounce must win (the setting is the consent, and consent was withdrawn),
+and a toggle flipped off while the model was already answering must ALSO win
+— the reply is discarded unshown, the insights service's discard-at-settle
+rule. `check:agent-egress` counts both guards in the source, and the unit
+tests prove each one's absence is a red test.
+
+**Offers, never actions — and the raw step never crosses the boundary.** A
+suggestion is a chip; nothing runs until the user takes one, and a taken step
+goes through `recorderService.tryStep`, the same verify gate every other step
+arrival crosses — tried on the live page, inserted only once it has worked.
+The renderer sees `{id, label}` and nothing else, so model output never
+becomes renderer-held structure; accepting sends the id back and the step it
+names is the one THIS process normalized and stored. The allowlist of step
+types a suggestion may carry (`click`, `check`, `select`, `wait`, `scroll`,
+`assert` — never `fill` or `press`, whose values the model would have to
+invent) is enforced in the service, not delegated to the prompt: the prompt
+also says it, but model output is untrusted text and the rule holds whatever
+the model was told.
+
+**The capture funnel learned nothing about AI.** The trigger is a new
+`onCaptureRecorded` hook at the end of `recordCaptured` — a listener registry
+that carries NO payload. The suggestion service learns "the step list moved"
+and reads everything else through its own deps, so the capture boundary's
+one-ingest rule is untouched and `check:capture-egress` stayed green through
+the change by design (its excision-by-boundary rewrite, made after the check
+once fired on recordCaptured growing a second statement, is what made that
+possible).
+
+**One egress check for the whole directory.** `check:agent-egress` clones the
+insights three-way pin — source scan over `main/services/agent/`, a planted
+secret pushed through BOTH prompt builders and `redactWithSnapshot` with the
+both-directions assertion (secret gone AND marker present, so a plant that
+never entered the payload cannot pass vacuously), and the wiring regexes
+(redact → `redactWithSnapshot` before `deps.completeJson` in both services,
+the store-bound flag, the false default). It adds one rule the insights check
+has no need for: `page-summary.ts` may never read an element's `.value`,
+because the inventory describes inputs the user may just have typed a
+password into. Proven fail-able by three mutations: the redact call removed,
+the post-answer guard removed, the default flipped to true — each turned
+exactly its own row red.

@@ -394,6 +394,13 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     key: "trainerPanelEnabled",
   },
   {
+    id: "ai-suggestions-enabled",
+    pane: "recording",
+    label: "AI step suggestions",
+    keywords: "ai suggestions strip chips next step assistant llm trainer",
+    key: "aiSuggestionsEnabled",
+  },
+  {
     id: "default-window-size",
     pane: "recording",
     label: "Default window size",
@@ -995,6 +1002,7 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   notifyOnBatchDone: true,
   notifyOnAiDebugDone: false,
   aiInsightsEnabled: false,
+  aiSuggestionsEnabled: false,
   aiInsightsCadence: "weekly",
   notifyOnInsightsReady: true,
   insightsSlackEnabled: false,

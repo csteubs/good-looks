@@ -7,7 +7,13 @@ import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@ui";
 
-import { api } from "../lib/api";
+import { api, type SuggestionsPayload } from "../lib/api";
+import {
+  applyAgentEvent,
+  reduceAgentEvents,
+  type AgentEventRecord,
+  type AgentRunView,
+} from "../lib/agent-run";
 import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
 import { invalidateRunDerived } from "../lib/run-derived-cache";
 import type {
@@ -230,6 +236,28 @@ interface RecorderContextValue {
    *  — and the only path that VERIFIES before inserting. Resolves with what
    *  happened to each step; the dialog renders that as its activity log. */
   verifyGeneratedSteps: (steps: RawStep[], label: string) => Promise<VerifiedStepsResult>;
+  /** The trainer agent's run as this window sees it, or null before any run.
+   *  `agentRun?.running` is a controls gate on both trainers — while the
+   *  agent drives the page, every other mutation waits. */
+  agentRun: AgentRunView | null;
+  /** Start a run toward a typed goal. The service refuses (with a showable
+   *  reason) over a live run or without a session. */
+  startAgent: (goal: string) => Promise<{ ok: boolean; runId?: string; reason?: string }>;
+  /** Queue a mid-run message — drained between steps, never mid-flight. */
+  sayToAgent: (text: string) => Promise<boolean>;
+  stopAgent: () => Promise<boolean>;
+  /** Resolve an assertion-proposal card. Accepting TRIES the assertion on
+   *  the live page through the same gate as everything else. */
+  resolveAgentProposal: (id: string, accept: boolean) => Promise<{ ok: boolean; detail?: string }>;
+  /** The AI suggestion strip's standing offers — empty when the setting is
+   *  off, no session is live, or nothing is on offer. Label and id only:
+   *  the raw step never crosses into the renderer. */
+  aiSuggestions: SuggestionsPayload["suggestions"];
+  /** Take a suggestion. The step is TRIED on the live page through the same
+   *  verify gate as everything else and inserted only on success; a failure
+   *  is toasted here so both trainers get it for free. */
+  acceptSuggestion: (id: string) => Promise<void>;
+  dismissSuggestion: (id: string) => void;
   reorderStep: (id: string, toIndex: number) => void;
   updateStep: (id: string, patch: Partial<Step>) => void;
   /** Declare a variable on the live session, so a step composed here can
@@ -375,6 +403,14 @@ export function RecorderProvider({
   // Those are two different questions that happened to share a variable; this
   // is only ever "what is running now".
   const [liveBatch, setLiveBatch] = React.useState<BatchState | null>(null);
+  // The trainer agent's run, reduced from `agent:event` pushes — see
+  // lib/agent-run.ts for why a reducer, and the effect below for the seed a
+  // late-opening window needs.
+  const [agentRun, setAgentRun] = React.useState<AgentRunView | null>(null);
+  // The suggestion strip's offers, replaced WHOLESALE by every
+  // `suggest:changed` push — the main-process service owns membership and
+  // staleness; this is a mirror, never a merge.
+  const [aiSuggestions, setAiSuggestions] = React.useState<SuggestionsPayload["suggestions"]>([]);
   // See the interface: the rail selects it, the Batch view edits it.
   const [openRoutineId, setOpenRoutineId] = React.useState<string | null>(null);
   // Per-step status for an in-flight trainer replayAll (auto-run on Edit in
@@ -731,7 +767,44 @@ export function RecorderProvider({
       .then((steps) => receiveSteps(steps ?? []))
       .catch(() => {});
 
+    // The trainer agent's event stream, applied incrementally; the ask seeds
+    // a window that opened mid-run (the recorder:getSteps argument again —
+    // the run's earlier pushes reached windows that existed then). The
+    // reducer's seq guard makes the overlap between the snapshot and a push
+    // that raced it harmless.
+    const offAgent = api.on<AgentEventRecord>("agent:event", (record) => {
+      setAgentRun((prev) => applyAgentEvent(prev, record));
+    });
+    // Through a resolved promise (the composer's countMatches pattern), so a
+    // bridge that lacks the call degrades to "no run" rather than crashing
+    // the provider every view in the window hangs off.
+    void Promise.resolve()
+      .then(() => api.agent.getRun())
+      .then((snap) => {
+        if (snap?.runId) {
+          setAgentRun((prev) => (prev ? prev : reduceAgentEvents(snap.events)));
+        }
+      })
+      .catch(() => {});
+
+    // The suggestion strip: pushes replace the offers wholesale, and the ask
+    // seeds a window that opened while offers were standing. Same resolved-
+    // promise hardening as the agent seed — a bridge without the call means
+    // "no offers", not a crashed provider.
+    const offSuggest = api.on<SuggestionsPayload>("suggest:changed", (payload) => {
+      setAiSuggestions(payload?.suggestions ?? []);
+    });
+    void Promise.resolve()
+      .then(() => api.suggest.get())
+      .then((payload) => {
+        const seeded = payload?.suggestions ?? [];
+        if (seeded.length > 0) setAiSuggestions((prev) => (prev.length > 0 ? prev : seeded));
+      })
+      .catch(() => {});
+
     return () => {
+      offSuggest();
+      offAgent();
       offState();
       offSteps();
       offFlowScope();
@@ -994,6 +1067,46 @@ export function RecorderProvider({
   }, [clearNewSteps]);
   const stopRun = React.useCallback((id: string) => void api.runner.stop(id), []);
 
+  // The agent's actions are thin: the SERVICE owns validity (a start over a
+  // live run, a say with no run), and its answer carries the reason — the
+  // command box shows it rather than re-deriving the rules here.
+  const startAgent = React.useCallback((goal: string) => api.agent.start(goal), []);
+  const sayToAgent = React.useCallback((text: string) => api.agent.say(text), []);
+  const stopAgent = React.useCallback(() => api.agent.stop(), []);
+  const resolveAgentProposal = React.useCallback(
+    (id: string, accept: boolean) => api.agent.resolveProposal(id, accept),
+    [],
+  );
+
+  // A session ending strands whatever offers were showing — the page they
+  // describe is gone, and the service only clears its own copy on the next
+  // capture. Mirror-side cleanup, so the next session never opens on chips
+  // from the last one.
+  const recording = state.recording;
+  React.useEffect(() => {
+    if (!recording) setAiSuggestions([]);
+  }, [recording]);
+
+  const acceptSuggestion = React.useCallback(async (id: string) => {
+    const result = await api.suggest
+      .accept(id)
+      .catch(() => ({ ok: false, detail: undefined as string | undefined }));
+    // Only the failure is toasted: success shows itself as the inserted step.
+    if (!result.ok) {
+      toast.error(
+        result.detail
+          ? `That suggestion didn't work: ${result.detail}`
+          : "That suggestion didn't work on the live page.",
+      );
+    }
+  }, []);
+  const dismissSuggestion = React.useCallback((id: string) => {
+    // Optimistic: a dismissed chip must not linger under the click while the
+    // round-trip settles; the confirming push replaces the list anyway.
+    setAiSuggestions((prev) => prev.filter((s) => s.id !== id));
+    void api.suggest.dismiss(id).catch(() => {});
+  }, []);
+
   const value: RecorderContextValue = {
     state,
     liveSteps,
@@ -1043,6 +1156,14 @@ export function RecorderProvider({
     run,
     stopRun,
     runEpoch,
+    agentRun,
+    startAgent,
+    sayToAgent,
+    stopAgent,
+    resolveAgentProposal,
+    aiSuggestions,
+    acceptSuggestion,
+    dismissSuggestion,
   };
 
   return <RecorderContext.Provider value={value}>{children}</RecorderContext.Provider>;

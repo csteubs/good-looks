@@ -16,6 +16,8 @@ import {
 } from "../windows/trainer-panel-window.js";
 import { mcpServerInfo } from "../services/mcp-install.js";
 import { recorderService } from "../services/recorder-service.js";
+import { trainerAgentService } from "../services/agent/trainer-agent-service.js";
+import { trainerSuggestionService } from "../services/agent/suggestion-service.js";
 import { batchRunner } from "../services/batch-runner.js";
 import { batchHistoryStore } from "../services/batch-history-store.js";
 import { routineStore } from "../services/routine-store.js";
@@ -283,6 +285,33 @@ export function registerHandlers(): void {
         typeof params?.label === "string" && params.label.trim() ? params.label.trim() : undefined,
       ),
   );
+  // ── The trainer agent ───────────────────────────────────────────────
+  // Drives the live session toward a typed goal through the SAME verify
+  // gate as recorder:verifySteps (recorderService.tryStep). Every param is
+  // `unknown` on purpose — the service validates; events stream back on the
+  // `agent:event` push and a late-opening window seeds from agent:getRun.
+  ipcMain.handle("agent:start", async (_e, params: { goal?: unknown }) =>
+    trainerAgentService.start(params?.goal),
+  );
+  ipcMain.handle("agent:say", async (_e, params: { text?: unknown }) =>
+    trainerAgentService.say(params?.text),
+  );
+  ipcMain.handle("agent:stop", async () => trainerAgentService.stop());
+  ipcMain.handle("agent:resolveProposal", async (_e, params: { id?: unknown; accept?: unknown }) =>
+    trainerAgentService.resolveProposal(params?.id, params?.accept),
+  );
+  ipcMain.handle("agent:getRun", async () => trainerAgentService.snapshot());
+  // ── The AI suggestion strip ─────────────────────────────────────────
+  // Offers ride the `suggest:changed` push; a late-opening window seeds
+  // from suggest:get. Accepting goes through the same verify gate as
+  // everything else — the id is `unknown` and the service judges it.
+  ipcMain.handle("suggest:accept", async (_e, params: { id?: unknown }) =>
+    trainerSuggestionService.accept(params?.id),
+  );
+  ipcMain.handle("suggest:dismiss", async (_e, params: { id?: unknown }) =>
+    trainerSuggestionService.dismiss(params?.id),
+  );
+  ipcMain.handle("suggest:get", async () => trainerSuggestionService.current());
   ipcMain.handle("recorder:replayStep", async (_e, params: { stepId: string }) =>
     recorderService.replayStep(params.stepId),
   );

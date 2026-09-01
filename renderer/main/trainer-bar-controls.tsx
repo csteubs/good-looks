@@ -15,7 +15,7 @@
 // that lost would be the panel).
 
 import * as React from "react";
-import { Crosshair, Workflow, X } from "lucide-react";
+import { Crosshair, Sparkles, Workflow, X } from "lucide-react";
 
 import { Btn, Segmented } from "../theme";
 import type { AssertKind, Step } from "../lib/recorder-types";
@@ -129,6 +129,18 @@ export interface BarContextZoneProps {
    *  when there is no suggestion, it was dismissed, the controls are
    *  disabled, or the composer is already open — the offer is moot then. */
   suggestion?: { label: string; title: string; onAccept: () => void; onDismiss: () => void } | null;
+  /** The AI suggestion strip's chips (store.aiSuggestions) — rendered in the
+   *  same idle slot as the mechanical chip, beside it when both stand.
+   *  Anything more urgent (armed assert, refine, a note) owns the band and
+   *  the offers wait; the view passes an empty list while the setting is
+   *  off, the composer is open, or nothing is on offer. One X dismisses
+   *  every shown offer — they describe one moment on the page, and waving
+   *  that moment away half-chip-at-a-time is fussier than anyone wants. */
+  aiSuggestions?: {
+    chips: { id: string; label: string }[];
+    onAccept: (id: string) => void;
+    onDismissAll: () => void;
+  } | null;
   /** The create-flow gate (trainer-actions.createFlowGate) + its action.
    *  Always mounted, disabled-gated — see the gate's comment. */
   createFlow: {
@@ -151,8 +163,10 @@ export function BarContextZone({
   onCancelRefine,
   note,
   suggestion,
+  aiSuggestions,
   createFlow,
 }: BarContextZoneProps): React.ReactElement {
+  const aiChips = aiSuggestions && aiSuggestions.chips.length > 0 ? aiSuggestions : null;
   const flowLabel =
     (createFlow.shortLabel ? "Flow" : "Create flow") +
     (createFlow.count > 0 ? ` (${createFlow.count})` : "");
@@ -195,28 +209,60 @@ export function BarContextZone({
         </>
       ) : note ? (
         <span className="gl-note min-w-0 truncate">{note}</span>
-      ) : suggestion ? (
+      ) : suggestion || aiChips ? (
         <>
-          {/* The chip is the suggestion's whole surface — accepting opens the
-              prefilled assertion form, and the X beside it waves THIS offer
-              away without silencing the next. Both fit the band's reserved
-              height, so an offer arriving or leaving moves nothing. */}
-          <button
-            type="button"
-            className="gl-context-chip min-w-0 truncate"
-            title={suggestion.title}
-            onClick={suggestion.onAccept}
-          >
-            {suggestion.label}
-          </button>
-          <button
-            type="button"
-            className="gl-icon-btn"
-            onClick={suggestion.onDismiss}
-            aria-label="Dismiss suggestion"
-          >
-            <X className="size-3.5" />
-          </button>
+          {suggestion ? (
+            <>
+              {/* The chip is the suggestion's whole surface — accepting opens
+                  the prefilled assertion form, and the X beside it waves THIS
+                  offer away without silencing the next. Both fit the band's
+                  reserved height, so an offer arriving or leaving moves
+                  nothing. */}
+              <button
+                type="button"
+                className="gl-context-chip min-w-0 truncate"
+                title={suggestion.title}
+                onClick={suggestion.onAccept}
+              >
+                {suggestion.label}
+              </button>
+              <button
+                type="button"
+                className="gl-icon-btn"
+                onClick={suggestion.onDismiss}
+                aria-label="Dismiss suggestion"
+              >
+                <X className="size-3.5" />
+              </button>
+            </>
+          ) : null}
+          {aiChips ? (
+            <>
+              {/* Violet marks the model's offers apart from the mechanical
+                  chip. Taking one TRIES it on the live page and inserts it
+                  only if it works — the same gate every step goes through. */}
+              {aiChips.chips.map((chip) => (
+                <button
+                  key={chip.id}
+                  type="button"
+                  className="gl-context-chip gl-context-chip-ai min-w-0 truncate"
+                  title="An AI-suggested step — taking it tries it on the live page and inserts it only if it works."
+                  onClick={() => aiChips.onAccept(chip.id)}
+                >
+                  <Sparkles className="size-3 shrink-0" aria-hidden />
+                  <span className="min-w-0 truncate">{chip.label}</span>
+                </button>
+              ))}
+              <button
+                type="button"
+                className="gl-icon-btn"
+                onClick={aiChips.onDismissAll}
+                aria-label="Dismiss suggestions"
+              >
+                <X className="size-3.5" />
+              </button>
+            </>
+          ) : null}
         </>
       ) : (
         <span className="gl-trainer-context-hint min-w-0 truncate">{CONTEXT_IDLE_HINT}</span>
