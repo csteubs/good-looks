@@ -170,6 +170,26 @@ async function mountTrainerPanel(): Promise<void> {
   );
 }
 
+/** The action-bar mockup lab — `/?view=bar-lab`.
+ *
+ *  Mounted INSTEAD OF the app, same argument as the specimen: the lab shows
+ *  three CANDIDATE bars that exist nowhere in the running app, side by side at
+ *  main-pane width and at the docked panel's 360px, so a direction can be
+ *  picked before any production view changes. No store and no bridge — every
+ *  control flips local state, and the banner says so. */
+async function mountBarLab(): Promise<void> {
+  const [React, ReactDOM, { BarLab }] = await Promise.all([
+    import("react"),
+    import("react-dom/client"),
+    import("./bar-mockups"),
+    import("../styles.css"),
+  ]);
+  const root = document.getElementById("root");
+  if (!root) throw new Error("Root element not found");
+  document.body.style.background = "var(--gl-ink)";
+  ReactDOM.createRoot(root).render(React.createElement(BarLab));
+}
+
 /** The training browser's URL strip — `/?view=chrome`.
  *
  *  Same argument again, one level further out: this renders into a
@@ -220,6 +240,11 @@ async function boot(): Promise<void> {
   }
   if (view === "chrome") {
     await mountRecorderChrome();
+    mountPreviewBanner();
+    return;
+  }
+  if (view === "bar-lab") {
+    await mountBarLab();
     mountPreviewBanner();
     return;
   }

@@ -10,6 +10,29 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-01 — The action-bar reorganisation starts as a mockup lab, not a branch of the views
+
+The trainer tool-row reorganisation (the work the 2026-08-28 entry reserved
+space for) opens with `?view=bar-lab` — three candidate bars rendered side by
+side at main-pane width and at the panel's 360px, across the states that
+historically reflowed the row — rather than with a redesign landing directly
+in `recording-view.tsx`. Two reasons. The directions differ structurally
+(tiles over a context line; a fixed primary row over a morphing zone; a
+command-box spine), so comparing them inside one production view would mean
+building all three for real; a lab under `renderer/dev/` costs a fraction of
+one. And the row's known defects are all RE-LAYOUT defects — transients
+injected mid-row, an armed assert changing a button's width — which jsdom
+cannot show and a static image can: the lab exists to be screenshotted.
+
+One rule worth recording: **lab classes wear a `mock-` prefix, never `gl-`.**
+`check:renderer-classes` audits the `gl-*` namespace against the production
+stylesheet, and a `gl-` class that resolves only in a dev-only sheet is
+exactly the "name that resolves to nothing" ambiguity it exists to kill —
+where a mock wants the real treatment it imports the real primitives and the
+real classes instead. The lab is scaffolding for a decision; whichever
+direction is picked, the production build (which never includes
+`renderer/dev/`) is untouched until it lands through its own reviewed change.
+
 ### 2026-08-28 — ⌘R toggles recording, and the chip became the button
 
 Two shortcuts for the trainer — ⌘R toggles recording/paused, ⌘P plays the
