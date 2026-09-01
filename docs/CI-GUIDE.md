@@ -377,6 +377,25 @@ used, so a run that recovered in a container is exactly the run this command
 brings back — and without the marking it would arrive in the app looking like a
 clean pass.
 
+### Auto-Heal events come back with the runs
+
+If Auto-Heal got a step past a stale locator on the build server, that heal is
+carried in too. It arrives in the Heals view awaiting review, exactly as a heal
+from a run you started yourself does, with the locator it replaced kept as the
+undo.
+
+This matters more than it sounds. A heal is the app noticing that the site
+moved, and CI is where most runs happen — so without this the runs that meet a
+site most often were the ones teaching the app least about it. Their heals also
+feed the fixes the app proposes for **other tests** on the same site, which is
+the feature that saves you fixing eight tests by hand after one release.
+
+Two things they never do. An ingested heal is never marked as applied: nothing
+on your machine changed, so there is no rewrite to undo — only a suggestion to
+read. And they dedupe per run and step, so ingesting the same artifact twice
+adds nothing, while the same step healing on Monday and again on Tuesday shows
+up as the two events it was.
+
 ---
 
 ## 9. When a CI run goes wrong

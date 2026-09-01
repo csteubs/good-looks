@@ -834,6 +834,10 @@ export interface HealEntry {
   candidates: HealCandidate[];
   /** whether the stored test was actually changed. False under "suggest". */
   applied: boolean;
+  /** true when this heal happened on another machine and was carried back by
+   *  `good-looks ingest` — a CI runner's heal. Never `applied`: nothing here
+   *  changed, so it is a suggestion to read rather than a rewrite to undo. */
+  ingested?: true;
   status: HealStatus;
   at: number;
 }
@@ -901,6 +905,10 @@ export interface PropagationDonorRef {
   at: number;
 }
 
+/** Exact identity, or a near miss corroborated as the same element. A near
+ *  miss is suggest-only — never auto-applied, whatever the confidence. */
+export type PropagationMatch = "exact" | "near-miss";
+
 export interface PropagationEntry {
   id: string;
   testId: string;
@@ -915,6 +923,9 @@ export interface PropagationEntry {
   confidence: number;
   /** codes from shared/propagation.mjs REASON_CODES — copy lives renderer-side */
   reasons: string[];
+  /** how the target was matched; absent on entries stored before near misses
+   *  existed, which read as `exact` */
+  match?: PropagationMatch;
   autoApplyEligible: boolean;
   applied: boolean;
   status: PropagationStatus;

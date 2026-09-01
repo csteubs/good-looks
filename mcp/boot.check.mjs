@@ -140,7 +140,14 @@ try {
   // One read, one write, one of each recent addition — so a registration that
   // throws mid-file is caught rather than leaving a truncated list that still
   // clears the floor above.
-  for (const name of ["list_tests", "run_batch", "run_group", "run_routine", "list_routines"]) {
+  for (const name of [
+    "list_tests",
+    "run_batch",
+    "run_group",
+    "run_routine",
+    "list_routines",
+    "list_propagations",
+  ]) {
     assert(names.has(name), `…including ${name}`);
   }
 } finally {

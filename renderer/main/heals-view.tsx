@@ -67,6 +67,8 @@ const REASON_COPY: Record<string, string> = {
     "This step's own recording lists the new locator among the element's candidates.",
   "fingerprint-similar": "The recorded elements look alike.",
   "target-failing": "This test is already going red.",
+  "near-miss-selector":
+    "This step's locator is written differently, but pins on the same identifier the fix replaced.",
 };
 
 function fmtWhen(ms: number): string {
@@ -303,6 +305,13 @@ function HealDetail({
             <span className="gl-chip">
               {entry.source === "run" ? "During a run" : "In the trainer"}
             </span>
+            {/* Where it RAN, which is not the same question as what it did.
+                A heal carried back by `good-looks ingest` happened in a
+                container that no longer exists, so the run's log and
+                screenshots may not have travelled with it — and it was never
+                applied to anything here. Saying so is what stops "During a
+                run" from reading as "during a run you did". */}
+            {entry.ingested ? <span className="gl-chip">On another machine</span> : null}
             {statusChip(entry)}
             <span className="gl-heal-when">{fmtWhen(entry.at)}</span>
           </div>
@@ -592,6 +601,16 @@ function ProposalDetail({
           <span className="gl-section-title">{entry.stepLabel || "Propagated fix"}</span>
           <div className="gl-heal-head">
             <span className="gl-chip">From another test</span>
+            {/* A near miss is a WEAKER CLAIM than an exact match and has to
+                look like one: the step's own locator is not the one that was
+                fixed, only one pinned on the same identifier. It is never
+                auto-applied, so this chip is the only place a person learns
+                which kind they are being asked about. */}
+            {entry.match === "near-miss" ? (
+              <span className="gl-chip" title="Written differently, pinned on the same identifier">
+                Near miss
+              </span>
+            ) : null}
             {proposalStatusChip(entry)}
             <span className="gl-heal-when">{fmtWhen(entry.at)}</span>
           </div>

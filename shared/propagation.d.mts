@@ -51,6 +51,11 @@ export interface JournalEntryLike {
   applied?: boolean;
   status?: string;
   pageUrl?: string;
+  /** true when the heal was carried back from another machine by
+   *  `good-looks ingest`. The engine deliberately does NOT read it: a CI
+   *  heal earns donorhood the same way a local one does, through its run's
+   *  outcome. Declared so the shape is honest about what reaches here. */
+  ingested?: boolean;
   at: number;
 }
 
@@ -99,6 +104,11 @@ export interface Proposal {
   confidence: number;
   /** Codes from REASON_CODES; the renderer owns the copy. */
   reasons: string[];
+  /** How the target was matched. `exact`: its own locator IS the identity the
+   *  donor fixed. `near-miss`: keyed differently but pinned on the same
+   *  identifier, corroborated as the same element — suggest-only, never
+   *  auto-applied. */
+  match: "exact" | "near-miss";
   autoApplyEligible: boolean;
 }
 
@@ -142,6 +152,7 @@ export declare const AUTO_APPLY_MIN: number;
 export declare const MAX_SEEDS_PER_KEY: number;
 export declare const PROPOSE_ONLY_TYPES: readonly string[];
 export declare const REASON_CODES: readonly string[];
+export declare const PROPAGATION_STATUSES: readonly string[];
 
 export declare function donorsFromJournal(input: {
   entries: JournalEntryLike[];
@@ -160,6 +171,15 @@ export declare function donorFromEdit(input: {
 export declare function fingerprintsSimilar(
   a: FingerprintLike | undefined,
   b: FingerprintLike | undefined,
+): boolean;
+
+/** Whether a target's locator is keyed differently from the donor's old one
+ *  but pinned on the same identifier — the near-miss rule. Answers "does this
+ *  locator DEPEND on what changed", never "is this the same element", which
+ *  the fingerprint answers separately. */
+export declare function nearMissLocator(
+  donorFromLocator: LocatorLike | undefined,
+  targetLocator: LocatorLike | undefined,
 ): boolean;
 
 export declare function proposalsFor(input: {

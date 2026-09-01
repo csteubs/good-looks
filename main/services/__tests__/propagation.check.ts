@@ -466,13 +466,17 @@ function main(): void {
     assertEqual(twice, once, "generate → parse → generate is a FIXED POINT for written locators");
   }
 
-  // ── 8. The heal journal's five consumers never read this store ───────────
+  // ── 8. No heal-counting path ever reads this store ───────────────────────
+  //
+  // The hazard, unchanged since PR 3: five consumers read heal-journal.json
+  // and key its entries on stepId/runId, so a proposal reaching one of them
+  // is counted as a healed step. Three of them have no business with
+  // proposals at ANY granularity, and the file-level rule says so.
   {
     const consumers = [
       "main/services/metrics-store.ts",
       "shared/rollup.mjs",
       "main/services/flake-source.ts",
-      "mcp/server.mjs",
     ];
     for (const file of consumers) {
       const src = fs.readFileSync(file, "utf-8");
@@ -485,6 +489,141 @@ function main(): void {
     // exist, so a green run above means absence, not blindness.
     const own = fs.readFileSync("main/services/propagation-store.ts", "utf-8");
     assert(own.includes("propagations.json"), "the scan target string exists where expected");
+  }
+
+  // ── 8b. …and in the MCP server, no ONE TOOL blends the two ───────────────
+  //
+  // mcp/server.mjs is the fourth consumer and, since `list_propagations`, it
+  // legitimately reads both stores — so the file-level rule above became too
+  // coarse to state the hazard. The hazard was never "this file mentions both
+  // files"; it is a single answer built from both, where a proposal is
+  // reported as something that happened. Tool registrations are the unit a
+  // caller actually sees, so that is the unit this is asserted over.
+  {
+    const src = fs.readFileSync("mcp/server.mjs", "utf-8");
+    const regions = src.split("server.registerTool(").slice(1);
+    // Vacuity guard FIRST: a rename of registerTool would leave zero regions
+    // and make every assertion below trivially true, which is the exact shape
+    // of a check that passes while measuring nothing.
+    assert(regions.length >= 20, `the tool registrations are findable (${regions.length})`);
+    const nameOf = (region: string) => region.match(/^\s*"([a-z_]+)"/)?.[1] ?? "(unnamed)";
+    const readsHeals = (region: string) => region.includes("heal-journal.json");
+    const readsProposals = (region: string) =>
+      region.includes("propagations.json") || region.includes("propagationDigest");
+
+    const blended = regions.filter((r) => readsHeals(r) && readsProposals(r)).map(nameOf);
+    assertEqual(blended, [], "no MCP tool reports heals and proposals from one payload");
+
+    const proposalTools = regions.filter(readsProposals).map(nameOf);
+    assertEqual(
+      proposalTools,
+      ["list_propagations"],
+      "…and exactly one tool reads the propagation store, the one named for it",
+    );
+    // Both halves of the split have to be real, or "no blending" is a fact
+    // about a scanner that found nothing.
+    assert(
+      regions.filter(readsHeals).length >= 1,
+      "the scan sees the tools that DO read the heal journal",
+    );
+  }
+
+
+  // ── 9. Near misses: stored, suggested, never written by a machine ────────
+  //
+  // A near miss proposes for a step whose locator is NOT the identity the
+  // donor fixed — only one pinned on the same identifier. That is a weaker
+  // claim, and the two properties that make it safe to ship live in different
+  // places: the engine refuses it auto-apply eligibility, and the store has to
+  // carry the distinction so the surfaces can say which kind they are asking
+  // about. This section is the integration half of both.
+  {
+    const NEAR_OLD: Locator = { k: "css", v: '[data-testid="near-btn"]' };
+    const NEAR_DONOR_OLD: Locator = { k: "testid", v: "near-btn" };
+    const NEAR_NEW: Locator = { k: "testid", v: "near-btn-v2" };
+
+    recorderSettingsStore.set({ autoHealApply: "apply", propagateFixes: true });
+    seedTest("near-donor", [step("nd1", NEAR_DONOR_OLD)]);
+    seedTest("near-target", [
+      step("nt1", NEAR_OLD, {
+        // Corroboration: the same element, seen by this test's own recorder.
+        fingerprint: { text: "Buy it", attributes: {}, depth: 1 } as never,
+      }),
+    ]);
+    // The donor's own step needs a fingerprint to corroborate AGAINST.
+    const donorRec = testStore.get("near-donor")!;
+    donorRec.steps[0] = {
+      ...donorRec.steps[0],
+      fingerprint: { text: "Buy it", attributes: {}, depth: 1 } as never,
+    };
+    testStore.save(donorRec);
+
+    const nearHeal = healJournalStore.record({
+      testId: "near-donor",
+      stepId: "nd1",
+      stepIndex: 0,
+      stepLabel: "click buy",
+      source: "run",
+      runId: "r-near",
+      originalLocator: NEAR_DONOR_OLD,
+      appliedLocator: NEAR_NEW,
+      candidates: [],
+      applied: true,
+    });
+    healJournalStore.setStatus(nearHeal.id, "accepted");
+    propagationService.noteHealAccepted();
+
+    const near = propagationStore.pending("near-target");
+    assertEqual(near.length, 1, "a near-miss target gets a proposal of its own");
+    assertEqual(near[0]?.match, "near-miss", "…marked as the weaker claim it is");
+    assert(
+      near[0]?.reasons.includes("near-miss-selector"),
+      "…carrying the reason code the renderer has copy for",
+    );
+    assertEqual(
+      near[0]?.fromLocator,
+      NEAR_OLD,
+      "…and the undo is the TARGET's own locator, not the donor's",
+    );
+    // THE ROW THAT MATTERS. Apply mode is ON, and this is still untouched.
+    assertEqual(
+      stepLoc("near-target", "nt1"),
+      NEAR_OLD,
+      "APPLY MODE DOES NOT WRITE A NEAR MISS — its step's locator is not the one that was fixed",
+    );
+    assertEqual(
+      near[0]?.autoApplyEligible,
+      false,
+      "…because the engine refused it eligibility, not because a guard happened to catch it",
+    );
+
+    // A person can still accept it, and then it behaves like any other.
+    const accepted = propagationService.applyEntry(near[0]!.id);
+    assertEqual(accepted.status, "accepted", "a person accepting a near miss settles it");
+    assertEqual(stepLoc("near-target", "nt1"), NEAR_NEW, "…and writes the proposed locator");
+    propagationService.revertEntry(near[0]!.id);
+    assertEqual(stepLoc("near-target", "nt1"), NEAR_OLD, "…with the revert restoring the original");
+    recorderSettingsStore.set({ autoHealApply: "suggest" });
+  }
+
+  // ── 10. An entry stored before `match` existed reads as the exact kind ────
+  //
+  // No migration, the propagation-store rule: the file is normalized on read,
+  // so an older entry has to mean something sensible rather than being dropped
+  // or read as a near miss it never was.
+  {
+    seedTest("legacy-t", [step("s1", OLD)]);
+    const legacy = proposalFor("legacy-t");
+    const file = path.join(userData, "recorder", "propagations.json");
+    const raw = JSON.parse(fs.readFileSync(file, "utf-8")) as Record<string, unknown>[];
+    for (const row of raw) {
+      if (row.id === legacy.id) delete row.match;
+    }
+    fs.writeFileSync(file, JSON.stringify(raw), "utf-8");
+
+    const readBack = propagationStore.get(legacy.id);
+    assert(!!readBack, "an entry written before the field existed is still readable");
+    assertEqual(readBack?.match, "exact", "…and reads as the exact match that was the only kind");
   }
 
   fs.rmSync(userData, { recursive: true, force: true });

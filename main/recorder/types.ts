@@ -33,7 +33,6 @@ import type { CompareOp } from "../../shared/step-semantics.mjs";
 // and neither can import the other's module — see the header of
 // `shared/overlay-rules.mjs`.
 import { MAX_OVERLAY_LABEL, OVERLAY_LOCATOR_KINDS } from "../../shared/overlay-rules.mjs";
-import { ELIDED, SENSITIVE_QUERY_PARAMS } from "../../shared/log-capture-source.mjs";
 import { MAX_ADDRESS_LENGTH, addressProblem } from "../../shared/email-code.mjs";
 
 export type { CostCurrency };
@@ -3290,60 +3289,13 @@ export interface HealEvidenceRect {
   h: number;
 }
 
-/** Longest page URL a heal record may carry. Over-long is REJECTED, never
- *  truncated — the run-provenance rule: a cut URL is a plausible URL for
- *  somewhere else, while absent is honestly unknown. */
-const MAX_HEAL_PAGE_URL = 2048;
-
-/** Narrow a heal event's page URL — page-controlled text the fixture read via
- *  `page.url()` — into something the journal may store.
- *
- *  http(s) only (a `javascript:` or `data:` address is not a page a heal
- *  happened on), no control characters, capped length, and sensitive query
- *  VALUES elided by name through the same denylist the network log applies
- *  (`SENSITIVE_QUERY_PARAMS`), so a token-bearing checkout URL does not land
- *  in a store that outlives the run. Null on any doubt; the caller drops the
- *  field, never the entry. */
-export function normalizeHealPageUrl(input: unknown): string | null {
-  if (typeof input !== "string" || input.length === 0 || input.length > MAX_HEAL_PAGE_URL) {
-    return null;
-  }
-  // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(input)) return null;
-  let url: URL;
-  try {
-    url = new URL(input);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-  for (const name of [...url.searchParams.keys()]) {
-    if (SENSITIVE_QUERY_PARAMS.includes(name.toLowerCase())) {
-      url.searchParams.set(name, ELIDED);
-    }
-  }
-  return url.toString();
-}
-
-/** Narrow a heal event's element box. Four finite numbers on the normalized
- *  0-1 viewport scale, REBUILT from named keys — width and height must be
- *  positive, because a zero-area highlight is a claim with nothing behind it.
- *  Anything else is null: a doubtful rect drops the box rather than drawing a
- *  wrong one. */
-export function normalizeHealRect(input: unknown): HealEvidenceRect | null {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) return null;
-  const o = input as Record<string, unknown>;
-  const fin = (v: unknown): number | null =>
-    typeof v === "number" && Number.isFinite(v) ? v : null;
-  const x = fin(o.x);
-  const y = fin(o.y);
-  const w = fin(o.w);
-  const h = fin(o.h);
-  if (x === null || y === null || w === null || h === null) return null;
-  if (x < 0 || x > 1 || y < 0 || y > 1) return null;
-  if (w <= 0 || w > 1 || h <= 0 || h > 1) return null;
-  return { x, y, w, h };
-}
+// Both heal-evidence normalizers MOVED to `shared/heal-evidence.mjs` and are
+// re-exported here, so every existing caller is unchanged. The move was forced
+// by `good-looks ingest`: a heal carried back from a CI runner crosses a gate
+// written in plain .mjs, and the URL narrowing is a PRIVACY rule (sensitive
+// query values elided) that must not depend on which machine healed. A copy in
+// the CLI would be right the day it was written and silently divergent after.
+export { normalizeHealPageUrl, normalizeHealRect } from "../../shared/heal-evidence.mjs";
 
 /** Result of a heal attempt for a single failed step. */
 export interface HealResult {

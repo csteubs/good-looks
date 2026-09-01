@@ -57,6 +57,20 @@ export const MAX_SEEDS_PER_KEY = 3;
  *  machinery already exists for when it doesn't. */
 export const PROPOSE_ONLY_TYPES = Object.freeze(["assert", "if", "capture"]);
 
+/** Every status a proposal can hold, in lifecycle order. HERE rather than in
+ *  the store because two processes now read it: the app normalizes an entry
+ *  against this list (an unknown status DROPS the entry), and the MCP's
+ *  `list_propagations` filters by it. Two spellings would mean a status the
+ *  app writes and the MCP silently reports nothing for. */
+export const PROPAGATION_STATUSES = Object.freeze([
+  "pending",
+  "accepted",
+  "dismissed",
+  "reverted",
+  "superseded",
+  "stale",
+]);
+
 /** Every reason code a proposal may carry. Codes, not copy: the renderer maps
  *  each to a fixed sentence (the insights-view rule — the engine contributes
  *  facts, never labels), and a code outside this list is a bug. */
@@ -69,6 +83,7 @@ export const REASON_CODES = Object.freeze([
   "fingerprint-key-match",
   "fingerprint-similar",
   "target-failing",
+  "near-miss-selector",
 ]);
 
 /** Base confidence per donor kind. A human decision (accepting a heal, fixing
@@ -209,6 +224,70 @@ export function fingerprintsSimilar(a, b) {
     const dx = Math.abs(ra.x + ra.w / 2 - (rb.x + rb.w / 2));
     const dy = Math.abs(ra.y + ra.h / 2 - (rb.y + rb.h / 2));
     if (dx <= 0.1 && dy <= 0.1) return true;
+  }
+  return false;
+}
+
+/** The identifying values a locator is PINNED ON — what stops matching when
+ *  the site renames something. `role` is deliberately absent: a role alone is
+ *  a category, not an identity, and matching on it would call every button on
+ *  the page a near miss. */
+function identifyingValues(locator) {
+  if (!locator || typeof locator !== "object") return [];
+  const out = [];
+  for (const key of ["v", "name", "placeholder", "label", "alt", "title"]) {
+    const value = locator[key];
+    if (typeof value === "string" && value.trim().length >= 3) out.push(value.trim());
+  }
+  return out;
+}
+
+/**
+ * Whether a target's locator is a NEAR MISS of the donor's old one: keyed
+ * differently, but demonstrably pinned on the same identifier the donor's fix
+ * replaced.
+ *
+ * ── Why this shape, and not "the fingerprints look alike" ─────────────────
+ * The obvious reading of "fuzzy matching" is: propose wherever the elements
+ * resemble each other. That is precisely wrong here, and quietly so. Two
+ * tests can click the same button through completely different locators —
+ * one on a testid, one on a role and name — and when the testid is renamed
+ * only the FIRST one breaks. Proposing a rewrite to the second changes a
+ * locator that works, which is churn at best and a silent behaviour change at
+ * worst, in a feature whose entire premise is that the user can trust what it
+ * offers.
+ *
+ * So the question is not "is this the same element" but "does this locator
+ * DEPEND on the thing that just changed". A step written as
+ * `css=[data-testid="pay-now"]` or `xpath=//*[@data-testid="pay-now"]` is
+ * exactly as broken as `testid=pay-now` when `pay-now` disappears, and today
+ * gets nothing because its heal key differs. Those are the near misses worth
+ * proposing for — common in imported projects and hand-written specs, where
+ * the same element is addressed a dozen ways.
+ *
+ * The rule: some identifying value of the donor's OLD locator appears in a
+ * value of the target's, as a whole token (so `pay-now` does not match
+ * `pay-nowhere`), and the two are not already the same key. Whether it is the
+ * same ELEMENT is then corroborated separately by the fingerprint, in
+ * `scoreTarget` — this answers the other half.
+ */
+export function nearMissLocator(donorFromLocator, targetLocator) {
+  const donorValues = identifyingValues(donorFromLocator);
+  const targetValues = identifyingValues(targetLocator);
+  if (donorValues.length === 0 || targetValues.length === 0) return false;
+  for (const needle of donorValues) {
+    for (const haystack of targetValues) {
+      if (haystack === needle) return true;
+      const at = haystack.indexOf(needle);
+      if (at < 0) continue;
+      // Whole token: the characters either side must not be part of an
+      // identifier, or `pay-now` matches `pay-nowhere` and every proposal
+      // built on it is a guess.
+      const before = at === 0 ? "" : haystack[at - 1];
+      const after = haystack[at + needle.length] ?? "";
+      const wordish = (c) => c !== "" && /[A-Za-z0-9_-]/.test(c);
+      if (!wordish(before) && !wordish(after)) return true;
+    }
   }
   return false;
 }
@@ -360,7 +439,15 @@ export function proposalsFor({ donors, tests, latestRunByTest = {}, existing = [
         // The donor's own step is already fixed; siblings in the same test
         // with the same key are stale too and stay in.
         if (donorStepIds.has(test.id + "::" + step.id)) continue;
-        if (keyOf(step.locator) !== group.fromKey) continue;
+        const targetKey = keyOf(step.locator);
+        if (!targetKey) continue;
+        // Exact identity, or a NEAR MISS — a locator keyed differently but
+        // pinned on the identifier the donor's fix replaced. The near-miss
+        // arm is suggest-only and carries a heavier corroboration bar, both
+        // applied below; matching is only half of it.
+        const exact = targetKey === group.fromKey;
+        const nearMiss = !exact && nearMissLocator(newest.fromLocator, step.locator);
+        if (!exact && !nearMiss) continue;
 
         const { confidence, reasons } = scoreTarget({
           donors: group.donors,
@@ -368,6 +455,20 @@ export function proposalsFor({ donors, tests, latestRunByTest = {}, existing = [
           targetStep: step,
           latestRun: latestRunByTest[test.id],
         });
+        if (nearMiss) {
+          // A near miss must be corroborated as the SAME ELEMENT, not merely
+          // as a locator mentioning the same string. Without it, two unrelated
+          // elements sharing an identifier — a label and the input it names,
+          // say — would propose for each other.
+          const fp = step.fingerprint;
+          const sameElement =
+            reasons.includes("fingerprint-key-match") || fingerprintsSimilar(donorFingerprint, fp);
+          if (!sameElement) continue;
+          reasons.push("near-miss-selector");
+          // No confidence ADDED: the corroboration it required is already
+          // scored. What changes is the ceiling — see `autoApplyEligible`,
+          // which a near miss can never satisfy.
+        }
         if (confidence < PROPOSE_MIN) continue;
 
         const proposal = {
@@ -390,13 +491,25 @@ export function proposalsFor({ donors, tests, latestRunByTest = {}, existing = [
           })),
           confidence,
           reasons,
+          /** `exact` when the target's own locator is the identity the donor
+           *  fixed; `near-miss` when it is keyed differently but pinned on the
+           *  same identifier. The surfaces say which, because they are
+           *  different claims and only one of them is ever written without a
+           *  person looking. */
+          match: exact ? "exact" : "near-miss",
           autoApplyEligible:
+            exact &&
             confidence >= AUTO_APPLY_MIN &&
             (reasons.includes("fingerprint-key-match") || group.donors.length >= 2) &&
             !PROPOSE_ONLY_TYPES.includes(step.type),
         };
 
-        const triple = tripleKey(test.id, step.id, group.fromKey);
+        // Keyed on the TARGET's own key, not the group's. They are the same
+        // for an exact match and differ for a near miss — and keying on the
+        // group's would make every near-miss sweep re-create a proposal it
+        // already had, because the entry it stored keys back by its own
+        // `fromLocator`.
+        const triple = tripleKey(test.id, step.id, targetKey);
         if (settledBlocked.has(triple + "::" + newest.toKey)) continue;
 
         const pending = pendingByTriple.get(triple);

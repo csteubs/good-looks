@@ -10,6 +10,153 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-01 — Fuzzy matching, asked as "does this locator depend on what changed" rather than "do these look alike"
+
+**The obvious reading of the plan's Later item was the wrong one.** "Fuzzy
+fingerprint matching (near-miss selectors), suggest-only" invites: propose
+wherever the donor's element and the target's element resemble each other.
+That is quietly wrong. Two tests can click the same button through
+completely different locators — one on a testid, one on a role and name —
+and when the testid is renamed only the FIRST is broken. Proposing a
+rewrite to the second changes a locator that works: churn at best, a
+silent behaviour change at worst, in a feature whose whole premise is that
+what it offers can be trusted.
+
+So the question `nearMissLocator` answers is not "is this the same
+element" but **"does this locator DEPEND on the thing that just
+changed"**. A step written `css=[data-testid="pay-now"]` or
+`xpath=//*[@data-testid="pay-now"]` is exactly as broken as
+`testid=pay-now` when `pay-now` disappears, and got nothing before because
+its heal key differs — the common case in imported projects and
+hand-written specs, where one element is addressed a dozen ways. Sameness
+of element is then corroborated SEPARATELY and required (a fingerprint key
+match or `fingerprintsSimilar`), because a label and the input it names
+share an identifier and are not the same thing.
+
+**The rule is deliberately narrow, and each narrowing has a failure behind
+it.** Whole-token matching, or `pay-now` matches `pay-nowhere` and every
+proposal built on it is a guess. No `role` among the identifying values, or
+every button on a site is a near miss of every other. A three-character
+floor, because two characters collide by accident constantly. All four are
+mutation-verified: removing any one of them turns a row red.
+
+**Suggest-only is structural, not a threshold.** `autoApplyEligible` is
+false for every near miss whatever the confidence, because the claim is
+weaker in kind and not merely in degree: the step's own locator is not the
+one that was fixed. `check:propagation` §9 proves it end to end with apply
+mode ON and the strongest possible corroboration — the proposal appears
+and the test on disk is untouched. The surfaces say which kind they are
+asking about (a "Near miss" chip and its own reason sentence), because a
+person accepting one is answering a different question than for an exact
+match.
+
+**One latent bug fell out.** The dedupe triple was keyed on the DONOR
+group's key while the stored entry keys back by its own `fromLocator` —
+identical for exact matches, which is why it never mattered, and a
+duplicate proposal minted on every sweep the moment a near miss keys
+differently. It now keys on the target's own locator throughout.
+
+### 2026-09-01 — CI heals come home: evidence travels, the journal is written by the machine that owns it
+
+**The gap, stated plainly.** `mcp/run-tests.mjs` COUNTED every heal an
+unattended run performed and then dropped it — the code said so out loud
+("journalling means writing back into a library that dies with the
+container"), and it was right at the time. The consequence was not obvious
+until propagation existed: the runs that meet a site most often were the
+ones teaching the app least about it, and a CI-heavy team's donor corpus
+was built from the handful of runs somebody triggered by hand.
+
+**Evidence travels; the journal does not.** The temptation was to have the
+CI runner write `heal-journal.json` itself — the file format is right
+there. Refused, and the original comment's instinct is why: a container
+writing a primary store it does not own is a second writer of the app's
+review queue, in another language, that nobody can see. Instead the runner
+writes `run-heals.json` beside the `heal-failures.json` it already wrote,
+and `good-looks ingest` promotes those events into the journal on the
+machine that owns it. One writer per store, and the CI half stays what CI
+is good at: producing evidence.
+
+**A heal is more dangerous to ingest than a run record.** R12's gate exists
+because a run record carries a path that gets read. A heal carries a
+LOCATOR, which is one accepted click from being generated source Playwright
+executes in Node (`ingested heal → donor → proposal → accept →
+step.locator → generateSpec`). So `shared/heal-ingest.mjs` rebuilds every
+locator value by value inside depth and width bounds — nothing survives
+that the walk did not copy, which is what makes "no functions, no prototype
+keys" true rather than promised — and four fields are the ingesting
+machine's rather than the container's: the `id` (a foreign one collides,
+and every accept/revert is keyed by it), `testId` and `runId` (from the
+envelope, so an event cannot attach a heal to a test it never touched), and
+`applied`, which is always false because nothing here changed and a revert
+that writes a locator the user's test never had is worse than no button.
+`candidates` are dropped outright: the Heals view offers them as locators
+to write into a test, and a foreign menu is a wider door than the fix
+itself for no gain the engine can use.
+
+**The journal now normalizes on READ, and that is the real find.** It was a
+bare `as HealEntry[]`, defensible for exactly as long as the app was its
+only writer. Ingest ended that. Fixing only the writer would have repeated
+the mistake the capture-boundary section already names — entries written
+before a guard are already on disk, and the file is hand-editable — so
+`readAll` rebuilds each entry, runs every locator (candidates included)
+through `normalizeLocator`, and DROPS what it cannot narrow rather than
+repairing it. A half-repaired heal is one nobody ever reviewed.
+
+**Two normalizers moved rather than being copied.**
+`normalizeHealPageUrl`/`normalizeHealRect` went to
+`shared/heal-evidence.mjs`, re-exported from `main/recorder/types.ts` so
+every caller is unchanged. Eliding a token-bearing checkout URL is a
+privacy rule that must not depend on which machine healed, and a copy in
+the CLI would have been right the day it was written. Writing that module
+also re-proved `main/services/frame-escape.test.ts`: the first draft's
+control-character class was silently mangled into literal bytes, the guard
+went red, and the rule is now a scan rather than a regex literal.
+
+**Dedupe is per run and step, deliberately not per locator.** Collapsing a
+step that heals on every CI run into one entry would hide exactly what
+`list_heals` reports as a chronic step — the signal that says a locator is
+worth rewriting by hand rather than healing forever.
+
+### 2026-09-01 — `list_propagations`, and a separation rule that had to get sharper rather than looser
+
+**The MCP reports the aggregate, not just the rows.** The plan called this
+tool trivial once the store existed, and the listing half is. What earns it
+its place is `sitesChanging`: origins where a pending proposal waits on two
+or more distinct TESTS. That is the shape of "a release moved a selector",
+and it is exactly what a list sorted by time hides — the same argument
+`list_heals` makes with `chronicSteps`, asked about origins instead of
+steps. Two proposals inside one test is deliberately not that finding (it is
+a test that needs a look, not a site that shipped), and settled proposals
+are not counted at all: a site whose proposals were all dismissed is a
+question already answered, and reporting it as a finding is how a caller
+learns to skim the field.
+
+**The deciding half lives outside `server.mjs` because nothing there can be
+tested.** That file resolves a data directory and opens a stdio transport at
+module scope, so a test cannot import it — which is why `check:mcp-boot`
+exists at all. `mcp/propagations.mjs` follows `artifacts.mjs`/`metrics.mjs`:
+pure in, value out, with `mcp/propagations.test.ts` driving the picking, the
+aggregate and the wire shape. The entries are REBUILT from named keys, the
+`export-bundle.mjs` rule applied to a different exit — this is app data on
+its way to a model over a wire the repo does not own, and a spread would
+ship the next `PropagationEntry` field to it because nobody looked.
+
+**`check:propagation` §8 was right and became too coarse, and the fix was to
+make it sharper.** The rule said: none of the heal journal's consumers ever
+mentions `propagations.json`, because a proposal reaching a heal-counting
+path is counted as a healed step. `mcp/server.mjs` is one of those
+consumers, so the new tool turned the check red — correctly, in the sense
+that the file-level statement was now false. The temptation was to drop
+`server.mjs` from the list. What the rule is actually about is not a file
+mentioning two stores; it is ONE ANSWER built from both, where a proposal is
+reported as something that happened. So the file-level rule stays verbatim
+for the three consumers with no business here at all, and `server.mjs` gets
+a tool-level one: split the source on `server.registerTool(`, and no
+registration may read both stores — with the count of regions asserted
+first, because a rename of `registerTool` would otherwise leave zero regions
+and a check that passes while measuring nothing. Verified by blending the
+two stores inside `list_heals` and watching it go red.
+
 ### 2026-09-01 — Propagation's surfaces: one review door, evidence you can look at, and an auto apply that stays pending
 
 **The review lives in ONE place, and everything else points at it.** The

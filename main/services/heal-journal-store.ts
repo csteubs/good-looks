@@ -19,7 +19,14 @@ import { randomUUID } from "crypto";
 
 import { app, logger } from "@shell/backend";
 
-import type { HealCandidate, HealEvidenceRect, Locator } from "../recorder/types.js";
+import {
+  normalizeHealPageUrl,
+  normalizeHealRect,
+  normalizeLocator,
+  type HealCandidate,
+  type HealEvidenceRect,
+  type Locator,
+} from "../recorder/types.js";
 
 /** What happened to a proposed heal. "pending" means it has been applied to the
  *  running test but not yet confirmed by the user (or, under "suggest" mode,
@@ -60,6 +67,12 @@ export interface HealEntry {
    *  to the viewport — where an evidence screenshot's highlight is drawn.
    *  Run-source heals only, best-effort, through `normalizeHealRect`. */
   rect?: HealEvidenceRect;
+  /** true when this heal happened on ANOTHER machine and was carried back by
+   *  `good-looks ingest` — a CI runner's heal, promoted into this journal by
+   *  the machine that owns it. Absent on heals that happened here. It is what
+   *  lets a surface say where a heal came from rather than inferring it from a
+   *  runId whose run may or may not have been ingested too. */
+  ingested?: true;
   status: HealStatus;
   at: number;
 }
@@ -76,11 +89,89 @@ function indexFile(): string {
   return path.join(dataDir(), "heal-journal.json");
 }
 
+/**
+ * One stored entry, REBUILT from named keys — never trusted as it lies on
+ * disk.
+ *
+ * This file used to be read with a bare `as HealEntry[]`, which was
+ * defensible while the app was its only writer. It stopped being defensible
+ * when `good-looks ingest` began carrying heals back from CI runners
+ * (`shared/heal-ingest.mjs`): an entry's `appliedLocator` is one accepted
+ * click away from being generated source Playwright executes in Node, so the
+ * journal is now on the capture boundary's path and gets the capture
+ * boundary's rule. Guarding only the writer is not enough on its own —
+ * entries written before any guard are already on disk, and a user can edit
+ * this file by hand.
+ *
+ * An entry that cannot be narrowed is DROPPED rather than repaired, the
+ * overlay-rule-store rule: a half-repaired heal is one nobody ever reviewed,
+ * and the alternative — keeping it with a locator this build cannot read —
+ * is an undo button that writes something unknown into a test.
+ */
+function normalizeEntry(input: unknown): HealEntry | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const e = input as Record<string, unknown>;
+  if (typeof e.id !== "string" || !e.id) return null;
+  if (typeof e.testId !== "string" || typeof e.stepId !== "string") return null;
+  if (typeof e.at !== "number" || !Number.isFinite(e.at)) return null;
+  const appliedLocator = normalizeLocator(e.appliedLocator);
+  if (!appliedLocator) return null;
+  const source = e.source === "trainer" || e.source === "run" ? e.source : null;
+  if (!source) return null;
+  const status: HealStatus =
+    e.status === "accepted" || e.status === "reverted" ? e.status : "pending";
+  const originalLocator = normalizeLocator(e.originalLocator);
+  // Candidates are the review UI's "use this one instead" menu, so each one is
+  // a locator that can be written into a test: same narrowing, and a candidate
+  // that fails it is dropped from the menu rather than taking the entry with
+  // it — the entry's own claim does not depend on them.
+  const candidates: HealCandidate[] = Array.isArray(e.candidates)
+    ? (e.candidates
+        .map((c) => {
+          if (!c || typeof c !== "object") return null;
+          const cand = c as Record<string, unknown>;
+          const locator = normalizeLocator(cand.locator);
+          if (!locator) return null;
+          return {
+            locator,
+            description: typeof cand.description === "string" ? cand.description : "",
+            score: typeof cand.score === "number" && Number.isFinite(cand.score) ? cand.score : 0,
+            matchedPastRun: cand.matchedPastRun === true,
+          };
+        })
+        .filter(Boolean) as HealCandidate[])
+    : [];
+  const pageUrl = normalizeHealPageUrl(e.pageUrl);
+  const rect = normalizeHealRect(e.rect);
+  return {
+    id: e.id,
+    testId: e.testId,
+    stepId: e.stepId,
+    stepIndex:
+      typeof e.stepIndex === "number" && Number.isInteger(e.stepIndex) && e.stepIndex >= 0
+        ? e.stepIndex
+        : 0,
+    stepLabel: typeof e.stepLabel === "string" ? e.stepLabel.slice(0, 500) : "",
+    source,
+    ...(typeof e.runId === "string" ? { runId: e.runId } : {}),
+    ...(originalLocator ? { originalLocator } : {}),
+    appliedLocator,
+    candidates,
+    applied: e.applied === true,
+    ...(pageUrl ? { pageUrl } : {}),
+    ...(rect ? { rect } : {}),
+    ...(e.ingested === true ? { ingested: true as const } : {}),
+    status,
+    at: e.at,
+  };
+}
+
 function readAll(): HealEntry[] {
   try {
     const raw = fs.readFileSync(indexFile(), "utf-8");
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as HealEntry[]) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map(normalizeEntry).filter((e): e is HealEntry => e !== null);
   } catch {
     return [];
   }

@@ -67,9 +67,11 @@ import {
 import {
   HEAL_EVENTS_FILE,
   HEAL_MATCHES_FILE,
+  RUN_HEALS_FILE,
   healArtifactEnvelope,
   healDirName,
   healMapFileName,
+  isHeal,
   isHealFailure,
 } from "../shared/heal-artifacts.mjs";
 import { buildHealMap } from "../shared/heal-map.mjs";
@@ -359,6 +361,13 @@ export function createRunner({
     out.healed = events.length - failures.length;
     out.failed = failures.length;
     write("heal-failures.json", failures);
+    // The heals that WORKED, written for the same reason the failures are:
+    // this process cannot journal them (that is a write into a library that
+    // dies with the container), but the machine that ingests this run can —
+    // and until it could, every heal a CI run performed was invisible at home,
+    // the donor corpus included. `isHeal` rather than "not a failure": an
+    // outcome this build does not recognise belongs in neither set.
+    write(RUN_HEALS_FILE, events.filter(isHeal));
     const matches = readJson(HEAL_MATCHES_FILE) ?? [];
     out.matched = matches.length;
     write("step-matches.json", matches);

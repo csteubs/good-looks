@@ -77,6 +77,9 @@ function createFrom(proposal: Proposal): PropagationEntry | null {
     donors: proposal.donors,
     confidence: proposal.confidence,
     reasons: proposal.reasons,
+    // Carried, not re-derived: the engine decided how this target was matched
+    // and a second opinion here could disagree with the reasons beside it.
+    match: proposal.match === "near-miss" ? "near-miss" : "exact",
     autoApplyEligible: proposal.autoApplyEligible,
   });
 }
