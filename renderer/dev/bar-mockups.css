@@ -1,0 +1,444 @@
+/* Lab-only styles for the bar mockups (`/?view=bar-lab`).
+ *
+ * Every class here wears the `mock-` prefix: this sheet loads only in the
+ * browser preview, and a `gl-`-named rule that exists only here is exactly
+ * the ambiguity check:renderer-classes exists to kill. Token READS are the
+ * real `--gl-*` custom properties (declared in the theme the lab imports);
+ * no new ones are declared. */
+
+.mock-lab {
+  min-height: 100%;
+  padding: 20px 24px 72px;
+  color: var(--gl-tx-1);
+  font-family: var(--gl-sans);
+}
+
+.mock-head {
+  max-width: 880px;
+  margin-bottom: 8px;
+}
+
+.mock-h1 {
+  margin: 0 0 6px;
+  font-family: var(--gl-mono);
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mock-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--gl-tx-2);
+}
+
+.mock-sub code {
+  font-family: var(--gl-mono);
+}
+
+.mock-section {
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid var(--gl-line);
+}
+
+.mock-title {
+  margin: 0 0 4px;
+  font-family: var(--gl-mono);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.mock-thesis {
+  margin: 0 0 10px;
+  max-width: 880px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gl-tx-2);
+}
+
+.mock-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.mock-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.mock-frames {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+/* One frame = status row + fake steps + the direction's bar. The border is
+ * the lab's, not the app's — it marks where the window would end. */
+.mock-frame {
+  flex: 1 1 560px;
+  min-width: 480px;
+  max-width: 880px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-ink);
+  display: flex;
+  flex-direction: column;
+}
+
+.mock-frame-narrow {
+  flex: 0 0 360px;
+  min-width: 360px;
+  max-width: 360px;
+}
+
+.mock-frame-tag {
+  padding: 4px 10px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  border-bottom: 1px dashed var(--gl-line);
+}
+
+/* ── scenery: the fake step list ── */
+
+.mock-steps {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.mock-step {
+  display: flex;
+  gap: 8px;
+  padding: 3px 6px;
+  font-family: var(--gl-mono);
+  font-size: 11px;
+}
+
+.mock-step-selected {
+  outline: 1px solid var(--gl-line);
+  outline-offset: -1px;
+}
+
+.mock-step-kind {
+  flex: 0 0 44px;
+  color: var(--gl-tx-3);
+}
+
+.mock-step-rest {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mock-caret {
+  padding: 2px 6px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gl-cyan);
+}
+
+/* ── the bar under test ── */
+
+.mock-bar {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A: tiles */
+
+.mock-tiles {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.mock-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  color: var(--gl-tx-1);
+  font-family: var(--gl-mono);
+  cursor: pointer;
+  position: relative;
+  text-align: left;
+}
+
+.mock-tile:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mock-tiles-folded .mock-tile {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+}
+
+.mock-tile-mark {
+  color: var(--gl-cyan);
+}
+
+.mock-tile-name {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.mock-tile-what {
+  font-family: var(--gl-sans);
+  font-size: 10px;
+  color: var(--gl-tx-3);
+}
+
+.mock-tile-caret {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  color: var(--gl-tx-3);
+}
+
+.mock-tiles-folded .mock-tile-caret {
+  position: static;
+  margin-left: auto;
+}
+
+/* the reserved context line — the point of directions A and B: its height is
+ * there whether or not a transient occupies it, so arming an assert or a
+ * replay finishing never moves the controls above it. */
+.mock-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.mock-context-hint {
+  font-size: 11px;
+  color: var(--gl-tx-3);
+}
+
+.mock-context-note {
+  font-size: 11px;
+  color: var(--gl-tx-1);
+}
+
+.mock-context-end {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 8px;
+}
+
+.mock-refine-mark {
+  color: var(--gl-cyan);
+  flex: 0 0 auto;
+}
+
+/* B/C: primary row and the command box */
+
+.mock-primary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.mock-cmd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.mock-cmd-mark {
+  color: var(--gl-cyan);
+  flex: 0 0 auto;
+}
+
+.mock-cmd-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  color: var(--gl-tx-1);
+  font-family: var(--gl-sans);
+  font-size: 12px;
+}
+
+.mock-cmd-input::placeholder {
+  color: var(--gl-tx-3);
+}
+
+.mock-cmd-input:disabled {
+  opacity: 0.45;
+}
+
+/* C: the spine */
+
+.mock-spine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.mock-spine-narrow {
+  border-bottom: 0;
+}
+
+.mock-spine-row2 {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 12px 6px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.mock-spine-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.mock-spine-armed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* the agent run */
+
+.mock-agent {
+  border-bottom: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+}
+
+.mock-agent-goal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px dashed var(--gl-line);
+}
+
+.mock-agent-goal-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.mock-agent-log {
+  padding: 6px 12px;
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  line-height: 1.7;
+}
+
+.mock-agent-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mock-agent-ok {
+  color: var(--gl-tx-3);
+}
+
+.mock-agent-live {
+  color: var(--gl-cyan);
+}
+
+.mock-proposal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 6px 8px;
+  border: 1px dashed var(--gl-line);
+}
+
+.mock-proposal-text {
+  font-size: 11px;
+  min-width: 0;
+}
+
+.mock-proposal-acts {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.mock-proposal-acts-wrap {
+  margin-left: 0;
+}
+
+/* the opt-in suggestion strip */
+
+.mock-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.mock-suggest-mark {
+  color: var(--gl-cyan);
+  flex: 0 0 auto;
+}
+
+.mock-chip {
+  padding: 2px 8px;
+  border: 1px solid var(--gl-line);
+  border-radius: 999px;
+  background: var(--gl-panel);
+  color: var(--gl-tx-1);
+  font-family: var(--gl-sans);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.mock-suggest-tag {
+  margin-left: auto;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
