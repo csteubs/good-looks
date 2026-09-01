@@ -19,7 +19,7 @@ import { randomUUID } from "crypto";
 
 import { app, logger } from "@shell/backend";
 
-import type { HealCandidate, Locator } from "../recorder/types.js";
+import type { HealCandidate, HealEvidenceRect, Locator } from "../recorder/types.js";
 
 /** What happened to a proposed heal. "pending" means it has been applied to the
  *  running test but not yet confirmed by the user (or, under "suggest" mode,
@@ -49,6 +49,17 @@ export interface HealEntry {
    *  "suggest" mode: the run used the candidate in-memory to get past the step,
    *  but the test on disk is untouched. */
   applied: boolean;
+  /** the page URL when the heal fired (sensitive query values elided), when
+   *  the source could read one. Recorded so a heal can be grouped by the page
+   *  it actually happened on rather than by the test's start URL, which
+   *  mid-test navigation makes a lie. Absent on entries predating 2026-09-01.
+   *  Always written through `normalizeHealPageUrl` — the value originates on
+   *  an untrusted page. */
+  pageUrl?: string;
+  /** the healed element's viewport-normalized (0-1) box at heal time, clipped
+   *  to the viewport — where an evidence screenshot's highlight is drawn.
+   *  Run-source heals only, best-effort, through `normalizeHealRect`. */
+  rect?: HealEvidenceRect;
   status: HealStatus;
   at: number;
 }

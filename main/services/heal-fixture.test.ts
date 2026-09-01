@@ -66,6 +66,16 @@ interface FakePage {
   evaluatedProbes: string[];
   /** what a failing locator resolves to, for `evaluateAll` */
   matchElements: FakeElement[];
+  /** what `locator.page().url()` answers; null = no URL to give */
+  pageUrl: string | null;
+  /** make `url()` throw, the way a torn-down page does */
+  urlThrows: boolean;
+  /** what `viewportSize()` answers; null = no viewport set */
+  viewport: { width: number; height: number } | null;
+  /** per-locator `boundingBox()` answers, keyed by the fake's desc; a locator
+   *  with no entry throws, the degraded path the fixture must survive */
+  boxes: Map<string, { x: number; y: number; width: number; height: number }>;
+  viewportSize(): { width: number; height: number } | null;
   evaluate(source: string): Promise<unknown>;
   getByTestId(v: string): FakeLoc;
   getByLabel(v: string): FakeLoc;
@@ -94,6 +104,10 @@ interface FakeLoc {
   filter(opts: { hasText?: string }): FakeLoc;
   and(other: FakeLoc): FakeLoc;
   nth(i: number): FakeLoc;
+  page(): { url(): string | null };
+  boundingBox(opts?: {
+    timeout?: number;
+  }): Promise<{ x: number; y: number; width: number; height: number }>;
 }
 
 function makePage(): FakePage {
@@ -108,7 +122,12 @@ function makePage(): FakePage {
     probeResult: [] as { locator: Locator }[],
     evaluatedProbes: [] as string[],
     matchElements: [] as FakeElement[],
+    pageUrl: "https://shop.example.test/checkout?step=2" as string | null,
+    urlThrows: false,
+    viewport: { width: 1000, height: 500 } as { width: number; height: number } | null,
+    boxes: new Map<string, { x: number; y: number; width: number; height: number }>(),
   } as FakePage;
+  page.viewportSize = () => page.viewport;
 
   function act(desc: string, what: string): string {
     const failure = page.failures.get(desc);
@@ -159,6 +178,25 @@ function makePage(): FakePage {
     }
     nth(i: number): FakeLocator {
       return new FakeLocator(`${this.desc}#${i}`);
+    }
+    // Real Playwright locators answer their owning page; `safeUrl` in the
+    // fixture reads the URL through this rather than through the install-time
+    // page, so a popup's locator reports the popup's address.
+    page(): { url(): string | null } {
+      return {
+        url: () => {
+          if (page.urlThrows) throw new Error("page has been closed");
+          return page.pageUrl;
+        },
+      };
+    }
+    async boundingBox(_opts?: {
+      timeout?: number;
+    }): Promise<{ x: number; y: number; width: number; height: number }> {
+      const box = page.boxes.get(this.desc);
+      if (!box) throw new Error("boundingBox unavailable");
+      page.performed.push(`${this.desc}:boundingBox`);
+      return box;
     }
   }
 
@@ -732,5 +770,126 @@ describe("recording what the failing locator matched", () => {
 
     await expect(page.getByTestId("unknown").click()).rejects.toThrow(/strict mode/);
     expect(fs.existsSync(path.join(healDir, "matches.json"))).toBe(false);
+  });
+});
+
+// ── Evidence for propagation: page URL and element rect ──────────────
+// A heal grouped by the page it actually happened on beats grouping by the
+// test's start URL, and the healed element's box is where the evidence
+// screenshot's highlight gets drawn. Both are best-effort page-derived
+// values: a page that will not answer costs the field, never the event, and
+// the runner validates them before they reach the journal.
+
+describe("evidence: page URL and healed-element rect on events", () => {
+  beforeEach(() => {
+    fs.rmSync(healDir, { recursive: true, force: true });
+  });
+
+  it("records the URL and the viewport-normalized box on a healed event", async () => {
+    const mod = await loadFixture({ "testid|submit": entry() });
+    const page = makePage();
+    page.failures.set("testid=submit", "Timeout 30000ms exceeded waiting for locator");
+    page.probeResult = [{ locator: { k: "testid", v: "submit-v2" } }];
+    page.boxes.set("testid=submit-v2", { x: 100, y: 50, width: 200, height: 100 });
+    mod.installHealing(page);
+
+    await page.getByTestId("submit").click();
+
+    const written = JSON.parse(fs.readFileSync(path.join(healDir, "heals.json"), "utf-8"));
+    expect(written[0].url).toBe("https://shop.example.test/checkout?step=2");
+    // 1000x500 viewport: exact division, so exact equality is safe.
+    expect(written[0].rect).toEqual({ x: 0.1, y: 0.1, w: 0.2, h: 0.2 });
+    // Measured BEFORE the action — a healed click that navigates away cannot
+    // erase the answer. The fake logs both, in order.
+    expect(page.performed).toEqual(["testid=submit-v2:boundingBox", "testid=submit-v2:click"]);
+  });
+
+  it("clips the box to the viewport — the region the screenshot actually shows", async () => {
+    const mod = await loadFixture({ "testid|submit": entry() });
+    const page = makePage();
+    page.failures.set("testid=submit", "Timeout 30000ms exceeded waiting for locator");
+    page.probeResult = [{ locator: { k: "testid", v: "submit-v2" } }];
+    // Overhangs the left edge and the bottom edge; only the intersection is
+    // in the shot, so only the intersection is the honest answer.
+    page.boxes.set("testid=submit-v2", { x: -50, y: 400, width: 100, height: 200 });
+    mod.installHealing(page);
+
+    await page.getByTestId("submit").click();
+
+    const written = JSON.parse(fs.readFileSync(path.join(healDir, "heals.json"), "utf-8"));
+    expect(written[0].rect).toEqual({ x: 0, y: 0.8, w: 0.05, h: 0.2 });
+  });
+
+  it("an element whose box cannot be read still heals, with no rect field", async () => {
+    const mod = await loadFixture({ "testid|submit": entry() });
+    const page = makePage();
+    page.failures.set("testid=submit", "Timeout 30000ms exceeded waiting for locator");
+    page.probeResult = [{ locator: { k: "testid", v: "submit-v2" } }];
+    // No boxes entry: boundingBox throws, the degraded path.
+    mod.installHealing(page);
+
+    const result = await page.getByTestId("submit").click();
+    expect(result).toBe("testid=submit-v2:click");
+
+    const written = JSON.parse(fs.readFileSync(path.join(healDir, "heals.json"), "utf-8"));
+    expect("rect" in written[0]).toBe(false);
+    expect(written[0].url).toBe("https://shop.example.test/checkout?step=2");
+  });
+
+  it("no viewport means no rect — a box that cannot be normalized is not written", async () => {
+    const mod = await loadFixture({ "testid|submit": entry() });
+    const page = makePage();
+    page.failures.set("testid=submit", "Timeout 30000ms exceeded waiting for locator");
+    page.probeResult = [{ locator: { k: "testid", v: "submit-v2" } }];
+    page.boxes.set("testid=submit-v2", { x: 100, y: 50, width: 200, height: 100 });
+    page.viewport = null;
+    mod.installHealing(page);
+
+    await page.getByTestId("submit").click();
+    const written = JSON.parse(fs.readFileSync(path.join(healDir, "heals.json"), "utf-8"));
+    expect("rect" in written[0]).toBe(false);
+  });
+
+  it("a page that cannot answer url() costs the field, never the heal", async () => {
+    const mod = await loadFixture({ "testid|submit": entry() });
+    const page = makePage();
+    page.failures.set("testid=submit", "Timeout 30000ms exceeded waiting for locator");
+    page.probeResult = [{ locator: { k: "testid", v: "submit-v2" } }];
+    page.urlThrows = true;
+    mod.installHealing(page);
+
+    const result = await page.getByTestId("submit").click();
+    expect(result).toBe("testid=submit-v2:click");
+
+    const written = JSON.parse(fs.readFileSync(path.join(healDir, "heals.json"), "utf-8"));
+    expect("url" in written[0]).toBe(false);
+  });
+
+  it("a failed attempt records the URL too — where the element went missing", async () => {
+    const mod = await loadFixture({ "testid|submit": entry() });
+    const page = makePage();
+    page.failures.set("testid=submit", "Timeout 30000ms exceeded waiting for locator");
+    page.failures.set("testid=bad", "Timeout 30000ms exceeded waiting for locator");
+    page.probeResult = [{ locator: { k: "testid", v: "bad" } }];
+    mod.installHealing(page);
+
+    await expect(page.getByTestId("submit").click()).rejects.toThrow("Timeout 30000ms");
+
+    const written = JSON.parse(fs.readFileSync(path.join(healDir, "heals.json"), "utf-8"));
+    expect(written[0].outcome).toBe("exhausted");
+    expect(written[0].url).toBe("https://shop.example.test/checkout?step=2");
+  });
+
+  it("a match set records the URL of the page it describes", async () => {
+    const mod = await loadFixture({ "testid|submit": entry() });
+    const page = makePage();
+    page.failures.set("testid=submit", "strict mode violation: resolved to 2 elements");
+    page.matchElements = [el({ id: "a" }), el({ id: "b" })];
+    mod.installHealing(page);
+
+    await expect(page.getByTestId("submit").click()).rejects.toThrow(/strict mode/);
+
+    const written = JSON.parse(fs.readFileSync(path.join(healDir, "matches.json"), "utf-8"));
+    expect(written[0].url).toBe("https://shop.example.test/checkout?step=2");
   });
 });

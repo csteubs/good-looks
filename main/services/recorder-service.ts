@@ -82,6 +82,7 @@ import {
   MAX_VARIABLES_PER_TEST,
   mergeSessionVariables,
   normalizeFlowArgs,
+  normalizeHealPageUrl,
   normalizeLocator,
   normalizePickedElement,
   normalizeRawStep,
@@ -306,6 +307,9 @@ function recordHeal(
 ): void {
   if (!session) return;
   try {
+    // The trainer's page URL, through the same gate the run path uses — the
+    // address is whatever the training browser is showing, which is untrusted.
+    const pageUrl = normalizeHealPageUrl(currentPageUrl());
     healJournalStore.record({
       testId: session.testId,
       stepId: step.id,
@@ -316,6 +320,7 @@ function recordHeal(
       appliedLocator: best.locator,
       candidates: heal.candidates,
       applied,
+      ...(pageUrl ? { pageUrl } : {}),
     });
   } catch (err) {
     logger.warn("recorder", "Could not journal a heal", { stepId: step.id, error: String(err) });

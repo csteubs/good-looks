@@ -406,6 +406,14 @@ export const runHistoryStore = {
       /** steps Auto-Heal tried to rescue and could not — the opposite evidence,
        *  and the more informative half: the element is gone, not renamed */
       healFailedSteps?: number;
+      /** a failed run salvaged its Playwright trace into the artifact dir */
+      hasTrace?: boolean;
+      /** highest attempt Playwright made, when the run retried — spread in via
+       *  `retryFields` (shared/run-attempts.mjs), so a single-attempt run
+       *  carries neither retry key */
+      attempt?: number;
+      /** the run failed and then passed on a retry */
+      passedOnRetry?: boolean;
       /** the per-test Playwright timeout THIS run executed under. Stored per
        *  run because the TestRecord's value is the CURRENT one, and a timeout
        *  raised since would silently make every older run's step-vs-budget
@@ -478,6 +486,18 @@ export const runHistoryStore = {
       ...(run.replayOfRunId ? { replayOfRunId: run.replayOfRunId } : {}),
       ...(run.healedSteps ? { healedSteps: run.healedSteps } : {}),
       ...(run.healFailedSteps ? { healFailedSteps: run.healFailedSteps } : {}),
+      // These three were passed by the runner and silently dropped here: the
+      // parameter type never declared them, and an object spread at the call
+      // site defeats excess-property checking, so it compiled clean while the
+      // Open Trace button gated on a field that was never written and
+      // `flakeSignal` never saw a retried pass. Absent stays absent — writing
+      // `attempt: 0` on every row would be indistinguishable from a row
+      // predating the field (see `retryFields` in shared/run-attempts.mjs).
+      ...(run.hasTrace === true ? { hasTrace: true } : {}),
+      ...(Number.isInteger(run.attempt) && (run.attempt as number) > 0
+        ? { attempt: run.attempt }
+        : {}),
+      ...(run.passedOnRetry === true ? { passedOnRetry: true } : {}),
       // Written whenever it is known, including on a passing run: "this step
       // took 58s of its 60s budget" is a finding on a pass, not only on a fail.
       ...(run.testTimeoutMs ? { testTimeoutMs: run.testTimeoutMs } : {}),
