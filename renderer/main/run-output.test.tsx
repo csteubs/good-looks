@@ -1,4 +1,5 @@
-// The run Output panel's "Debug with AI" icon.
+// The run Output panel's "Debug with AI" icon, and the tabbed console it
+// became.
 //
 // Two things here are easy to get wrong and silent when wrong. First, the icon
 // used to render ONLY for a failed run — which meant a minimized job vanished
@@ -12,7 +13,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 
 import { toneFor } from "../lib/ai-debug-status";
-import type { AiDebugStatus } from "../lib/recorder-types";
+import type { AiDebugStatus, Step } from "../lib/recorder-types";
 import { RunOutput } from "./run-output";
 import { summariseRun } from "../lib/run-summary";
 import type { RunInfo } from "./recorder-store";
@@ -20,11 +21,17 @@ import type { RunInfo } from "./recorder-store";
 // The panel now carries a triage line and a failure-reason row, both of which
 // query on mount. Mocked to "no verdict" and an empty history so these tests
 // stay about the AI debug icon — run-triage.test.tsx covers the line and
-// run-failure-reason.test.tsx the row.
+// run-failure-reason.test.tsx the row. The artifacts arm feeds the History
+// tab, whose own behaviour lives in run-history-panel.test.tsx.
 vi.mock("../lib/api", () => ({
   api: {
     runs: { triage: async () => null, list: async () => [] },
     failureReasons: { list: async () => ({ builtin: [], custom: [] }) },
+    artifacts: {
+      list: async () => [],
+      getReplay: async () => null,
+      readShot: async () => null,
+    },
   },
 }));
 
@@ -176,6 +183,144 @@ describe("the log drawer", () => {
     // only once the log happens to overflow is one nobody learns is there.
     render(<Panel info={info({ lines: [], running: true, code: null })} />);
     expect(expander()).toBeTruthy();
+  });
+});
+
+// ── The tabbed console (2026-09-01) ───────────────────────────────────
+//
+// The panel now wears the trainer console's clothes: a tab strip in the head
+// (Console / Step details / History), a status bar over the log with the same
+// "Done — N/M passed" reading and hit-rate pill, and the auto-scroll toggle.
+// What these pin is the parts that would fail silently: a bar that counts
+// wrong, a step row that reports the wrong verdict, and the compact-panel rule
+// that used to key on `:has(.gl-run-log)` and would collapse the strip under
+// the other tabs now that the log unmounts with its tab.
+
+/** Switch tabs. Radix's TabsTrigger activates on pointer-down/focus rather
+ *  than a bare click — fireEvent.click alone leaves the tab unchanged and the
+ *  assertions silently run against the previous tab's content. */
+function selectTab(name: RegExp | string) {
+  const tab = screen.getByRole("tab", { name });
+  fireEvent.mouseDown(tab);
+  fireEvent.focus(tab);
+  fireEvent.click(tab);
+  return tab;
+}
+
+let stepSeq = 0;
+function step(over: Partial<Step> = {}): Step {
+  stepSeq += 1;
+  return {
+    id: `s${stepSeq}`,
+    timestamp: stepSeq,
+    type: "click",
+    locator: { k: "role", role: "button", name: "Submit" },
+    ...over,
+  } as Step;
+}
+
+describe("the console tabs", () => {
+  it("carries the trainer console's strip: Console, Step details, and History", () => {
+    render(<Panel info={info()} />);
+    expect(screen.getByRole("tab", { name: "Console" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Step details" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "History" })).toBeTruthy();
+  });
+
+  it("reads a finished run over the log the way the trainer does", () => {
+    render(
+      <Panel
+        info={info({ code: 0, stepStatus: { 0: "passed", 1: "passed" } })}
+        steps={[step(), step()]}
+      />,
+    );
+    expect(screen.getByText("Done — 2/2 passed")).toBeTruthy();
+    expect(screen.getByText("100% hit rate").className).toContain("text-support-green");
+  });
+
+  it("names the step a failed run stopped at, and grades the hit rate", () => {
+    render(
+      <Panel
+        info={info({ code: 1, stepStatus: { 0: "passed", 1: "failed" } })}
+        steps={[step(), step()]}
+      />,
+    );
+    expect(screen.getByText("Stopped at step 2 — 1/2 passed")).toBeTruthy();
+    expect(screen.getByText("50% hit rate").className).toContain("text-support-yellow");
+  });
+
+  it("says so when a run reported no steps at all, instead of 0/0", () => {
+    // A spec that failed to load settles nothing; "Done — 0/0 passed" would
+    // read as an empty suite that passed.
+    render(<Panel info={info({ code: 1, stepStatus: {} })} steps={[step()]} />);
+    expect(screen.getByText(/No per-step results/)).toBeTruthy();
+  });
+
+  it("offers Auto-scroll on the Console tab only", () => {
+    render(<Panel info={info()} />);
+    expect(screen.getByLabelText("Auto-scroll console")).toBeTruthy();
+    selectTab("Step details");
+    expect(screen.queryByLabelText("Auto-scroll console")).toBeNull();
+  });
+});
+
+describe("the Step details tab", () => {
+  const rows = () => document.querySelectorAll('[data-gl="step-detail"]');
+
+  it("reports each step's outcome beside its locator", () => {
+    render(
+      <Panel
+        info={info({ code: 1, stepStatus: { 0: "passed", 1: "failed" } })}
+        steps={[step(), step()]}
+      />,
+    );
+    selectTab("Step details");
+    expect(rows()).toHaveLength(2);
+    expect(rows()[0].getAttribute("data-status")).toBe("passed");
+    expect(rows()[1].getAttribute("data-status")).toBe("failed");
+    expect(rows()[0].textContent).toContain("Step 1");
+    // The locator the step stands on, in the app's own spelling.
+    expect(rows()[0].textContent).toContain('getByRole("button"');
+  });
+
+  it("shows a dash, not a verdict, for steps the run never reached", () => {
+    render(<Panel info={info({ code: 1, stepStatus: { 0: "passed" } })} steps={[step(), step()]} />);
+    selectTab("Step details");
+    expect(rows()[1].getAttribute("data-status")).toBe("idle");
+  });
+});
+
+describe("the panel without a live run", () => {
+  function ColdPanel({ testId }: { testId?: string }) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <RunOutput
+          summary={summariseRun({ testId: "t1", runs: [], heals: [], stepCount: 3, live: null, now: 0 })}
+          testId={testId}
+          runs={[]}
+        />
+      </QueryClientProvider>
+    );
+  }
+
+  it("shrinks to its summary on the Console tab, as before the tabs", () => {
+    render(<ColdPanel />);
+    const panel = document.querySelector('[data-gl="run-panel"]') as HTMLElement;
+    expect(panel.hasAttribute("data-compact")).toBe(true);
+    // Nothing to expand onto — the drawer control goes with the strip.
+    expect(screen.queryByRole("button", { name: /the run output/i })).toBeNull();
+  });
+
+  it("keeps the strip on the other tabs, which have content of their own", () => {
+    // The old `:has(.gl-run-log)` spelling collapsed the panel under Step
+    // details and History, because the unmounted Console tab took the log's
+    // class with it.
+    render(<ColdPanel testId="t1" />);
+    const panel = document.querySelector('[data-gl="run-panel"]') as HTMLElement;
+    selectTab("History");
+    expect(panel.hasAttribute("data-compact")).toBe(false);
+    expect(screen.getByRole("button", { name: /the run output/i })).toBeTruthy();
+    expect(screen.getByText("No runs recorded yet")).toBeTruthy();
   });
 });
 

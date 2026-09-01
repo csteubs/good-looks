@@ -2956,10 +2956,30 @@
   border-bottom: 1px solid var(--gl-line);
 }
 
-/* Pushed to the trailing edge, so the expand control is in the same place
-   whether or not the AI sparkle and the copy button are showing. */
-.gl-run-expand {
+/* Everything that is not the tab strip, pushed to the trailing edge as one
+   cluster — the verdict chip, the failure actions, the auto-scroll toggle and
+   the expand control — so the head reads tabs-then-status the way the
+   trainer's console head reads tabs-then-toggle. */
+.gl-run-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   margin-inline-start: auto;
+}
+
+/* The status line over the log — "Done — 12/15 passed", the hit-rate pill —
+   mirroring `.gl-trainer-console-bar` because the two consoles are the same
+   surface in the user's head. Its own rule for the same reason the trainer's
+   is: the containers behave differently (this one expands), so sharing a class
+   would couple what only happens to match today. */
+.gl-run-console-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--gl-line);
 }
 
 /* The log fills the scroller rather than sitting in it as a card: the panel
@@ -3117,12 +3137,17 @@
 }
 
 /* Without a live run there is no log, so the fixed 224px strip has nothing to
-   fill it and the panel is as tall as the summary inside it. */
-.gl-run-panel:not(:has(.gl-run-log)) {
+   fill it and the panel is as tall as the summary inside it. A DATA ATTRIBUTE
+   the component sets, no longer `:not(:has(.gl-run-log))`: since the panel
+   became the tabbed console, the log's absence stopped implying there is
+   nothing to fill the strip — an unmounted Console tab has no `.gl-run-log`
+   while Step details or History is filling the space fine, and the `:has`
+   spelling made the panel collapse under them on every tab switch. */
+.gl-run-panel[data-compact] {
   flex: 0 0 auto;
 }
 
-.gl-run-panel:not(:has(.gl-run-log)) .gl-run-summary {
+.gl-run-panel[data-compact] .gl-run-summary {
   border-bottom: 0;
 }
 

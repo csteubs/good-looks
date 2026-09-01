@@ -14182,3 +14182,52 @@ because both answer "where is this" about the script being read.
 **Not done here.** Flow-block decorations and the re-inline quick fix;
 signature help; rename; a user-JSON keymap; hunk-by-hunk AI review (still
 open from Phase 3).
+
+## 2026-09-01 — The detail view's run panel wears the trainer console's clothes
+
+**One console, twice.** The trainer's bottom panel and the test detail
+view's run panel are the same surface in the user's head — "the console
+area" — and they had drifted into two designs a screen apart: the trainer
+had a tab strip (Console / Step details / Cookies), a status bar over the
+log ("Done — 15/15 passed", a hit-rate pill) and an Auto-scroll toggle;
+the detail panel had a title, a chip and a bare log. The detail panel now
+carries the same strip and the same bar, and `hitRateTone` moved to
+`renderer/lib/hit-rate.ts` so both consoles grade a hit rate with one set
+of thresholds rather than a copy each.
+
+**Cookies deliberately did not come across.** That tab edits the live
+TRAINING BROWSER's cookies over recorder IPC (`recorder:listCookies` and
+friends); outside a recording session there is no browser to edit, and
+its own fallback renders "No cookies for this page" forever. The rule the
+detail view's other tabs already state applies: a tab that could only
+ever be empty is worse than no tab.
+
+**Step details is session-scoped, and says so.** Run history stores no
+per-step results — the per-index statuses live in the store's `RunInfo`
+and die with the session — so the tab reports THIS session's run beside
+each step's locator, and shows a dash (never a verdict) for a step no run
+has reached. Deriving old per-step verdicts from the log text was
+declined: a guess wearing a checkmark.
+
+**History is a strip, not an archive.** The new tab lists the test's runs
+newest first (through `runsForTest`, so baseline-update bookkeeping rows
+stay out — the same rule the retry panel stands on), chips the amber
+facts a green row would otherwise hide (healed / retry / a11y / shots),
+and shows the most recent CAPTURED run's screenshots with a link to the
+Visual view. It caps at 30 rows and 8 frames and points at Stats and
+Visual for the rest, because both of those screens already answer the
+deeper question and a second viewer would be a second thing to keep
+right. The pictures are queried inside the tab (Radix unmounts an
+inactive tab, so nobody pays for frames they never open) under the Visual
+view's own query keys, so the two screens share a cache; the "latest
+captured run" comes from the replay index, not run history, because
+retention can prune the JSON while the replay is still on disk.
+
+**The compact rule changed spelling because the old one became a bug.**
+The no-live-run panel used to shrink via `:not(:has(.gl-run-log))`, which
+was correct while the log's absence meant there was nothing to show. With
+tabs, the log unmounts WITH its tab — so the `:has` spelling collapsed
+the 224px strip under Step details and History, which have content of
+their own. The component now sets `data-compact` only on the Console tab
+with no live run; the CSS keys on that. The expand drawer follows the
+same rule: hidden only where expanding would open onto nothing.
