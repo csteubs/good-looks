@@ -88,6 +88,14 @@ vi.mock("../lib/api", () => ({
       remove: async () => ({ removed: 1 }),
       clearAllSettled: async () => ({ removed: 0 }),
     },
+    propagation: {
+      listAll: counted("propagations", () => []),
+      list: async () => [],
+      accept: async () => null,
+      dismiss: async () => null,
+      revert: async () => null,
+      evidence: async () => null,
+    },
     artifacts: { list: counted("replays", () => []) },
     a11y: { rollup: counted("a11y-rollup", () => null) },
     metrics: {
@@ -134,6 +142,10 @@ function Consumers() {
   // while you stand on that category — which is precisely the shape that made
   // three tiles never refresh, so it belongs in the list and therefore here.
   useQuery({ queryKey: ["a11y-rollup"], queryFn: counted("a11y-rollup", () => null) });
+  // Cross-test proposals: the runner sweeps AT TEARDOWN, before runs:changed,
+  // so the push that announces the run is also the one that must refresh the
+  // proposals every badge counts.
+  useQuery({ queryKey: ["propagations", "all"], queryFn: counted("propagations", () => []) });
   return null;
 }
 
@@ -171,6 +183,7 @@ describe("run-derived caches", () => {
     await waitFor(() => expect(calls.metrics).toBe(before.metrics + 1));
     await waitFor(() => expect(calls.captureOverhead).toBe(before.captureOverhead + 1));
     await waitFor(() => expect(calls["a11y-rollup"]).toBe(before["a11y-rollup"] + 1));
+    await waitFor(() => expect(calls.propagations).toBe(before.propagations + 1));
   });
 
   it("refetches them when a batch finishes, not only a single run", async () => {
@@ -200,6 +213,22 @@ describe("run-derived caches", () => {
     expect(calls["script-changes"]).toBe(1);
   });
 
+  it("refetches proposals on their own push, without dragging the run caches", async () => {
+    // The service's non-run writers (a sweep off a trainer heal, a dismiss in
+    // another window) announce themselves on `propagations:changed`. This runs
+    // on the same real bus as the rest of the file because the inert-stub trap
+    // in the header is exactly how this subscription would rot invisibly.
+    renderWith(<Consumers />);
+    await waitFor(() => expect(calls.propagations).toBe(1));
+    const before = { ...calls };
+
+    emit("propagations:changed", null);
+
+    await waitFor(() => expect(calls.propagations).toBe(before.propagations + 1));
+    expect(calls.runs).toBe(before.runs);
+    expect(calls.heals).toBe(before.heals);
+  });
+
   it("keeps the list and the exported keys in step", () => {
     // Guards the loop above from rotting: a key added to RUN_DERIVED_KEYS
     // fails this until it has a consumer in this file.
@@ -210,6 +239,7 @@ describe("run-derived caches", () => {
         "flake",
         "heals",
         "metrics",
+        "propagations",
         "replays",
         "run-totals",
         "runs",

@@ -93,3 +93,5 @@ export { InsertGap } from "./primitives/insert-gap";
 export type { InsertGapProps } from "./primitives/insert-gap";
 export { Calendar } from "./primitives/calendar";
 export type { CalendarProps } from "./primitives/calendar";
+export { ShotHighlight, shotHighlightBox } from "./primitives/shot-highlight";
+export type { ShotHighlightProps, ShotHighlightRect } from "./primitives/shot-highlight";

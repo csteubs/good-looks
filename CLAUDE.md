@@ -104,7 +104,7 @@ renderer/components/ reusable UI composed from renderer/ui
 renderer/lib/        shared frontend utilities (llm-prompts, host bridge types, etc.)
 renderer/theme/      the indie redesign's bespoke layer: --gl-* tokens, self-hosted fonts,
                      the atmosphere overlays + reduced-motion floor, primitives/ (the
-                     sixteen components a screen is built from), shell/ (the top
+                     seventeen components a screen is built from), shell/ (the top
                      strip + rail the app's FRAME is drawn from) and screens.css
                      (what one screen IS, filled in per screen by Phase B). Distinct from
                      renderer/ui: that is the component library the views import, this is

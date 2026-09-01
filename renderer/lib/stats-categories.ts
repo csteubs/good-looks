@@ -30,6 +30,7 @@ import { countA11ySteps } from "./a11y-format";
 import type {
   FlakeReport,
   HealListEntry,
+  PropagationListEntry,
   RunRecord,
   RunReplaySummary,
   RunTotals,
@@ -321,6 +322,9 @@ export interface CategoryInputs {
   runTotals?: RunTotals;
   flake?: FlakeReport;
   heals?: HealListEntry[];
+  /** Cross-test propagation proposals — counted with heals: same queue,
+   *  same door. */
+  propagations?: PropagationListEntry[];
   replays?: RunReplaySummary[];
   stepHealth?: { available: boolean; rows: StepHealthRow[] };
   slowness?: {
@@ -450,15 +454,28 @@ export function summariseStability(flake: FlakeReport): CategorySummary {
   };
 }
 
-export function summariseHeals(heals: HealListEntry[], runs: RunRecord[]): CategorySummary {
+export function summariseHeals(
+  heals: HealListEntry[],
+  runs: RunRecord[],
+  proposals: PropagationListEntry[] = [],
+): CategorySummary {
   if (realRuns(runs).length === 0) return unmeasured("heals");
   const pending = heals.filter((h) => h.status === "pending");
+  const proposed = proposals.filter((p) => p.status === "pending");
+  // One number, one queue: a heal and a propagated proposal wait on the same
+  // decision in the same view, and two counts for one door is how a badge and
+  // its destination come to disagree.
+  const waiting = pending.length + proposed.length;
   return measured(
     "heals",
-    pending.length,
-    String(pending.length),
-    pending.length > 0
-      ? `${pending.length} ${plural(pending.length, "substitution")} waiting on a decision`
+    waiting,
+    String(waiting),
+    waiting > 0
+      ? `${waiting} ${plural(waiting, "substitution")} waiting on a decision${
+          proposed.length > 0
+            ? ` (${proposed.length} propagated from ${plural(proposed.length, "sibling test", "sibling tests")})`
+            : ""
+        }`
       : "nothing is waiting on a decision",
     `${heals.length} ${plural(heals.length, "heal")} recorded`,
     "amber",
@@ -587,7 +604,8 @@ export function summariseAll(inputs: CategoryInputs): CategorySummary[] {
         if (inputs.flake) out.push(summariseStability(inputs.flake));
         break;
       case "heals":
-        if (inputs.heals && inputs.runs) out.push(summariseHeals(inputs.heals, inputs.runs));
+        if (inputs.heals && inputs.runs)
+          out.push(summariseHeals(inputs.heals, inputs.runs, inputs.propagations ?? []));
         break;
       case "a11y":
         if (inputs.runs) out.push(summariseA11y(inputs.runs));

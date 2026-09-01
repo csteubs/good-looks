@@ -290,6 +290,13 @@ export function TestDetailView() {
     queryKey: ["script-changes", id],
     queryFn: () => api.scriptChanges.list(id),
   });
+  // The badge's third route: fixes proposed for this test from its siblings.
+  // Review lives in the Heals view; this screen only has to make the count
+  // visible without opening the tab.
+  const propagationsQuery = useQuery({
+    queryKey: ["propagations", id],
+    queryFn: () => api.propagation.list(id),
+  });
   // Badged on the Accessibility tab, from the most recent run that actually
   // checked — same reasoning as the Heals count: an unaccepted violation the
   // user has to open a tab to discover is one they won't discover. Shares the
@@ -404,12 +411,13 @@ export function TestDetailView() {
     }
     return null;
   })();
-  // One badge for both stores. They are two routes to the same hazard — the
-  // stored test changed and nobody has looked — and two numbers on one tab
-  // would be asking the user to add them up.
+  // One badge for all three stores. They are three routes to the same hazard —
+  // the stored test changed (or is about to change) and nobody has looked —
+  // and three numbers on one tab would be asking the user to add them up.
   const pendingHeals =
     (healsQuery.data ?? []).filter((h) => h.status === "pending").length +
-    scriptChanges.filter((c) => c.status === "pending").length;
+    scriptChanges.filter((c) => c.status === "pending").length +
+    (propagationsQuery.data ?? []).filter((p) => p.status === "pending").length;
   const a11yNewSteps = latestA11yRun(runsQuery.data ?? [], id)?.a11yNewSteps ?? 0;
   const runInfo = runs[id];
 

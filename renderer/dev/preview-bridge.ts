@@ -36,6 +36,7 @@ import {
   NOW,
   ROUTINES,
   HEALS,
+  PROPAGATIONS,
   AI_DEBUG_HISTORY,
   INSIGHT_REPORTS,
   INSIGHTS_STATE,
@@ -307,6 +308,7 @@ function seed() {
     livePage: { open: false } as LivePageStatus,
     runs: [...structuredClone(RUNS), ...costFiller()],
     heals: structuredClone(HEALS),
+    propagations: structuredClone(PROPAGATIONS),
     scriptChanges: structuredClone(SCRIPT_CHANGES),
     aiDebugHistory: structuredClone(AI_DEBUG_HISTORY),
     // One custom reason, so the picker, the Settings editor and the Stats
@@ -1588,6 +1590,49 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "heals:list": () => state.heals,
     "heals:listAll": () => state.heals,
     "heals:pending": () => state.heals.filter((h) => h.status === "pending"),
+
+    // ── Propagation proposals ────────────────────────────────────────────
+    // Accept/dismiss/revert settle the fixture in place, for the script-change
+    // reason above: a preview where the buttons do nothing visible teaches the
+    // opposite of the app. The evidence handler serves the login test's real
+    // preview frames so `?view=heals` shows the ShotHighlight populated — the
+    // only way an agent can look at the highlight over a "screenshot".
+    "propagation:list": (p) => state.propagations.filter((x) => x.testId === p?.testId),
+    "propagation:listAll": () => state.propagations,
+    "propagation:accept": (p) => {
+      const entry = state.propagations.find((x) => x.id === p?.id);
+      if (entry) {
+        entry.status = "accepted";
+        entry.applied = true;
+      }
+      return entry ?? null;
+    },
+    "propagation:dismiss": (p) => {
+      const entry = state.propagations.find((x) => x.id === p?.id);
+      if (entry) entry.status = "dismissed";
+      return entry ?? null;
+    },
+    "propagation:revert": (p) => {
+      const entry = state.propagations.find((x) => x.id === p?.id);
+      if (entry) entry.status = "reverted";
+      return entry ?? null;
+    },
+    // The rects sit on the generated frame's own drawn button (x 24, y 300,
+    // 260×44 on 960×600 — same anchor the specimen uses), so the boxes wrap a
+    // visible element: a box around empty background is exactly the geometry
+    // mistake the figure exists to make obvious. The target's is nudged and
+    // padded — a record-time memory, visibly not a measurement.
+    "propagation:evidence": () => ({
+      donor: {
+        shot: visualFrame("after-heal.png"),
+        rect: { x: 24 / 960, y: 300 / 600, w: 260 / 960, h: 44 / 600 },
+      },
+      target: {
+        shot: visualFrame("target-step.png"),
+        rect: { x: 18 / 960, y: 294 / 600, w: 276 / 960, h: 58 / 600 },
+        approximate: true,
+      },
+    }),
 
     // ── Script changes ───────────────────────────────────────────────────
     //

@@ -113,6 +113,9 @@ export interface ExistingProposalLike {
   confidence?: number;
   reasons?: string[];
   donors?: unknown[];
+  /** True once the apply-mode writeback landed the fix in the step; the stale
+   *  rule then expects the step to carry `toLocator`, not `fromLocator`. */
+  applied?: boolean;
 }
 
 export interface ProposalRefresh {

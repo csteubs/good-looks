@@ -171,6 +171,13 @@ export function BatchView() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const { data: tests = [] } = useQuery({ queryKey: ["tests"], queryFn: api.tests.list });
+  // Pending cross-test proposals — the outcome panel's one-line pointer. In
+  // RUN_DERIVED_KEYS, so a routine finishing refreshes it with everything else.
+  const { data: allProposals = [] } = useQuery({
+    queryKey: ["propagations", "all"],
+    queryFn: () => api.propagation.listAll(),
+  });
+  const pendingProposals = allProposals.filter((p) => p.status === "pending").length;
   const settingsQuery = useQuery({
     queryKey: ["recorder-settings"],
     queryFn: () => api.recorder.getSettings(),
@@ -2025,6 +2032,25 @@ export function BatchView() {
                     failed · {summary.skipped} skipped · {fmtDuration(summary.durationMs)} total.
                     Each test also appears in Stats as its own run.
                   </p>
+                  {pendingProposals > 0 ? (
+                    // The routine's runs may have minted cross-test proposals
+                    // (a heal on one test proposing the same fix for its
+                    // siblings). One line and one door — review itself lives
+                    // in the Heals view, beside the evidence; this editor
+                    // grows no review UI (docs/plans/preemptive-updates.md).
+                    <p className="gl-note">
+                      {pendingProposals} suggested update{pendingProposals === 1 ? "" : "s"} for
+                      other tests {pendingProposals === 1 ? "waits" : "wait"} on review —{" "}
+                      <button
+                        type="button"
+                        className="gl-linklike"
+                        onClick={() => navigate({ to: "/heals" })}
+                      >
+                        review them
+                      </button>
+                      .
+                    </p>
+                  ) : null}
                 </Panel>
               ) : null}
 

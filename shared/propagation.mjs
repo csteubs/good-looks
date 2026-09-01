@@ -433,14 +433,21 @@ export function proposalsFor({ donors, tests, latestRunByTest = {}, existing = [
   }
 
   // ── Staleness: pending entries whose target moved under them ──
+  // An APPLIED pending entry is the exception: its step carries `toLocator`
+  // BY DESIGN — the apply-mode writeback awaiting review — so it holds while
+  // the step still does, and goes stale only when the step matches neither
+  // its undo nor its fix.
   const stale = [];
   for (const [, pending] of pendingByTriple) {
     const test = testsById.get(pending.testId);
     const step = test?.steps?.find((s) => s.id === pending.stepId);
     const fromKey = keyOf(pending.fromLocator);
-    if (!test || !step || !step.locator || keyOf(step.locator) !== fromKey) {
-      stale.push(pending.id);
-    }
+    const stepKey = step?.locator ? keyOf(step.locator) : null;
+    const holds =
+      stepKey !== null &&
+      (stepKey === fromKey ||
+        (pending.applied === true && stepKey === keyOf(pending.toLocator)));
+    if (!test || !step || !holds) stale.push(pending.id);
   }
 
   return { create, refresh, supersede, stale, conflicts };

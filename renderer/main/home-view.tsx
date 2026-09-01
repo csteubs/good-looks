@@ -142,11 +142,22 @@ export function HomeView() {
   const tests = useQuery({ queryKey: ["tests"], queryFn: api.tests.list }).data;
   const runs = useQuery({ queryKey: ["runs"], queryFn: api.runs.list }).data;
   const heals = useQuery({ queryKey: ["heals", "all"], queryFn: api.heals.listAll }).data;
+  const proposals = useQuery({
+    queryKey: ["propagations", "all"],
+    queryFn: api.propagation.listAll,
+  }).data;
 
   // `Date.now()` at render rather than a memo: this is read once per paint and
   // a stale window boundary is a wrong number for no benefit.
   const green = runs === undefined ? null : greenRate(runs, Date.now());
-  const toReview = heals?.filter((h) => h.status === "pending").length;
+  // Heals AND propagation proposals: both wait on the same person, and both
+  // doors open on the same Heals view. Counted only once both have answered —
+  // a number computed from half its inputs is a number that shrinks later.
+  const toReview =
+    heals === undefined || proposals === undefined
+      ? undefined
+      : heals.filter((h) => h.status === "pending").length +
+        proposals.filter((p) => p.status === "pending").length;
 
   const goTo = React.useCallback(
     (stat: StatKey) => {

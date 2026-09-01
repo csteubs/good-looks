@@ -52,7 +52,7 @@ export function AutoHealPane() {
           id="auto-heal-apply"
           label="Apply heals automatically"
           nested
-          summary="Off (recommended): a heal gets the step past its failure and is recorded on the Heals tab for you to apply or discard — your saved test is not changed. On: the new locator is written to the step straight away. Worth knowing first: a wrong heal usually still succeeds, because clicking the wrong button rarely raises an error."
+          summary="Off (recommended): a heal gets the step past its failure and is recorded on the Heals tab for you to apply or discard — your saved test is not changed. On: the new locator is written to the step straight away, and high-confidence propagated fixes are too. Worth knowing first: a wrong heal usually still succeeds, because clicking the wrong button rarely raises an error."
         >
           <Switch
             id="auto-heal-apply"
@@ -60,6 +60,23 @@ export function AutoHealPane() {
             onCheckedChange={(checked) =>
               void save({ autoHealApply: (checked ? "apply" : "suggest") as HealApplyMode })
             }
+          />
+        </SettingRow>
+      ) : null}
+
+      {enabled ? (
+        <SettingRow
+          id="auto-heal-propagate"
+          label="Propagate confirmed fixes"
+          nested
+          summary="When a locator fix is confirmed on one test, propose the same fix for matching steps in other tests on the same site, and let runs use it the moment the old locator actually fails. Proposals wait on the Heals view; your saved tests are not changed until you apply one."
+          details="A fix counts as confirmed when you accepted a heal, fixed a locator by hand, or a run healed with it and passed. Runs are protected immediately: the known-good locator is tried before Auto-Heal searches the page, and every use is recorded as an ordinary heal. Off means fully off — nothing is proposed and runs get no seeds."
+          risk="With “Apply heals automatically” on, a high-confidence propagated fix is written to a test without a per-change review. Every write lands in the Heals journal with a one-click revert."
+        >
+          <Switch
+            id="auto-heal-propagate"
+            checked={settings.propagateFixes ?? true}
+            onCheckedChange={(checked) => void save({ propagateFixes: checked })}
           />
         </SettingRow>
       ) : null}

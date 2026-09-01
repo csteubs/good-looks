@@ -1169,11 +1169,74 @@ export function registerHandlers(): void {
   ipcMain.handle("propagation:dismiss", async (_e, params: { id: string }) => {
     const settled = propagationStore.setStatus(String(params?.id ?? ""), "dismissed");
     if (!settled) throw new Error("Proposal not found: " + String(params?.id ?? ""));
+    propagationService.pushChanged();
     return settled;
   });
   ipcMain.handle("propagation:revert", async (_e, params: { id: string }) =>
     propagationService.revertEntry(String(params?.id ?? "")),
   );
+  // The evidence figure: the donor's after-heal screenshot and the target's
+  // most recent one, each with the healed element's box when one is known.
+  // Joined HERE rather than by three renderer round-trips, because the joins
+  // are the artifact layer's own (journal → replay → shot by action index)
+  // and every rung of absence has to be honest — a side with nothing retained
+  // is simply absent, never an error and never an empty frame.
+  ipcMain.handle("propagation:evidence", async (_e, params: { id: string }) => {
+    const entry = propagationStore.get(String(params?.id ?? ""));
+    if (!entry) return null;
+    const shotOf = (testId: string, runId: string, stepId: string) => {
+      const replay = artifactStore.readReplay(testId, runId);
+      const step = replay?.steps.find((s) => s.stepId === stepId);
+      if (!step?.screenshot) return null;
+      const buf = artifactStore.readShot(testId, runId, step.screenshot);
+      return buf
+        ? { shot: `data:image/png;base64,${buf.toString("base64")}`, stepRect: step.rect }
+        : null;
+    };
+    const out: {
+      donor?: { shot: string | null; rect?: unknown; approximate?: boolean };
+      target?: { shot: string | null; rect?: unknown; approximate?: boolean };
+    } = {};
+
+    // Donor side: the newest donor that came from a journalled heal — its
+    // entry carries the MEASURED box (PR 1) and names the run whose artifacts
+    // hold the after-heal screenshot.
+    const donorRef = [...entry.donors]
+      .sort((a, b) => b.at - a.at)
+      .find((d) => d.healEntryId && d.runId);
+    if (donorRef?.healEntryId && donorRef.runId) {
+      const heal = healJournalStore.get(donorRef.healEntryId);
+      const donorShot = shotOf(donorRef.testId, donorRef.runId, donorRef.stepId);
+      if (donorShot) {
+        out.donor = {
+          shot: donorShot.shot,
+          ...(heal?.rect ? { rect: heal.rect } : {}),
+        };
+      }
+    }
+
+    // Target side: the newest retained capture run of the target test. The
+    // replay step's own rect is a measurement; the step's recorded
+    // fingerprint rect is a memory, and says so.
+    const latest = artifactStore
+      .listReplays()
+      .filter((r) => r.testId === entry.testId)
+      .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))[0];
+    if (latest) {
+      const targetShot = shotOf(entry.testId, latest.runId, entry.stepId);
+      if (targetShot) {
+        const fingerprintRect = testStore
+          .get(entry.testId)
+          ?.steps.find((s) => s.id === entry.stepId)?.fingerprint?.rect;
+        out.target = targetShot.stepRect
+          ? { shot: targetShot.shot, rect: targetShot.stepRect }
+          : fingerprintRect
+            ? { shot: targetShot.shot, rect: fingerprintRect, approximate: true }
+            : { shot: targetShot.shot };
+      }
+    }
+    return out;
+  });
 
   ipcMain.handle("heals:clearSettled", async (_e, params: { testId: string }) =>
     healJournalStore.clearSettled(params.testId),

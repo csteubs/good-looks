@@ -229,7 +229,7 @@ describe("search", () => {
 
   it("counts matches per pane", () => {
     const counts = matchCountByPane(searchSettings("heal"));
-    expect(counts["auto-heal"]).toBe(4);
+    expect(counts["auto-heal"]).toBe(5);
   });
 
   it("omits panes with no match rather than reporting zero", () => {
@@ -341,6 +341,7 @@ describe("reset", () => {
     expect(patch).toEqual({
       autoHealEnabled: true,
       autoHealApply: "suggest",
+      propagateFixes: true,
       autoHealRetries: 3,
       autoHealAttemptTimeoutMs: 4000,
     });

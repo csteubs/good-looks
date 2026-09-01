@@ -334,14 +334,41 @@ function main(): void {
       "an assert step is propose-only whatever the mode — its success proves nothing",
     );
     const autoEntries = propagationStore.list("auto-t");
-    assert(
-      autoEntries.some((x) => x.status === "accepted" && x.applied),
-      "the auto-applied entry lands accepted+applied — the reviewable record",
+    const autoApplied = autoEntries.find((x) => x.stepId === "a1");
+    assertEqual(
+      autoApplied?.status,
+      "pending",
+      "the auto-applied entry STAYS PENDING — an auto write is not a decision",
+    );
+    assertEqual(
+      autoApplied?.applied,
+      true,
+      "…stamped applied — the amber unreviewed state the review counts surface",
     );
     assert(
       autoEntries.some((x) => x.status === "pending" && x.stepId === "a2"),
       "…while the assert step's proposal stays pending for a person",
     );
+
+    // The next sweep must neither re-apply nor stale it: its step carries the
+    // fix BY DESIGN, and the review is still owed to a person.
+    propagationService.noteHealAccepted();
+    assertEqual(
+      propagationStore.get(autoApplied!.id)?.status,
+      "pending",
+      "a later sweep leaves the applied entry pending — not staled, not re-settled",
+    );
+
+    // Keep settles the review without rewriting the step (whose locator is
+    // already the fix — the fromLocator guard must not mark this stale).
+    const kept = propagationService.applyEntry(autoApplied!.id);
+    assertEqual(kept.status, "accepted", "Keep on an applied entry settles the review");
+    assertEqual(stepLoc("auto-t", "a1"), NEW, "…without touching the step again");
+
+    // And the undo held through all of it: revert restores the target's own
+    // old locator from the accepted+applied record.
+    propagationService.revertEntry(autoApplied!.id);
+    assertEqual(stepLoc("auto-t", "a1"), OLD, "revert after Keep still restores the original");
     recorderSettingsStore.set({ autoHealApply: "suggest" });
   }
 

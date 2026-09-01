@@ -67,6 +67,12 @@ describe("preview bridge channel coverage", () => {
       "runs:getLog",
       "heals:list",
       "heals:pending",
+      // The Heals view unions these rows into its journal and the detail pane
+      // maps the evidence join into figures. Unhandled, the propagation third
+      // of that view is only ever its absence — and the evidence pane, the
+      // one part jsdom cannot render lit, never gets looked at.
+      "propagation:listAll",
+      "propagation:evidence",
       "llm:getConfig",
       "llm:detect",
       "aiDebug:list",

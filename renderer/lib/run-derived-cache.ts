@@ -68,6 +68,13 @@ export const RUN_DERIVED_KEYS: readonly (readonly string[])[] = [
   // from a route that is only mounted while you are standing on it, which is
   // the exact shape this module exists to keep out of the views.
   ["a11y-rollup"],
+  // Cross-test propagation proposals. The RUNNER writes them at teardown —
+  // fresh heals become donors and the sweep runs before `runs:changed` fires —
+  // so this cache is a function of run history like everything above. The
+  // writers a run does NOT drive (trainer heals, manual edits, accept and
+  // dismiss) announce themselves on `propagations:changed`, subscribed in
+  // RecorderProvider beside the other non-run channels.
+  ["propagations"],
 ] as const;
 
 /**

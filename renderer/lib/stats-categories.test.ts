@@ -234,6 +234,42 @@ describe("zero is not the same as never measured", () => {
     expect(never.display).toBeNull();
   });
 
+  it("counts pending propagation proposals into the one review number", () => {
+    // One number, one queue: the Heals door answers "what waits on me",
+    // whichever journal the wait lives in — and the headline says how much
+    // of it arrived from sibling tests.
+    const proposal = {
+      id: "p1",
+      testId: "t2",
+      testName: "Account",
+      stepId: "s1",
+      stepLabel: "click",
+      origin: "https://example.test",
+      fromLocator: { k: "testid", v: "a" },
+      toLocator: { k: "testid", v: "b" },
+      donors: [],
+      confidence: 0.9,
+      reasons: [],
+      autoApplyEligible: false,
+      applied: false,
+      status: "pending",
+      at: 1,
+    } as never;
+    const settled = { ...(proposal as object), id: "p2", status: "dismissed" } as never;
+
+    const s = summariseHeals([heal({ id: "h1", status: "pending" })], [run({ id: "r1" })], [
+      proposal,
+      settled,
+    ]);
+    expect(s.display).toBe("2");
+    expect(s.say).toContain("2 substitutions waiting");
+    expect(s.say).toContain("1 propagated from sibling test");
+
+    // Settled proposals alone leave the door clean.
+    const clean = summariseHeals([], [run({ id: "r1" })], [settled]);
+    expect(clean.state).toBe("clean");
+  });
+
   it("separates a settled suite from one with too few runs to judge", () => {
     const settled = summariseStability(
       flake({ analysedTests: 4, windowRuns: 20, tests: [testFlake({ verdict: "stable" })] }),

@@ -610,6 +610,7 @@ app.whenReady().then(async () => {
   // apply is refused, which is the right default for the launch window.
   propagationService.init({
     isRecording: (testId) => recorderService.sessionTestId() === testId,
+    push: () => sendToMain("propagations:changed", null),
   });
   propagationService.start();
 

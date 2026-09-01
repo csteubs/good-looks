@@ -43,6 +43,10 @@ interface PropagationDeps {
    *  regenerates the spec when it finishes, so a write underneath it is
    *  silently discarded minutes later (the refuseIfRecording rule). */
   isRecording: (testId: string) => boolean;
+  /** announce "the propagation store changed" to every window — the renderer
+   *  invalidates `["propagations"]` off it. Injected (sendToMain lives in
+   *  handlers) and optional: a missing push costs freshness, never a write. */
+  push?: () => void;
 }
 
 let deps: PropagationDeps | null = null;
@@ -122,10 +126,9 @@ function sweep(reason: string, extraDonors: Donor[] = []): void {
     for (const c of plan.conflicts) {
       logger.info("propagation", "Conflicting donors — proposing nothing", c);
     }
-    if (
-      plan.create.length + plan.refresh.length + plan.supersede.length + plan.stale.length >
-      0
-    ) {
+    const changed =
+      plan.create.length + plan.refresh.length + plan.supersede.length + plan.stale.length > 0;
+    if (changed) {
       logger.info("propagation", "Sweep applied a plan", {
         reason,
         created: plan.create.length,
@@ -142,6 +145,9 @@ function sweep(reason: string, extraDonors: Donor[] = []): void {
     if (recorderSettingsStore.get().autoHealApply === "apply") {
       for (const entry of propagationStore.pending()) {
         if (!entry.autoApplyEligible) continue;
+        // Already written and awaiting review — re-applying would settle a
+        // review nobody has done.
+        if (entry.applied) continue;
         try {
           propagationService.applyEntry(entry.id, undefined, { via: "auto" });
         } catch (err) {
@@ -152,6 +158,7 @@ function sweep(reason: string, extraDonors: Donor[] = []): void {
         }
       }
     }
+    if (changed) deps?.push?.();
   } catch (err) {
     logger.warn("propagation", "Sweep failed", { reason, err: String(err) });
   }
@@ -259,23 +266,38 @@ export const propagationService = {
       throw new Error("That step no longer exists.");
     }
     const current = rec.steps[idx].locator;
-    if (!current || healKeyFor(current) !== healKeyFor(entry.fromLocator)) {
+    const currentKey = current ? healKeyFor(current) : null;
+    // An APPLIED entry's step already carries `toLocator` — Keep (and a bulk
+    // apply that swept one up) settles the review, it does not rewrite the
+    // step. Only a step matching neither spelling has genuinely moved on.
+    const appliedInPlace =
+      entry.applied && currentKey !== null && currentKey === healKeyFor(entry.toLocator);
+    if (!appliedInPlace && (!current || currentKey !== healKeyFor(entry.fromLocator))) {
       propagationStore.setStatus(id, "stale");
       throw new Error("That step has changed since this was proposed.");
     }
     const chosen = normalizeLocator(locatorOverride ?? entry.toLocator);
     if (!chosen) throw new Error("The proposed locator is not usable.");
-    rec.steps[idx] = { ...rec.steps[idx], locator: chosen };
-    rec.updatedAt = Date.now();
-    if (!rec.scriptEdited) rec.scriptPath = testStore.regenerateScript(rec);
-    testStore.save(rec);
-    const settled = propagationStore.setStatus(id, "accepted", { applied: true });
+    if (!appliedInPlace || locatorOverride !== undefined) {
+      rec.steps[idx] = { ...rec.steps[idx], locator: chosen };
+      rec.updatedAt = Date.now();
+      if (!rec.scriptEdited) rec.scriptPath = testStore.regenerateScript(rec);
+      testStore.save(rec);
+    }
+    // An AUTO apply is a write, not a decision: the entry stays pending with
+    // `applied` stamped — the amber "Applied, unreviewed" state the review
+    // counts surface — and a person's accept is what settles it. (Plan §2.6.)
+    const settled =
+      opts.via === "auto"
+        ? propagationStore.markApplied(id)
+        : propagationStore.setStatus(id, "accepted", { applied: true });
     logger.info("propagation", "Applied a propagated fix", {
       id,
       testId: entry.testId,
       stepId: entry.stepId,
       via: opts.via,
     });
+    deps?.push?.();
     return settled ?? entry;
   },
 
@@ -301,6 +323,13 @@ export const propagationService = {
       }
     }
     const settled = propagationStore.setStatus(id, "reverted");
+    deps?.push?.();
     return settled ?? entry;
+  },
+
+  /** A surface outside this module settled an entry (the dismiss handler) —
+   *  announce it so every window's counts refresh. */
+  pushChanged(): void {
+    deps?.push?.();
   },
 };

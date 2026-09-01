@@ -262,6 +262,20 @@ export const propagationStore = {
     return next;
   },
 
+  /** Stamp a pending entry as written to the test WITHOUT settling it — the
+   *  auto-apply landing state ("Applied, unreviewed"). No `decidedAt`: nobody
+   *  has decided anything yet, and the review counts key off `pending`. */
+  markApplied(id: string): PropagationEntry | null {
+    const all = readAll();
+    const idx = all.findIndex((e) => e.id === id);
+    if (idx < 0 || all[idx].status !== "pending") return null;
+    const next = normalizeEntry({ ...all[idx], applied: true });
+    if (!next) return null;
+    all[idx] = next;
+    writeAll(all);
+    return next;
+  },
+
   /** Settle an entry. `applied` is stamped when the accept/revert actually
    *  changed the test on disk, so revert knows whether there is an undo. */
   setStatus(

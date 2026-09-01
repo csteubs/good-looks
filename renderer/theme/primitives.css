@@ -1060,3 +1060,101 @@ button.gl-tag-stack {
   color: var(--gl-tx-1);
   font-weight: 700;
 }
+
+/* ── ShotHighlight ────────────────────────────────────────────────────── */
+/* A step screenshot with the element highlighted — the trainer's refine-box
+   anatomy (border, halo, label pill) re-drawn over a picture. The MEASURED
+   box spotlights: its first shadow layer is a huge spread that dims the rest
+   of the stage, clipped by the stage's overflow, so a small element stays
+   findable on a busy page without anything occluding the element itself.
+   The APPROXIMATE box (a record-time memory, not a measurement) is dashed
+   with no spotlight — a visibly weaker claim that must never read as the
+   measured one. Reveal runs ONE settle pulse to say "look here"; reduced
+   motion renders the box static and full (clamp motion, never delete
+   information), and the box's geometry never animates — a box easing toward
+   its rect would briefly draw a claim that is not true. */
+
+.gl-shothl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.gl-shothl-stage {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--gl-line);
+  border-radius: 4px;
+  background: var(--gl-ink);
+}
+
+.gl-shothl-img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.gl-shothl-box {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+  border: 2px solid var(--gl-cyan);
+  border-radius: 2px;
+  box-shadow:
+    0 0 0 100vmax rgba(8, 9, 10, 0.42),
+    0 0 0 1px rgba(255, 255, 255, 0.5),
+    0 0 10px rgba(53, 224, 255, 0.35);
+  animation: gl-shothl-settle 700ms ease-out 1;
+}
+
+.gl-shothl-box-approx {
+  border-style: dashed;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3);
+  animation: none;
+}
+
+/* Rides the box's top edge, the refine box's pill. Clipped by the stage when
+   the element sits at the very top — the pill is garnish, the box is the
+   claim. */
+.gl-shothl-tag {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: -2px;
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  line-height: 16px;
+  background: var(--gl-cyan);
+  color: var(--gl-ink);
+  padding: 0 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+  max-width: 95%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gl-shothl-caption {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--gl-tx-3);
+}
+
+/* The settle pulse: the glow layer starts wide and eases home. The spotlight
+   layer is repeated verbatim so the dim never flickers. */
+@keyframes gl-shothl-settle {
+  from {
+    box-shadow:
+      0 0 0 100vmax rgba(8, 9, 10, 0.42),
+      0 0 0 1px rgba(255, 255, 255, 0.5),
+      0 0 0 14px rgba(53, 224, 255, 0.3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gl-shothl-box {
+    animation: none;
+  }
+}

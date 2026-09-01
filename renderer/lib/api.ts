@@ -14,6 +14,9 @@ import type {
   FlakeReport,
   HealEntry,
   HealListEntry,
+  PropagationEntry,
+  PropagationEvidence,
+  PropagationListEntry,
   ScriptChangeEntry,
   ScriptChangeListEntry,
   ScriptChangeSource,
@@ -533,6 +536,25 @@ export const api = {
     remove: (id: string) => ipc().invoke<{ removed: number }>("heals:remove", { id }),
     /** Clear settled heals across every test; pending ones are kept. */
     clearAllSettled: () => ipc().invoke<{ removed: number }>("heals:clearAllSettled"),
+  },
+  /** Cross-test propagation proposals — the heal journal's third sibling.
+   *  Accept and revert delegate to the ONE apply path in propagation-service,
+   *  so every guard (stale, script-edited, imported, live-recording) holds
+   *  whichever surface asked. */
+  propagation: {
+    list: (testId: string) =>
+      ipc().invoke<PropagationEntry[]>("propagation:list", { testId }),
+    listAll: () => ipc().invoke<PropagationListEntry[]>("propagation:listAll"),
+    /** Apply the proposal to the stored test. `locator` overrides the fix. */
+    accept: (id: string, locator?: Locator) =>
+      ipc().invoke<PropagationEntry>("propagation:accept", { id, locator }),
+    dismiss: (id: string) => ipc().invoke<PropagationEntry>("propagation:dismiss", { id }),
+    revert: (id: string) => ipc().invoke<PropagationEntry>("propagation:revert", { id }),
+    /** The evidence figure: donor and target step screenshots with the healed
+     *  element's box, joined backend-side. Every rung of absence is honest —
+     *  a side with no retained shot is simply absent. */
+    evidence: (id: string) =>
+      ipc().invoke<PropagationEvidence | null>("propagation:evidence", { id }),
   },
   /** Whole-script changes — an AI-debug fix, or a hand edit in the Script tab.
    *  The heal journal's sibling; the two are merged in the Heals surfaces. */
