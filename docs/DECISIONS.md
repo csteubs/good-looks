@@ -10,6 +10,95 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-01 — The Variables tab: groups per kind, and a warning that means something
+
+**The standing warning was the problem, not the wording.** The tab carried a
+permanent amber `Callout` saying Value and Captured variables are plain text.
+Every word of it was true and none of it asked for anything, so it was on
+screen for someone editing a generated variable, to whom none of it applied —
+and it sat in the same amber as the two notices that DO require an action (a
+secret declared with no stored value that steps already read; basic auth naming
+a secret that no longer exists). A colour spent on something permanent stops
+being a signal, and the two notices that needed it were the ones that lost.
+
+So colour on this tab now means exactly one thing, in two tiers. `blocking`
+(red) is "the list is being held back from the backend until you fix this" — an
+invalid or duplicated name, which the local-draft rule already refuses to save.
+`action` (amber) is "this saved, and the next run will go ahead wrong". The
+plaintext explanation keeps every word and its unconditional render — "Value" is
+still the default kind, and the decision it warns about is still made before the
+first row exists — but as body copy. Each group also restates its own kind's
+rule in its legend, which is where that kind is being chosen, so the sentence is
+shorter and always relevant instead of long and usually not.
+
+**The empty-secret flag needs a reader, not just an empty value.** It fires only
+once a step references the secret. A secret just declared has its own input on
+screen and nothing depending on it; warning there would fire on every new secret
+and put us straight back where we started.
+
+**Grouped by kind, because the KIND is what decides what may be done.** A
+secret's value can only be replaced, a generated one has no value at all, and a
+dataset row may never carry either — but the flat list drew all four with the
+same row and a kind dropdown, which put the commonest action (edit a value) and
+the rarest (change what a variable IS) in adjacent columns at equal weight, one
+mis-click apart. Each kind is now a hairline group with exactly one value
+affordance, so inside a group there is only one thing a control can mean.
+
+The header comment's original argument — one list, because the kinds share one
+namespace — survives intact and is the reason for the shape of the fix rather
+than an objection to it. The GROUPING IS A VIEW: `grouped` carries each row's
+index into the stored list, every edit writes back through that index, and
+`duplicateAt` is still computed over the whole list in stored order. A plain
+`email` and a secret `email` collide exactly as two plain ones would, and the
+error renders on the offending row wherever it sits. Getting this backwards —
+grouping the DATA — would mean an edit in one group writing over a variable in
+another, which is what `writes a kind change back into the variable's stored
+position` exists to catch.
+
+**Choosing a kind moved earlier; changing one moved later.** The kind is named
+on the header's Add menu, so declaring a password as a Secret from the start is
+one gesture rather than a conversion after the plaintext has already been
+written to the record. Changing it afterwards moved into the row's `⋯` menu,
+with Remove — the two rare and consequential actions behind one deliberate
+second gesture, instead of a dropdown and a trash icon flanking the value field.
+`changeKind` drops the fields the new kind may not carry: `normalizeVariables`
+already refuses to store a secret's value, so the record was safe either way,
+but leaving it in the local draft would keep the password on screen under a
+legend promising it is encrypted.
+
+The cost is discoverability, and it is real: someone who declared a password as
+a Value has three clicks to fix it rather than one. A name heuristic ("this is
+called `password` — make it a Secret?") was considered and deferred rather than
+rejected; see docs/plans/variables-view.md.
+
+**Datasets became a table.** The question the section exists to answer — what is
+`email` on each row — is a column. Drawn as a card per row with a wrapping field
+cluster in each, it could only be answered by reading every card and holding
+them in your head.
+
+**Every section is a `Panel`, with its control in its own header.** Five
+concerns shared one scroll with nothing between them but whitespace, and each
+one's control was flushed to the far right edge — `Add variable`, the flow
+switch and `Run sweep` all landing in the same column with nothing tying any of
+them to the section that owned it. Reusable flow, Login session and HTTP basic
+auth are none of them variables, but they stay on this tab under one `Reuse &
+identity` panel rather than moving to a sixth tab: basic auth's password IS a
+Secret variable by construction (the record stores only its name), so separating
+it from the list it references would be the worse split.
+
+**The neutral switch is one definition with a second scope, not a third copy.**
+`.gl-setting-group [role="switch"]` and `.gl-run-options [role="checkbox"]`
+gained `.gl-var-group` as an additional selector rather than a duplicated block.
+A switch that is neutral in two places and blue in the third is exactly the
+drift one definition prevents — and blue is not in this palette (tokens.css).
+
+**Expiry is not here, and could not have been.** "A token expired and the test
+is failing because of it" is the right trigger for an interruption, but
+`tests:secretStatus` returns `{ name, hasValue }` and nothing else: there is no
+expiry, no last-used timestamp, and no link from a failing run back to a
+variable. Inventing a warning with no data behind it would have been the same
+mistake as the callout. The design for it is in docs/plans/variables-view.md.
+
 ### 2026-09-01 — Propagation's surfaces: one review door, evidence you can look at, and an auto apply that stays pending
 
 **The review lives in ONE place, and everything else points at it.** The

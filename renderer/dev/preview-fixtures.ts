@@ -152,18 +152,56 @@ export const TESTS: TestRecord[] = [
     // would, so the argument form's default placeholder shows a true value.
     isFlow: true,
     flowParams: ["email"],
+    // ONE OF EACH KIND, on purpose. The Variables tab draws a group per kind
+    // and only for the kinds in use, so a fixture with two plain variables
+    // renders one group and the redesign cannot be seen at all — including the
+    // one state worth looking at, a declared secret with no stored value that
+    // steps already read. `apiToken` is exactly that: the preview's secret set
+    // starts empty, so it opens carrying its amber flag.
     variables: [
       { name: "email", kind: "plain", value: "nobody@example.com" },
+      { name: "site", kind: "plain", value: "https://app.example.com" },
       // A secret + basicAuth referencing it, so the Variables tab's HTTP
       // basic auth section renders with a chosen credential — the only place
       // outside a real record it can be seen filled in.
       { name: "wallPw", kind: "secret" },
+      { name: "apiToken", kind: "secret" },
+      { name: "sessionId", kind: "captured" },
+      { name: "runTag", kind: "generated", genSpec: "uuid" },
+    ],
+    // Two rows over the non-secret variables, so the datasets table renders as
+    // a table rather than as its "no rows yet" line.
+    datasets: [
+      {
+        id: "d-prod",
+        name: "Production",
+        values: { email: "nobody@example.com", site: "https://app.example.com" },
+      },
+      {
+        id: "d-staging",
+        name: "Staging",
+        values: { email: "qa@example.com", site: "https://staging.app.example.com" },
+      },
     ],
     basicAuth: { username: "staging", passwordVar: "wallPw" },
     steps: steps(
       { type: "goto", url: "https://app.example.com/login" },
-      { type: "fill", locator: { k: "label", v: "Email" }, value: "${email}" },
+      // `varRefs` is what the Variables tab counts to say "used by 2 steps" and
+      // what decides whether an empty secret is worth interrupting over — the
+      // recorder writes it at capture time, so a fixture has to carry it too.
+      {
+        type: "fill",
+        locator: { k: "label", v: "Email" },
+        value: "${email}",
+        varRefs: ["email"],
+      },
       { type: "fill", locator: { k: "label", v: "Password" }, value: "hunter2" },
+      {
+        type: "fill",
+        locator: { k: "label", v: "API token" },
+        value: "${apiToken}",
+        varRefs: ["apiToken"],
+      },
       { type: "click", locator: { k: "role", role: "button", name: "Sign in" } },
       { type: "assert", assert: "visible", locator: { k: "testid", v: "login-error" } },
     ),

@@ -11,7 +11,7 @@
 // variable that steps still reference, and building dataset rows for a secret.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { clearToastCalls, toastTexts } from "../__tests__/sonner-stub";
@@ -86,6 +86,72 @@ vi.mock("../lib/api", () => ({
   },
 }));
 
+/* ── Driving the native menus ─────────────────────────────────────────
+ *
+ * `Add variable` and every variable row's actions are `DropdownMenu`s, which
+ * are backed by REAL macOS menus: the items never enter the DOM, so no query
+ * can reach them and a click on the trigger is only half the gesture. The
+ * trigger hands a plain-data template to `glazeAPI.Menu.popup` and runs the
+ * handler for whichever `commandId` comes back — an ordinary promise this test
+ * can answer, which is what makes it the REAL handler rather than a stand-in.
+ * Same technique the settings panes use for their selects (appearance-pane).
+ */
+interface NativeItem {
+  label?: string;
+  commandId?: number;
+  submenu?: NativeItem[];
+}
+
+/** Depth-first, because `Change type` is a submenu. */
+function commandIdFor(items: NativeItem[], label: RegExp): number | undefined {
+  for (const item of items) {
+    if (item.label && item.commandId !== undefined && label.test(item.label)) return item.commandId;
+    if (item.submenu) {
+      const nested = commandIdFor(item.submenu, label);
+      if (nested !== undefined) return nested;
+    }
+  }
+  return undefined;
+}
+
+/** What the next popup should answer with. Read synchronously inside `popup`,
+ *  which the trigger calls during the click. */
+let menuPick: RegExp | null = null;
+/** Every template the panel has popped, so a test can assert on what was
+ *  OFFERED as well as on what choosing it did. */
+let menuTemplates: NativeItem[][] = [];
+
+const popup = vi.fn(async (options?: { items?: NativeItem[] }) => {
+  const items = options?.items ?? [];
+  menuTemplates.push(items);
+  return menuPick ? { commandId: commandIdFor(items, menuPick) } : {};
+});
+
+/** Open the menu named by `trigger` and choose the item matching `item`. */
+async function chooseFromMenu(trigger: RegExp, item: RegExp): Promise<void> {
+  const button = await screen.findByRole("button", { name: trigger });
+  menuPick = item;
+  fireEvent.click(button);
+  menuPick = null;
+}
+
+/** Open a menu and choose nothing — for asserting on what it OFFERED. */
+async function openMenu(trigger: RegExp): Promise<void> {
+  fireEvent.click(await screen.findByRole("button", { name: trigger }));
+}
+
+/** The template the last opened menu offered, as labels (submenus flattened
+ *  with their parent's name, so "Change type ▸ Secret" reads as one string). */
+function lastMenuLabels(): string[] {
+  const items = menuTemplates[menuTemplates.length - 1] ?? [];
+  const out: string[] = [];
+  for (const i of items) {
+    if (i.submenu) out.push(...i.submenu.map((s) => `${i.label} ${s.label}`));
+    else if (i.label) out.push(i.label);
+  }
+  return out;
+}
+
 function makeTest(partial: Partial<TestRecord> = {}): TestRecord {
   return {
     id: "t1",
@@ -114,6 +180,9 @@ beforeEach(() => {
   secretStatus = [];
   sessionState = null;
   allTests = [];
+  menuPick = null;
+  menuTemplates = [];
+  (window as unknown as { glazeAPI: { Menu: unknown } }).glazeAPI = { Menu: { popup } };
 });
 
 describe("VariablesPanel", () => {
@@ -182,11 +251,18 @@ describe("VariablesPanel", () => {
     expect(screen.getByText(/fresh value every run/i)).toBeTruthy();
   });
 
-  it("offers the TOTP flag on a secret and saves it through the same list", async () => {
+  it("offers the TOTP choice on a secret and saves it through the same list", async () => {
+    // A secret is a password OR a TOTP setup key and never both, which is a
+    // segmented control's exact shape — it replaced a checkbox whose meaning
+    // lived in a three-line paragraph beside it. Plain buttons with
+    // `aria-pressed`, so `click` works (unlike Radix's TabsTrigger).
     secretStatus = [{ name: "mfa", hasValue: true }];
     renderPanel(makeTest({ variables: [{ name: "mfa", kind: "secret" }] }));
-    const box = await screen.findByLabelText("TOTP key for mfa");
-    fireEvent.click(box);
+    const group = await screen.findByRole("group", { name: /what mfa holds/i });
+    const password = within(group).getByRole("button", { name: "Password" });
+    expect(password.getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(within(group).getByRole("button", { name: "TOTP key" }));
     await waitFor(() =>
       expect(setVariables).toHaveBeenCalledWith("t1", [
         { name: "mfa", kind: "secret", totp: true },
@@ -232,7 +308,10 @@ describe("VariablesPanel", () => {
         ],
       }),
     );
-    fireEvent.click(await screen.findByLabelText("Remove email"));
+    // Behind the row's menu rather than on a trash icon beside the value
+    // field: deleting a variable steps depend on and editing its value are not
+    // the same weight of action, and they used to sit in adjacent columns.
+    await chooseFromMenu(/actions for email/i, /^Remove email$/);
     await waitFor(() =>
       expect(setVariables).toHaveBeenCalledWith("t1", [
         { name: "region", kind: "plain", value: "eu" },
@@ -360,7 +439,7 @@ describe("creating and renaming variables (drafts stay local until valid)", () =
 
   it("adds a variable as an editable local row without persisting an empty name", async () => {
     renderPanel(makeTest());
-    fireEvent.click(await screen.findByRole("button", { name: /add variable/i }));
+    await chooseFromMenu(/add variable/i, /^Value$/);
     // The row appears immediately...
     expect((await screen.findByLabelText("Variable name")) as HTMLInputElement).toBeTruthy();
     // ...and nothing was sent: an empty name would be normalized away on write.
@@ -369,7 +448,7 @@ describe("creating and renaming variables (drafts stay local until valid)", () =
 
   it("persists the new variable exactly once its name becomes valid", async () => {
     renderPanel(makeTest());
-    fireEvent.click(await screen.findByRole("button", { name: /add variable/i }));
+    await chooseFromMenu(/add variable/i, /^Value$/);
     const name = (await screen.findByLabelText("Variable name")) as HTMLInputElement;
 
     // "1x" is not a valid identifier — still nothing persisted, row still here.
@@ -410,7 +489,10 @@ describe("creating and renaming variables (drafts stay local until valid)", () =
 
   it("holds a duplicate name locally and says why", async () => {
     renderPanel(makeTest({ variables: [{ name: "email", kind: "plain", value: "a@b.com" }] }));
-    fireEvent.click(await screen.findByRole("button", { name: /add variable/i }));
+    await chooseFromMenu(/add variable/i, /^Value$/);
+    // The menu answers on a microtask (`popup` is a promise), so the new row
+    // is not in the DOM the instant the trigger is clicked.
+    await waitFor(() => expect(screen.getAllByLabelText("Variable name")).toHaveLength(2));
     const inputs = screen.getAllByLabelText("Variable name") as HTMLInputElement[];
     fireEvent.change(inputs[1], { target: { value: "email" } });
 
@@ -429,7 +511,7 @@ describe("creating and renaming variables (drafts stay local until valid)", () =
   });
 });
 
-// ── The plaintext warning ─────────────────────────────────────────────────
+// ── The plaintext notice ──────────────────────────────────────────────────
 //
 // "Value" is the default kind, and the difference between it and "Secret" is
 // invisible on this panel once a row exists: same field, same row, and a
@@ -438,10 +520,23 @@ describe("creating and renaming variables (drafts stay local until valid)", () =
 // tests.json and in the generated spec is this notice. It renders whether or
 // not any variable exists yet, because the decision it warns about is made
 // before the first row does.
-describe("the plaintext warning", () => {
+//
+// IT IS BODY COPY NOW, not the amber callout it used to be, and that is the
+// property these tests defend from both sides. Its words are unchanged and it
+// still renders unconditionally — but a notice that is permanently on screen
+// and asks for nothing is not a warning, and sitting in the same amber as the
+// two notices that DO require an action taught the eye to skip all three. The
+// amber is reserved for those two (see "notices that require an action"
+// below); this states a fact.
+describe("the plaintext notice", () => {
   /** The notice's own paragraph. Matched on the whole element rather than a
    *  text node: the sentence is broken up by `<strong>` around each kind, so
-   *  every text-node query would match only a fragment of it. */
+   *  every text-node query would match only a fragment of it.
+   *
+   *  Anchored on "Only a", which is the clause that makes this paragraph the
+   *  COMPARISON between the kinds rather than one kind's own rule — the
+   *  datasets note below is a second paragraph saying rows are plain text too,
+   *  and a bare /plain text/ now matches both. */
   function notice(pattern: RegExp): HTMLElement {
     return screen.getByText(
       (_content, el) =>
@@ -452,7 +547,8 @@ describe("the plaintext warning", () => {
   it("names which kinds are stored in plain text, and which is not", async () => {
     renderPanel(makeTest());
     await screen.findByText(/Variables/);
-    const text = notice(/plain text/i).textContent ?? "";
+    const text = notice(/Only a/).textContent ?? "";
+    expect(text).toMatch(/plain text/i);
     expect(text).toMatch(/Value/);
     expect(text).toMatch(/Captured/);
     expect(text).toMatch(/Secret/);
@@ -464,7 +560,21 @@ describe("the plaintext warning", () => {
     // only after the fact would be a description, not a warning.
     renderPanel(makeTest({ variables: [] }));
     await screen.findByText(/No variables yet/i);
-    expect(notice(/plain text/i)).toBeTruthy();
+    expect(notice(/Only a/)).toBeTruthy();
+  });
+
+  it("states it as body copy, not as a standing alert", async () => {
+    // THE REGRESSION THIS PINS: it was a `Callout color="yellow"` with a
+    // warning triangle, permanently on screen, asking for nothing. Amber on
+    // this tab now means "a run will go ahead wrong unless you do something",
+    // and there is exactly one flag treatment — so if this paragraph ever gets
+    // it back, the two notices that need it lose their weight.
+    renderPanel(makeTest());
+    const el = notice(/Only a/);
+    expect(el.className).toContain("gl-var-note");
+    expect(el.closest(".gl-var-flag")).toBeNull();
+    // And nothing else on a freshly opened tab is wearing the flag treatment.
+    expect(document.querySelectorAll(".gl-var-flag").length).toBe(0);
   });
 
   it("says dataset rows are plain text too", async () => {
@@ -671,3 +781,234 @@ describe("HTTP basic auth", () => {
   });
 });
 
+
+// ── The kind groups ───────────────────────────────────────────────────────
+//
+// The kinds are DRAWN as four groups and STORED as one list. Everything here
+// defends that split: what the user sees is grouped by what may be done to a
+// variable, while the namespace, the duplicate rule and the saved order stay
+// whole-list properties. Get it wrong in the other direction — group the data
+// rather than the view — and an edit in one group writes over a variable in
+// another, which is the failure these tests exist to catch.
+
+describe("the kind groups", () => {
+  it("draws each kind in its own group, under the rule that kind is stored by", async () => {
+    secretStatus = [{ name: "password", hasValue: true }];
+    renderPanel(
+      makeTest({
+        variables: [
+          { name: "site", kind: "plain", value: "https://x.test" },
+          { name: "password", kind: "secret" },
+          { name: "orderNo", kind: "captured" },
+          { name: "runId", kind: "generated", genSpec: "uuid" },
+        ],
+      }),
+    );
+    // Each group is a landmark with its own name, so "which of these am I
+    // acting on" is answerable without reading the row.
+    const secrets = await screen.findByRole("region", { name: "Secrets" });
+    expect(within(secrets).getByLabelText("Variable name")).toBeTruthy();
+    expect(secrets.textContent).toMatch(/Encrypted on this Mac/i);
+
+    const values = screen.getByRole("region", { name: "Values" });
+    expect(values.textContent).toMatch(/Plain text, in this test's record/i);
+    expect(screen.getByRole("region", { name: "Captured" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Generated" })).toBeTruthy();
+  });
+
+  it("draws no group for a kind this test does not use", async () => {
+    // Four empty boxes above a test with one variable would be a legend of the
+    // type system rather than a list of this test's variables. An unused kind
+    // is reached through the panel header's menu instead.
+    renderPanel(makeTest({ variables: [{ name: "site", kind: "plain", value: "" }] }));
+    expect(await screen.findByRole("region", { name: "Values" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Secrets" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Generated" })).toBeNull();
+  });
+
+  it("names the kind when the variable is created, not after", async () => {
+    // The safety path: declaring a password as a Secret from the start, rather
+    // than typing it into a Value row and converting afterwards — by which
+    // point it has already been written to the record in plaintext.
+    renderPanel(makeTest());
+    await chooseFromMenu(/add variable/i, /^Secret$/);
+    const secrets = await screen.findByRole("region", { name: "Secrets" });
+    fireEvent.change(within(secrets).getByLabelText("Variable name"), {
+      target: { value: "apiToken" },
+    });
+    await waitFor(() =>
+      expect(setVariables).toHaveBeenCalledWith("t1", [{ name: "apiToken", kind: "secret" }]),
+    );
+  });
+
+  it("offers every kind on the add menu", async () => {
+    renderPanel(makeTest());
+    await openMenu(/add variable/i);
+    expect(lastMenuLabels()).toEqual([
+      "Value",
+      "Secret",
+      "Captured at run time",
+      "Generated each run",
+    ]);
+  });
+
+  it("adds into the group whose own control was used", async () => {
+    renderPanel(makeTest({ variables: [{ name: "site", kind: "plain", value: "" }] }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add to Values" }));
+    await waitFor(() =>
+      expect(screen.getAllByLabelText("Variable name").length).toBe(2),
+    );
+    // Still one group: the new row is a Value, because that is the group its
+    // control belongs to.
+    expect(screen.queryByRole("region", { name: "Secrets" })).toBeNull();
+  });
+
+  it("keeps ONE namespace across the groups", async () => {
+    // A `${name}` reference does not care which group the variable is drawn
+    // in, so a plain `email` and a secret `email` collide exactly as two plain
+    // ones would — and the list must not round-trip until one is renamed.
+    renderPanel(makeTest({ variables: [{ name: "email", kind: "plain", value: "a@b.com" }] }));
+    await chooseFromMenu(/add variable/i, /^Secret$/);
+    const secrets = await screen.findByRole("region", { name: "Secrets" });
+    fireEvent.change(within(secrets).getByLabelText("Variable name"), {
+      target: { value: "email" },
+    });
+
+    expect(setVariables).not.toHaveBeenCalled();
+    expect(within(secrets).getByText(/Already declared above/i)).toBeTruthy();
+  });
+
+  it("offers every kind but the one the row already is", async () => {
+    renderPanel(makeTest({ variables: [{ name: "site", kind: "plain", value: "" }] }));
+    await openMenu(/actions for site/i);
+    const labels = lastMenuLabels();
+    expect(labels).toContain("Change type Secret");
+    expect(labels).toContain("Change type Captured at run time");
+    expect(labels).not.toContain("Change type Value");
+    expect(labels).toContain("Remove site");
+  });
+
+  it("writes a kind change back into the variable's stored position", async () => {
+    // The groups reorder what is DRAWN. If a change wrote back by the position
+    // within its group, changing the second Value would rewrite whichever
+    // variable happened to sit second in the whole list.
+    renderPanel(
+      makeTest({
+        variables: [
+          { name: "site", kind: "plain", value: "https://x.test" },
+          { name: "token", kind: "plain", value: "" },
+        ],
+      }),
+    );
+    await chooseFromMenu(/actions for token/i, /^Generated each run$/);
+    await waitFor(() =>
+      expect(setVariables).toHaveBeenCalledWith("t1", [
+        { name: "site", kind: "plain", value: "https://x.test" },
+        { name: "token", kind: "generated", genSpec: "string" },
+      ]),
+    );
+  });
+
+  it("drops the plaintext value when a variable becomes a secret", async () => {
+    // `normalizeVariables` refuses to store a secret's value, so the record is
+    // safe either way — but leaving it in the local draft would keep the
+    // password on screen under a legend promising it is encrypted, and would
+    // put it back on the record the moment any other edit saved the list.
+    renderPanel(makeTest({ variables: [{ name: "password", kind: "plain", value: "hunter2" }] }));
+    await chooseFromMenu(/actions for password/i, /^Secret$/);
+    await waitFor(() =>
+      expect(setVariables).toHaveBeenCalledWith("t1", [{ name: "password", kind: "secret" }]),
+    );
+    expect(JSON.stringify(setVariables.mock.calls)).not.toMatch(/hunter2/);
+    // And the field that held it is gone from the screen with it.
+    expect(screen.queryByLabelText("Default value for password")).toBeNull();
+  });
+});
+
+// ── Notices that require an action ────────────────────────────────────────
+//
+// The whole point of demoting the standing callout: amber on this tab now
+// means "this saved, and the next run will go ahead wrong unless you do
+// something". If it appears for anything else it stops meaning that.
+
+describe("notices that require an action", () => {
+  it("flags a secret with no value once steps read it", async () => {
+    secretStatus = [{ name: "apiToken", hasValue: false }];
+    renderPanel(
+      makeTest({
+        variables: [{ name: "apiToken", kind: "secret" }],
+        steps: [
+          { id: "s1", type: "fill", timestamp: 0, value: "${apiToken}", varRefs: ["apiToken"] },
+          { id: "s2", type: "fill", timestamp: 0, value: "${apiToken}", varRefs: ["apiToken"] },
+        ],
+      }),
+    );
+    const flag = await screen.findByText(/No value stored/i);
+    expect(flag.closest(".gl-var-flag")?.getAttribute("data-tier")).toBe("action");
+    expect(flag.textContent).toMatch(/2 steps/);
+  });
+
+  it("says nothing about a secret nothing reads yet", async () => {
+    // A secret just declared has its own input on screen and nothing depending
+    // on it. Warning here would fire on every new secret, at which point the
+    // colour stops being a signal.
+    secretStatus = [{ name: "apiToken", hasValue: false }];
+    renderPanel(makeTest({ variables: [{ name: "apiToken", kind: "secret" }] }));
+    await screen.findByLabelText("Value for apiToken");
+    expect(screen.queryByText(/No value stored/i)).toBeNull();
+  });
+
+  it("marks a name that will not save as blocking, not merely actionable", async () => {
+    // The two tiers are not decoration: blocking means the list is being held
+    // back from the backend until it is fixed, which is a different thing to
+    // do about it than "a run will be wrong".
+    renderPanel(makeTest({ variables: [{ name: "has-dash", kind: "plain" }] }));
+    const flag = await screen.findByText(/Use letters, numbers and underscores/i);
+    expect(flag.closest(".gl-var-flag")?.getAttribute("data-tier")).toBe("blocking");
+  });
+});
+
+// ── Datasets, as a table ──────────────────────────────────────────────────
+
+describe("the dataset table", () => {
+  it("gives every non-secret variable a column header", async () => {
+    // The question the section exists to answer — what is `currency` on each
+    // row — is a column. As a card per row with a wrapping field cluster in
+    // each, it could only be answered by reading every card in turn.
+    secretStatus = [{ name: "password", hasValue: true }];
+    renderPanel(
+      makeTest({
+        variables: [
+          { name: "currency", kind: "plain", value: "GBP" },
+          { name: "orderNo", kind: "captured" },
+          { name: "password", kind: "secret" },
+        ],
+        datasets: [{ id: "d1", name: "GBP", values: { currency: "GBP" } }],
+      }),
+    );
+    expect(await screen.findByRole("columnheader", { name: "currency" })).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "orderNo" })).toBeTruthy();
+    expect(screen.queryByRole("columnheader", { name: "password" })).toBeNull();
+  });
+
+  it("puts one row per dataset row, addressable by row and column", async () => {
+    renderPanel(
+      makeTest({
+        variables: [{ name: "currency", kind: "plain", value: "GBP" }],
+        datasets: [
+          { id: "d1", name: "Sterling", values: { currency: "GBP" } },
+          { id: "d2", name: "Dollars", values: { currency: "USD" } },
+        ],
+      }),
+    );
+    expect(
+      ((await screen.findByLabelText("currency for row Dollars")) as HTMLInputElement).value,
+    ).toBe("USD");
+    fireEvent.click(screen.getByLabelText("Remove row Sterling"));
+    await waitFor(() =>
+      expect(setDatasets).toHaveBeenCalledWith("t1", [
+        { id: "d2", name: "Dollars", values: { currency: "USD" } },
+      ]),
+    );
+  });
+});
