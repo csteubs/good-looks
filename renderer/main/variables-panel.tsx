@@ -752,7 +752,7 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
           title="Variables"
           id={
             variables.length === 0
-              ? "none declared"
+              ? "None declared"
               : `${variables.length} declared${secretCount > 0 ? ` · ${secretCount} secret` : ""}`
           }
           right={
@@ -873,7 +873,7 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
             browser's credential prompt with the same values the run's
             `test.use({ httpCredentials })` reads, so a wall that blocks one
             blocks neither. */}
-        <Panel title="Reuse & identity" id="how this test is shared, and how it signs in" pad={10}>
+        <Panel title="Reuse & identity" id="How this test is shared, and how it signs in" pad={10}>
           <div className="flex flex-col gap-2.5">
             <GroupBox
               title="Reusable flow"
@@ -979,7 +979,7 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
                       setSession.mutate({ useSessionFrom: v === "none" ? null : v })
                     }
                   >
-                    <SelectTrigger aria-label="Session source" className="w-80">
+                    <SelectTrigger aria-label="Session source" className="w-96">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1072,7 +1072,7 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
           title="Datasets"
           id={
             datasets.length === 0
-              ? "no rows"
+              ? "No rows"
               : `${datasets.length} row${datasets.length === 1 ? "" : "s"} · ${columns.length} column${
                   columns.length === 1 ? "" : "s"
                 }`

@@ -6675,7 +6675,7 @@
 
 .gl-var-group-title {
   font-family: var(--gl-mono);
-  font-size: 9px;
+  font-size: 9.5px;
   font-weight: 700;
   letter-spacing: var(--gl-track-label);
   text-transform: uppercase;
@@ -6692,7 +6692,7 @@
    require an action. */
 .gl-var-group-note {
   font-family: var(--gl-sans);
-  font-size: 10.5px;
+  font-size: 11.5px;
   line-height: 1.5;
   color: var(--gl-tx-3);
   min-width: 0;
@@ -6774,7 +6774,7 @@
   align-items: flex-start;
   gap: 6px;
   font-family: var(--gl-sans);
-  font-size: 10.5px;
+  font-size: 11.5px;
   line-height: 1.45;
   padding-inline-start: 1px;
 }
@@ -6788,8 +6788,8 @@
 }
 
 .gl-var-flag svg {
-  width: 12px;
-  height: 12px;
+  width: 13px;
+  height: 13px;
   flex-shrink: 0;
   margin-top: 2px;
 }
@@ -6799,7 +6799,7 @@
    be retuned without touching every other screen that reads that one. */
 .gl-var-note {
   font-family: var(--gl-sans);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.55;
   color: var(--gl-tx-3);
   margin: 0;
@@ -6808,23 +6808,24 @@
 
 .gl-var-note code {
   font-family: var(--gl-mono);
-  font-size: 10.5px;
+  font-size: 11.5px;
   color: var(--gl-tx-2);
 }
 
 /* A statement the user can act on but does not have to — the re-point offer,
-   the saved-session readout. Copy on the left, its one control on the right,
-   inside the section that owns it. */
+   the saved-session readout, the session-source picker.
+ *
+ * THE CONTROL SITS UNDER ITS COPY, BOTH ON THE LEFT MARGIN. Laid out as two
+ * columns it inherited the defect this whole tab was redrawn to remove: the
+ * sentence took the width and pushed its one control to the far right edge,
+ * where it read as belonging to the panel rather than to the paragraph it
+ * answers. Stacked, the control starts on the same margin as the words that
+ * explain it and the eye never crosses the panel to find it. */
 .gl-var-offer {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-
-.gl-var-offer > :first-child {
-  flex: 1 1 320px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
   min-width: 0;
 }
 
@@ -6847,13 +6848,13 @@
 
 .gl-var-param-name {
   font-family: var(--gl-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--gl-tx-2);
 }
 
 .gl-var-param-default {
   font-family: var(--gl-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--gl-tx-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6885,7 +6886,7 @@
 
 .gl-var-table th {
   font-family: var(--gl-mono);
-  font-size: 8.5px;
+  font-size: 9px;
   font-weight: 700;
   letter-spacing: var(--gl-track-label);
   text-transform: uppercase;
