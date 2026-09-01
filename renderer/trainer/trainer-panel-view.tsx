@@ -35,7 +35,8 @@ import { prettyKey } from "../lib/editor-keymap-table";
 import { urlAssertPrefill } from "../../shared/url-assert.mjs";
 import { useRecorder } from "../main/recorder-store";
 import { createFlowGate, pickAddStepFromMenu, pickAssertFromMenu } from "../main/trainer-actions";
-import { BarContextZone, TILE_COPY } from "../main/trainer-bar-controls";
+import { BarContextZone, TILE_COPY, useNextAction } from "../main/trainer-bar-controls";
+import { suggestFlowName } from "../lib/next-action";
 import { CursorGap, INSERT_HERE, StepRow } from "../main/step-row";
 import { CreateFlowDialog } from "../main/create-flow-dialog";
 import { FlowStepsPreview } from "../main/flow-steps-preview";
@@ -340,6 +341,15 @@ export function TrainerPanelView() {
   // trainer-actions.createFlowGate.
   const flowGate = createFlowGate(liveSteps, selection.ids);
 
+  // The mechanical next-action suggestion (lib/next-action.ts) — same hook,
+  // same rules as the main trainer, resolved against THIS window's dismissal
+  // state. See the mirror comment in recording-view.tsx.
+  const { suggestion, dismiss: dismissSuggestion } = useNextAction(
+    liveSteps,
+    state.cursor,
+    state.liveUrl ?? state.url ?? "",
+  );
+
   // The composer, at the cursor rather than over the list (§6.2). Same shape as
   // the main window's — see recording-view.tsx for why it is a function of the
   // gap index rather than one element hoisted out of the list.
@@ -532,6 +542,23 @@ export function TrainerPanelView() {
         refineMode={state.refineMode}
         onCancelRefine={endRefine}
         note={replayStatus}
+        suggestion={
+          suggestion && !controlsDisabled && addKind === null
+            ? {
+                label: suggestion.label,
+                title: suggestion.title,
+                onAccept: () => {
+                  setContextPick({
+                    picked: suggestion.picked,
+                    assert: suggestion.assert,
+                    prefillValue: suggestion.prefillValue,
+                  });
+                  setAddKind("assertion");
+                },
+                onDismiss: dismissSuggestion,
+              }
+            : null
+        }
         createFlow={{
           ...flowGate,
           disabled: flowGate.disabled || controlsDisabled,
@@ -683,6 +710,7 @@ export function TrainerPanelView() {
         open={createFlowOpen}
         onOpenChange={setCreateFlowOpen}
         count={selection.ids.length}
+        suggestedName={suggestFlowName(liveSteps, selection.ids)}
         onCreate={async (name) => {
           await extractFlow(selection.ids, name);
           setSelection(emptySelection());

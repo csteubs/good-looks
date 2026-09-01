@@ -18,7 +18,8 @@ import * as React from "react";
 import { Crosshair, Workflow, X } from "lucide-react";
 
 import { Btn, Segmented } from "../theme";
-import type { AssertKind } from "../lib/recorder-types";
+import type { AssertKind, Step } from "../lib/recorder-types";
+import { suggestNextAction, type NextActionSuggestion } from "../lib/next-action";
 import { ASSERT_LABEL } from "./trainer-actions";
 
 /** Tile copy, exported for the same reason DOCK_TOOLTIP is: folded tiles
@@ -71,6 +72,45 @@ export function StrictnessControl({
   );
 }
 
+/** The view-side half of the next-action rules (renderer/lib/next-action.ts):
+ *  the one input the pure module cannot compute is whether the page URL moved
+ *  AFTER the anchor step landed, which needs memory of what the URL was when
+ *  it landed — held here, per window. Dismissal lives here too, keyed by the
+ *  suggestion's id, so waving one offer away does not silence the next.
+ *  Shared by both trainers so the rules cannot drift into firing on one
+ *  surface and not the other. */
+export function useNextAction(
+  steps: Step[],
+  cursor: number,
+  liveUrl: string,
+): { suggestion: NextActionSuggestion | null; dismiss: () => void } {
+  const anchorIndex = Math.min(cursor, steps.length) - 1;
+  const anchorId = anchorIndex >= 0 ? (steps[anchorIndex]?.id ?? null) : null;
+  // Derived-during-render (the sanctioned setState-in-render shape) rather
+  // than an effect, so the navigation comparison never runs a render behind
+  // the step list it describes.
+  const [urlAtAnchor, setUrlAtAnchor] = React.useState<{ id: string | null; url: string }>({
+    id: null,
+    url: "",
+  });
+  if (urlAtAnchor.id !== anchorId) setUrlAtAnchor({ id: anchorId, url: liveUrl });
+  const navigatedSinceLastStep =
+    anchorId !== null &&
+    urlAtAnchor.id === anchorId &&
+    urlAtAnchor.url !== "" &&
+    liveUrl !== "" &&
+    liveUrl !== urlAtAnchor.url;
+  const [dismissedId, setDismissedId] = React.useState<string | null>(null);
+  const computed = suggestNextAction({ steps, cursor, liveUrl, navigatedSinceLastStep });
+  const suggestion = computed && computed.id !== dismissedId ? computed : null;
+  return {
+    suggestion,
+    dismiss: () => {
+      if (suggestion) setDismissedId(suggestion.id);
+    },
+  };
+}
+
 export interface BarContextZoneProps {
   /** Per-surface frame class: "gl-trainer-context" | "gl-panelwin-context". */
   className: string;
@@ -84,6 +124,11 @@ export interface BarContextZoneProps {
   onCancelRefine: () => void;
   /** Transient one-liner — the replay result, cleared by the view's timer. */
   note: string | null;
+  /** The mechanical next-action chip (renderer/lib/next-action.ts), rendered
+   *  only while nothing more urgent occupies the band. The view passes null
+   *  when there is no suggestion, it was dismissed, the controls are
+   *  disabled, or the composer is already open — the offer is moot then. */
+  suggestion?: { label: string; title: string; onAccept: () => void; onDismiss: () => void } | null;
   /** The create-flow gate (trainer-actions.createFlowGate) + its action.
    *  Always mounted, disabled-gated — see the gate's comment. */
   createFlow: {
@@ -105,6 +150,7 @@ export function BarContextZone({
   refineMode,
   onCancelRefine,
   note,
+  suggestion,
   createFlow,
 }: BarContextZoneProps): React.ReactElement {
   const flowLabel =
@@ -149,6 +195,29 @@ export function BarContextZone({
         </>
       ) : note ? (
         <span className="gl-note min-w-0 truncate">{note}</span>
+      ) : suggestion ? (
+        <>
+          {/* The chip is the suggestion's whole surface — accepting opens the
+              prefilled assertion form, and the X beside it waves THIS offer
+              away without silencing the next. Both fit the band's reserved
+              height, so an offer arriving or leaving moves nothing. */}
+          <button
+            type="button"
+            className="gl-context-chip min-w-0 truncate"
+            title={suggestion.title}
+            onClick={suggestion.onAccept}
+          >
+            {suggestion.label}
+          </button>
+          <button
+            type="button"
+            className="gl-icon-btn"
+            onClick={suggestion.onDismiss}
+            aria-label="Dismiss suggestion"
+          >
+            <X className="size-3.5" />
+          </button>
+        </>
       ) : (
         <span className="gl-trainer-context-hint min-w-0 truncate">{CONTEXT_IDLE_HINT}</span>
       )}

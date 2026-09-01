@@ -37,7 +37,8 @@ import {
 } from "../lib/step-selection";
 import { StepComposer, type AddStepKind } from "./step-composer";
 import { createFlowGate, pickAddStepFromMenu, pickAssertFromMenu } from "./trainer-actions";
-import { BarContextZone, TILE_COPY } from "./trainer-bar-controls";
+import { BarContextZone, TILE_COPY, useNextAction } from "./trainer-bar-controls";
+import { suggestFlowName } from "../lib/next-action";
 import { stepSessionKey, useAiDebug } from "./ai-debug-store";
 import { parseSessionKey } from "../lib/ai-debug-sessions";
 import { toneFor } from "../lib/ai-debug-status";
@@ -692,6 +693,16 @@ export function RecordingView() {
   // selection), so its disabled state and title have to carry the verdict.
   const flowGate = createFlowGate(liveSteps, selection.ids);
 
+  // The mechanical next-action suggestion (lib/next-action.ts) — a chip in
+  // the context band's idle slot. Accepting it seeds the composer exactly the
+  // way the assert menu's page group does; the offer is withheld while the
+  // composer is already open, because it would only reopen what is on screen.
+  const { suggestion, dismiss: dismissSuggestion } = useNextAction(
+    liveSteps,
+    state.cursor,
+    state.liveUrl ?? state.url ?? "",
+  );
+
   // The composer, rendered AT THE CURSOR rather than over the list (§6.2).
   //
   // A function of the gap index rather than one element hoisted out of the
@@ -906,6 +917,23 @@ export function RecordingView() {
         refineMode={state.refineMode}
         onCancelRefine={endRefine}
         note={replayStatus}
+        suggestion={
+          suggestion && !controlsDisabled && addKind === null
+            ? {
+                label: suggestion.label,
+                title: suggestion.title,
+                onAccept: () => {
+                  setContextPick({
+                    picked: suggestion.picked,
+                    assert: suggestion.assert,
+                    prefillValue: suggestion.prefillValue,
+                  });
+                  setAddKind("assertion");
+                },
+                onDismiss: dismissSuggestion,
+              }
+            : null
+        }
         createFlow={{
           ...flowGate,
           disabled: flowGate.disabled || controlsDisabled,
@@ -1073,6 +1101,7 @@ export function RecordingView() {
         open={createFlowOpen}
         onOpenChange={setCreateFlowOpen}
         count={selection.ids.length}
+        suggestedName={suggestFlowName(liveSteps, selection.ids)}
         onCreate={async (name) => {
           await extractFlow(selection.ids, name);
           setSelection(emptySelection());

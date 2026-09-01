@@ -11,12 +11,17 @@ export function CreateFlowDialog({
   open,
   onOpenChange,
   count,
+  suggestedName,
   onCreate,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** How many steps the selection holds, for the description. */
   count: number;
+  /** A mechanical name for the selection (lib/next-action.suggestFlowName),
+   *  prefilled into the field on open — still the user's to edit. "" opens
+   *  the field empty, as before the suggestion existed. */
+  suggestedName?: string;
   /** Resolves on success (the host clears its selection); rejects with a
    *  message meant to be shown beside the field. */
   onCreate: (name: string) => Promise<void>;
@@ -25,13 +30,18 @@ export function CreateFlowDialog({
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
 
-  React.useEffect(() => {
+  // Reset on the OPEN TRANSITION only — derived during render rather than in
+  // an effect keyed on `suggestedName`, because a suggestion recomputed while
+  // the dialog is up must never wipe what the user has typed into the field.
+  const [wasOpen, setWasOpen] = React.useState(false);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) {
-      setName("");
+      setName(suggestedName ?? "");
       setError(null);
       setBusy(false);
     }
-  }, [open]);
+  }
 
   const submit = async () => {
     const trimmed = name.trim();

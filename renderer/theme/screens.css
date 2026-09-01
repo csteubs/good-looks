@@ -3747,6 +3747,29 @@
   color: var(--gl-cyan);
 }
 
+/* The next-action chip — the ONE mechanical suggestion the band offers while
+   idle (renderer/lib/next-action.ts). A quiet pill, deliberately NOT cyan:
+   cyan is "waiting on the user", and a suggestion is the opposite — the app
+   is offering and the user owes nothing. Sized inside the band's reserved
+   34px, so an offer arriving, being taken or being dismissed never moves the
+   tiles above it. Shared by both surfaces the way `.gl-trainer-prompt` is:
+   it is an occupant, not a frame. */
+.gl-context-chip {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-tx-2);
+  background: none;
+  border: 1px solid var(--gl-line);
+  border-radius: 999px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.gl-context-chip:hover {
+  color: var(--gl-tx-1);
+  border-color: var(--gl-tx-3);
+}
+
 /* `.gl-trainer-refine` is retired (2026-09-01): the refine notice is a
    context-band occupant now, not its own banner. */
 

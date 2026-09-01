@@ -468,10 +468,13 @@ const MEASURED_REQUIREMENT = 928;
       `${label}: the strip holds exactly four ToolTiles — membership is a constant of the session`,
     );
     assert(
-      !/selection\./.test(strip) && !/assertMode/.test(strip) && !/replayStatus/.test(strip),
-      `${label}: no transient state reaches the strip — armed prompts, replay results and ` +
-        "selection counts are context-band occupants, and one of them back in the strip is " +
-        "the reflow returning",
+      !/selection\./.test(strip) &&
+        !/assertMode/.test(strip) &&
+        !/replayStatus/.test(strip) &&
+        !/suggestion/.test(strip),
+      `${label}: no transient state reaches the strip — armed prompts, replay results, ` +
+        "selection counts and the next-action chip are context-band occupants, and one of " +
+        "them back in the strip is the reflow returning",
     );
     assert(
       !/selection\.ids\.length > 0 \? \(/.test(src),

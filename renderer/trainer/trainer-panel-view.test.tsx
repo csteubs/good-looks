@@ -438,6 +438,41 @@ describe("the context band", () => {
     const btn = screen.getByRole("button", { name: /^flow \(2\)$/i });
     expect(btn.hasAttribute("disabled")).toBe(false);
   });
+
+  // The next-action chip fires on this surface too — same hook, same rules as
+  // the main trainer (lib/next-action.ts), resolved against this window's own
+  // dismissal state. The full rule matrix is the main suite's and the node
+  // tests'; what this pins is that the PANEL is wired at all.
+  const FILLED = step("f1", {
+    type: "fill",
+    locator: { k: "label", v: "Email" },
+    value: "chris@example.com",
+    fingerprint: {
+      tag: "input",
+      description: 'input "Email"',
+      candidates: [{ k: "testid", v: "email" }],
+      attributes: { type: "email" },
+      depth: 3,
+    },
+  });
+
+  it("offers the next-action chip after a fill, dismissible", () => {
+    setStore({ liveSteps: [FILLED], state: state({ cursor: 1 }) });
+    renderPanel();
+    expect(screen.getByRole("button", { name: /assert this field/i })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /dismiss suggestion/i }));
+    expect(screen.queryByRole("button", { name: /assert this field/i })).toBeNull();
+  });
+
+  it("accepting the chip opens the composer prefilled", async () => {
+    setStore({ liveSteps: [FILLED], state: state({ cursor: 1 }) });
+    renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: /assert this field/i }));
+    await waitFor(() =>
+      expect(document.querySelector('[data-gl="step-composer"]')).toBeTruthy(),
+    );
+    expect(screen.getByDisplayValue("chris@example.com")).toBeTruthy();
+  });
 });
 
 describe("context actions are addressed", () => {
