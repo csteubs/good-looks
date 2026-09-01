@@ -10,6 +10,76 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-01 — The trainer agent: the model proposes, the verify gate disposes
+
+PR 3 of the bar plan: the AI tile opens a COMMAND DRAWER on both trainers —
+a box that reads "Tell the trainer what to do — or click the page" — and
+behind it, `main/services/agent/` drives the live session toward a typed
+goal. The decisions that shaped it:
+
+**One verify gate, two callers.** The per-step body of
+`verifyAndInsertSteps` became `tryOneStep` (normalize through the ingest
+boundary → run against the live page → insert only what worked), with
+`verifyAndInsertSteps` looping over it unchanged and the agent's public
+`tryStep` wrapping a single try. The alternative — an agent with its own
+execute-and-insert path — is a second boundary to forget; this way a step
+proposed by the agent's model enters the list through EXACTLY the code the
+Generate Steps dialog uses, and `e2e/verified-steps.spec.ts` stayed green
+across the refactor as the proof. `tryStep` is pinned in
+`check:replay-suspend` beside the replay methods, because an unsuspended
+verified try records the step it just inserted.
+
+**The mailbox is the interruption model.** A user message mid-run
+(`agent:say`) queues; the loop drains the queue between steps and before
+every planning turn, so a redirection lands before the next step and never
+inside one. `stop()` is the one flag every stage checks. Three straight
+failures park the run in `awaiting-user` — and the park LOOP only returns
+on a message, a stop or a dead session, never on its poll tick, because a
+tick that replanned would burn the whole turn budget while the user was at
+lunch (caught in review before it shipped).
+
+**Failure feeds evidence, not retries.** A failed try is probed with the
+Auto-Heal machinery (`agentProbeStep` — candidates rebuilt through
+`normalizeRawStep` before anything reaches a prompt) and the next planning
+turn carries FAILED STEP / ERROR / CANDIDATE lines. The model is told to
+change approach, not the loop to try again: "3 attempts per step" is a
+consecutive-failure budget, and an identical fourth guess teaches nothing
+the evidence has not.
+
+**The page reaches the model as a bounded inventory, never HTML.**
+`agent/page-summary.ts` collects up to 40 visible interactables (tag, role,
+aria-label, capped text, id, testid, placeholder, type) and NEVER an
+element's value — a live form holds whatever the user typed, passwords
+included. The summary is page JSON, so `normalizePageSummary` rebuilds it
+from named keys like every other arrival from the capture boundary. The
+prompt marks both the inventory and the evidence as untrusted page DATA,
+mirroring ai-log-payload's framing.
+
+**Assertion proposals are cards, not steps.** The model may propose up to
+two assertions per turn; they render as cards and run ONLY on the user's
+accept — through the same `tryStep`, so an accepted assertion that does not
+hold on the live page reports "didn't hold" on the card instead of
+inserting a red step. Everything the run inserts is bracketed
+`group`/`endGroup` under the goal, lazily, so a run that achieved nothing
+leaves the list untouched.
+
+**Attended, deliberately.** Every run starts from an explicit send, so the
+agent carries no settings flag and no egress check — that treatment is
+reserved for the unattended suggestion strip (PR 4). The context builder is
+still held to the unattended standard (no logs, no headers, no raw HTML, no
+values), because context builders outlive their callers. The mechanical
+parse in `lib/command-parse.ts` goes FIRST at the box: an assert phrase
+arms the picker and "wait 2 seconds" opens the composer prefilled, so a
+phrase the trainer's own controls can honor never costs a model call.
+
+**The e2e authority** is `e2e/agent-loop.spec.ts`: a scripted Ollama
+endpoint (turn one proposes a click that resolves and one that cannot; turn
+two claims done and proposes a card) against the real app — one insertion,
+the second /api/chat body carrying the evidence, the group bracketing, no
+double-capture, and the card inserting only on accept. Verified to fail by
+making the gate insert regardless of outcome, which turned three e2e rows
+red across both specs.
+
 ### 2026-09-01 — Next-action chips: mechanical suggestions, no model, no egress
 
 PR 2 of the bar plan: the context band's idle slot now offers the ONE

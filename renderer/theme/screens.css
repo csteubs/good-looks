@@ -3770,6 +3770,140 @@
   border-color: var(--gl-tx-3);
 }
 
+/* ── The command drawer (the AI tile's surface, PR 3) ──────────────────
+   Frame per surface, the band rule; the gl-agent-* occupants are shared the
+   way gl-trainer-prompt is. It mounts BETWEEN the context band and the step
+   list, so opening it shifts the list exactly the way the composer does —
+   the strip and the band above never move. Violet on the title only:
+   violet marks AI-adjacent machinery in this palette, and one mark says it. */
+.gl-trainer-ai {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.gl-panelwin-ai {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+}
+
+.gl-agent-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.gl-agent-title {
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gl-violet);
+}
+
+.gl-agent-state {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-tx-3);
+}
+
+.gl-agent-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-tx-2);
+}
+
+.gl-agent-say {
+  display: flex;
+  gap: 6px;
+}
+
+.gl-agent-say[data-who="user"] {
+  color: var(--gl-tx-1);
+}
+
+.gl-agent-who {
+  flex: 0 0 auto;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  padding-top: 1px;
+}
+
+.gl-agent-step {
+  display: flex;
+  gap: 6px;
+}
+
+.gl-agent-glyph {
+  flex: 0 0 auto;
+}
+
+/* The verify gate's three verdicts, in the palette's own words: phosphor for
+   ran, red for failed, tertiary for the honest "nothing verified this". */
+.gl-agent-step[data-status="ran"] .gl-agent-glyph {
+  color: var(--gl-phos);
+}
+
+.gl-agent-step[data-status="failed"] .gl-agent-glyph {
+  color: var(--gl-red);
+}
+
+.gl-agent-step[data-status="unchecked"] .gl-agent-glyph {
+  color: var(--gl-tx-3);
+}
+
+.gl-agent-detail {
+  color: var(--gl-tx-3);
+}
+
+.gl-agent-proposal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--gl-line);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+/* The stop control — filled, not outlined: an outlined square beside the
+   head's buttons reads as an empty checkbox, and red is what stop means. */
+.gl-agent-stop {
+  color: var(--gl-red);
+}
+
+.gl-agent-stop svg {
+  fill: currentColor;
+}
+
+.gl-agent-inputrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gl-agent-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 /* `.gl-trainer-refine` is retired (2026-09-01): the refine notice is a
    context-band occupant now, not its own banner. */
 

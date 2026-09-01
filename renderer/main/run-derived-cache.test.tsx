@@ -54,6 +54,9 @@ vi.mock("../lib/api", () => ({
       handlers.get(channel)!.add(cb);
       return () => handlers.get(channel)!.delete(cb);
     },
+    agent: {
+      getRun: async () => ({ runId: null, running: false, state: "idle", events: [] }),
+    },
     runs: {
       list: counted("runs", () => []),
       totals: counted("run-totals", () => ({

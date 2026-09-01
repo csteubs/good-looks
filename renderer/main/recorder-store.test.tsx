@@ -83,6 +83,15 @@ vi.mock("../lib/api", () => ({
       discardExit: async () => {},
     },
     runner: { run: async () => ({ runId: "t1" }), stop: async () => {}, replayRun: async () => ({ runId: "t1" }) },
+    // The store seeds the trainer-agent run on mount, the getSteps argument
+    // again. A null runId is "no run has ever happened", the ordinary case.
+    agent: {
+      getRun: async () => ({ runId: null, running: false, state: "idle", events: [] }),
+      start: async () => ({ ok: true, runId: "agent-1" }),
+      say: async () => true,
+      stop: async () => true,
+      resolveProposal: async () => ({ ok: true }),
+    },
     // The store asks for a batch already running when this window opened —
     // §6.8 moved the live batch here so every screen can see it, not just the
     // batch view. Null is "nothing running", which is the ordinary case.
