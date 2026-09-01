@@ -32,6 +32,14 @@ import {
   normalizeIngestedRun,
   planIngest,
 } from "../../shared/run-ingest.mjs";
+import {
+  healIngestKey,
+  normalizeIngestedHeal,
+  normalizeIngestedLocator,
+  planHealIngest,
+} from "../../shared/heal-ingest.mjs";
+import { RUN_HEALS_FILE } from "../../shared/heal-artifacts.mjs";
+import type { HealEntry } from "./heal-journal-store.js";
 
 const made: string[] = [];
 afterEach(() => {
@@ -72,6 +80,42 @@ function libraryWith(runs: unknown[], logs: Record<string, string> = {}): string
     writeFileSync(join(dir, "recorder", "logs", `${id}.log`), text, "utf8");
   }
   return dir;
+}
+
+/** One heal event, in the shape the heal fixture writes into `heals.json`. */
+function healEvent(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    outcome: "healed",
+    stepId: "s1",
+    stepIndex: 0,
+    stepLabel: 'getByTestId("submit-v1").click()',
+    method: "click",
+    originalLocator: { k: "testid", v: "submit-v1" },
+    appliedLocator: { k: "testid", v: "submit-v2" },
+    candidates: [],
+    url: "https://shop.example.com/cart",
+    rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.1 },
+    at: 1_700_000_000_500,
+    ...over,
+  };
+}
+
+/** Write a run's heal evidence into a source library, where the runner does. */
+function withHealEvidence(
+  libDir: string,
+  testId: string,
+  runId: string,
+  entries: unknown[],
+): void {
+  const dir = join(libDir, "recorder", "artifacts", testId, runId);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, RUN_HEALS_FILE), JSON.stringify({ testId, runId, entries }), "utf8");
+}
+
+/** This library's heal journal, as stored. */
+function journalOf(dataDir: string): Record<string, unknown>[] {
+  const file = join(dataDir, "recorder", "heal-journal.json");
+  return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>[]) : [];
 }
 
 function run(source: string, dataDir: string, options: Partial<{ dryRun: boolean; json: boolean }> = {}) {
@@ -519,5 +563,434 @@ describe("retries (R24)", () => {
     const out = normalizeIngestedRun(validRun());
     expect("attempt" in out!).toBe(false);
     expect("passedOnRetry" in out!).toBe(false);
+  });
+});
+
+/**
+ * Carrying a CI run's HEALS back, not just its runs.
+ *
+ * The gap this closes, in one sentence: `mcp/run-tests.mjs` counted every heal
+ * an unattended run performed and then dropped it, because journalling on a CI
+ * runner writes into a library that dies with the container — so the runs that
+ * exercise a site most often taught the app nothing about that site, the
+ * cross-test donor corpus included.
+ *
+ * A heal is a locator, and a locator is one accepted click away from generated
+ * source Playwright executes in Node. So most of what follows is about the
+ * gate, not the copying.
+ */
+describe("normalizeIngestedHeal", () => {
+  const context = { testId: "t-one", runId: "run-1" };
+
+  it("turns a fixture event into a journal entry this library can store", () => {
+    const entry = normalizeIngestedHeal(healEvent(), context);
+    expect(entry).toMatchObject({
+      testId: "t-one",
+      runId: "run-1",
+      stepId: "s1",
+      source: "run",
+      status: "pending",
+      appliedLocator: { k: "testid", v: "submit-v2" },
+      originalLocator: { k: "testid", v: "submit-v1" },
+      pageUrl: "https://shop.example.com/cart",
+      rect: { x: 0.1, y: 0.2, w: 0.3, h: 0.1 },
+      ingested: true,
+    });
+  });
+
+  it("takes the test and run from the ENVELOPE, never from the event", () => {
+    // An event naming its own test would attach a heal to a test it never
+    // touched — and the envelope's ids are the ones the caller matched to a
+    // run record it decided to store.
+    const entry = normalizeIngestedHeal(
+      healEvent({ testId: "t-somebody-else", runId: "run-999" }),
+      context,
+    );
+    expect(entry?.testId).toBe("t-one");
+    expect(entry?.runId).toBe("run-1");
+  });
+
+  it("never reports a foreign heal as applied", () => {
+    // Nothing on this machine changed. `applied: true` would offer a revert
+    // that writes a locator the user's test never had.
+    const entry = normalizeIngestedHeal(healEvent({ applied: true }), context);
+    expect(entry?.applied).toBe(false);
+  });
+
+  it("drops the candidate menu rather than carrying page-authored alternatives", () => {
+    const entry = normalizeIngestedHeal(
+      healEvent({
+        candidates: [
+          { locator: { k: "css", v: ".sneaky" }, description: "d", score: 1, matchedPastRun: false },
+        ],
+      }),
+      context,
+    );
+    // The Heals view offers candidates as "use this one instead", i.e. as
+    // locators to write into a test. A foreign menu is a wider door than the
+    // fix itself, and the propagation engine corroborates against the target's
+    // own fingerprint, never the donor's candidates.
+    expect(entry?.candidates).toEqual([]);
+  });
+
+  it("elides a token in the page URL, by the same rule a local heal obeys", () => {
+    const entry = normalizeIngestedHeal(
+      healEvent({ url: "https://shop.example.com/pay?token=SECRET-VALUE&q=1" }),
+      context,
+    );
+    expect(entry?.pageUrl).toContain("q=1");
+    expect(entry?.pageUrl).not.toContain("SECRET-VALUE");
+    expect(JSON.stringify(entry)).not.toContain("SECRET-VALUE");
+  });
+
+  it("refuses a URL or rect it cannot trust, without losing the heal", () => {
+    // The optional-fields-refuse-only-themselves rule: a heal with a junk box
+    // is still a heal that happened.
+    const entry = normalizeIngestedHeal(
+      healEvent({ url: "javascript:alert(1)", rect: { x: 5, y: 5, w: 0, h: -2 } }),
+      context,
+    );
+    expect(entry).not.toBeNull();
+    expect(entry && "pageUrl" in entry).toBe(false);
+    expect(entry && "rect" in entry).toBe(false);
+  });
+
+  it("refuses an event missing either half of its claim", () => {
+    expect(normalizeIngestedHeal(healEvent({ appliedLocator: undefined }), context)).toBeNull();
+    expect(normalizeIngestedHeal(healEvent({ originalLocator: undefined }), context)).toBeNull();
+    expect(normalizeIngestedHeal(healEvent({ stepId: "" }), context)).toBeNull();
+    expect(normalizeIngestedHeal(healEvent({ at: "soon" }), context)).toBeNull();
+    expect(normalizeIngestedHeal(healEvent({ stepIndex: -1 }), context)).toBeNull();
+    expect(normalizeIngestedHeal(null, context)).toBeNull();
+    expect(normalizeIngestedHeal(healEvent(), { testId: "", runId: "r" })).toBeNull();
+  });
+
+  it("REBUILDS the entry — an extra field on the event does not ride along", () => {
+    const entry = normalizeIngestedHeal(
+      healEvent({ mischief: "carried?", applied: true }),
+      context,
+    );
+    expect(JSON.stringify(entry)).not.toContain("carried?");
+    expect(Object.keys(entry ?? {}).sort()).toEqual(
+      [
+        "appliedLocator",
+        "applied",
+        "at",
+        "candidates",
+        "ingested",
+        "originalLocator",
+        "pageUrl",
+        "rect",
+        "runId",
+        "source",
+        "status",
+        "stepId",
+        "stepIndex",
+        "stepLabel",
+        "testId",
+      ].sort(),
+    );
+  });
+});
+
+/**
+ * The gate and the app's journal still agree, checked by the compiler.
+ *
+ * The two are joined by nothing at runtime: the CLI writes JSON, the app reads
+ * it back. So a field renamed on `HealEntry` would leave `ingest` writing
+ * entries the store quietly drops — which is `check:run-ingest`'s "both
+ * directions" rule, applied to heals.
+ */
+describe("the gate's output is a heal the app can store", () => {
+  it("type-checks as an entry, minus the id this machine mints", () => {
+    const entry = normalizeIngestedHeal(healEvent(), { testId: "t-one", runId: "run-1" });
+    expect(entry).not.toBeNull();
+    const storable: Omit<HealEntry, "id"> = entry as unknown as Omit<HealEntry, "id">;
+    expect(storable.source).toBe("run");
+    expect(storable.status).toBe("pending");
+  });
+});
+
+describe("normalizeIngestedLocator", () => {
+  it("keeps an ordinary locator, nesting included", () => {
+    const locator = {
+      k: "role",
+      role: "button",
+      name: "Pay",
+      ctx: { within: { k: "testid", v: "card" }, withinHasText: "Billing" },
+    };
+    expect(normalizeIngestedLocator(locator)).toEqual(locator);
+  });
+
+  it("refuses what is not a locator record", () => {
+    expect(normalizeIngestedLocator("getByRole")).toBeNull();
+    expect(normalizeIngestedLocator([{ k: "testid" }])).toBeNull();
+    expect(normalizeIngestedLocator(null)).toBeNull();
+    expect(normalizeIngestedLocator({})).toBeNull();
+  });
+
+  it("refuses a value carrying anything JSON cannot hold, or a prototype key", () => {
+    // The rebuild is what makes this true rather than a promise: nothing
+    // survives that the walk did not copy.
+    expect(normalizeIngestedLocator({ k: "css", v: "ok", bad: () => 1 })).toBeNull();
+    expect(normalizeIngestedLocator(JSON.parse('{"k":"css","__proto__":{"x":1}}'))).toBeNull();
+  });
+
+  it("refuses a structure deeper or wider than a locator ever is", () => {
+    let deep: Record<string, unknown> = { k: "css" };
+    for (let i = 0; i < 12; i++) deep = { k: "css", ctx: deep };
+    expect(normalizeIngestedLocator(deep)).toBeNull();
+
+    const wide: Record<string, unknown> = {};
+    for (let i = 0; i < 40; i++) wide[`k${i}`] = "v";
+    expect(normalizeIngestedLocator(wide)).toBeNull();
+  });
+});
+
+describe("planHealIngest", () => {
+  const context = { testId: "t-one", runId: "run-1" };
+
+  it("counts the unreadable apart from the already-present", () => {
+    const plan = planHealIngest(
+      [],
+      [healEvent(), { junk: true }, healEvent({ stepId: "s2" })],
+      context,
+    );
+    expect(plan.fresh).toHaveLength(2);
+    expect(plan.unusable).toBe(1);
+    expect(plan.duplicate).toBe(0);
+  });
+
+  it("is idempotent per run and step, so a second ingest adds nothing", () => {
+    const first = planHealIngest([], [healEvent()], context);
+    const keys = first.fresh.map(healIngestKey);
+    const second = planHealIngest(keys, [healEvent()], context);
+    expect(second.fresh).toHaveLength(0);
+    expect(second.duplicate).toBe(1);
+  });
+
+  it("keeps the same step healing on a DIFFERENT run — that is the decay signal", () => {
+    // Collapsing these would hide exactly what `list_heals` reports as a
+    // chronic step, and what makes a locator worth rewriting by hand.
+    const first = planHealIngest([], [healEvent()], context);
+    const second = planHealIngest(first.fresh.map(healIngestKey), [healEvent()], {
+      testId: "t-one",
+      runId: "run-2",
+    });
+    expect(second.fresh).toHaveLength(1);
+  });
+
+  it("dedupes within one batch, not just against what is stored", () => {
+    const plan = planHealIngest([], [healEvent(), healEvent()], context);
+    expect(plan.fresh).toHaveLength(1);
+    expect(plan.duplicate).toBe(1);
+  });
+});
+
+describe("ingestCommand — heals", () => {
+  it("carries the heals of the runs it stored, into the journal", () => {
+    const source = libraryWith([validRun()], { "run-1": "log" });
+    withHealEvidence(source, "t-one", "run-1", [healEvent()]);
+    const local = libraryWith([]);
+
+    const r = run(source, local);
+    expect(r.code).toBe(0);
+
+    const journal = journalOf(local);
+    expect(journal).toHaveLength(1);
+    expect(journal[0]).toMatchObject({
+      testId: "t-one",
+      runId: "run-1",
+      source: "run",
+      status: "pending",
+      applied: false,
+      ingested: true,
+    });
+    // Minted here, like the log path is: a foreign id can collide with a local
+    // entry's, and every accept and revert in the app is keyed by it.
+    expect(typeof journal[0].id).toBe("string");
+    expect(r.out).toContain("Auto-Heal event(s)");
+  });
+
+  it("says nothing and writes nothing when a run brought no heals", () => {
+    const source = libraryWith([validRun()], { "run-1": "log" });
+    const local = libraryWith([]);
+    const r = run(source, local);
+    expect(journalOf(local)).toEqual([]);
+    expect(r.out).not.toContain("Auto-Heal");
+  });
+
+  it("leaves the journal alone on a dry run", () => {
+    const source = libraryWith([validRun()]);
+    withHealEvidence(source, "t-one", "run-1", [healEvent()]);
+    const local = libraryWith([]);
+    run(source, local, { dryRun: true });
+    expect(journalOf(local)).toEqual([]);
+  });
+
+  it("keeps the heals this library already had, and adds beside them", () => {
+    const source = libraryWith([validRun()]);
+    withHealEvidence(source, "t-one", "run-1", [healEvent()]);
+    const local = libraryWith([]);
+    mkdirSync(join(local, "recorder"), { recursive: true });
+    writeFileSync(
+      join(local, "recorder", "heal-journal.json"),
+      JSON.stringify([{ id: "mine", testId: "t-other", stepId: "s9", runId: "r9", at: 1 }]),
+      "utf8",
+    );
+
+    run(source, local);
+    const journal = journalOf(local);
+    expect(journal).toHaveLength(2);
+    expect(journal.some((e) => e.id === "mine")).toBe(true);
+  });
+
+  it("ingests a run's heals once, however often the directory is ingested", () => {
+    const source = libraryWith([validRun()]);
+    withHealEvidence(source, "t-one", "run-1", [healEvent()]);
+    const local = libraryWith([]);
+
+    run(source, local);
+    run(source, local);
+    // The second pass finds the run already present, so it does not reach the
+    // heals at all — and even if it did, the per-run-and-step key would hold.
+    expect(journalOf(local)).toHaveLength(1);
+  });
+
+  it("carries no heal for a run it refused to store", () => {
+    // An entry naming a run this library does not have points at nothing: the
+    // Heals view cannot show the run, and the propagation engine cannot read
+    // the outcome that decides whether the heal is trustworthy evidence.
+    //
+    // TWO runs, one good and one refused, both with heal evidence. A fixture
+    // with only the refused run passes whether or not the pass is scoped —
+    // nothing is ingested at all, so the heals are never reached. This one
+    // fails unless the scoping is real, which is what a mutation run showed.
+    const source = libraryWith([
+      validRun(),
+      validRun({ id: "run-bad", status: "not-a-status", startedAt: "soon" }),
+    ]);
+    withHealEvidence(source, "t-one", "run-1", [healEvent()]);
+    withHealEvidence(source, "t-one", "run-bad", [healEvent({ stepId: "s-refused" })]);
+    const local = libraryWith([]);
+
+    run(source, local);
+    const journal = journalOf(local);
+    expect(journal).toHaveLength(1);
+    expect(journal[0].runId).toBe("run-1");
+    expect(JSON.stringify(journal)).not.toContain("s-refused");
+  });
+
+  it("survives heal evidence that is missing, empty or nonsense", () => {
+    const source = libraryWith([validRun(), validRun({ id: "run-2" })]);
+    withHealEvidence(source, "t-one", "run-1", []);
+    mkdirSync(join(source, "recorder", "artifacts", "t-one", "run-2"), { recursive: true });
+    writeFileSync(
+      join(source, "recorder", "artifacts", "t-one", "run-2", RUN_HEALS_FILE),
+      "{ not json",
+      "utf8",
+    );
+    const local = libraryWith([]);
+
+    const r = run(source, local);
+    expect(r.code).toBe(0);
+    expect(r.history()).toHaveLength(2);
+    expect(journalOf(local)).toEqual([]);
+  });
+
+  it("never truncates a journal it could not parse", () => {
+    // Trading the user's whole heal history for one CI import would be the
+    // worst outcome available here.
+    const source = libraryWith([validRun()]);
+    withHealEvidence(source, "t-one", "run-1", [healEvent()]);
+    const local = libraryWith([]);
+    mkdirSync(join(local, "recorder"), { recursive: true });
+    writeFileSync(join(local, "recorder", "heal-journal.json"), "{ half written", "utf8");
+
+    run(source, local);
+    expect(readFileSync(join(local, "recorder", "heal-journal.json"), "utf8")).toBe(
+      "{ half written",
+    );
+  });
+
+  it("reports the count in --json, so a CI wrapper can act on it", () => {
+    const source = libraryWith([validRun()]);
+    withHealEvidence(source, "t-one", "run-1", [healEvent(), healEvent({ stepId: "s2" })]);
+    const local = libraryWith([]);
+
+    const r = run(source, local, { json: true });
+    const summary = JSON.parse(r.out) as { heals: number; healsFromRuns: number };
+    expect(summary.heals).toBe(2);
+    expect(summary.healsFromRuns).toBe(1);
+  });
+});
+
+describe("ingestCommand — the per-test cap", () => {
+  /** `n` stored heals for one test, all settled unless told otherwise. */
+  function storedHeals(n: number, over: Record<string, unknown> = {}): Record<string, unknown>[] {
+    return Array.from({ length: n }, (_, i) => ({
+      id: `old-${i}`,
+      testId: "t-one",
+      stepId: `s${i}`,
+      stepIndex: 0,
+      stepLabel: "old",
+      source: "run",
+      runId: `r-old-${i}`,
+      originalLocator: { k: "testid", v: "a" },
+      appliedLocator: { k: "testid", v: "b" },
+      candidates: [],
+      applied: false,
+      status: "accepted",
+      at: 1_000 + i,
+      ...over,
+    }));
+  }
+
+  function ingestOneHeal(local: string) {
+    const source = libraryWith([validRun()]);
+    withHealEvidence(source, "t-one", "run-1", [healEvent()]);
+    return run(source, local);
+  }
+
+  it("drops the oldest SETTLED heals to make room, and keeps the count capped", () => {
+    const local = libraryWith([]);
+    mkdirSync(join(local, "recorder"), { recursive: true });
+    writeFileSync(
+      join(local, "recorder", "heal-journal.json"),
+      JSON.stringify(storedHeals(200)),
+      "utf8",
+    );
+
+    ingestOneHeal(local);
+    const journal = journalOf(local);
+    expect(journal).toHaveLength(200);
+    // The oldest settled one made way; the new one is in.
+    expect(journal.some((e) => e.id === "old-0")).toBe(false);
+    expect(journal.some((e) => e.runId === "run-1")).toBe(true);
+  });
+
+  it("never drops a PENDING heal, even to stay under the cap", () => {
+    // A pending heal is the only stored copy of the locator its step used to
+    // have. Dropping one to make room for a CI import would destroy the undo
+    // for a change already made to a test — the journal's whole purpose.
+    const local = libraryWith([]);
+    mkdirSync(join(local, "recorder"), { recursive: true });
+    writeFileSync(
+      join(local, "recorder", "heal-journal.json"),
+      JSON.stringify(storedHeals(200, { status: "pending", applied: true })),
+      "utf8",
+    );
+
+    ingestOneHeal(local);
+    const journal = journalOf(local);
+    // Over the cap rather than one short of an undo: the cap is a backstop,
+    // and this is the case where honouring it costs more than breaking it.
+    expect(journal).toHaveLength(201);
+    // Every one of the stored heals is still there — asserted by id, so this
+    // says "none were dropped" rather than counting a total that the ingested
+    // entry (itself pending) also contributes to.
+    for (let i = 0; i < 200; i++) {
+      expect(journal.some((e) => e.id === `old-${i}`)).toBe(true);
+    }
   });
 });

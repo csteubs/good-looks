@@ -28,7 +28,13 @@ export declare function isHeal(event: unknown): boolean;
  *  that exist, so an unrecognised value counts as neither. */
 export declare function isHealFailure(event: unknown): boolean;
 
-/** The envelope `heal-failures.json` and `step-matches.json` are written in. */
+/** What an unattended run writes its SUCCESSFUL heals into, in the run's
+ *  artifact directory — evidence for `good-looks ingest` to promote into the
+ *  journal on the machine that owns the library. */
+export declare const RUN_HEALS_FILE: string;
+
+/** The envelope `heal-failures.json`, `step-matches.json` and `run-heals.json`
+ *  are written in. */
 export declare function healArtifactEnvelope<T>(
   testId: string,
   runId: string,

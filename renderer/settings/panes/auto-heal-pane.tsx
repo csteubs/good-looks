@@ -70,8 +70,8 @@ export function AutoHealPane() {
           label="Propagate confirmed fixes"
           nested
           summary="When a locator fix is confirmed on one test, propose the same fix for matching steps in other tests on the same site, and let runs use it the moment the old locator actually fails. Proposals wait on the Heals view; your saved tests are not changed until you apply one."
-          details="A fix counts as confirmed when you accepted a heal, fixed a locator by hand, or a run healed with it and passed. Runs are protected immediately: the known-good locator is tried before Auto-Heal searches the page, and every use is recorded as an ordinary heal. Off means fully off — nothing is proposed and runs get no seeds."
-          risk="With “Apply heals automatically” on, a high-confidence propagated fix is written to a test without a per-change review. Every write lands in the Heals journal with a one-click revert."
+          details="A fix counts as confirmed when you accepted a heal, fixed a locator by hand, or a run healed with it and passed — including heals carried back from CI by ‘good-looks ingest’. Matching steps are usually ones using the same locator; a step written differently but pinned on the same identifier is offered as a “near miss”, and those are only ever suggested. Runs are protected immediately: the known-good locator is tried before Auto-Heal searches the page, and every use is recorded as an ordinary heal. Off means fully off — nothing is proposed and runs get no seeds."
+          risk="With “Apply heals automatically” on, a high-confidence propagated fix is written to a test without a per-change review — exact matches only, never a near miss. Every write lands in the Heals journal with a one-click revert."
         >
           <Switch
             id="auto-heal-propagate"

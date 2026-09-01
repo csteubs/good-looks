@@ -349,6 +349,28 @@ describe("HealsView", () => {
     );
   });
 
+  it("says when a heal happened on another machine", async () => {
+    // A CI heal reads as "During a run" like any other, and the run it names
+    // may not exist in this library at all. The chip is what keeps that from
+    // reading as a run the user did — and it appears only for heals that were
+    // actually carried back.
+    journal = [heal({ ingested: true })];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+    expect(await screen.findByText("On another machine")).toBeTruthy();
+  });
+
+  it("says nothing of the sort about a heal that happened here", async () => {
+    // Its own test rather than a second render in the one above: Testing
+    // Library cleans up BETWEEN tests, so a second `render` in one body leaves
+    // the first tree mounted and the negative assertion reads the old chip.
+    journal = [heal()];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+    await screen.findByText("During a run");
+    expect(screen.queryByText("On another machine")).toBeNull();
+  });
+
   it("names a deleted test rather than showing a bare id", async () => {
     // A heal outlives the test it came from. "(deleted test)" is information;
     // a uuid is not.
@@ -667,6 +689,35 @@ describe("HealsView — propagation proposals", () => {
     // The donor is named from the tests cache, not shown as a bare id.
     // (findBy: the tests query resolves after the detail renders.)
     expect(await screen.findByText(/Confirmed in Login/)).toBeTruthy();
+  });
+
+  it("marks a near miss as the weaker claim, and says why in words", async () => {
+    // A near miss proposes for a step whose locator is NOT the one that was
+    // fixed — only one pinned on the same identifier. It is never
+    // auto-applied, so this chip and this sentence are where a person learns
+    // which kind of claim they are being asked to judge.
+    proposals = [
+      proposal({
+        match: "near-miss",
+        reasons: ["donor-accepted", "near-miss-selector"],
+        autoApplyEligible: false,
+      }),
+    ];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+
+    expect(await screen.findByText("Near miss")).toBeTruthy();
+    expect(
+      screen.getByText(/pins on the same identifier the fix replaced/i),
+    ).toBeTruthy();
+  });
+
+  it("says nothing of the sort about an exact match", async () => {
+    proposals = [proposal({ match: "exact" })];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+    await screen.findByText("From another test");
+    expect(screen.queryByText("Near miss")).toBeNull();
   });
 
   it("applies and dismisses through the propagation API, not the heal one", async () => {

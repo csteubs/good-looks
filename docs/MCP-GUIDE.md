@@ -176,6 +176,7 @@ or changing one is done in the app's run panel, not from here.
 | --- | --- |
 | "Which tests are flaky, as opposed to just broken?" | `get_flake_report` |
 | "Which locators has Auto-Heal been rewriting over and over?" | `list_heals` |
+| "Did a site change break several tests at once?" | `list_propagations` |
 | "Which steps are getting slower while still passing?" | `get_step_health`, `get_suite_cost` |
 | "Which steps fail on one browser only?" | `get_browser_matrix` |
 | "How much of my suite's runtime is screenshots and a11y checks?" | `get_suite_cost` |
