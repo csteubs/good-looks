@@ -151,6 +151,139 @@
   background-color: rgba(255, 255, 255, 0.055);
 }
 
+/* ── ToolTile ─────────────────────────────────────────────────────────── */
+
+/* The trainer action bar's tile (Direction A, 2026-09-01). `flex: 1 1 0` +
+   `min-width: 0` is the strip contract: four tiles share the row equally and
+   SHRINK rather than wrap or push a sibling out — the strip's membership and
+   geometry must not move while the user is reaching for it, which is the
+   defect this architecture replaces. Text inside truncates before the tile
+   grows. */
+.gl-tooltile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 6px 26px 6px 8px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  color: var(--gl-tx-1);
+  font-family: var(--gl-mono);
+  cursor: pointer;
+  text-align: left;
+}
+
+/* Folded — the compact strip posture, and the panel's only posture. The 30px
+   height is Btn's, so a folded strip reads as a row of buttons that happen to
+   know their names. `flex-basis: auto` here where the unfolded card takes 0:
+   equal-width folded tiles hand "AI"'s surplus to nobody and truncate
+   "ASSERT" at 360px — content-based widths seat all four names, and the
+   grow keeps the strip filled. Still `min-width: 0`, still shrinkable, still
+   no wrap. */
+.gl-tooltile-folded {
+  flex: 1 1 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+}
+
+/* The mark takes the caret's cyan licence, deliberately: during a live
+   session these four are the "act on the trainer" entry points beside a page
+   that is being recorded, the same standing the insert caret has. Chosen in
+   the approved bar-lab mock; if palette discipline ever wins this argument,
+   this is the one declaration to change. */
+.gl-tooltile-mark {
+  display: inline-flex;
+  color: var(--gl-cyan);
+}
+
+/* Lucide's 24px default, corrected for the same reason .gl-btn svg is. */
+.gl-tooltile svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
+.gl-tooltile-name {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.gl-tooltile-what {
+  font-family: var(--gl-sans);
+  font-size: 10px;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.gl-tooltile-caret {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 11px;
+  height: 11px;
+  color: var(--gl-tx-3);
+}
+
+.gl-tooltile-folded .gl-tooltile-caret {
+  position: static;
+  margin-left: auto;
+}
+
+.gl-tooltile:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.gl-tooltile:not(:disabled):hover {
+  background-color: rgba(255, 255, 255, 0.055);
+}
+
+/* The holo border, exactly as .gl-btn-ai draws it — one treatment, two
+   wearers, both meaning "hands the job to a model". */
+.gl-tooltile-ai {
+  border-color: transparent;
+  background:
+    linear-gradient(var(--gl-panel), var(--gl-panel)) padding-box,
+    var(--gl-holo) border-box;
+  background-size:
+    auto,
+    var(--gl-holo-size);
+  background-position:
+    0 0,
+    var(--gl-holo-rest) 0;
+}
+
+.gl-tooltile-ai:not(:disabled):hover {
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.055)) padding-box,
+    linear-gradient(var(--gl-panel), var(--gl-panel)) padding-box,
+    var(--gl-holo) border-box;
+  background-size:
+    auto,
+    auto,
+    var(--gl-holo-size);
+  background-position:
+    0 0,
+    0 0,
+    var(--gl-holo-rest) 0;
+}
+
 /* ── StatusChip ───────────────────────────────────────────────────────── */
 
 /* FIXED WIDTH. This is a layout contract, not a style: every status chip is

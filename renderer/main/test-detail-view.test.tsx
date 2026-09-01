@@ -275,10 +275,15 @@ beforeEach(() => {
 describe("the Accessibility tab", () => {
   it("sits after Heals, so the run-related tabs stay together", async () => {
     // Placement is the whole request: it belongs beside Heals, not buried at
-    // the front where it would push Steps and Script along.
+    // the front where it would push Steps and Script along. Scoped to the
+    // detail strip — the run panel below carries its own tablist (Console /
+    // Step details / History), whose tabs would otherwise read as "last".
     renderView();
-    const tabs = await screen.findAllByRole("tab");
-    const names = tabs.map((t) => t.textContent);
+    await screen.findAllByRole("tab");
+    const strip = document.querySelector(".gl-detail-tabs") as HTMLElement;
+    const names = within(strip)
+      .getAllByRole("tab")
+      .map((t) => t.textContent);
     expect(names[names.length - 1]).toMatch(/Accessibility/);
     expect(names[names.length - 2]).toMatch(/Heals/);
   });
@@ -1242,7 +1247,12 @@ describe("applying an AI-debug fix, in the Steps tab", () => {
     await view.apply("// corrected spec");
 
     await waitFor(() => expect(screen.queryByRole("tab", { name: /^Steps/ })).toBeNull());
-    const selected = screen.getAllByRole("tab").filter((t) => t.getAttribute("data-state") === "active");
+    // Scoped to the detail strip: the run panel's console tablist keeps its own
+    // active tab, which is a different strip answering a different question.
+    const strip = document.querySelector(".gl-detail-tabs") as HTMLElement;
+    const selected = within(strip)
+      .getAllByRole("tab")
+      .filter((t) => t.getAttribute("data-state") === "active");
     expect(selected).toHaveLength(1);
     expect(selected[0].textContent).toMatch(/Script/);
   });

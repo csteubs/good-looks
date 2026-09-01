@@ -338,7 +338,7 @@ describe("nothing is usable until the steps have arrived", () => {
   it("disables the tools while the steps are still in flight", () => {
     setStore({ stepsLoaded: false });
     renderPanel();
-    for (const name of [/add step/i, /add assertion/i, /replay from the current step/i]) {
+    for (const name of [/add step/i, /^assert$/i, /replay from the current step/i]) {
       expect(screen.getByRole("button", { name }).hasAttribute("disabled")).toBe(true);
     }
   });
@@ -364,9 +364,10 @@ describe("nothing is usable until the steps have arrived", () => {
 });
 
 describe("tool icons stay distinguishable", () => {
-  // Every control in the tool row is ICON-ONLY — the label is a tooltip you get
-  // after hovering. So two controls drawing the same glyph are, in practice,
-  // the same button twice. Nothing else catches this: both render fine, both
+  // The tiles carry NAMES now (Direction A's folded strip), but the rule
+  // outlives the icon-only row that taught it: the glyph is still the fastest
+  // read at 360px, and two tiles drawing the same one are, at a glance, the
+  // same tool twice. Nothing else catches this: both render fine, both
   // have correct accessible names, and the tests above pass either way.
   //
   // The trap that taught this rule was the pause/resume TOGGLE that used to
@@ -389,13 +390,88 @@ describe("tool icons stay distinguishable", () => {
     setStore({ state: state({ paused: true }) });
     renderPanel();
     const labels = [
-      /add assertion/i,
-      /add step/i,
-      /generate steps with ai/i,
+      /^assert$/i,
+      /^add step$/i,
+      /^ai$/i,
       /replay from the current step/i,
     ];
     const glyphs = labels.map((l) => glyphOf(screen.getByRole("button", { name: l })));
     expect(new Set(glyphs).size).toBe(glyphs.length);
+  });
+});
+
+describe("the context band", () => {
+  // The 2026-09-01 reorganisation: every transient this panel used to spread
+  // over three conditional bands lives in one reserved-height band now, and
+  // two things become reachable from this surface for the first time — the
+  // Hard/Soft choice, and a Create flow control that is always mounted.
+
+  it("mounts the strictness toggle only while an assertion is armed", () => {
+    renderPanel();
+    expect(screen.queryByRole("button", { name: "Soft" })).toBeNull();
+  });
+
+  it("re-arms a live assertion with the new strictness — soft is reachable here at last", () => {
+    // This view hard-coded `soft: false` into its assert handler for its
+    // whole life; the shared context band is what fixed it.
+    setStore({ state: state({ assertMode: "visible" }) });
+    renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: "Soft" }));
+    expect(actions.setAssert).toHaveBeenCalledWith("visible", true);
+  });
+
+  it("keeps Create flow mounted and disabled with no selection, the hint as its title", () => {
+    renderPanel();
+    const btn = screen.getByRole("button", { name: /^flow$/i });
+    expect(btn.hasAttribute("disabled")).toBe(true);
+    expect(btn.getAttribute("title")).toMatch(/select two or more adjacent steps/i);
+  });
+
+  it("enables Create flow for a contiguous selection, count in the label", () => {
+    setStore({
+      liveSteps: [step("a", { type: "click" }), step("b", { type: "click" })],
+    });
+    renderPanel();
+    const rows = screen.getAllByRole("option");
+    fireEvent.click(rows[0]);
+    fireEvent.click(rows[1], { shiftKey: true });
+    const btn = screen.getByRole("button", { name: /^flow \(2\)$/i });
+    expect(btn.hasAttribute("disabled")).toBe(false);
+  });
+
+  // The next-action chip fires on this surface too — same hook, same rules as
+  // the main trainer (lib/next-action.ts), resolved against this window's own
+  // dismissal state. The full rule matrix is the main suite's and the node
+  // tests'; what this pins is that the PANEL is wired at all.
+  const FILLED = step("f1", {
+    type: "fill",
+    locator: { k: "label", v: "Email" },
+    value: "chris@example.com",
+    fingerprint: {
+      tag: "input",
+      description: 'input "Email"',
+      candidates: [{ k: "testid", v: "email" }],
+      attributes: { type: "email" },
+      depth: 3,
+    },
+  });
+
+  it("offers the next-action chip after a fill, dismissible", () => {
+    setStore({ liveSteps: [FILLED], state: state({ cursor: 1 }) });
+    renderPanel();
+    expect(screen.getByRole("button", { name: /assert this field/i })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /dismiss suggestion/i }));
+    expect(screen.queryByRole("button", { name: /assert this field/i })).toBeNull();
+  });
+
+  it("accepting the chip opens the composer prefilled", async () => {
+    setStore({ liveSteps: [FILLED], state: state({ cursor: 1 }) });
+    renderPanel();
+    fireEvent.click(screen.getByRole("button", { name: /assert this field/i }));
+    await waitFor(() =>
+      expect(document.querySelector('[data-gl="step-composer"]')).toBeTruthy(),
+    );
+    expect(screen.getByDisplayValue("chris@example.com")).toBeTruthy();
   });
 });
 
@@ -685,8 +761,8 @@ describe("a replay started in the OTHER trainer window", () => {
 
   it("disables the controls that would act into the run", () => {
     renderPanel();
-    for (const label of ["Add assertion", "Add step", "Generate steps with AI", "Replay from the current step"]) {
-      expect(screen.getByLabelText(label).hasAttribute("disabled")).toBe(true);
+    for (const name of [/^assert$/i, /^add step$/i, /^ai$/i, /replay from the current step/i]) {
+      expect(screen.getByRole("button", { name }).hasAttribute("disabled")).toBe(true);
     }
   });
 
@@ -833,8 +909,9 @@ describe("theme", () => {
       "gl-panelwin",
       "gl-panelwin-head",
       "gl-panelwin-url",
+      "gl-panelwin-tiles",
+      "gl-panelwin-context",
       "gl-panelwin-list",
-      "gl-panelwin-tools",
       "gl-panelwin-foot",
     ]) {
       expect(document.querySelector(`.${cls}`), `${cls} is rendered`).not.toBeNull();

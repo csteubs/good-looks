@@ -10,6 +10,96 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-01 — Next-action chips: mechanical suggestions, no model, no egress
+
+PR 2 of the bar plan: the context band's idle slot now offers the ONE
+suggestion the rules in `renderer/lib/next-action.ts` stand behind — a
+dismissible `.gl-context-chip` that opens the assertion composer prefilled.
+After a `fill`: assert that field's value. After a navigation: assert the URL
+path. A valid selection prefills the create-flow dialog's name field from its
+last named click. The decisions worth recording:
+
+**Mechanical means mechanical.** Every rule reads only the step list and the
+URL the trainer already displays; nothing leaves the app, so there is no
+settings flag and no egress gate. That line is drawn on purpose — the AI
+suggestion strip planned behind `aiSuggestionsEnabled` SENDS page content
+somewhere and gets the full insights treatment (off by default, disclosure
+copy, its own check). A rule-based chip that quietly grew a model call would
+inherit none of those guards, which is why the module's header says NO LLM in
+capitals and the ARCHITECTURE entry repeats it.
+
+**A navigation beats a fill.** When the page moves after a fill (a form that
+auto-submits), the element suggestion is not merely weaker — it is WRONG: the
+field left the page, and accepting would open a form whose assertion cannot
+pass. The navigation rule therefore wins whenever both apply. Same posture on
+prefills: a `sequential` fill appends rather than replaces, so its chip opens
+the value field EMPTY (the trainer-actions rule again — an empty field the
+user fills beats a plausible value they do not check), and a `goto` anchor
+prefills from its OWN url, never the live page an inserted goto has not
+navigated.
+
+**Passwords and variables are silent.** A value assertion transcribes the
+value into the step list and the generated spec, so a fill into
+`type="password"` or one interpolating `${...}` offers nothing at all. The
+node tests pin the silence as hard as the offers.
+
+**The chip is a band occupant, not a bar member.** It renders in the idle
+slot only — armed assert, refine and the replay note all outrank it, the
+views withhold it while the composer is open, and `check:narrow-layout` §5
+now refuses `suggestion` inside the tile-strip slice, so the reflow this
+architecture retired cannot come back wearing a suggestion. Dismissal is
+identity-keyed (`fill:<stepId>`; `url:<anchor>:<path>`) and per-window:
+waving off one offer does not silence the next, a redirect chain that
+settles on the same path stays dismissed, and a genuinely new path is a new
+offer. The one fact the pure module cannot compute — did the URL change
+after the anchor step landed — is tracked by `useNextAction` in
+`trainer-bar-controls.tsx`, which both trainers share so the rules cannot
+fire on one surface and not the other.
+
+### 2026-09-01 — Direction A lands: the tile strip over a reserved context band
+
+The trainer's tool row is now four `ToolTile`s (Assert, Add step, Replay, AI)
+over a fixed-height context band, on both surfaces — Direction A from the
+bar-lab, picked by the maintainer from the mock screenshots. The decision the
+architecture encodes: **the bar's geometry is a constant of the session.**
+The old row's occupant count swung five to nine as transients — the armed
+prompt, Hard/Soft, the replay result, the selection note, Create flow — 
+injected themselves inline, so the row reflowed exactly while the user was
+mid-reach; the same failure the 2026-08-17 entry banned on Visual's header,
+unguarded on the one surface where the user repeats the gesture hundreds of
+times per session. Now the strip never changes membership (disabled-gated,
+never render-gated) and never wraps (tiles are `flex: 1 1 0` + `min-width: 0`
+and SHRINK), and every transient lives in the band beneath, whose
+`min-height` is reserved whether or not anything occupies it. Arming an
+assertion changes what the band says, never where a tile is — measured for
+real in `e2e/panel-overflow.spec.ts`'s new row, pinned at source level by
+`check:narrow-layout` §5.
+
+Five defects died with the old row. Inline transients (above). The assert
+trigger's width changing when a kind armed — the kind's label renders in the
+band now, off the trigger. Create flow render-gated on selection — always
+mounted now, its disabled title carrying `extractableRange`'s LIVE verdict,
+so an invalid selection reads why before the click rather than in a
+six-second note after it. Hard/Soft holding permanent width for a choice
+that only matters while arming — it mounts inside the armed context only.
+And the panel's hard-coded `soft: false` — soft assertions were unreachable
+from the surface most sessions are driven from, which the shared band fixed
+as a side effect of having ONE armed-context implementation.
+
+Adaptations against the mock, all width-driven and found by looking at the
+built preview rather than the lab: the panel's tiles drop their carets and
+"Add step" shortens to "Add" (aria-label keeps the full name) — four tiles
+share ~332px, and a caret there is the difference between a name and an
+ellipsis; and folded tiles take `flex-basis: auto` where unfolded cards take
+`0` — equal-width folded tiles hand "AI"'s surplus to nobody and truncate
+"ASSERT". The tile marks keep the mock's cyan, knowingly against the
+"colour means outcome" rule — the argument is the insert caret's licence
+(the four entry points beside a live page), the counter-argument is that
+four cyan glyphs is chrome wearing the live colour; if palette discipline
+wins later, `.gl-tooltile-mark` is the one declaration to change. Shared
+LOGIC lives in `trainer-actions.ts` / `trainer-bar-controls.tsx`; markup and
+class names stay per-surface, which is 2026-08-12's rule left standing.
+
 ### 2026-09-01 — The action-bar reorganisation starts as a mockup lab, not a branch of the views
 
 The trainer tool-row reorganisation (the work the 2026-08-28 entry reserved
@@ -14182,3 +14272,66 @@ because both answer "where is this" about the script being read.
 **Not done here.** Flow-block decorations and the re-inline quick fix;
 signature help; rename; a user-JSON keymap; hunk-by-hunk AI review (still
 open from Phase 3).
+
+## 2026-09-01 — The detail view's run panel wears the trainer console's clothes
+
+**One console, twice.** The trainer's bottom panel and the test detail
+view's run panel are the same surface in the user's head — "the console
+area" — and they had drifted into two designs a screen apart: the trainer
+had a tab strip (Console / Step details / Cookies), a status bar over the
+log ("Done — 15/15 passed", a hit-rate pill) and an Auto-scroll toggle;
+the detail panel had a title, a chip and a bare log. The detail panel now
+carries the same strip and the same bar, and `hitRateTone` moved to
+`renderer/lib/hit-rate.ts` so both consoles grade a hit rate with one set
+of thresholds rather than a copy each.
+
+**Cookies deliberately did not come across.** That tab edits the live
+TRAINING BROWSER's cookies over recorder IPC (`recorder:listCookies` and
+friends); outside a recording session there is no browser to edit, and
+its own fallback renders "No cookies for this page" forever. The rule the
+detail view's other tabs already state applies: a tab that could only
+ever be empty is worse than no tab.
+
+**Step details is session-scoped, and says so.** Run history stores no
+per-step results — the per-index statuses live in the store's `RunInfo`
+and die with the session — so the tab reports THIS session's run beside
+each step's locator, and shows a dash (never a verdict) for a step no run
+has reached. Deriving old per-step verdicts from the log text was
+declined: a guess wearing a checkmark.
+
+**History is a strip, not an archive.** The new tab lists the test's runs
+newest first (through `runsForTest`, so baseline-update bookkeeping rows
+stay out — the same rule the retry panel stands on), chips the amber
+facts a green row would otherwise hide (healed / retry / a11y / shots),
+and shows the most recent CAPTURED run's screenshots with a link to the
+Visual view. It caps at 30 rows and 8 frames and points at Stats and
+Visual for the rest, because both of those screens already answer the
+deeper question and a second viewer would be a second thing to keep
+right. The pictures are queried inside the tab (Radix unmounts an
+inactive tab, so nobody pays for frames they never open) under the Visual
+view's own query keys, so the two screens share a cache; the "latest
+captured run" comes from the replay index, not run history, because
+retention can prune the JSON while the replay is still on disk.
+
+**One height, and the user drags it.** The panel used to shrink to its
+summary when no run was live (first as `:not(:has(.gl-run-log))` — which
+the tabs broke outright, since the log unmounts WITH its tab and the
+strip collapsed under Step details and History — then as a component-set
+compact state on the Console tab only). Both spellings had the same
+user-facing result: the Console tab was shorter than its siblings, three
+different panels wearing one tab strip, and the shortest one was the
+console. The shrink is retired. The Console tab keeps its bar-plus-log
+surface even before a run — the bar says why the log is empty, because a
+black console saying "no run yet" reads as a console while bare panel
+background reads as a rendering bug — and the panel holds one height on
+every tab.
+
+That height is the user's: the top edge is a drag handle (SplitView's
+pointer idiom, plus arrow keys and a double-click reset), clamped so the
+panel can neither vanish nor evict the step list, written as an inline
+`flex-basis` over the resting 224px, and remembered in localStorage the
+way SplitView remembers its pane widths. The EXPAND toggle deliberately
+stays unpersisted — a panel that stayed expanded would hide the step
+list on the next test opened, for a run nobody had looked at — but a
+dragged height is a layout preference, not a glance at one failure, so
+it survives.

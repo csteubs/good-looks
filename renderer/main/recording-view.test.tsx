@@ -396,6 +396,15 @@ describe("the session-state chip", () => {
 });
 
 describe("the hard/soft assertion choice", () => {
+  // Hard/Soft lives INSIDE the armed-assert context band as of the 2026-09-01
+  // reorganisation — it used to hold permanent width in the tool row for a
+  // choice that only matters while arming. Every test here arms first.
+  it("mounts only while an assertion is armed", () => {
+    render(withAiDebug(<RecordingView />));
+    expect(screen.queryByRole("button", { name: "Soft" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Hard" })).toBeNull();
+  });
+
   it("can be driven by a plain click", () => {
     // WORTH ITS OWN TEST because it could not be done before B6. This was the
     // SDK's `SegmentedControl`, a Radix control that activates on pointer-down
@@ -404,6 +413,7 @@ describe("the hard/soft assertion choice", () => {
     // (CLAUDE.md). The theme's `Segmented` is plain buttons with
     // `aria-pressed`, so the choice is finally assertable at this level
     // instead of only at the IPC layer.
+    setStore({ state: state({ assertMode: "visible" }) });
     render(withAiDebug(<RecordingView />));
     fireEvent.click(screen.getByRole("button", { name: "Soft" }));
     expect(screen.getByRole("button", { name: "Soft" }).getAttribute("aria-pressed")).toBe("true");
@@ -422,6 +432,7 @@ describe("the hard/soft assertion choice", () => {
   });
 
   it("reports the current choice through aria-pressed", () => {
+    setStore({ state: state({ assertMode: "visible" }) });
     render(withAiDebug(<RecordingView />));
     expect(screen.getByRole("button", { name: "Hard" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Soft" }).getAttribute("aria-pressed")).toBe("false");
@@ -893,6 +904,94 @@ describe("the fill context action", () => {
   });
 });
 
+// ── The next-action chip ───────────────────────────────────────────────────
+//
+// The context band's idle slot offers the ONE mechanical suggestion the rules
+// in lib/next-action.ts stand behind — no LLM, nothing leaves the app. What
+// these pin is the WIRING: the chip renders only while the band is otherwise
+// idle, accepting it opens the composer prefilled the way the assert menu's
+// page group does, and dismissing hides this offer without silencing the next.
+describe("the next-action chip", () => {
+  const FILLED = step("f1", {
+    type: "fill",
+    locator: { k: "label", v: "Email" },
+    value: "chris@example.com",
+    fingerprint: {
+      tag: "input",
+      description: 'input "Email"',
+      candidates: [{ k: "testid", v: "email" }],
+      attributes: { type: "email" },
+      depth: 3,
+    },
+  });
+
+  it("offers a value assertion after a fill; accepting opens the composer prefilled and withdraws the chip", async () => {
+    setStore({ liveSteps: [FILLED], state: state({ cursor: 1 }) });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: /assert this field/i }));
+    const form = await waitFor(() => screen.getByRole("form", { name: /add assertion/i }));
+    expect(within(form).getByDisplayValue("chris@example.com")).toBeTruthy();
+    // The offer is moot while the composer it opened is on screen.
+    expect(screen.queryByRole("button", { name: /assert this field/i })).toBeNull();
+  });
+
+  it("dismisses on the X, and the idle hint returns", () => {
+    setStore({ liveSteps: [FILLED], state: state({ cursor: 1 }) });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: /dismiss suggestion/i }));
+    expect(screen.queryByRole("button", { name: /assert this field/i })).toBeNull();
+    expect(screen.getByText("Act on the page, or pick a tool.")).toBeTruthy();
+  });
+
+  it("switches to the URL-path offer when the page moves after the last step", async () => {
+    // A fill whose page then moved is a field that is no longer there — the
+    // navigation rule beats the fill rule on purpose.
+    setStore({
+      liveSteps: [FILLED],
+      state: state({ cursor: 1, liveUrl: "https://example.com/form" }),
+    });
+    const view = render(withAiDebug(<RecordingView />));
+    expect(screen.getByRole("button", { name: /assert this field/i })).toBeTruthy();
+    setStore({
+      liveSteps: [FILLED],
+      state: state({ cursor: 1, liveUrl: "https://example.com/thanks" }),
+    });
+    view.rerender(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: /assert the url path/i }));
+    const form = await waitFor(() => screen.getByRole("form", { name: /add assertion/i }));
+    expect(within(form).getByDisplayValue("/thanks")).toBeTruthy();
+  });
+
+  it("never renders over an armed assertion", () => {
+    setStore({ liveSteps: [FILLED], state: state({ cursor: 1, assertMode: "visible" }) });
+    render(withAiDebug(<RecordingView />));
+    expect(screen.queryByRole("button", { name: /assert this field/i })).toBeNull();
+  });
+
+  it("stays silent for a password field", () => {
+    setStore({
+      liveSteps: [
+        step("pw", {
+          type: "fill",
+          locator: { k: "label", v: "Password" },
+          value: "hunter2",
+          fingerprint: {
+            tag: "input",
+            description: "password",
+            candidates: [{ k: "label", v: "Password" }],
+            attributes: { type: "password" },
+            depth: 3,
+          },
+        }),
+      ],
+      state: state({ cursor: 1 }),
+    });
+    render(withAiDebug(<RecordingView />));
+    expect(screen.queryByRole("button", { name: /assert this field/i })).toBeNull();
+    expect(screen.getByText("Act on the page, or pick a tool.")).toBeTruthy();
+  });
+});
+
 describe("multi-select and Create flow", () => {
   const CLICK = { k: "testid" as const, v: "go" };
   const fourSteps = () => [
@@ -925,16 +1024,30 @@ describe("multi-select and Create flow", () => {
     expect(screen.getByRole("button", { name: /create flow \(1\)/i })).toBeTruthy();
   });
 
-  it("refuses a gapped selection with a visible sentence instead of a dead dialog", () => {
+  it("refuses a gapped selection by disabling the button, with the reason as its title", () => {
+    // DISABLED-GATED, never render-gated, as of 2026-09-01: the verdict is
+    // computed live, so an invalid selection reads WHY before the click
+    // rather than in a six-second note after it — and the bar's geometry no
+    // longer changes at the moment of selection.
     setStore({ liveSteps: fourSteps() });
     render(withAiDebug(<RecordingView />));
     const rows = screen.getAllByRole("option");
     fireEvent.click(rows[0]);
     fireEvent.click(rows[2], { metaKey: true });
-    fireEvent.click(screen.getByRole("button", { name: /create flow/i }));
-    expect(screen.getByText(/contiguous run of steps/i)).toBeTruthy();
+    const btn = screen.getByRole("button", { name: /create flow \(2\)/i });
+    expect(btn.hasAttribute("disabled")).toBe(true);
+    expect(btn.getAttribute("title")).toMatch(/contiguous run of steps/i);
+    fireEvent.click(btn);
     // And the naming dialog did NOT open.
     expect(screen.queryByLabelText("Flow name")).toBeNull();
+  });
+
+  it("stays mounted with no selection, disabled, saying what a selection would earn", () => {
+    setStore({ liveSteps: fourSteps() });
+    render(withAiDebug(<RecordingView />));
+    const btn = screen.getByRole("button", { name: /^create flow$/i });
+    expect(btn.hasAttribute("disabled")).toBe(true);
+    expect(btn.getAttribute("title")).toMatch(/select two or more adjacent steps/i);
   });
 
   it("creates the flow through the dialog, in list order, and clears the selection", async () => {
@@ -951,9 +1064,30 @@ describe("multi-select and Create flow", () => {
     await waitFor(() =>
       expect(actions.extractFlow).toHaveBeenCalledWith(["b", "c"], "Sign in"),
     );
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /create flow/i })).toBeNull(),
-    );
+    // The bar's button is ALWAYS mounted now — done means the selection
+    // cleared, so it reads bare "Create flow" again and is disabled.
+    await waitFor(() => {
+      const btn = screen.getByRole("button", { name: /^create flow$/i });
+      expect(btn.hasAttribute("disabled")).toBe(true);
+    });
+  });
+
+  it("prefills the flow name from the selection's last named click", async () => {
+    setStore({
+      liveSteps: [
+        step("a", { type: "fill", locator: { k: "label", v: "Email" }, value: "x" }),
+        step("b", { type: "click", locator: { k: "role", role: "button", name: "Log in" } }),
+      ],
+    });
+    render(withAiDebug(<RecordingView />));
+    const rows = screen.getAllByRole("option");
+    fireEvent.click(rows[0]);
+    fireEvent.click(rows[1], { shiftKey: true });
+    fireEvent.click(screen.getByRole("button", { name: /create flow \(2\)/i }));
+    const input = await screen.findByLabelText("Flow name");
+    // Still the user's to edit — but the field opens carrying the button the
+    // selected steps exist to reach.
+    expect((input as HTMLInputElement).value).toBe("Log in");
   });
 
   it("shows the backend's refusal beside the name field", async () => {

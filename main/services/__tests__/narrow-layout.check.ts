@@ -425,6 +425,106 @@ const MEASURED_REQUIREMENT = 928;
   }
 }
 
+
+// ── 5. The trainer's tile strip and context band (Direction A, 2026-09-01) ─
+//
+// The trainer's old tool row was this check's blind spot: its occupant count
+// swung 5→9 as transients (the armed-assert prompt, the replay result, the
+// selection note) injected themselves INLINE, so the row reflowed exactly
+// while the user was reaching for it — the same failure §4 bans on Visual's
+// header, unguarded on the one surface where the user is mid-gesture hundreds
+// of times per session. The replacement's contract has two halves:
+//
+//  a. The STRIP is furniture. Four ToolTiles, in both trainers, mounted in
+//     every session state — disabled-gated, never render-gated — and the
+//     strip does not wrap: the tiles are `flex: 1 1 0` + `min-width: 0`, so a
+//     narrow pane shrinks their text, never their geometry.
+//  b. The CONTEXT BAND is where every transient lives, over a RESERVED
+//     min-height — a transient arriving changes what the band says, never
+//     where the tiles are.
+//
+// Source-level like everything here: jsdom cannot see a row reflow.
+
+{
+  const TRAINERS: [string, string, string][] = [
+    ["../../../renderer/main/recording-view.tsx", "gl-trainer-tiles", "recording-view"],
+    ["../../../renderer/trainer/trainer-panel-view.tsx", "gl-panelwin-tiles", "trainer-panel-view"],
+  ];
+
+  for (const [rel, stripClass, label] of TRAINERS) {
+    const src = read(rel);
+
+    const stripStart = src.indexOf(stripClass);
+    const zoneStart = src.indexOf("<BarContextZone");
+    assert(stripStart !== -1, `${label}: renders the ${stripClass} strip`);
+    assert(
+      zoneStart !== -1 && zoneStart > stripStart,
+      `${label}: the reserved BarContextZone sits under the strip — the transients' one home`,
+    );
+    const strip = src.slice(stripStart, zoneStart);
+
+    assert(
+      (strip.match(/<ToolTile/g) ?? []).length === 4,
+      `${label}: the strip holds exactly four ToolTiles — membership is a constant of the session`,
+    );
+    assert(
+      !/selection\./.test(strip) &&
+        !/assertMode/.test(strip) &&
+        !/replayStatus/.test(strip) &&
+        !/suggestion/.test(strip),
+      `${label}: no transient state reaches the strip — armed prompts, replay results, ` +
+        "selection counts and the next-action chip are context-band occupants, and one of " +
+        "them back in the strip is the reflow returning",
+    );
+    assert(
+      !/selection\.ids\.length > 0 \? \(/.test(src),
+      `${label}: no bar control is render-gated on the selection — the shape that made ` +
+        "Create flow appear mid-reach is retired for disabled-gating",
+    );
+  }
+
+  const screens = read("../../../renderer/theme/screens.css");
+  for (const cls of ["gl-trainer-tiles", "gl-panelwin-tiles"]) {
+    const m = screens.match(new RegExp(`\\.${cls}\\s*\\{([^}]*)\\}`));
+    assert(m !== null, `screens.css: .${cls} has a rule`);
+    if (m) {
+      assert(
+        !/flex-wrap/.test(m[1]),
+        `.${cls} does not wrap — the strip's height is part of the no-reflow contract; ` +
+          "tiles shrink instead (see .gl-tooltile)",
+      );
+    }
+  }
+  for (const cls of ["gl-trainer-context", "gl-panelwin-context"]) {
+    const m = screens.match(new RegExp(`\\.${cls}\\s*\\{([^}]*)\\}`));
+    assert(m !== null, `screens.css: .${cls} has a rule`);
+    if (m) {
+      assert(
+        /min-height/.test(m[1]),
+        `.${cls} reserves its height — delete the min-height and an arriving transient ` +
+          "moves the strip, which is the defect this architecture replaced",
+      );
+      assert(
+        !/flex-wrap/.test(m[1]),
+        `.${cls} does not wrap — a wrap container wraps its occupants BEFORE a truncatable ` +
+          "one shrinks, so the armed content grew the band 34→69px at panel width in the e2e " +
+          "and moved the list; the prompt truncates instead",
+      );
+    }
+  }
+
+  const primitives = read("../../../renderer/theme/primitives.css");
+  const tile = primitives.match(/\.gl-tooltile\s*\{([^}]*)\}/);
+  assert(tile !== null, "primitives.css: .gl-tooltile has a rule");
+  if (tile) {
+    assert(
+      /flex:\s*1 1 0/.test(tile[1]) && /min-width:\s*0/.test(tile[1]),
+      ".gl-tooltile shrinks (`flex: 1 1 0` + `min-width: 0`) rather than pushing a sibling " +
+        "out or wrapping the strip — the other half of the same contract",
+    );
+  }
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);
