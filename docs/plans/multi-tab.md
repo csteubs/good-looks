@@ -1,10 +1,11 @@
 # Multiple tabs — design
 
-**Status:** design, written 2026-09-02. Nothing below is built.
+**Status:** design, written 2026-09-02, revised the same day after a spike
+against real Playwright (see "What the spike proved"). Nothing below is built.
 
 Companion documents: [../ARCHITECTURE.md](../ARCHITECTURE.md) for what exists,
 [../DECISIONS.md](../DECISIONS.md) for why, [../IFRAMES.md](../IFRAMES.md) for
-the engine-first precedent this plan follows.
+the engine-first precedent.
 
 ## The problem
 
@@ -16,456 +17,367 @@ anchor's `target` to `_self` before the browser follows it
 (`main/recorder/capture-script.ts:579` `keepInWindow`), injects
 `<base target="_self">`, and the recorder window denies every `window.open`
 through `setWindowOpenHandler` (`main/services/recorder-service.ts:2558`),
-re-issuing the URL in the same window. The recording therefore looks like a
-click followed by a same-tab navigation, and the steps after it are captured
-against the new document.
+re-issuing the URL in the same window. The recording is therefore a LINEAR
+journey: a click, then steps captured against the document that click opened,
+whichever tab a real browser would have put it in.
 
 On a run none of that exists. Real Playwright honours the `target`, the new
 document opens as a second `Page` in the same `BrowserContext`, and the
 generated spec's one `page` (`main/services/script-generator.ts:2285`
 `async ({ page })`) stays on the opener. Every later locator resolves against
-the wrong document and every `toHaveURL` reads the old address. The failure is
-silent in the sense that matters: the trainer showed the journey green.
+the wrong document and every `toHaveURL` reads the old address. The trainer
+showed the journey green.
 
-Nothing in the model can express a second tab. `StepType`
-(`main/recorder/types.ts:44-180`) has no page concept, `root()` seeds every
-locator with the literal `"page"` (`script-generator.ts:180-183`), and the
-run fixtures patch the one fixture `page` instance (see "Where we are").
+## The requirement
 
-## Two features, and the order
+The run must follow the journey the trainer recorded **without user input**.
+Tab management is the runner's business and invisible to the user, with one
+exception: while a run is being watched, the Step details list shows a row
 
-*Same-tab policy* and *multi-tab support* are different features, and both are
-needed:
-
-- **Same-tab policy** — a run option that makes a run behave the way the
-  trainer already does: every `_blank` target and `window.open` stays in the
-  one page. Small, and it is the **migration path**: every test recorded so far
-  that clicks a `_blank` link was recorded under exactly this policy, and
-  re-recording them is not an answer. It is also the right behaviour for a test
-  whose subject is what is *behind* the link, not the tab.
-- **Multi-tab support** — a `popup` step that expects the previous step to open
-  a page and a `switchPage` step that moves later steps onto one, so a test
-  whose subject IS the second tab (an OAuth popup, a "preview in new tab", a
-  help centre) is writable, runnable and eventually recordable.
-
-Engine first, trainer last, as `docs/IFRAMES.md` argued and as landed: a
-multi-tab test is **writable and runnable** (hand-written, AI-written,
-imported) before it is **recordable**. The trainer half is where the cost is
-(a second `WebContentsView`, a tab strip, replay across tabs) and every one of
-the engine phases is useful without it.
-
-## Where we are
-
-| Layer | File | The single-page assumption |
-|---|---|---|
-| Model | `main/recorder/types.ts:44-180`, `:1245` `STEP_TYPES` | no page concept anywhere |
-| Generator | `script-generator.ts:180-183` `root()`, plus 33 sites emitting the literal receiver `page` (list in Phase 1) | one receiver, `page`, seeded in `root()` and hard-coded everywhere else |
-| Parser | `spec-parser.ts` — ~25 regexes anchored on `page\.`; `:1977` `expect(page)`; `:2333` the variable-action guard | a `pageN` receiver falls through to `parseLocator("pageN")` and counts as `skipped`, or is mistaken for a locator variable |
-| Capture fixture | `shared/capture-fixture-source.mjs:452-463` `patchOnce` | `PAGE_ACTIONS` are wrapped on the fixture page **instance**; `LOCATOR_ACTIONS` on `Locator.prototype` (global, so a second page's locators ARE wrapped and screenshot `self.page()`) |
-| Capture logs | `capture-fixture-source.mjs:210-278` `installLogCapture(page)` | console, pageerror, request, response on the one page only |
-| Axe | `capture-fixture-source.mjs:574` `page.addInitScript` | page-level, so a second page has no `window.axe` and every per-step audit on it returns null |
-| Heal | `shared/heal-fixture-source.mjs:385-395` factories on the page instance; `:495`, `:525`, `:546` probe and rebuild close over the fixture `page` | a second page's locators carry no heal key; even keyed, the probe would run on page 1 |
-| Settle | `shared/settle-fixture-source.mjs:209-219` | same instance/prototype split as capture |
-| User stylesheet | `shared/user-page-fixture-source.mjs:65-66` | `page.on("domcontentloaded")`, page-level (the init script at `:54` is context-level and already reaches every page) |
-| Overlay counter | `shared/dismiss-fixture-source.mjs:175` `page.exposeBinding` | the watcher runs in every page (context init script); its dismissals on a second page go uncounted |
-| Already context-wide | signature `context.route` (`signature-fixture-source.mjs:105`), `storageState`, both `addInitScript`s | nothing to do |
-| Reporter | `shared/step-reporter-source.mjs:33-37`, `shared/step-marker.mjs` | keyed by spec line only; page-agnostic, which is fine |
-| Artifacts | `artifact-store.ts:5` `<testId>/<runId>/<stepIndex>.png`, manifest entries `capture-fixture-source.mjs:403-406` | no page axis; a step's screenshot is of whichever page acted, unlabelled |
-| Trainer | `recorder-service.ts:830` one `pageView`; `:2558` deny; `:2566` `did-create-window` closes strays; `capture-script.ts:579` `keepInWindow` | a popup cannot happen, by three layers of design |
-| Trainer replay | `step-replayer.ts` resolves against `document` of the one page; every replay entry goes through `pageWc()` | a `switchPage` the replayer does not refuse previews later steps against the wrong document |
-
-## The model
-
-Two step types. Neither carries a locator; neither carries page-controlled
-text that reaches generated source as anything but a number.
-
-### `popup` — "expect the PREVIOUS step to open a page"
-
-The `download` step's shape exactly (`types.ts:92-98`): the promise is armed
-BEFORE the triggering step's line and awaited after, because a listener
-attached after the click races the event it exists to catch. The generator
-already has the pre-line hook for this (`script-generator.ts:1889-1892`) and
-the backward walk that finds the trigger (`:1818-1842`).
-
-```ts
-// Step
-| "popup"
-// fields
-timeoutMs?: number;   // existing field; the waitForEvent timeout
+```
+> New Tab Opened (#N)
 ```
 
-Emission, with `n` the popup's emission-order number (a fixed point on
-regeneration, the same rule `download${n}` follows):
+after the step that opened it, where N is the number of tabs open in the run's
+browser at that moment.
 
-```ts
-const popup1 = page.context().waitForEvent("page", { timeout: 30000 });   // armed before the trigger
-let page1;
-await page.getByRole("link", { name: "Open help" }).click();            // the trigger
-await test.step("expect a new page", async () => {
-  page1 = await popup1;
-  await page1.waitForLoadState();
+That rules out the first draft of this plan, which asked the user to author
+`popup` and `switchPage` steps. It is kept at the end as the deferred design
+for the one case automatic following cannot express: a test that acts on the
+opener while the popup is still open.
+
+## The design: the run follows the newest tab
+
+The recorded journey is linear, so the run is made linear too. A run fixture,
+`shared/tabs-fixture-source.mjs`, installed in the capture fixture beside the
+overlay rules, keeps a stack of the context's open pages and an ACTIVE page,
+which is always the newest open one. Every step in a generated spec resolves
+against the active page at the moment the step RUNS, not the page that was
+current when the spec was written.
+
+### What the fixture does
+
+- **A `page` that follows.** The `page` fixture handed to the test is a Proxy
+  over the original page whose every read delegates to the active page.
+  `context.on("page")` pushes the new page, makes it active, and installs the
+  per-page fixtures on it (below). `page.on("close")` pops it and falls back to
+  the previous open page, which is what a person watching the closed popup
+  would look at next.
+- **Locators are materialized when they act, not when they are built.** A
+  factory call through the proxy (`getByRole`, `locator`, `frameLocator` and
+  the rest) returns a RECIPE, a lazy locator that remembers the chain
+  (`.filter().nth()` append to it) and builds the real `Locator` on the active
+  page when an action or an assertion runs. A generated spec builds each
+  step's locator inline, so a recipe is materialized once per step in
+  practice; what the laziness buys is a step written just after a popup that
+  closes itself, where the page it was built on is gone by the time it runs.
+  The materialized locator is a real Playwright `Locator`, so the capture,
+  heal and settle wrappers on `Locator.prototype` still apply.
+- **`expect` follows too.** The fixture already re-exports `expect`
+  (`shared/capture-fixture-source.mjs:52`) and the runner rewrites the spec's
+  `@playwright/test` import to the fixture, so `expect(page)` and
+  `expect(recipe)` reach a wrapper that resolves the receiver at CALL time,
+  after tabs have settled, and dispatches to Playwright's `expect` on the real
+  page or locator. `.not` and `.soft` are carried through; every other
+  receiver falls straight through to Playwright's `expect`.
+- **Settling before every action and assertion.** Two waits, both bounded:
+  - **The tab that is coming.** A context init script hooks `window.open` and a
+    capture-phase click on `a[target]`, `area[target]` and `form[target]`
+    (anything but `_self`, `_parent`, `_top`) and reports through an exposed
+    binding, `__glTabIntent`. When intent has been signalled and the page has
+    not arrived, the next action or assertion waits for the `page` event (up
+    to a few seconds). Without this, `expect(page).toHaveURL` right after an
+    anchor click binds the opener: Playwright's page matchers capture the
+    receiver once at call time (`page.mainFrame().waitForURL`, `expect.js`
+    `toHaveURLWithPredicate`) and never re-resolve it. A `window.open` popup
+    exists before the click resolves; an anchor's does not, reliably.
+  - **The tab that arrived.** `waitForLoadState("domcontentloaded")` on the
+    newest page, so the first step on it does not read `about:blank`.
+- **One retry when the page went away underneath.** An action or assertion
+  that fails while the page it was bound to is now closed (`isClosed()`, not
+  the error text — the spike saw the same close surface as "Target page,
+  context or browser has been closed" and as "Protocol error
+  (Runtime.callFunctionOn): session closed") and the active page has changed,
+  runs once more on the new active page. This is the self-closing popup:
+  the run reaches the next step in milliseconds, the popup takes hundreds to
+  close itself, and the recorded journey's next step was on the opener.
+- **Announcing.** Each new page writes a marker to stdout,
+  `__GLAZE_STEP__:{"event":"tab","count":N,"attempt":a}`, on the channel the
+  step markers already use (`shared/step-marker.mjs`), and a line
+  `[glaze-tabs] New Tab Opened (#N)` to stderr for the Output tab and the
+  saved log. `N` is `context.pages().length` at that moment. A close writes
+  only the stderr line; the requirement names one row, and a close changes
+  nothing the user must act on.
+
+### Where it is on
+
+Set through the environment by both runners, `GLAZE_FOLLOW_TABS=1`, for every
+test whose spec the app generated, and NOT for an imported test. An imported
+spec that manages its own popups (`const [popup] = await Promise.all([
+page.waitForEvent("popup"), …])`) means `page` as the opener from then on,
+and following would break it. The runner already decides per test whether a
+spec is imported (`playwright-runner.ts:365`, where the signature fixture is
+withheld for the same reason: an imported spec may not even import
+`@playwright/test`).
+
+No setting. The trainer's journey is linear and the run replays it; there is
+nothing a user could choose here that the recording did not already choose.
+
+### Downloads are unaffected
+
+A `target="_blank"` link that serves an attachment fires `download` on the
+OPENER and creates no page (`context.pages()` stays 1, measured in the spike),
+so the `download` step's arming line (`script-generator.ts:1849`) keeps
+working through the proxy, which binds `waitForEvent` to the active page at
+arming time.
+
+### The trainer does not change
+
+`keepInWindow`, `<base target="_self">`, the deny handler and
+`did-create-window` all stay. They are what makes the recording linear, and a
+linear recording is exactly what the run now replays. A tab strip in the
+trainer is the deferred design at the end, wanted only for the opener-while-
+popup-open case.
+
+## What the spike proved
+
+A throwaway fixture (proxy page, lazy locators, wrapped `expect`, the intent
+binding, the closed-page retry) against a local server with an anchor
+`_blank`, a `window.open`, a `noopener` `window.open`, a `form target=_blank`,
+a popup that closes itself after 300 ms, and a `_blank` download link.
+Playwright 1.62, headless Chromium. Seven cases including a twenty-iteration
+anchor race; **7/7 across repeated runs** once the retry keyed on `isClosed()`
+rather than the error message. Before the intent binding the anchor case
+failed every time (expect bound the opener); before the lazy locators and the
+retry the self-closing popup failed every time. Both mechanisms are needed;
+neither alone is enough. The plan's first task is turning the spike into
+`e2e/tab-follow.spec.ts` so those seven rows are the feature's authority.
+
+## Where we are, and what each phase changes
+
+| Layer | File | The single-page assumption | Phase |
+|---|---|---|---|
+| Capture fixture | `shared/capture-fixture-source.mjs:452-463` `patchOnce` | `PAGE_ACTIONS` wrapped on the fixture page **instance**; `LOCATOR_ACTIONS` on `Locator.prototype` (global, already right for any page) | 1 |
+| Capture logs | `capture-fixture-source.mjs:210-278` `installLogCapture(page)` | console, pageerror, request, response on one page | 1 |
+| Axe | `capture-fixture-source.mjs:574` `page.addInitScript` | page-level; a second page has no `window.axe` and every per-step audit on it returns null | 1 |
+| Heal | `shared/heal-fixture-source.mjs:385-395` factories on the instance; `:495`, `:525`, `:546` probe and rebuild close over the fixture `page` | a second page's locators carry no heal key; even keyed, the probe runs on page 1 | 1 |
+| Settle | `shared/settle-fixture-source.mjs:209-219` | same instance/prototype split | 1 |
+| User stylesheet | `shared/user-page-fixture-source.mjs:65-66` | `page.on("domcontentloaded")`, page-level (the init script is context-level already) | 1 |
+| Overlay counter | `shared/dismiss-fixture-source.mjs:175` `page.exposeBinding` | the watcher runs in every page; its dismissals on a second page go uncounted | 1 |
+| Already context-wide | signature `context.route`, `storageState`, both `addInitScript`s | nothing to do | — |
+| Marker parser | `shared/step-marker.mjs:45-64` | admits only `begin`/`end` | 2 |
+| Runner | `playwright-runner.ts:1020-1036` `processStdout`; `mcp/run-tests.mjs:873` | forwards step markers only | 2 |
+| Store and panel | `renderer/main/recorder-store.tsx:558` `runner:step`; `renderer/main/run-output.tsx:514-548` Step details | rows are the test's steps and nothing else | 2 |
+| Artifacts | `artifact-store.ts:5` `<stepIndex>.png`, manifest `capture-fixture-source.mjs:403-406` | no page axis; a screenshot is of whichever page acted, unlabelled | 2 |
+| Generator, parser, model | — | unchanged: the spec still names one `page` | — |
+| Trainer | — | unchanged | — |
+
+### Phase 1 — the fixture follows, and the other fixtures follow the page
+
+After this, a recorded test that opens a tab runs green, with full evidence on
+every tab.
+
+1. **`shared/tabs-fixture-source.mjs`** — the mechanism above, as a source
+   string in the dismiss-fixture idiom, plus `installTabFollowing(page,
+   context, testInfo, perPage)` where `perPage(p)` is the chain of per-page
+   installs the capture fixture hands it. Exports `expect`. The capture
+   fixture imports it unconditionally (`check:ci-fixtures` derives the written
+   set from the fixture's imports) and installs it FIRST in the `page`
+   fixture, before the signature, so it owns `context.on("page")`.
+2. **Per-page installs.** Each fixture splits its install into a prototype
+   half (once per process, the existing `patched` latches) and an instance
+   half taking a page: capture (`PAGE_ACTIONS` wrap, `installLogCapture`, axe
+   — or move axe to `context().addInitScript`, which is simpler and right),
+   heal (factory tagging per page; the probe and the rebuild use `loc.page()`
+   instead of the closed-over page; an install guard like settle's, so the
+   prototype half cannot double-wrap), settle (instance half), user stylesheet
+   (the two listeners), overlay counter (`context().exposeBinding`, which
+   installs into every page). `shared/page-actions.mjs` is unchanged.
+3. **Manifest and log entries gain `page: n`** (optional; absent reads as 0)
+   so a screenshot of tab 2 can be labelled. Nothing is keyed by it.
+4. **Both runners set `GLAZE_FOLLOW_TABS`** for non-imported tests
+   (`playwright-runner.ts`, `mcp/run-tests.mjs`), and `describeRun` says it
+   armed, the way it says which overlay rules were.
+5. **Tests.** `e2e/tab-follow.spec.ts` — the spike's seven rows through the
+   REAL CLI on a spec `generateSpec` emitted (the `record-then-run` /
+   `runtime-boot` pattern): anchor, `window.open`, `noopener`, form,
+   self-closing popup then a step on the opener, `_blank` download, the
+   twenty-iteration anchor race; plus a capture-run row asserting a screenshot
+   with `page: 1`, console entries from tab 2, and a heal on a locator that
+   only resolves on tab 2 (written-but-unwired is R49's shape, and a heal map
+   that cannot probe the acting page heals nothing while reporting armed).
+   `check:ci-fixtures` asserts the new fixture is written and loaded. A
+   laptop-speed half executes the fixture string against a fake context that
+   emits `page` and `close` (the `check:retry-evidence` shape) for the stack,
+   the intent counter and the retry rule. `main/services/assert-emission.test.ts`
+   is unchanged: the spec's text does not change.
+
+### Phase 2 — "> New Tab Opened (#N)" in Step details
+
+1. **`shared/step-marker.mjs`**: `parseStepMarker` admits
+   `{ event: "tab", count, attempt }` with `count` an integer ≥ 1 and no
+   `line`; `splitStepMarkers` is unchanged. A `tab` marker from a writer the
+   parser predates is dropped, as unknown markers are today.
+2. **Runner**: `processStdout` emits `runner:tab { runId, count, afterIndex }`
+   where `afterIndex` is the last step that BEGAN on this attempt (the runner
+   already tracks attempt statuses), so the row lands under the step that
+   opened the tab. The MCP runner records `tabsOpened` on the run record and
+   `triage_run` mentions it.
+3. **Store**: `runs[runId].tabEvents: { afterIndex, count }[]` appended on
+   `runner:tab`; cleared with the run.
+4. **Panel**: `run-output.tsx` Step details renders, after step `afterIndex`'s
+   row, a muted mono row `> New Tab Opened (#N)` with `data-gl="tab-event"`.
+   The trainer panel's Step details mirror (`renderer/trainer/
+   trainer-panel-view.tsx`) gets the same row. The console's `N/M steps` line
+   does not count it: it is not a step.
+5. **Tests.** `step-marker.test.ts` rows for the new event and for a `tab`
+   marker straddling chunks; a `processStdout` test that a tab marker becomes
+   `runner:tab` with the right `afterIndex` and never a `runner:step`;
+   `recorder-store.test.tsx` for the append and the reset; `run-output.test.tsx`
+   for the row's position under the opening step and its absence when no tab
+   opened; the same for the trainer panel; `check:step-progress` pins that the
+   reporter's category guard still drops nothing it used to report.
+
+## Rejected: a same-tab run policy
+
+An init script that prepends `<base target="_self">`, rewrites every `target`
+and replaces `window.open` with `location.assign` makes a run behave like the
+trainer and needs none of the above. Rejected because it changes what the
+site does — a `noopener` popup that posts a message back to its opener, an
+OAuth flow that closes itself, a page that reads `window.opener` — and the
+requirement is that the tab opens and the watcher sees it. It stays available
+as the user's own "Page init script" (Settings → Recording) for a site that
+needs it.
+
+## Deferred: explicit tabs
+
+The one journey following cannot express: act on the opener WHILE the popup is
+open, then on the popup, then on the opener. The trainer cannot record it
+either (it has one document), so it is a hand-written or imported case today,
+and imported specs already run with following off.
+
+The design, should it be needed: a `popup` step (armed before the triggering
+step and awaited after, the `download` step's shape, `types.ts:92-98`,
+`script-generator.ts:1804-1892`) and a `switchPage` step carrying a numeric
+`pageIndex` (never a free-text identifier, so nothing crosses the capture
+boundary as one), a current-receiver threaded through `root()`
+(`script-generator.ts:180-183`) and the 33 sites that emit the literal `page`,
+a receiver capture in the parser's ~25 `page\.`-anchored regexes, entries in
+the renderer's step-type tables (`type-chip.tsx:27-73` is exhaustive), refusal
+arms in the replayer (`step-replayer.ts:547-605`), and, last, a second
+`WebContentsView` and a tab strip in the trainer with the deny handler
+unchanged. `describe-step-parity.test.ts:448` is the first test that goes red
+when a step type is added. All of it sits on top of Phase 1, not instead of
+it: an explicit `switchPage` would set the fixture's active page.
+
+## Appendix: the spike fixture
+
+The throwaway fixture the seven rows ran against, verbatim, for whoever turns it into `shared/tabs-fixture-source.mjs`. It is a spike: `globalThis.__glTabs` and the string-matched close errors are shortcuts the real fixture must not keep.
+
+```js
+import { test as base, expect as baseExpect } from "@playwright/test";
+
+const PAGE_ACTIONS = ["goto", "reload", "goBack", "goForward", "setViewportSize", "setContent", "waitForTimeout"];
+const FACTORIES = ["getByRole", "getByText", "getByLabel", "getByPlaceholder", "getByTestId", "getByTitle", "getByAltText", "locator", "frameLocator"];
+const REFINERS = ["filter", "nth", "first", "last", "and", "or", "getByRole", "getByText", "getByLabel", "getByPlaceholder", "getByTestId", "getByTitle", "getByAltText", "locator"];
+const CLOSED = /has been closed|Target closed|Target page, context or browser has been closed/;
+export const events = [];
+
+const RECIPE = Symbol("recipe");
+
+export const test = base.extend({
+  page: async ({ page, context }, use) => {
+    const stack = [page];
+    let active = page;
+    let intent = 0, seen = 0;   // intent: in-page signals; seen: page events consumed
+    let gate = Promise.resolve();
+    let pendingPage = null;      // a promise for the next page event when intent > seen
+
+    await context.exposeBinding("__glTabIntent", () => { intent++; if (!pendingPage) pendingPage = context.waitForEvent("page", { timeout: 3000 }).catch(() => null).then(() => { pendingPage = null; }); });
+    await context.addInitScript(() => {
+      const o = window.open;
+      window.open = function (...a) { try { window.__glTabIntent(); } catch {} return o.apply(this, a); };
+      document.addEventListener("click", (e) => {
+        const el = e.target && e.target.closest ? e.target.closest("a[target],area[target],form[target]") : null;
+        const t = el && el.getAttribute("target");
+        if (t && t !== "_self" && t !== "_parent" && t !== "_top") { try { window.__glTabIntent(); } catch {} }
+      }, true);
+    });
+    context.on("page", (p) => {
+      stack.push(p); active = p; seen++; if (intent < seen) intent = seen;
+      const n = context.pages().length;
+      events.push(`New Tab Opened (#${n})`);
+      process.stdout.write(`__GLAZE_STEP__:{"event":"tab","count":${n}}\n`);
+      gate = p.waitForLoadState("domcontentloaded").catch(() => {});
+      p.on("close", () => {
+        const i = stack.indexOf(p); if (i >= 0) stack.splice(i, 1);
+        if (active === p) { active = stack[stack.length - 1]; events.push(`Tab closed -> #${stack.length}`); }
+      });
+    });
+    // Everything an action or assertion does first: if the page signalled a
+    // tab is coming and it has not arrived, wait for it; then wait for the
+    // newest tab to reach domcontentloaded.
+    async function settleTabs() {
+      if (intent > seen && pendingPage) { await pendingPage; pendingPage = null; }
+      await gate;
+    }
+    const materialize = (recipe) => recipe.reduce((acc, [m, args]) => acc[m](...args), active);
+    function lazy(recipe) {
+      const target = () => materialize(recipe);
+      return new Proxy({}, {
+        get(_t, prop) {
+          if (prop === RECIPE) return recipe;
+          if (prop === "then") return undefined;
+          if (REFINERS.includes(prop)) return (...args) => lazy([...recipe, [prop, args]]);
+          return async (...args) => {
+            await settleTabs();
+            const bound = active;
+            try { return await target()[prop](...args); }
+            catch (e) { if ((bound.isClosed() || CLOSED.test(String(e))) && active !== bound) { await settleTabs(); return target()[prop](...args); } throw e; }
+          };
+        },
+      });
+    }
+    const proxy = new Proxy(page, {
+      get(_t, prop) {
+        if (prop === RECIPE) return [];
+        if (FACTORIES.includes(prop)) return (...args) => lazy([[prop, args]]);
+        if (PAGE_ACTIONS.includes(prop)) return async (...args) => { await settleTabs(); return active[prop](...args); };
+        const v = active[prop];
+        return typeof v === "function" ? v.bind(active) : v;
+      },
+    });
+    proxy.__settleTabs = undefined;
+    globalThis.__glTabs = { settleTabs, materialize, current: () => active, RECIPE };
+    await use(proxy);
+    delete globalThis.__glTabs;
+  },
+});
+
+// expect: a receiver that is the page proxy or a lazy locator is resolved at
+// CALL time, after tabs have settled; a closed-target failure on a receiver
+// whose page has since changed is retried once on the new page.
+function wrapExpectation(recv, mods) {
+  return new Proxy({}, {
+    get(_t, prop) {
+      if (prop === "not" || prop === "soft") return wrapExpectation(recv, { ...mods, [prop]: true });
+      return async (...args) => {
+        const T = globalThis.__glTabs;
+        await T.settleTabs();
+        const build = () => { let e = baseExpect(recv[T.RECIPE].length ? T.materialize(recv[T.RECIPE]) : T.current()); if (mods.soft) e = e.soft ? baseExpect.soft(recv[T.RECIPE].length ? T.materialize(recv[T.RECIPE]) : T.current()) : e; if (mods.not) e = e.not; return e; };
+        const bound = T.current();
+        try { return await build()[prop](...args); }
+        catch (e) { if ((bound.isClosed() || CLOSED.test(String(e))) && T.current() !== bound) { await T.settleTabs(); return build()[prop](...args); } throw e; }
+      };
+    },
+  });
+}
+export const expect = new Proxy(baseExpect, {
+  apply(target, thisArg, args) {
+    const T = globalThis.__glTabs;
+    const r = args[0];
+    if (T && r && typeof r === "object" && r[T.RECIPE] !== undefined) return wrapExpectation(r, {});
+    return Reflect.apply(target, thisArg, args);
+  },
 });
 ```
-
-`page1` is declared at test scope beside the arming line, not inside the
-wrapper: `stepOpen`/`stepClose` never wrap an arming line
-(`script-generator.ts:1771-1780`) precisely so the awaited value lives in the
-scope later lines read from. The `let` is one extra pre-line, attributed to
-the trigger by the same `record1` call as the arming line.
-
-**Why `context().waitForEvent("page")` and not `page.waitForEvent("popup")`.**
-The `popup` event fires on the OPENER for pages it opened. The context event
-fires for any new page, including one a form submit or a script on another tab
-opened, and it fires on the receiver's context wherever the current receiver
-is. One spelling for every case; the name `popup` is the user's word for it.
-
-**`waitForLoadState()` is part of the step.** A new page begins at
-`about:blank` and Playwright's own docs pair the two calls. Without it the
-first assertion on `page1` reads the blank document.
-
-**The popup step switches the current receiver.** After it, steps emit
-against `page1` until a `switchPage` says otherwise. This matches what the
-trainer will do when it opens a tab (focus follows) and what a hand-written
-test means nine times in ten.
-
-### `switchPage` — "later steps act on this tab"
-
-```ts
-| "switchPage"
-// fields
-pageIndex?: number;   // 0 = the original page; n = the nth popup, in step order
-```
-
-Emits nothing of its own. It changes the generator's current receiver, which
-`root()` seeds and which the six emission helpers read. A `pageIndex` that
-names a popup not yet declared at that point in the step list is
-`UNGENERATABLE` with the reason, the existing shape for a step the generator
-refuses.
-
-**An index, not a name.** A page-variable name chosen by the user would be an
-identifier landing in executed source and would need `isValidVariableName` at
-the boundary AND at emission (`repeatVar`'s double guard, `types.ts:1863`).
-An index goes through `num()` and derives `page${n}` on emission; the parser
-reads it back from the receiver. Nothing free-text crosses.
-
-**Inside `if`/`loop` it is refused.** The receiver is tracked statically in
-emission order, the way `loopNames` and `blockKinds` are
-(`script-generator.ts:1785-1802`). A `switchPage` inside a conditional would
-change the receiver for every step after the block whether or not the branch
-ran, which is a spec that lies. `UNGENERATABLE`, same as a `download` whose
-trigger would be a structural step.
-
-### Where the two are refused on purpose
-
-- **Page path.** Both are added to `IPC_ONLY_STEP_TYPES` (`types.ts:1253`)
-  until the trainer records them (Phase 3 lifts `popup` out, as the download
-  recorder inserts through `insertStep`, which re-normalizes). A page that
-  could author a `switchPage` could point the rest of the test at a page it
-  opened.
-- **The injected replayer** (`step-replayer.ts:547-605`): both get the
-  honest-refusal arm the run-only steps have, and for `switchPage` this is
-  stronger than a courtesy — until Phase 4 the trainer has one document, and a
-  replay past a `switchPage` would resolve every later locator against it.
-- **The AI-steps subset** (`renderer/lib/parse-llm-response.ts:95-106`) does
-  NOT gain them in Phase 1; the trainer agent proposes steps it can try on the
-  live page, and it cannot try these until Phase 4.
-
-### Same-tab policy
-
-A run option beside `handlePopups` (`shared/popup-presets.mjs`
-`resolveHandlePopups`): per-test field, global default, shipped default. Named
-`newTabs: "same-tab" | "new-tab"`.
-
-- `same-tab` installs a context init script that prepends
-  `<base target="_self">`, rewrites `target` on every anchor and form present
-  and added (a `MutationObserver`, attribute filter `target`), and replaces
-  `window.open` with `location.assign`. It is the trainer's `keepInWindow`
-  moved to the run, which is the parity the trainer's whole navigation
-  containment was built for.
-- `new-tab` installs nothing.
-- **Shipped default: `same-tab`.** Every existing test was recorded under it
-  and a default of `new-tab` breaks them all on the day it ships. A test that
-  carries a `popup` step is generated with `new-tab` regardless of the
-  setting, because the step cannot succeed otherwise; the generator emits the
-  override into `test.use` the way `httpCredentials` is emitted, and
-  `describeRun` says which policy was armed, as it says which overlay rules
-  were.
-
-## Phases
-
-### Phase 0 — same-tab policy (its own PR, lands first)
-
-The fix for the reported failure, and the smallest change here.
-
-1. `shared/same-tab-fixture-source.mjs` in the dismiss-fixture idiom: the
-   init script as a string, `installSameTab(page)` calling
-   `page.context().addInitScript`, a `note()` to stderr saying it armed.
-2. `shared/run-fixtures.mjs` gains the file; the capture fixture imports it
-   unconditionally and installs it when the env says so (`check:ci-fixtures`
-   derives the written set from the fixture's own imports, so the unattended
-   runner needs no second list).
-3. `shared/popup-presets.mjs` (or a sibling `shared/new-tabs.mjs`) holds
-   `resolveNewTabs(test, settings)` — THE one function the app's runner, the
-   MCP/CLI runner and `describeRun` call, the `armedPopupRulesFor` rule.
-4. Settings → Recording: the global default. Test detail: the per-test
-   override. `TestRecord` gains a field, so `shared/export-bundle.mjs` must
-   list it (`check:export-egress` refuses a field in neither list — it is a
-   run-read field, so it exports).
-5. Docs: `docs/POPUPS-GUIDE.md` gains a section — a third meaning of "pop-up"
-   beside the two it already separates (a browser dialog, a page overlay), and
-   the guide is the in-app manual, so `check:docs-blocks` rules apply: no
-   ordered lists, no nested bullets, a slug unique across all three docs.
-6. Tests: a DOM test of the init script against `target=_blank`, a
-   `MutationObserver`-added anchor and a `window.open` call; a row in the
-   real-CLI e2e (`e2e/record-then-run` or `runtime-boot` style) that clicks a
-   `_blank` link under each policy and asserts the page count.
-
-### Phase 1 — the engine: model, generator, parser, renderer
-
-After this a multi-tab test is writable in the Script tab or the step list and
-runs correctly through the real CLI. Run evidence (screenshots, logs, heal) on
-the second page is partial until Phase 2.
-
-**Model** — `main/recorder/types.ts`: the two union members with their
-doc-comments, `STEP_TYPES` (`:1245`), `IPC_ONLY_STEP_TYPES`, `pageIndex` on
-`Step` and `RawStep` (`:699-754`) via `int()` in `normalizeRawStep` (`:1727+`,
-rebuilt, never spread). Mirror in `renderer/lib/recorder-types.ts:74`.
-
-**Generator** — `main/services/script-generator.ts`:
-
-- A `currentReceiver` in the emission loop's per-run state beside `loopNames`
-  / `blockKinds` / `downloadNum` (`:1785-1817`), set by `popup` and
-  `switchPage`, reset per test body.
-- `root()` (`:180-183`) takes the receiver as its seed. `stepLine` (`:865`)
-  and the six helpers that take `(step, target, vars)` — `assertLine :308`,
-  `captureLine :407`, `stateLine :435`, `conditionExpr :584`, `waitLine :655`,
-  `cookieLine :769` — gain the receiver. Every one of the 33 sites below
-  reads it instead of the literal, EXCEPT the four marked structural:
-
-  | Lines | What |
-  |---|---|
-  | :182 | `root()` seed — fixes every locator-bearing step and `.and()` at :281 |
-  | :331, :337, :348, :349 | `expect(page).toHaveURL/Title` |
-  | :411 | capture subject for url/title |
-  | :440, :442 | `page.mouse.down/up` |
-  | :586, :602, :604 | condition fallback target, `urlContains`, `titleContains` |
-  | :682, :690, :731 | wait on URL/title, `waitForTimeout` |
-  | :772, :775, :783 | cookies — `page.context()` is the same context from any page; emit through the receiver anyway so the parser has one shape |
-  | :874, :933, :965, :970 | `goto`, keyboard press, `reload`, `setViewportSize` |
-  | :1028, :1048, :1062, :1074, :1082, :2036 (:2026 comment) | runtime helpers taking `page` as first argument — they work on any Page (`glaze-runtime-source.mjs`) |
-  | :1125 | the viewport log line's `page.viewportSize()` |
-  | :2149, :2157 | `page.setDefaultTimeout` bracket — **structural, stays `page`** (a per-page default timeout would differ per receiver; the bracket is about the test) |
-  | :1849 | download arming — reads the receiver (a download from the popup tab is a real case) |
-  | :2285 | `test(…, async ({ page })` — **structural** |
-  | the new popup arming | `page.context()` from the receiver — the context is shared, so either spelling is correct; emit through the receiver for one parser shape |
-
-- The `popup` arming pre-pass and awaiting arm, modelled line for line on the
-  download's (`:1804-1850`, `:1889-1892`, `:2056-2092`) including the
-  `inPlace` fallback and the structural-trigger refusal.
-- `describeStep` (`:1194`) phrases: "expect a new page (tab 2)", "switch to
-  tab 2" / "switch to the first tab". `stepTitle` (`:1182`) admits
-  `\bpage\d*\.` in its own-code regex. Byte-identical mirror in
-  `renderer/lib/describe-step.ts` — `describe-step-parity.test.ts:448` derives
-  its coverage from `STEP_TYPES` and is the first test to go red.
-- `needsVarObject` unaffected; the page variables are `let`s, not `V` fields.
-
-**Parser** — `main/services/spec-parser.ts`:
-
-- A `pageVars: Map<string, number>` threaded like `pendingDownloads`
-  (`:1120`), because a wrapped statement must resolve the same way a bare one
-  does.
-- A receiver capture `(page\d*)` replacing the `page\.` anchor at each of the
-  sites the report lists (`:474/:483/:501` builder prefix, `:978/:981`
-  conditions, `:1510`, `:1549-1554`, `:1609`, `:1628-:1721` helpers, `:1760-
-  :1872` page methods, `:1977` `expect(page)`, `:2265`, `:2333`, `:2359`),
-  emitting a `switchPage` step when the receiver changes between consecutive
-  statements. A receiver the map has never seen counts as `skipped`, the
-  download-unarmed rule (`:1351-1355`).
-- Arming/awaiting branches beside the download's (`:1306-1389`): the arming
-  line records `popupN → n`; the awaiting block pushes a `popup` step and sets
-  the current receiver to `pageN`. The `let pageN;` declaration is consumed
-  with the arming line.
-- An explicit test that the pair is NOT swallowed into a `code` step by the
-  `:1230-1240` fallback (`code-step-roundtrip.test.ts` is the precedent).
-
-**Renderer** — entries in every table the report enumerates:
-`type-chip.tsx:27-73` (compile error without), `step-composer.tsx`
-(`AddStepKind`, `ADD_STEP_LABEL`, build switch, dialog body: "Expect a new
-tab" with a timeout; "Switch tab" with a picker over the popups declared
-above the cursor), `trainer-actions.ts:77-108` (append — index is the native
-menu's commandId), `step-row.tsx` inline field, replay-button and
-continue-on-failure exclusion lists (`:773`, `:824`), `edit-steps-view.tsx`'s
-offerable kinds, `carried-frame.ts:78`. Specimen and preview fixtures gain a
-row so the chips can be seen.
-
-**Replayer** — `step-replayer.ts:547-605`: refusal arms for both.
-
-**Tests, Phase 1**
-
-- `main/services/popup-emission.test.ts` mirroring `download-emission.test.ts`
-  one for one: arming before the trigger, awaiting after, `inPlace`, disabled,
-  continue-on-failure, regeneration fixed point, foreign awaiting block counts
-  as skipped, `switchPage` inside `if` is `UNGENERATABLE`, `switchPage` to an
-  undeclared index is `UNGENERATABLE`, receiver threading through every
-  helper (one row per site group in the table above).
-- `check:spec-parser` sections: a seven-step multi-tab journey round-trips;
-  the type sequence assertion at `:902`.
-- `check:step-ingest`: `pageIndex` rejected as a string, negative, non-integer
-  (the `downloadMatch` pair at `:312-320` is the template); both types
-  refused on the page path.
-- `describe-step-parity`: fixture cases for both.
-- `renderer/main/step-composer-popup.test.tsx` beside the download one.
-- `assert-emission.test.ts:42` `matcherArg` widened to a `page\d*` receiver.
-- `e2e/tab-parity.spec.ts`: a real popup, real Playwright. The fixture
-  server (`assert-parity.spec.ts:43` is the pattern) serves a page with a
-  `_blank` link and a `window.open` button; a generated spec — click, popup,
-  `toHaveURL` on the new page, a locator click on it, `switchPage 0`, an
-  assertion on the opener — is run through the real CLI (`check:runtime-boot`
-  and `record-then-run` are the patterns). `specVerdict`'s `new Function`
-  scope binds one `page`, so this is its own spec rather than a row in
-  assert-parity. **Changing what a receiver switch emits or resolves to? Add a
-  row.**
-
-### Phase 2 — run fixtures follow the page
-
-After this a run's evidence on the second tab is as complete as on the first.
-
-- **Capture** (`capture-fixture-source.mjs`): split `patchOnce` into a
-  prototype half (once per process, the current `patched` latch) and
-  `installPageInstance(p)` (per page: `PAGE_ACTIONS` wrap, `installLogCapture`,
-  axe init script — or move axe to `context().addInitScript`, which is
-  correct and simpler). Subscribe `page.context().on("page", installPageInstance)`
-  in the fixture. Manifest entries and log entries gain `page: n` (optional,
-  so a manifest predating the field reads as page 0). Screenshots are already
-  of `getPage(this)`, which is the acting page once the instance wrap exists.
-- **Heal** (`heal-fixture-source.mjs`): the factory tagging (`:385-395`) runs
-  per page through the same `on("page")`; the probe (`:525`) and rebuild
-  (`:495`, `:546`) use `loc.page()` rather than the closed-over `page`.
-  `installHealing` gains the install guard settle and signature have, because
-  the prototype half must not double-wrap.
-- **Settle**: same split.
-- **User stylesheet**: `context().on("page")` attaches the two listeners per
-  page. **Overlay counter**: `context().exposeBinding`, which Playwright
-  offers and which installs into every page.
-- `shared/page-actions.mjs`: no change — the sets are the same per page.
-- The runner (`playwright-runner.ts`) and the artifact readers
-  (`artifact-store.ts`) read the new `page` field into the step timeline so
-  the run panel can label a screenshot "tab 2". Nothing is keyed by it.
-- `describeRun` / the MCP `triage_run` say how many pages a run opened.
-
-**Tests, Phase 2**
-
-- `check:retry-evidence` / `check:step-progress` style: execute the shipped
-  fixture strings without a browser against a fake context that emits `page`.
-- `e2e/tab-evidence.spec.ts` (or rows in `tab-parity.spec.ts`): a capture run
-  of the Phase 1 journey yields a screenshot for the step on tab 2 with
-  `page: 1` in the manifest, console entries from tab 2, and a heal on a
-  locator that only resolves on tab 2. **The one that matters most is the
-  heal row**: written-but-unwired is R49's shape, and a heal map that cannot
-  probe the acting page heals nothing while reporting armed.
-
-### Phase 3 — the trainer opens a tab
-
-After this the click that opens a tab is recorded as it happened, with a
-`popup` step, and the user can switch tabs and have it recorded.
-
-**Views.** `pageView` becomes `tabs: TabView[]` plus `activeTab`; `pageWc()`
-returns the active tab's webContents, so the thirty call sites do not change.
-A `createPageView()` helper holds the one set of `webPreferences` — same
-`partition` string per session (shared cookies and storage; a popup that
-lands in a fresh partition is logged out), no preload, nothing else — and
-`layoutViews()` sets the active tab's bounds and hides the others.
-`destroyViews()` closes them all; the four `recWindow = null` sites are
-unchanged. Every `wc.on(…)` attached inside `start()` moves into
-`attachPageListeners(wc)` and is called per tab: the capture console channel
-(`:2637`), the navigation guards, `dom-ready` inject, `context-menu`, the URL
-broadcasts. The `will-download` listener already filters by `contents`.
-
-**Policy.** `setWindowOpenHandler` keeps returning `{ action: "deny" }` — the
-check pins it, and it stays right: the app creates the view, Electron never
-does. On `load-in-window` under `newTabs: "new-tab"` the handler creates a
-tab, loads the URL there, activates it, and inserts a `popup` step through
-`insertStep` the way `will-download` does. Under `same-tab` the current
-`loadNavInWindow` path stays. **`keepInWindow` and the `<base target=_self>`
-injection become conditional on the policy** — the DECISIONS entry that added
-them cites WKWebView routing `_blank` past the handler, which is a Glaze fact,
-and the Electron handler does receive anchor-opened windows; this is verified
-first, in the e2e below, before the rewrite is removed on the new-tab path.
-`did-create-window` keeps closing strays.
-
-**Ordering.** The click that opened the tab reaches the backend on the
-console channel; `setWindowOpenHandler` fires during the same dispatch. The
-`popup` step must land AFTER the click, or the generator arms on the wrong
-trigger. The download recorder has the same race, and Phase 3 starts by
-writing the e2e row that measures it for downloads and popups both. If the
-order is not already guaranteed by the ledger, the `popup` insert is deferred
-until the next capture flush, which the ledger can hand it.
-
-**Tab strip.** `renderer/recorder-chrome/` grows a tab row above the URL bar:
-title or host per tab, the active one marked, click to activate (records a
-`switchPage` through `insertStep`), a close control (records nothing in this
-phase; a `closePage` step is a follow-up). `URL_STRIP_HEIGHT` gains the row
-only while more than one tab exists, through the existing `stripHeight()`
-funnel so the viewport arithmetic the check pins stays the three lines it is.
-`recorder:tabs` push and `recorder:activateTab` invoke; the preload has no
-channel allowlist. `chrome-clickable.spec.ts` is the pattern for proving the
-row is hit-testable under the page.
-
-**Checks to renegotiate, by name.** `check:recorder-navigation` (the deny
-assertion stays satisfied; the `webPreferences` audit anchors on `pageView`
-by identifier and the preload count must stay 1, so the helper keeps that
-identifier or the check is updated with it); `check:recorder-views` (the
-partition slice is bounded by `pageView = new WebContentsView(` and
-`layoutViews();`, which the helper moves; the check is updated to audit the
-helper); `check:replay-suspend` (unchanged, no new replay path).
-
-**Tests, Phase 3**
-
-- `e2e/recorder-tabs.spec.ts` on the `click-navigation.spec.ts` server
-  pattern: a `_blank` click opens a second WebContentsView in the SAME
-  `BrowserWindow` (`windows.spec.ts` asserts the window count stays), the
-  step list reads click → popup in that order, the active target's URL is the
-  new page, a click on the tab row records `switchPage 0`, the recording
-  finalizes to a spec that runs green under the real CLI against the same
-  server. A `window.open` row beside the anchor row. A row under
-  `same-tab` asserting one view and no popup step.
-- `recorder-navigation.test.ts`: the decision function is unchanged; a unit
-  test that the tab-open path is only reached on `load-in-window`.
-- Dev preview: `?view=recorder-tabs` reports a session with two tabs so the
-  strip can be seen in a browser.
-
-### Phase 4 — replay, verify and the agent across tabs
-
-- `runStep` gains native branches beside `viewport`/`reload`/`cookie`
-  (`recorder-service.ts:528-591`): `switchPage` activates the tab,
-  `popup` waits for the next tab to be created (bounded by the step's
-  timeout). The replayer refusals from Phase 1 are lifted for both.
-- `verifyAndInsertSteps` / `tryStep` run against the active tab already; an
-  AI-proposed `switchPage` becomes tryable, so the LLM subset in
-  `parse-llm-response.ts` gains both types and `agent-prompts.ts` learns the
-  vocabulary. `page-summary.ts` reports the tab list so the model can say
-  which page it is looking at.
-- `e2e/verified-steps.spec.ts` and `agent-loop.spec.ts` gain a row each.
-
-## What is deliberately left out
-
-- **A `closePage` step.** Playwright needs no explicit close; a popup that
-  closes itself (OAuth) is followed by `switchPage 0`, which is enough. Add
-  it when a test needs to assert the close.
-- **Tabs the test did not open** — a page opened by the site on load, or a
-  service worker. `context.waitForEvent("page")` catches them if a `popup`
-  step is armed; nothing else looks.
-- **Cross-context pages** (a new incognito window). Out of scope; one context
-  per test stays the rule.
-- **A per-tab viewport.** A new page takes the context's viewport; a
-  `viewport` step after `switchPage` sizes the receiver.
-
-## Open questions to settle during Phase 1
-
-1. Whether `popup` should also accept an optional URL expectation
-   (`value` + the URL match semantics from `shared/step-semantics.mjs`) so a
-   single step says "a page opened AND it is the checkout". Cheap, but it is
-   a second assertion in one step, which the step list has avoided.
-2. Whether `switchPage` to the index of a popup whose page has closed should
-   fail (Playwright's `page.isClosed()`) or be `UNGENERATABLE`. Run-time
-   failure is more honest: the spec does not know.
