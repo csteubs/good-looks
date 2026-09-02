@@ -10,6 +10,126 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-01 — Handle pop-ups: an opt-out switch and built-in vendor handlers, because a rule cannot be taught on a pop-up that did not show
+
+**The field report, and why every piece of it could not work.** A user on
+ritual.com met a Klaviyo newsletter modal and a DataGrail consent banner, placed
+a *Handle next dialog* step (answer: Dismiss) inside an `if` block that looked
+for the pop-up, ticked Continue on Failure, and watched the pop-up stay. Three
+mechanisms, each doing exactly what it was built to do, and none of them the
+thing needed. The dialog step emits `glazeArmDialog(page, "dismiss")`, which is
+`page.once("dialog", …)` — Playwright's `dialog` event fires for `alert`,
+`confirm`, `prompt` and `beforeunload`, and a Klaviyo form is ordinary DOM
+injected by a third-party script, so no event fires, the one-shot handler stays
+armed, and nothing on the page is touched. The `if` emits
+`if (await locator.isVisible())`, read once at that instant, and the modal
+arrives about eight seconds into a visit (2026-08-22, below), so the body is
+skipped almost every time and arms a dialog answer the rest. Continue on Failure
+wraps the statement in `try/catch`; arming a handler never throws. And even the
+right fix — a click on the close control — is a point-in-time fix, since
+DataGrail re-injects on every document and Klaviyo arrives mid-test, both
+measured on that site. The feature that already answered all of this, standing
+overlay rules, was a right-click away in the trainer, and the user still hit a
+wall: the Klaviyo form is on a timer and had not shown during the recording,
+and the store refuses a target typed by hand. The composer said "the NEXT alert,
+confirm or prompt", the shipped documentation never mentioned an overlay, and
+nothing pointed from the step that *sounds* like a pop-up to the feature that
+handles one.
+
+**A switch now, without losing "nothing to forget to turn on".** Overlay rules
+shipped with no toggle on purpose: a host with no rules armed nothing and paid
+nothing, so there was no setting to leave off. That argument holds exactly as
+long as every rule is one the user taught, and it stops holding the moment the
+app ships handlers of its own — a built-in that clicks something on every site
+is a behaviour a test must be able to decline, and a test whose subject IS the
+newsletter form needs it left alone. So the switch is an OPT-OUT. *Handle
+pop-ups* defaults on (`DEFAULT_HANDLE_POPUPS`, spelled once in
+`shared/popup-presets.mjs`), so every taught rule keeps working on the day this
+lands; it is per test (`TestRecord.handlePopups`, absent meaning inherit — the
+`captureArtifacts ?? defaultCaptureArtifacts` shape `check:run-defaults` pins)
+with `RecorderSettings.defaultHandlePopups` underneath; and it is ONE switch
+over the rules AND the presets. Half a switch — presets off, rules still on —
+would leave a test that asserts on the consent banner watching it vanish anyway.
+`armedPopupRulesFor` is the one function every arming site calls (the app
+runner, the trainer's injection, the MCP/CLI runner and `describeRun`), for the
+reason `shared/` exists: a transcribed "is handling on" is how a test that
+turned pop-ups off in the app would still have them clicked away in CI. The
+trainer honours it too, seeded from the New Recording dialog's box and re-armed
+when the setting changes mid-session, because a recording that clicked the form
+away and a run that did not — or the reverse — is the pair that makes a green
+trainer lie.
+
+**Why vetted, vendor-scoped presets do not break the no-typed-targets rule.**
+The store refuses a hand-typed target because a selector nobody saw match is a
+selector that fires on nothing, or on the wrong thing, and nobody finds out
+until a run at 3am. A preset is not that. Each is scoped to markup only its
+vendor renders — Klaviyo's `klaviyo-form-…` dialog container, DataGrail's
+`dg-header-close` control — so it resolves to nothing everywhere else, and each
+is PROVEN rather than trusted, at three distances from the real site:
+`main/recorder/popup-presets.dom.test.ts` drives the capture harness against
+synthetic vendor markup and asserts the close is clicked once, a re-injected
+banner is clicked again, and a look-alike Close outside the vendor's container
+is not; `e2e/popup-dismissal.spec.ts` runs a generated spec through the real
+Playwright CLI against a local site that injects both, with the switched-off row
+FAILING under the backdrop — the control that proves the feature is the
+difference; and `scripts/probe-popups.mjs` plus the env-gated live row confirm
+the selectors against ritual.com itself. Both presets click the vendor's own
+close control and nothing else. DataGrail's never presses Accept or Reject,
+because a preset must not make a consent decision on the user's behalf; a
+banner configured without a close button is documented as a case for a taught
+rule. Ids are prefixed `preset:` when armed so a run report can tell a built-in
+from a taught rule, and each is switchable in Settings → Overlay rules, per Mac.
+
+**Rejected: blocking the vendor's script with `page.route`.** It is the fix that
+needs no selector, and it changes the page under test: a site whose Klaviyo
+script never loads is not the site the user's customers see, and DataGrail's
+script control leaves the tags it manages inert, so a test of anything
+downstream of consent tests nothing. The app dismisses what the site shows; it
+does not edit the site.
+
+**Rejected: hiding by stylesheet as the default answer.** The user stylesheet
+can do it today, per site, and it stays the escape hatch rather than the default
+for the reason 2026-08-22 gave — a hidden banner is still in the accessibility
+tree, still counted by an `a11y` step, and a run that deletes page content is a
+run whose screenshots stop describing the site.
+
+**Rejected: closing through a vendor JavaScript API.** Neither has one. Klaviyo's
+`_klOnsite` only opens a form; DataGrail's `DG_BANNER_API` shows the banner and
+reads or writes preferences, and writing them was measured on 2026-08-22 not to
+suppress it. A close call that does not exist cannot be the mechanism.
+
+**Rejected for now: listening for Klaviyo's `klaviyoForms` event.** It is a
+precise arrival signal, and it is vendor code inside the one shared watcher —
+which `check:overlay-rules` exists to keep singular. The MutationObserver plus
+the 500 ms poll sees the form arrive anyway; the event buys nothing the watcher
+does not already have, at the cost of the first vendor-specific branch in code
+every rule runs through.
+
+**A new convention: the env-gated live-site spec.** This repository had no
+network-dependent test, and the two selectors above are only finally right
+against the real site. The live row in `e2e/popup-dismissal.spec.ts` runs only
+when `GL_LIVE_SITE` names a URL, waits for either vendor's container in a fresh
+context, asserts the matching `dismissed:` report when one appears, and calls
+`test.skip` — never `expect(true)` — when none does. Skipped rather than
+vacuously passed, so a green run cannot mean "the site showed nothing"; gated
+rather than unconditional, because CI and the container this was built in
+cannot reach the site (the egress proxy refuses it), and a red that means "no
+network" trains people to ignore it. Named here because the next
+network-dependent question will reach for the same shape.
+
+**The app's own advice was steering users into the wrong fix.** The AI
+step-debugger's prompt told the model that an element covered by a banner is
+fixed by "a step that dismisses or scrolls past it" — the point-in-time answer
+2026-08-22 measured and rejected — and the trainer's occlusion message named the
+covering element without saying what to do about it. Both are reworded: a
+banner or modal that comes back is Handle pop-ups (a built-in handler, or a rule
+taught by right-clicking its close control), a sticky header is a scroll, and it
+is still not a wait and not a new locator. The runner adds one system line to a
+failed run whose log says "intercepts pointer events" while the test has
+handling off, in the run options' own words, so the fix is named where the
+failure is read. The documentation gap closed the same way: a third in-app
+document, `docs/POPUPS-GUIDE.md`, whose first topic is the sorting question.
+
 ### 2026-09-01 — The Variables tab: groups per kind, and a warning that means something
 
 **The standing warning was the problem, not the wording.** The tab carried a

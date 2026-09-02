@@ -27,6 +27,7 @@ const start = vi.fn(
     _testId?: string,
     _viewport?: { width: number; height: number } | null,
     _runBrowser?: string,
+    _handlePopups?: boolean,
   ) => {},
 );
 const setSettings = vi.fn(async (_update: Partial<RecorderSettings>) => ({}) as RecorderSettings);
@@ -75,6 +76,11 @@ function startedBrowser() {
 /** The viewport argument `start` was called with. */
 function startedViewport() {
   return start.mock.calls[0]?.[3];
+}
+
+/** The handlePopups argument `start` was called with (6th). */
+function startedHandlePopups() {
+  return start.mock.calls[0]?.[5];
 }
 
 describe("window size preset", () => {
@@ -141,6 +147,8 @@ describe("window size preset", () => {
       { width: 768, height: 1024 },
       // Untouched picker → nothing stored, so the test inherits the default.
       undefined,
+      // Handle pop-ups, as the box shows it: on, from the default.
+      true,
     );
   });
 });
@@ -290,5 +298,62 @@ describe("the URL field says what it will open", () => {
     fireEvent.change(field, { target: { value: "example.com" } });
     await waitFor(() => expect(field.getAttribute("aria-describedby")).toBeTruthy());
     expect(screen.getByLabelText("URL")).toBe(field);
+  });
+});
+
+// ── Handle pop-ups while recording ────────────────────────────────────────
+//
+// The trainer arms the same overlay rules and built-in handlers a run does, so
+// a session that wants the pop-up ON SCREEN — recording the newsletter sign-up
+// itself — needs a way to say so before the first page loads. The box is
+// seeded from the global default and handed to `start` as its own argument;
+// what is pinned is that the value reaches `start` in the right slot, because
+// a positional slip here silently records with handling on while the box says
+// off. It is NOT written back to settings: that is a decision about one
+// recording, and persisting it would turn handling off for every test after.
+describe("handle pop-ups while recording", () => {
+  it("offers the box, on by default", async () => {
+    open();
+    const box = await screen.findByLabelText("Handle pop-ups while recording");
+    // A native checkbox (the dialog is a redesigned surface, so the SDK's
+    // data-state-carrying Checkbox is off limits): the property is the state.
+    expect((box as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("seeds from the global default", async () => {
+    settings = { defaultHandlePopups: false };
+    open();
+    const box = await screen.findByLabelText("Handle pop-ups while recording");
+    await waitFor(() => expect((box as HTMLInputElement).checked).toBe(false));
+    await startRecording();
+    expect(startedHandlePopups()).toBe(false);
+  });
+
+  it("hands the choice to start", async () => {
+    settings = { defaultHandlePopups: true };
+    open();
+    await screen.findByLabelText("Handle pop-ups while recording");
+    await startRecording();
+    expect(startedHandlePopups()).toBe(true);
+  });
+
+  it("passes false when unticked", async () => {
+    settings = { defaultHandlePopups: true };
+    open();
+    const box = await screen.findByLabelText("Handle pop-ups while recording");
+    fireEvent.click(box);
+    await waitFor(() => expect((box as HTMLInputElement).checked).toBe(false));
+    await startRecording();
+    expect(startedHandlePopups()).toBe(false);
+  });
+
+  it("does not write the choice back to the global default", async () => {
+    open();
+    const box = await screen.findByLabelText("Handle pop-ups while recording");
+    fireEvent.click(box);
+    await startRecording();
+    for (const [update] of setSettings.mock.calls) {
+      expect(Object.keys(update)).not.toContain("defaultHandlePopups");
+    }
   });
 });

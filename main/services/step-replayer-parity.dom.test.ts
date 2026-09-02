@@ -331,6 +331,21 @@ describe("occlusion: the click a real run refuses", () => {
     expect(r.error ?? "").toContain("Accept cookies");
   });
 
+  it("points at Handle pop-ups when the cover is a banner", () => {
+    // The log line, not the error: the error is what the step row shows and it
+    // names the element; the log is where the trainer's console explains what
+    // to do about it. The old advice was implicitly "add a step that closes
+    // it", which is right until the next navigation re-injects the banner.
+    document.body.innerHTML = '<button data-testid="b">Buy</button><div id="banner" class="cookie-bar">Accept cookies</div>';
+    stubTopmost(document.getElementById("banner"));
+    const r = run(step({ type: "click", locator: { k: "testid", v: "b" } }));
+    expect(r.ok).toBe(false);
+    expect(r.logs.map((l) => l.m).join(" | ")).toMatch(/Handle pop-ups is the fix/);
+    // Still carries the phrase the run's own error uses, so the two read as
+    // the same failure.
+    expect(why(r)).toMatch(/intercepts pointer events/i);
+  });
+
   it("a descendant receiving the click is NOT occlusion", () => {
     // A <span> inside a <button> is the normal case and the event still
     // reaches the button. Treating it as interception would fail almost every

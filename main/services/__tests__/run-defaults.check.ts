@@ -102,6 +102,50 @@ function code(rel: string): string {
   );
 }
 
+// ── Handle pop-ups follows the setting unless the dialog moved it ─────────
+//
+// The same shape as the speed rule above, and the same silent failure: a new
+// recording that copied `defaultHandlePopups` onto every record would pin each
+// test to the default of the day it was recorded, so a user who later turns
+// the default off finds every existing test still clicking banners away, with
+// no error anywhere. Absent means follow the setting; the record carries the
+// field only when the New Recording dialog's choice DIFFERED from the default.
+// And the runners resolve it through the shared three-layer rule rather than
+// a bare `??` on the setting — which would skip the shipped default and read
+// a settings file predating the key as "off", turning every taught rule off
+// on upgrade.
+{
+  const recorder = code("main/services/recorder-service.ts");
+  assert(
+    !/handlePopups:\s*recorderSettingsStore\.get\(\)\.defaultHandlePopups/.test(recorder),
+    "a new recording does not stamp the default Handle pop-ups choice onto the record — absent means follow the setting",
+  );
+  assert(
+    /handlePopups\s*!==\s*recorderSettingsStore\.get\(\)\.defaultHandlePopups/.test(recorder),
+    "…the field is written only when the dialog's choice differs from the default",
+  );
+
+  const runner = code("main/services/playwright-runner.ts");
+  assert(
+    /resolveHandlePopups\(/.test(runner),
+    "the runner resolves Handle pop-ups through `resolveHandlePopups`",
+  );
+  assert(
+    !/rec\.handlePopups\s*\?\?/.test(runner),
+    "…and not by a bare `??` on the setting, which skips the shipped default",
+  );
+
+  const unattended = code("mcp/run-tests.mjs");
+  assert(
+    /resolveHandlePopups\(/.test(unattended),
+    "the unattended runner resolves it through the same rule",
+  );
+  assert(
+    !/test\.handlePopups\s*\?\?/.test(unattended),
+    "…and not by a bare `??` either",
+  );
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);

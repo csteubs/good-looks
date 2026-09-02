@@ -40,6 +40,7 @@ import {
   isCostCurrency,
 } from "../../shared/cost-units.mjs";
 import { DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
+import { DEFAULT_HANDLE_POPUPS, normalizeDisabledPresets } from "../../shared/popup-presets.mjs";
 import {
   clampTestTimeoutMs,
   DEFAULT_TEST_TIMEOUT_MS,
@@ -232,6 +233,11 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   defaultCaptureArtifacts: false,
   defaultA11yChecks: false,
   defaultRecordLogs: false,
+  // On, from the shared constant: taught overlay rules were always armed
+  // before this switch existed, and a default of off would silently turn
+  // every one of them off on upgrade. See shared/popup-presets.mjs.
+  defaultHandlePopups: DEFAULT_HANDLE_POPUPS,
+  disabledPopupPresets: [],
   recordAllHeaders: false,
   // An egress path, so `false` here is a security default rather than a taste
   // one. See the field's own note in `recorder-types.ts`.
@@ -390,6 +396,12 @@ function read(): RecorderSettings {
         typeof parsed.defaultRecordLogs === "boolean"
           ? parsed.defaultRecordLogs
           : DEFAULT_SETTINGS.defaultRecordLogs,
+      defaultHandlePopups:
+        typeof parsed.defaultHandlePopups === "boolean"
+          ? parsed.defaultHandlePopups
+          : DEFAULT_SETTINGS.defaultHandlePopups,
+      // Known preset ids only — a ghost id would be a switch for nothing.
+      disabledPopupPresets: normalizeDisabledPresets(parsed.disabledPopupPresets),
       recordAllHeaders:
         typeof parsed.recordAllHeaders === "boolean"
           ? parsed.recordAllHeaders
@@ -626,6 +638,16 @@ export const recorderSettingsStore = {
         update.defaultRecordLogs !== undefined
           ? update.defaultRecordLogs
           : current.defaultRecordLogs,
+      defaultHandlePopups:
+        typeof update.defaultHandlePopups === "boolean"
+          ? update.defaultHandlePopups
+          : current.defaultHandlePopups,
+      // Same normalizer as the read path: a value refused on load must be
+      // refused on save, or it is written and then silently ignored forever.
+      disabledPopupPresets:
+        update.disabledPopupPresets !== undefined
+          ? normalizeDisabledPresets(update.disabledPopupPresets)
+          : current.disabledPopupPresets,
       recordAllHeaders:
         update.recordAllHeaders !== undefined ? update.recordAllHeaders : current.recordAllHeaders,
       siteIconsFromWeb:
@@ -833,6 +855,8 @@ export const recorderSettingsStore = {
       autoHealApply: next.autoHealApply,
       defaultA11yChecks: next.defaultA11yChecks,
       defaultRecordLogs: next.defaultRecordLogs,
+      defaultHandlePopups: next.defaultHandlePopups,
+      disabledPopupPresetsCount: next.disabledPopupPresets.length,
       recordAllHeaders: next.recordAllHeaders,
       siteIconsFromWeb: next.siteIconsFromWeb,
       keepRunningAiDebugJobs: next.keepRunningAiDebugJobs,

@@ -23,6 +23,7 @@ import {
   DEFAULT_COST_CURRENCY,
 } from "../../shared/cost-units.mjs";
 import { PROXY_DEFAULTS } from "../../shared/proxy-config.mjs";
+import { DEFAULT_HANDLE_POPUPS } from "../../shared/popup-presets.mjs";
 
 // ── Panes ────────────────────────────────────────────────────────────────────
 
@@ -135,7 +136,7 @@ export const PANES: readonly PaneDef[] = [
     // moved, the other clicks away something that got in front of it.
     id: "overlay-rules",
     title: "Overlay rules",
-    subtitle: "Banners and pop-ups to click away automatically, per site.",
+    subtitle: "Pop-ups and banners to click away automatically.",
     group: "Testing",
   },
   {
@@ -679,6 +680,20 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
 
   // Overlay rules
   {
+    id: "popups-default",
+    pane: "overlay-rules",
+    label: "Handle pop-ups",
+    keywords: "popup pop-up banner dismiss klaviyo datagrail newsletter consent cookie modal default run trainer",
+    key: "defaultHandlePopups",
+  },
+  {
+    id: "popups-presets",
+    pane: "overlay-rules",
+    label: "Built-in handlers",
+    keywords: "klaviyo datagrail preset vendor built-in handler close",
+    key: "disabledPopupPresets",
+  },
+  {
     id: "overlay-rules-what",
     pane: "overlay-rules",
     label: "How they work",
@@ -995,6 +1010,12 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   defaultWindowSize: null,
   defaultCaptureArtifacts: false,
   defaultRecordLogs: false,
+  // Read from the shared module rather than spelled `true` here, for the same
+  // reason the cost and proxy defaults are: the store, this window and the
+  // unattended runner must agree on what "unset" means, and a literal in each
+  // is right the day it is written and silent forever after.
+  defaultHandlePopups: DEFAULT_HANDLE_POPUPS,
+  disabledPopupPresets: [],
   recordAllHeaders: false,
   siteIconsFromWeb: false,
   keepRunningAiDebugJobs: false,

@@ -14,6 +14,7 @@
 import { parseDoc, slugify, type DocPage } from "./doc-blocks";
 import mcpGuideSource from "../../docs/MCP-GUIDE.md?raw";
 import ciGuideSource from "../../docs/CI-GUIDE.md?raw";
+import popupsGuideSource from "../../docs/POPUPS-GUIDE.md?raw";
 
 /** Ids of the documents the pane can show. The pane is a list rather than a
  *  special case, so a further document costs a line here and a Help menu item.
@@ -24,7 +25,7 @@ import ciGuideSource from "../../docs/CI-GUIDE.md?raw";
  *  so two documents both ending in "See also" would collide in all three, and
  *  the visible symptom is a Help link that opens the wrong document.
  *  `check:docs-blocks` asserts it. */
-export type DocId = "mcp" | "ci";
+export type DocId = "mcp" | "ci" | "popups";
 
 export interface AppDoc {
   id: DocId;
@@ -36,10 +37,12 @@ export interface AppDoc {
 export const APP_DOCS: readonly AppDoc[] = [
   { id: "mcp", label: "AI assistants (MCP)", page: parseDoc(mcpGuideSource) },
   { id: "ci", label: "Running tests without the app", page: parseDoc(ciGuideSource) },
+  { id: "popups", label: "Pop-ups and dialogs", page: parseDoc(popupsGuideSource) },
 ];
 
 export const MCP_GUIDE = APP_DOCS[0].page;
 export const CI_GUIDE = APP_DOCS[1].page;
+export const POPUPS_GUIDE = APP_DOCS[2].page;
 
 /** The document a topic slug belongs to, or null when nothing ships it.
  *

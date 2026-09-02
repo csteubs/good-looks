@@ -78,13 +78,14 @@ import { mailboxStore } from "./mailbox-store.js";
 import { stripAnsi } from "../../shared/strip-ansi.mjs";
 import { firstErrorLine } from "../../shared/error-signature.mjs";
 import { suggestFailureReason } from "../../shared/failure-reasons.mjs";
-import { armedRulesFor } from "../../shared/overlay-rules.mjs";
+import { armedPopupRulesFor, resolveHandlePopups } from "../../shared/popup-presets.mjs";
 import type { RunTrigger } from "../../shared/run-trigger.mjs";
 import {
   PLAYWRIGHT_CONFIG_FILE,
   playwrightConfigSource,
 } from "../../shared/playwright-config-source.mjs";
 import type {
+  ArmedOverlayRule,
   HealApplyMode,
   HealCandidate,
   Locator,
@@ -1288,6 +1289,10 @@ export const playwrightRunner = {
       let exitCode = -1;
       let tempSpecPath: string | null = null;
       let capturingRun = false;
+      // Whether this run handles pop-ups (resolved with the other gates below;
+      // declared here because the completion path reads it to explain a
+      // failure under a banner the test chose to keep).
+      let handlePopups = true;
       // Playwright's own scratch dir (traces, failure screenshots). Per-run
       // rather than the shared default: it is derived from the SPEC's path, so
       // two concurrent runs of one spec would write to — and clean — the same
@@ -1467,17 +1472,39 @@ export const playwrightRunner = {
         const testHost = normalizeSignatureHost(testOrigin);
         const originEntry = signatureEntries.find((entry) => entry.host === testHost) ?? null;
         let signing = originEntry !== null;
-        // ── Standing overlay rules ──────────────────────────────────────
+        // ── Handle pop-ups: standing overlay rules + built-in handlers ──
         //
-        // Armed by HOST, from the test's own starting URL. Nothing here is a
-        // toggle: a run against a host with no rules installs nothing and pays
-        // nothing, which is why there is no setting to forget to turn on.
+        // Armed by HOST from the test's own starting URL (the taught rules)
+        // plus the built-in Klaviyo/DataGrail handlers, through the ONE
+        // function the trainer and the unattended runner also call. Gated by
+        // the test's "Handle pop-ups" option, falling back to the global
+        // default — the same three-layer rule as capture and a11y, resolved
+        // by `resolveHandlePopups` so every process agrees. Off means NOTHING
+        // is clicked away, the taught rules included: a test whose subject is
+        // the pop-up has to be able to keep it.
         //
         // Imported tests are excluded along with every other fixture — their
         // spec is somebody else's file and is never redirected through ours.
-        const overlayRules = rec.sourceDir
-          ? []
-          : armedRulesFor(overlayRuleStore.listRules(), rec.url ?? "");
+        handlePopups =
+          resolveHandlePopups(rec.handlePopups, healSettings.defaultHandlePopups) && !rec.sourceDir;
+        const taughtRuleCount = rec.sourceDir
+          ? 0
+          : armedPopupRulesFor({
+              rules: overlayRuleStore.listRules(),
+              url: rec.url ?? "",
+              handlePopups: true,
+              disabledPresets: healSettings.disabledPopupPresets,
+            }).filter((r) => !r.builtIn).length;
+        const overlayRules = (
+          rec.sourceDir
+            ? []
+            : armedPopupRulesFor({
+                rules: overlayRuleStore.listRules(),
+                url: rec.url ?? "",
+                handlePopups,
+                disabledPresets: healSettings.disabledPopupPresets,
+              })
+        ) as ArmedOverlayRule[];
         let dismissing = overlayRules.length > 0;
         // Settings → Recording → page stylesheet / init script: applied to a
         // recorded test's runs, never an imported spec's (same rule as the
@@ -1661,6 +1688,28 @@ export const playwrightRunner = {
         emitOutput(runId, "system", "Running " + path.basename(rec.scriptPath) + "…\n");
         if (capturing) emitOutput(runId, "system", "Capturing screenshots for this run.\n");
         if (recordLogs) emitOutput(runId, "system", "Recording console and network for this run.\n");
+        // Said out loud either way. A run that quietly clicks things on a page
+        // is a run whose failures point nowhere, and a run that quietly does
+        // NOT — because this test opted out — is one whose failure under a
+        // banner reads as a broken locator. The fixture prints what it armed
+        // and dismissed on stderr; this is the app-side half, in the words the
+        // run options use.
+        if (dismissing) {
+          emitOutput(
+            runId,
+            "system",
+            "Handling pop-ups: " + overlayRules.map((r) => r.label || r.host || r.id).join(", ") + ".\n",
+          );
+        } else if (!handlePopups && !rec.sourceDir) {
+          emitOutput(
+            runId,
+            "system",
+            "Handle pop-ups is off for this test — " +
+              (taughtRuleCount > 0
+                ? `${taughtRuleCount} overlay rule${taughtRuleCount === 1 ? "" : "s"} for this site and the built-in handlers were not armed.\n`
+                : "the built-in pop-up handlers were not armed.\n"),
+          );
+        }
         // Announced like the other two. Without it the only evidence the check
         // was even armed was the run taking longer — and axe is slow enough
         // that "slower than usual" is not evidence of anything.
@@ -1996,6 +2045,29 @@ export const playwrightRunner = {
 
         // Persist this run to the log database (metadata + raw output). The
         // record id === the artifacts runId so later phases can join them.
+        // A failure under something that intercepts the click, on a test that
+        // chose NOT to handle pop-ups, is the one failure whose cause is a
+        // setting rather than the page. Playwright's own wording is the
+        // signal (the same phrase failure-reasons.mjs classifies as
+        // "not actionable"), and the remedy is named in the run options'
+        // words. Only when the test opted out: with handling on, the covering
+        // element was not one a rule or a preset matched, and pointing at the
+        // switch would be wrong. Emitted BEFORE the log is snapshotted below,
+        // so the line is in the persisted log a person reads later and not
+        // only in the live Output panel.
+        if (
+          exitCode !== 0 &&
+          !handlePopups &&
+          !rec.sourceDir &&
+          /intercepts pointer events/.test((logBuffers.get(runId) ?? []).join(""))
+        ) {
+          emitOutput(
+            runId,
+            "system",
+            "A click was intercepted by another element and Handle pop-ups is off for this test. " +
+              "If that element was a pop-up or banner, turn Handle pop-ups on in the run options.\n",
+          );
+        }
         const logText = (logBuffers.get(runId) ?? []).join("");
         logBuffers.delete(runId);
         // What capture actually cost this run, straight from the fixture's

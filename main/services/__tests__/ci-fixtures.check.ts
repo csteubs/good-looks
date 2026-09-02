@@ -151,8 +151,9 @@ const appRunner = code("main/services/playwright-runner.ts");
   //
   // Each row carries the SHAPE its guard takes, because they are not all the
   // same shape and asserting one pattern would quietly stop covering the odd
-  // one out. `wantsDismiss` is the odd one: the rules are armed first and the
-  // gate is "did any arm", so the `!imported` decision is one line up.
+  // one out. `wantsDismiss` is the odd one: the test's Handle pop-ups option
+  // is resolved first (guarded by `!imported`), the rules are armed through
+  // it (an imported spec arms nothing), and the gate is "did any arm".
   const GATES: [string, RegExp][] = [
     ["wantsScreenshots", /const wantsScreenshots =\s*!imported/],
     ["wantsA11y", /const wantsA11y =\s*!imported/],
@@ -160,7 +161,10 @@ const appRunner = code("main/services/playwright-runner.ts");
     ["wantsSettle", /const wantsSettle =\s*!imported/],
     ["wantsHeal", /const wantsHeal =\s*\n?\s*!imported/],
     ["wantsUserPage", /const wantsUserPage =\s*!imported/],
-    ["wantsDismiss", /const armedRules = imported \? \[\] :[\s\S]{0,200}?const wantsDismiss =/],
+    [
+      "wantsDismiss",
+      /const handlePopups =\s*\n?\s*!imported[\s\S]{0,300}?const armedRules = imported\s*\?\s*\[\]\s*:[\s\S]{0,400}?const wantsDismiss =/,
+    ],
   ];
   for (const [gate, shape] of GATES) {
     assert(shape.test(runner), `${gate} is guarded by !imported`);
@@ -431,8 +435,21 @@ const appRunner = code("main/services/playwright-runner.ts");
   // every rule in the library against every host. Caught by breaking exactly
   // that and watching nothing happen.
   assert(
-    /const armedRules = imported \? \[\] : armedRulesFor\(overlayRules, test\.url/.test(runner),
-    "…armed by HOST from the test's own URL, through the shared `armedRulesFor`",
+    /const armedRules = imported\s*\?\s*\[\]\s*:\s*armedPopupRulesFor\(\{\s*rules: overlayRules,\s*url: test\.url/.test(
+      runner,
+    ),
+    "…armed by HOST from the test's own URL, through the shared `armedPopupRulesFor`",
+  );
+  // The gate is the TEST's own field with the global default underneath, read
+  // through the shared resolver — a hand-rolled `??` here is the second
+  // spelling that lets a test keep its pop-up in the app and lose it in CI.
+  assert(
+    /resolveHandlePopups\(test\.handlePopups, settings\.defaultHandlePopups\)/.test(runner),
+    "…gated by the test's Handle pop-ups option through the shared `resolveHandlePopups`",
+  );
+  assert(
+    /disabledPresets: settings\.disabledPopupPresets/.test(runner),
+    "…and the built-in handlers honour the Settings switches",
   );
   assert(
     /dismissEnv\(armedRules\)/.test(runner),

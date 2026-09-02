@@ -6,6 +6,7 @@
 // against the generator, consumes them with types rather than `any`.
 
 import type { Dataset, RecorderSettings, TestRecord, TestSpeed } from "../main/recorder/types.js";
+import type { OverlayRuleLike } from "../shared/overlay-rules.mjs";
 
 /** The subset of a TestRecord this module reads. Loose on purpose: these come
  *  from tests.json on disk, which may predate any given field. */
@@ -93,6 +94,19 @@ export declare function describeRun(
     timeoutMs?: number;
     timeoutRaised?: boolean;
     signatures?: readonly SignatureRegisterEntry[];
+    /** The app's standing overlay rules, so the report can name the ones
+     *  this test's host would have armed. */
+    overlayRules?: readonly OverlayRuleLike[];
+    /** What the run ACTUALLY installed (R8) — passed in, never re-derived. */
+    ran?: {
+      screenshots?: boolean;
+      accessibility?: boolean;
+      consoleAndNetwork?: boolean;
+      autoHeal?: boolean;
+      pageSettling?: boolean;
+      /** The rules the run armed, by label. */
+      overlayRules?: readonly string[];
+    };
     nowMs?: number;
   },
 ): RunFixtureReport;

@@ -1112,6 +1112,10 @@ export const SETTINGS: RecorderSettings = {
   debugScreenshots: false,
   defaultCaptureArtifacts: true,
   defaultRecordLogs: true,
+  // The shipped default, and one preset switched off so the Overlay rules
+  // pane's built-in handler rows show both states.
+  defaultHandlePopups: true,
+  disabledPopupPresets: ["datagrail-consent-close"],
   recordAllHeaders: false,
   siteIconsFromWeb: false,
   keepRunningAiDebugJobs: false,

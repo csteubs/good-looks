@@ -14,9 +14,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { screen, fireEvent, waitFor } from "@testing-library/react";
 
-import { renderPane } from "../__tests__/harness";
+import { makeController, renderPane, savedPatch } from "../__tests__/harness";
 import { OverlayRulesPane, describeTarget } from "./overlay-rules-pane";
 import type { OverlayRule } from "../../lib/recorder-types";
+import { POPUP_PRESETS } from "../../../shared/popup-presets.mjs";
 
 const { rulesApi, onApi } = vi.hoisted(() => ({
   rulesApi: {
@@ -137,5 +138,73 @@ describe("OverlayRulesPane", () => {
     renderPane(<OverlayRulesPane />);
     await screen.findByText("No rules yet");
     expect(onApi).toHaveBeenCalledWith("overlayRules:changed", expect.any(Function));
+  });
+});
+
+// ── Handle pop-ups: the switch over everything, and the built-in handlers ──
+//
+// Two RecorderSettings, read through the controller like Auto-Heal's rather
+// than through react-query like the rules, so "reset section" and the modified
+// count can see them. What is pinned is the PATCH each control writes — the
+// wrong direction on the presets row is silent: a switch that wrote the enabled
+// ids into `disabledPopupPresets` would render correctly and disarm exactly
+// the handlers the user left on.
+describe("Handle pop-ups", () => {
+  it("reads the default as on and saves being turned off", () => {
+    withRules([]);
+    const { controller } = renderPane(<OverlayRulesPane />);
+    const sw = screen.getByRole("switch", { name: /^handle pop-ups$/i });
+    expect(sw.getAttribute("aria-checked") ?? sw.getAttribute("data-state")).toMatch(
+      /true|checked/i,
+    );
+    fireEvent.click(sw);
+    expect(savedPatch(controller)).toEqual({ defaultHandlePopups: false });
+  });
+
+  it("lists every built-in handler with its vendor and what it clicks", () => {
+    withRules([]);
+    renderPane(<OverlayRulesPane />);
+    // Driven off the shipped list rather than two literals, so a third vendor
+    // is covered the day it lands — and the list is asserted non-empty so the
+    // loop cannot pass over nothing.
+    expect(POPUP_PRESETS.length).toBeGreaterThan(1);
+    for (const preset of POPUP_PRESETS) {
+      expect(screen.getByText(preset.label)).toBeTruthy();
+      expect(screen.getByText(preset.target.v as string)).toBeTruthy();
+    }
+    expect(screen.getByText("Klaviyo")).toBeTruthy();
+    expect(screen.getByText("DataGrail")).toBeTruthy();
+  });
+
+  it("switching a handler off records its id, and only its id", () => {
+    withRules([]);
+    const { controller } = renderPane(<OverlayRulesPane />);
+    fireEvent.click(screen.getByRole("switch", { name: "Enable DataGrail consent banner — Close" }));
+    expect(savedPatch(controller)).toEqual({ disabledPopupPresets: ["datagrail-consent-close"] });
+  });
+
+  it("switching it back on removes the id", () => {
+    withRules([]);
+    const controller = makeController({
+      settings: { disabledPopupPresets: ["datagrail-consent-close"] },
+    });
+    renderPane(<OverlayRulesPane />, { controller });
+    const sw = screen.getByRole("switch", { name: "Enable DataGrail consent banner — Close" });
+    expect(sw.getAttribute("aria-checked") ?? sw.getAttribute("data-state")).toMatch(
+      /false|unchecked/i,
+    );
+    fireEvent.click(sw);
+    expect(savedPatch(controller)).toEqual({ disabledPopupPresets: [] });
+  });
+
+  it("opens the pop-ups document from the row", () => {
+    // The first production use of `SettingRow`'s `doc` prop. The pane is
+    // router-free; the routed wrapper in settings-view.tsx turns the slug into
+    // an address, and this is the slug it must be handed.
+    withRules([]);
+    const onOpenDoc = vi.fn();
+    renderPane(<OverlayRulesPane onOpenDoc={onOpenDoc} />);
+    fireEvent.click(screen.getByRole("button", { name: "How pop-up handling works" }));
+    expect(onOpenDoc).toHaveBeenCalledWith("handle-pop-ups");
   });
 });

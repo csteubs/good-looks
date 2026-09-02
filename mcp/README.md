@@ -663,7 +663,7 @@ skipped.
 | Run-time Auto-Heal | Switched on — **and currently inert.** See below |
 | Writing a heal BACK to the test | Never, by construction: there is no writeback code in this process, and it would edit a `tests.json` that dies with the container |
 | Signature headers | Off — the values are encrypted to the app and unreadable here |
-| Overlay dismissal | Off — its source embeds the recorder's locator engine, which has not moved to `shared/` yet |
+| Overlay dismissal | **On** when the test's Handle pop-ups option is on (the default) — the host's taught rules plus the built-in Klaviyo/DataGrail handlers, armed through the same `armedPopupRulesFor` the app calls, since 2026-08-25 (R51 moved the locator engine to `shared/`; the gate arrived with Handle pop-ups) |
 
 **Two gaps remain, and both are worth knowing before you trust a report.**
 

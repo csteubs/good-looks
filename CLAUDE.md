@@ -310,6 +310,26 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                     so a rule taught in the trainer and a rule enforced in a run cannot
                     drift into agreeing "for now". `check:overlay-rules` fails if a second
                     copy of either appears.
+                    popup-presets.mjs is the SWITCH over that watcher and the
+                    BUILT-IN rules it arms beside the taught ones (2026-09-01):
+                    DEFAULT_HANDLE_POPUPS (on — taught rules were always on, and
+                    a default of off would turn every one of them silently off),
+                    POPUP_PRESETS (Klaviyo form and DataGrail consent banner, each
+                    a CSS target scoped to markup only that vendor renders, each
+                    clicking the vendor's own close control and never Accept or
+                    Reject), resolveHandlePopups (test field, else the global
+                    default, else the shipped default) and armedPopupRulesFor —
+                    THE ONE FUNCTION every arming site calls: the app's runner,
+                    the trainer's injection, the MCP/CLI runner and describeRun.
+                    Off returns nothing, the taught rules included, because a
+                    test whose subject is the pop-up has to be able to keep it.
+                    Rules had no toggle on purpose (a host with none armed
+                    nothing, so there was nothing to forget); a built-in that
+                    clicks something on every site is what made one necessary.
+                    The presets do not break the store's no-typed-targets rule:
+                    that rule refuses a selector nobody saw match, and these
+                    are proven against the vendor's markup by the DOM test, the
+                    real-CLI e2e spec and the GL_LIVE_SITE-gated live row.
                     browser-install.mjs is the same shape for the runner's "is
                     the browser there" question: which `<engine>-<revision>`
                     directories the BUNDLED CLI launches, read from its
@@ -395,17 +415,20 @@ mcp/                 standalone MCP server exposing the test library to external
                       get_step_matches, capture_app, get_screenshot)
                      — see mcp/README.md
 docs/                ARCHITECTURE.md (per-file map) + DECISIONS.md (dated rationale) +
-                     MCP-GUIDE.md and CI-GUIDE.md, which are ALSO THE APP'S IN-APP MANUAL
-                     — Settings → Documentation renders BOTH (renderer/lib/doc-blocks.ts
+                     MCP-GUIDE.md, CI-GUIDE.md and POPUPS-GUIDE.md (the third, 2026-09-01:
+                     pop-ups, banners and dialogs, for a USER of the app), which are ALSO
+                     THE APP'S IN-APP MANUAL — Settings → Documentation renders ALL THREE
+                     (renderer/lib/doc-blocks.ts
                      parses a subset of markdown and THROWS on the rest; check:docs-blocks
                      runs it in the gate over every doc in APP_DOCS). Edit them as prose,
                      not as UI copy, but expect the gate to refuse an ordered list or a
-                     nested bullet. TOPIC SLUGS ARE UNIQUE ACROSS THE TWO, not within
+                     nested bullet. TOPIC SLUGS ARE UNIQUE ACROSS THE THREE, not within
                      one: a slug is the row id the settings search indexes a topic under,
                      the key the topic list renders it with, and the segment
                      /settings/documentation/$topic carries — none of the three is scoped
                      by document, so two files both ending in "See also" collide in all
-                     three and the symptom is a Help item opening the wrong document.
+                     three and the symptom is a Help item opening the wrong document
+                     (which is why the third ends in "Related reading").
                      check:docs-blocks asserts it, and asserts REQUIRED_TOPIC_SLUGS over
                      the UNION rather than per file — asking each doc for every linked
                      slug fails the moment there are two

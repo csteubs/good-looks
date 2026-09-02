@@ -31,6 +31,7 @@ import { resolve } from "node:path";
 import {
   DISMISS_COUNT_ENV,
   DISMISS_ENV_PREFIX,
+  dismissEnv,
   dismissEnvNames,
   dismissFixtureSource,
 } from "../../../shared/dismiss-fixture-source.mjs";
@@ -42,6 +43,7 @@ import {
   OVERLAY_LOCATOR_KINDS,
   watcherSource,
 } from "../../../shared/overlay-rules.mjs";
+import { POPUP_PRESETS, presetRules } from "../../../shared/popup-presets.mjs";
 
 let failures = 0;
 
@@ -86,8 +88,6 @@ const captureScript = buildCaptureScript("check-nonce", [], [
     host: "example.com",
     label: "Close",
     target: { k: "testid", v: "close-btn" },
-    createdAt: 0,
-    updatedAt: 0,
   },
 ]);
 assert(
@@ -259,6 +259,137 @@ assert(
   captureScript.includes("suppress: 0"),
   "the capture state carries the suppression counter",
 );
+
+// ── Handle pop-ups: ONE arming function, and the presets are DATA ─────
+//
+// The switch (shared/popup-presets.mjs) is honoured in `armedPopupRulesFor`
+// and nowhere else, so every process that arms rules has to reach them through
+// it: the app's runner, the trainer's injection and the MCP/CLI runner. A site
+// that went to `armedRulesFor` directly would arm the taught rules behind the
+// switch's back — a test that turned pop-ups off in the app and still had its
+// banner clicked away in CI, with nothing in either log to say why. And the
+// presets are data in ONE module: a vendor name inlined at an arming site is
+// a second spelling of a selector that is right today and stale the day the
+// vendor's markup moves, which is how a preset ends up passing its test and
+// missing on the site.
+//
+// Source-level, like the watcher assertions above: a unit test can prove the
+// function is right and cannot see who calls it.
+
+/** Source with line comments stripped, so a rule never matches its own
+ *  explanation — the trap `check:emit-redaction` went red on. */
+function code(rel: string): string {
+  return read(rel)
+    .split("\n")
+    .map((l) => l.replace(/\/\/.*$/, ""))
+    .join("\n");
+}
+
+{
+  const ARMING_SITES = [
+    ["the app's runner", "main/services/playwright-runner.ts"],
+    ["the trainer", "main/services/recorder-service.ts"],
+    ["the MCP/CLI runner", "mcp/run-tests.mjs"],
+  ] as const;
+  for (const [label, rel] of ARMING_SITES) {
+    const src = code(rel);
+    assert(src.includes("armedPopupRulesFor("), `${label} arms through armedPopupRulesFor()`);
+    assert(
+      !src.includes("armedRulesFor("),
+      `${label} never reaches the host rules directly, behind the switch's back`,
+    );
+    assert(
+      !/klaviyo/i.test(src),
+      `${label} names no vendor — the presets are data in shared/popup-presets.mjs`,
+    );
+  }
+  assert(
+    !/klaviyo/i.test(code("main/handlers/index.ts")),
+    "the IPC layer names no vendor either",
+  );
+  // The two RUNNERS resolve the switch through the shared three-layer rule.
+  // (The trainer does too, but it is the runners where a bare `??` would skip
+  // the shipped default and turn an absent setting into "off".)
+  for (const [label, rel] of [
+    ["the app's runner", "main/services/playwright-runner.ts"],
+    ["the MCP/CLI runner", "mcp/run-tests.mjs"],
+  ] as const) {
+    assert(
+      code(rel).includes("resolveHandlePopups("),
+      `${label} resolves Handle pop-ups through resolveHandlePopups()`,
+    );
+  }
+}
+
+// ── A preset survives the env round trip, and is a rule the trainer would accept ──
+//
+// The same trip the taught rule above makes, for the shipped list: the runner
+// WRITES `dismissEnv(armed)`, the fixture READS it back inside a Playwright
+// worker, and a preset that does not survive is a run that says "armed" and
+// clicks nothing. Run through the fixture's own reader, sliced at the same
+// declaration boundary as above.
+{
+  const shipped = presetRules();
+  const saved = { ...process.env };
+  Object.assign(process.env, dismissEnv(shipped));
+  let parsed: { label: string; target: { k: string; v?: string } }[] = [];
+  try {
+    const marker = "const RULES = rulesFromEnv();";
+    const cut = dismissFixtureSource.indexOf(marker);
+    if (cut < 0) throw new Error("could not find the reader's boundary in the fixture");
+    const readRules = new Function(
+      `${dismissFixtureSource.slice(0, cut)}; return rulesFromEnv();`,
+    ) as () => typeof parsed;
+    parsed = readRules();
+  } catch (e) {
+    parsed = [];
+    console.error(`   (reader threw: ${String(e)})`);
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
+  assert(
+    shipped.length === POPUP_PRESETS.length && shipped.length > 0,
+    "presetRules() arms every shipped preset by default",
+  );
+  assert(
+    parsed.length === POPUP_PRESETS.length,
+    "the fixture's reader finds every preset the runner wrote",
+  );
+  assert(
+    JSON.stringify(parsed.map((r) => r.label)) === JSON.stringify(POPUP_PRESETS.map((p) => p.label)),
+    "…and reads back each label intact",
+  );
+  assert(
+    JSON.stringify(parsed.map((r) => r.target)) ===
+      JSON.stringify(POPUP_PRESETS.map((p) => ({ ...p.target }))),
+    "…and each css target intact",
+  );
+
+  // A preset the overlay normalizer would refuse is one that arms in a run
+  // (which never normalizes) and could never have been taught in the trainer —
+  // the two halves of the feature disagreeing about what a rule IS.
+  for (const preset of POPUP_PRESETS) {
+    const normalized = normalizeOverlayRule({
+      id: preset.id,
+      host: "vendor.example",
+      label: preset.label,
+      target: preset.target,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    assert(normalized !== null, `preset ${preset.id} is a rule the normalizer accepts`);
+    assert(
+      normalized?.target.k !== "xpath" &&
+        OVERLAY_LOCATOR_KINDS.includes(normalized?.target.k ?? ""),
+      `preset ${preset.id} is of an allowed kind, never xpath`,
+    );
+    assert(
+      normalized?.target.v === preset.target.v,
+      `preset ${preset.id}'s target survives normalization intact`,
+    );
+  }
+}
 
 if (failures > 0) {
   console.error(`\n${failures} overlay-rule check(s) failed.`);

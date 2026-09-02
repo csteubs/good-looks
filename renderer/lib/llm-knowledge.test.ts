@@ -212,6 +212,16 @@ describe("the trainer's own failure modes are in its prompt", () => {
     expect(sys).toMatch(/toBeVisible\(\) will PASS/i);
   });
 
+  it("sends a covering banner to Handle pop-ups rather than to a new step", () => {
+    // The prompt used to say "the fix is a step that dismisses ... it" — the
+    // approach DECISIONS 2026-08-22 measured and rejected: a consent banner is
+    // re-injected on every document and a marketing modal arrives mid-test, so
+    // a click placed at one point in the step list is right until the next
+    // navigation. The app's own advice must not steer the model there.
+    expect(sys).toMatch(/Handle pop-ups/);
+    expect(sys).not.toMatch(/a step that dismisses/i);
+  });
+
   it("explains a zero match count on an indexed locator", () => {
     expect(sys).toMatch(/\.nth\(k\)/);
     expect(sys).toMatch(/fewer than/i);

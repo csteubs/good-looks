@@ -202,10 +202,12 @@ Worth reading once, because each of these is invisible until it bites.
 ### A run from here does the same work as a run in the app
 
 Screenshot capture, accessibility checks, console and network recording,
-run-time Auto-Heal, crawl page-settling and standing overlay rules all work in
-an MCP run. Each one follows the setting the test already carries, exactly as
-the app reads it. You do not get a lesser run for asking an assistant to start
-it.
+run-time Auto-Heal, crawl page-settling and pop-up handling — the overlay rules
+you taught and the built-in Klaviyo and DataGrail handlers, following the
+test's own *Handle pop-ups* option — all work in an MCP run. Each one follows
+the setting the test already carries, exactly as the app reads it. You do not
+get a lesser run for asking an assistant to start it. The Pop-ups guide, in the
+topics beside this one, covers what a run arms and what it reports.
 
 Every run reports what it did and did not do in a `fixtures` field. Read that
 before drawing a conclusion from a failure — it is where the exceptions below

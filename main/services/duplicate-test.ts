@@ -51,6 +51,9 @@ export const DUPLICATED_FIELDS = [
   "a11yChecks",
   "recordLogs",
   "captureArtifacts",
+  // HOW the test runs, like the three above: a copy of a test that needs its
+  // pop-up left alone needs it left alone too.
+  "handlePopups",
   "runHeadless",
   "runBrowser",
   // HOW the test runs, like runBrowser. The username and the passwordVar name

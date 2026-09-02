@@ -70,8 +70,9 @@ import {
   permissionAllowed,
   DENIED_RECORDER_PERMISSIONS,
 } from "./recorder-navigation.js";
-import { armedRulesFor, MAX_OVERLAY_LABEL } from "../../shared/overlay-rules.mjs";
-import type { CookieSpec, GenSpec, OverlayRule } from "../recorder/types.js";
+import { MAX_OVERLAY_LABEL } from "../../shared/overlay-rules.mjs";
+import { armedPopupRulesFor, resolveHandlePopups } from "../../shared/popup-presets.mjs";
+import type { ArmedOverlayRule, CookieSpec, GenSpec } from "../recorder/types.js";
 import type { RunBrowser } from "../recorder/types.js";
 import {
   initialCursor,
@@ -750,6 +751,12 @@ interface Session {
    * It rides on the session because the record is not written until `finalize`.
    */
   runBrowser?: RunBrowser;
+  /** Whether this session clicks pop-ups away — the host's taught overlay
+   *  rules and the built-in handlers. A boolean is a PIN: the test's own
+   *  field when continuing one, or the New Recording dialog's choice. `null`
+   *  means follow `defaultHandlePopups` as it stands at each injection, so a
+   *  default flipped mid-recording takes effect on the next document. */
+  handlePopups: boolean | null;
   /** snapshot of the global "show URL bar" setting — whether this session's
    *  window gets the app-owned URL strip above the page */
   showUrlBar: boolean;
@@ -1450,15 +1457,29 @@ async function applyUserPage(page: { insertCSS?: (css: string) => Promise<unknow
   }
 }
 
-/** The overlay rules that apply to a URL right now.
+/** The pop-up handlers that apply to a URL right now: the host's taught rules
+ *  and the built-in presets, or nothing when this session has pop-up handling
+ *  off. Through the SAME `armedPopupRulesFor` a run uses, so a recording and
+ *  its runs click the same things away.
  *
  *  Read from the store on every call rather than cached on the session: a rule
  *  taught mid-recording should take effect on the page the user is looking at,
  *  and the store is small enough that re-reading it is cheaper than keeping a
- *  second copy honest. */
-function armedOverlayRules(url: string): OverlayRule[] {
+ *  second copy honest. The settings are re-read for the same reason — a
+ *  preset switched off in Settings while recording stops on the next document. */
+function armedOverlayRules(url: string): ArmedOverlayRule[] {
   try {
-    return armedRulesFor(overlayRuleStore.listRules(), url);
+    const settings = recorderSettingsStore.get();
+    const handlePopups = resolveHandlePopups(
+      session?.handlePopups ?? undefined,
+      settings.defaultHandlePopups,
+    );
+    return armedPopupRulesFor({
+      rules: overlayRuleStore.listRules(),
+      url,
+      handlePopups,
+      disabledPresets: settings.disabledPopupPresets,
+    }) as ArmedOverlayRule[];
   } catch (err) {
     // A rule that cannot be read is a rule that does not fire. Never a reason
     // to fail an injection — capture matters more than dismissal.
@@ -2070,6 +2091,11 @@ export const recorderService = {
     /** engine for this test's RUNS, from the same dialog's browser picker.
      *  Omitted means inherit the global default. Never affects the trainer. */
     runBrowser?: RunBrowser;
+    /** Whether to click pop-ups away while recording, from the same dialog's
+     *  "Handle pop-ups" box. Omitted means follow the global default. For a
+     *  NEW recording a choice that differs from the default is stamped onto
+     *  the record, so its runs behave the way the recording did. */
+    handlePopups?: boolean;
   }): Promise<RecorderState> {
     if (session) {
       recWindow?.focus();
@@ -2083,6 +2109,7 @@ export const recorderService = {
     let existingVariables: TestVariable[] = [];
     let editing = false;
     let createdAt = Date.now();
+    let existingHandlePopups: boolean | undefined;
 
     if (params.testId) {
       const rec = testStore.get(params.testId);
@@ -2094,6 +2121,7 @@ export const recorderService = {
         existingSteps = rec.steps;
         existingVariables = rec.variables ?? [];
         createdAt = rec.createdAt;
+        existingHandlePopups = rec.handlePopups;
       }
     }
 
@@ -2116,6 +2144,16 @@ export const recorderService = {
       // record over this, so continuing a test in the trainer cannot silently
       // re-engine it from a dialog the user did not see.
       runBrowser: isRunBrowser(params.runBrowser) ? params.runBrowser : undefined,
+      // The test's own pin wins when continuing one — the dialog that offers
+      // the choice is the NEW Recording dialog, which an "Edit in Trainer"
+      // session never showed. Otherwise the dialog's choice, otherwise follow
+      // the default.
+      handlePopups:
+        typeof existingHandlePopups === "boolean"
+          ? existingHandlePopups
+          : typeof params.handlePopups === "boolean"
+            ? params.handlePopups
+            : null,
       showUrlBar: recorderSettingsStore.get().showUrlBar,
       // Starts at the session's start URL so the strip has something true to
       // show during the first load, rather than a blank bar that fills in.
@@ -4370,6 +4408,12 @@ async function finalize(): Promise<void> {
     // Before the spread, like the two above: a chosen engine seeds a NEW test,
     // and an existing one keeps whatever its own toolbar says.
     ...(s.runBrowser ? { runBrowser: s.runBrowser } : {}),
+    // Before the spread for the same reason, and only when the dialog's choice
+    // was MOVED OFF the global default — a choice equal to the default stays
+    // absent, so the test keeps following the setting. `runBrowser`'s rule.
+    ...(s.handlePopups !== null && s.handlePopups !== recorderSettingsStore.get().defaultHandlePopups
+      ? { handlePopups: s.handlePopups }
+      : {}),
     ...(existing ?? {}),
     id: s.testId,
     name: s.name,

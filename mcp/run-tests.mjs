@@ -77,7 +77,7 @@ import {
 import { buildHealMap } from "../shared/heal-map.mjs";
 import { seedsForTest } from "../shared/propagation.mjs";
 import { dismissEnv } from "../shared/dismiss-fixture-names.mjs";
-import { armedRulesFor } from "../shared/overlay-rules.mjs";
+import { armedPopupRulesFor, resolveHandlePopups } from "../shared/popup-presets.mjs";
 import { userPageEnv } from "../shared/user-page-fixture-source.mjs";
 // The CI secret contract — where a secret comes from without the app, and
 // the refusal when it comes from nowhere.
@@ -646,10 +646,14 @@ export function createRunner({
     // `check:ci-fixtures` asserts the absence directly.
     const wantsUserPage =
       !imported && Boolean(settings.userStylesheet || settings.userInitScript);
-    // Standing overlay rules, armed by HOST from the test's own starting URL —
-    // the same rule the app applies, through the same `armedRulesFor`. There is
-    // no setting: a run against a host with no rules arms nothing and pays
-    // nothing, which is what makes this safe to have on by default.
+    // Handle pop-ups: the standing overlay rules armed by HOST from the test's
+    // own starting URL, plus the built-in Klaviyo/DataGrail handlers — through
+    // the same `armedPopupRulesFor` the app's runner and trainer call, gated
+    // by the test's own "Handle pop-ups" option with the global default
+    // underneath (`resolveHandlePopups`, the same three-layer rule as capture
+    // and a11y). A test that turned pop-ups off in the app must not have its
+    // banner clicked away here; a test that left it on gets exactly what an
+    // app run gets.
     //
     // It could not be on before R51. The fixture's watcher embeds the recorder's
     // locator engine, so a rule taught in the trainer and a rule enforced in a
@@ -658,7 +662,16 @@ export function createRunner({
     // the worse answer: two implementations of "does this rule match" agree
     // right up until the page they disagree on, and the symptom is a run
     // clicking something nobody chose.
-    const armedRules = imported ? [] : armedRulesFor(overlayRules, test.url ?? "");
+    const handlePopups =
+      !imported && resolveHandlePopups(test.handlePopups, settings.defaultHandlePopups);
+    const armedRules = imported
+      ? []
+      : armedPopupRulesFor({
+          rules: overlayRules,
+          url: test.url ?? "",
+          handlePopups,
+          disabledPresets: settings.disabledPopupPresets,
+        });
     const wantsDismiss = armedRules.length > 0;
     const anyCapability =
       wantsScreenshots ||
@@ -1411,10 +1424,17 @@ export function createRunner({
                       (t.steps ?? []).some((st) => st?.locator),
                     pageSettling:
                       resolveRunSpeed(speed, t.speed, settings.defaultRunSpeed) === "crawl",
-                    // Armed per test by host, exactly as executeTest arms them.
-                    overlayRules: armedRulesFor(allOverlayRules, t.url ?? "").map(
-                      (r) => r.label || r.host,
-                    ),
+                    // Armed per test by host and gated by the test's own
+                    // Handle pop-ups option, exactly as executeTest arms them.
+                    overlayRules: armedPopupRulesFor({
+                      rules: allOverlayRules,
+                      url: t.url ?? "",
+                      handlePopups: resolveHandlePopups(
+                        t.handlePopups,
+                        settings.defaultHandlePopups,
+                      ),
+                      disabledPresets: settings.disabledPopupPresets,
+                    }).map((r) => r.label || r.host),
                   },
               timeoutMs: 0,
               timeoutRaised: false,

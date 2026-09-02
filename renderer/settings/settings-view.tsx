@@ -94,6 +94,24 @@ function RoutedDocumentationPane() {
   );
 }
 
+/** The Overlay rules pane, with the Documentation address wired to it.
+ *
+ *  The "Handle pop-ups" row carries a `doc` link — the first row to — and the
+ *  document it opens is a TOPIC of the Documentation pane, which lives at
+ *  `/settings/documentation/$topic`. The pane stays router-free like every
+ *  other (a pane test passes a `vi.fn()`); this wrapper is the second place,
+ *  after `RoutedDocumentationPane`, that knows the address exists. */
+function RoutedOverlayRulesPane() {
+  const navigate = useNavigate();
+  return (
+    <OverlayRulesPane
+      onOpenDoc={(slug) =>
+        navigate({ to: "/settings/$pane/$topic", params: { pane: "documentation", topic: slug } })
+      }
+    />
+  );
+}
+
 const PANE_COMPONENTS: Record<PaneId, ComponentType> = {
   appearance: AppearancePane,
   editor: EditorPane,
@@ -104,7 +122,7 @@ const PANE_COMPONENTS: Record<PaneId, ComponentType> = {
   storage: StoragePane,
   stats: StatsPane,
   "failure-reasons": FailureReasonsPane,
-  "overlay-rules": OverlayRulesPane,
+  "overlay-rules": RoutedOverlayRulesPane,
   cost: CostPane,
   ai: AiPane,
   alerts: AlertsPane,

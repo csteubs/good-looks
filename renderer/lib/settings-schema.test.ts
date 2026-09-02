@@ -221,6 +221,12 @@ describe("search", () => {
     ["insights", "ai-insights-enabled"],
     ["monthly", "ai-insights-cadence"],
     ["black hole", "home-black-hole"],
+    // The pop-up switch is found by the vendor whose form is in the way, and
+    // by what the form is — nobody searching for it knows the word "overlay".
+    ["klaviyo", "popups-presets"],
+    ["datagrail", "popups-presets"],
+    ["newsletter", "popups-default"],
+    ["consent", "popups-default"],
   ];
 
   it.each(vocabulary)("finds %s", (query, expectedId) => {

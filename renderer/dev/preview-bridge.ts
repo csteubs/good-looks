@@ -823,6 +823,14 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       if (test) test.hidden = Boolean(p?.hidden);
       return test;
     },
+    /** The "Handle pop-ups" run option. Stored on the record the way the real
+     *  handler stores it, so `?test=t-login` keeps the box where it was put
+     *  across a refetch rather than snapping back to the fixture's default. */
+    "tests:setHandlePopups": (p) => {
+      const test = findTest(p?.id);
+      if (test) test.handlePopups = Boolean(p?.handlePopups);
+      return test;
+    },
     "tests:updateSteps": (p) => {
       const test = findTest(p?.id);
       if (test && Array.isArray(p?.steps)) test.steps = p.steps as typeof test.steps;

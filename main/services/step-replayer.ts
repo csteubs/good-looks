@@ -710,7 +710,7 @@ export function buildReplayScript(step: Step): string {
           if (step.force === true) {
             log("info", "another element (" + what + ") is on top — ignored, this click has Ignore Actionability (force)");
           } else {
-            log("error", "another element (" + what + ") is on top of this one — a real run fails here with \\"element intercepts pointer events\\"");
+            log("error", "another element (" + what + ") is on top of this one — a real run fails here with \\"element intercepts pointer events\\" — if that is a pop-up or banner, Handle pop-ups is the fix (run options, or Settings → Overlay rules)");
             return { ok: false, error: "Element is covered by " + what };
           }
         }

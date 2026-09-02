@@ -206,6 +206,9 @@ interface RecorderContextValue {
     testId?: string,
     viewport?: { width: number; height: number } | null,
     runBrowser?: RunBrowser,
+    /** Whether the trainer clicks pop-ups away during this session, from the
+     *  New Recording dialog's box. Omitted means follow `defaultHandlePopups`. */
+    handlePopups?: boolean,
   ) => Promise<void>;
   pause: () => void;
   resume: () => void;
@@ -861,13 +864,14 @@ export function RecorderProvider({
       testId?: string,
       viewport?: { width: number; height: number } | null,
       runBrowser?: RunBrowser,
+      handlePopups?: boolean,
     ) => {
       setLiveSteps([]);
       // A new session's list has nothing to do with the last one's highlight.
       setNewStepIds(new Set());
       setLastAddedStepId(null);
       prevStepsRef.current = null;
-      await api.recorder.start(url, name, testId, viewport, runBrowser);
+      await api.recorder.start(url, name, testId, viewport, runBrowser, handlePopups);
     },
     [],
   );
