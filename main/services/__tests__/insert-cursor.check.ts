@@ -193,6 +193,45 @@ assert(
     "this the label is clipped to nothing",
 );
 
+// ── 6. The step editor has the cursor too ────────────────────────────
+//
+// Edit Test → Edit Steps is the THIRD rendering of a step list, and the one
+// for a test recorded months ago — where the step that is missing is almost
+// never the last one. It appended unconditionally until 2026-09-02, so every
+// add was followed by a drag. It cannot share §3's assertions (no session, no
+// `liveSteps`, no scroll-follow: nothing arrives unbidden here), but the
+// cursor's own rules are the trainer's and drift between them is the same
+// bug §3 exists for: a control that means one thing in the trainer and
+// another in the editor.
+
+const editor = read("renderer/main/edit-steps-view.tsx");
+
+assert(
+  /import \{ CursorGap, INSERT_HERE, StepRow \} from "\.\/step-row"/.test(editor),
+  "edit-steps-view.tsx: renders the trainer's CursorGap with the trainer's copy — not a " +
+    "second insert control with its own words",
+);
+assert(
+  /label=\{i \+ 1 === draft\.length \? undefined : INSERT_HERE\}/.test(editor),
+  "edit-steps-view.tsx: labels the active cursor everywhere EXCEPT the end of the list — " +
+    "the trainer's rule, for the trainer's reason",
+);
+assert(
+  /justAdded=\{step\.id === lastAddedId\}/.test(editor),
+  "edit-steps-view.tsx: hands the arriving step to StepRow, which scrolls it into view — a " +
+    "step inserted mid-list in a list long enough to scroll is otherwise invisible, and reads " +
+    "as the add having done nothing",
+);
+assert(
+  /gl-step-list gl-step-list--tight/.test(editor),
+  "edit-steps-view.tsx: the list is `--tight`, as in both trainers — rows separated by their " +
+    "own cursors AND a gap would double the space between every step",
+);
+assert(
+  !/setDraft\(\(prev\) => \[\.\.\.prev, \.\.\.newSteps\]\)/.test(editor),
+  "edit-steps-view.tsx: an added step is spliced at the cursor, never appended",
+);
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

@@ -10,6 +10,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 import type { Step, StepType } from "../lib/recorder-types";
 import { EditStepsView } from "./edit-steps-view";
+import { INSERT_HERE } from "./step-row";
 
 function step(id: string, partial: Partial<Step> & { type: StepType }): Step {
   return { id, timestamp: 0, ...partial } as Step;
@@ -238,5 +239,109 @@ describe("using a variable in a step", () => {
       }),
     );
     expect(screen.getByText(/shop\.example\.com/)).toBeTruthy();
+  });
+});
+
+// ── Placing a new step ────────────────────────────────────────────────────
+//
+// New steps land at the INSERT CURSOR — the gap-between-rows control the
+// trainer has — not at the end. This editor is for a test recorded months ago,
+// where the step that is missing is almost never the last one; before the
+// cursor, every add appended and the user dragged the row up into place. The
+// rules pinned here are the trainer's: the cursor opens at the end, a click on
+// a gap moves it, an add lands there and advances it past what landed, and a
+// deletion above it pulls it back so it still names the same gap.
+describe("placing a new step", () => {
+  /** Stand in for the native "+ Add step" menu, answering with the chosen
+   *  kind, then drive the dialog it opens through to its confirm. */
+  async function addStep(label: string) {
+    (window as unknown as { glazeAPI: { Menu: { popup: unknown } } }).glazeAPI.Menu.popup = vi.fn(
+      async (opts: { items: { label?: string; commandId?: number }[] }) => {
+        const item = opts.items.find((i) => i.label === label);
+        // Not found means the kind was renamed or dropped — answer "nothing
+        // chosen" so the test fails on the missing dialog, not on a wrong
+        // commandId opening another kind's form.
+        return item?.commandId === undefined ? {} : { commandId: item.commandId };
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: /add step/i }));
+    const dialog = await screen.findByRole("dialog");
+    const confirm = Array.from(dialog.querySelectorAll("button")).find((b) =>
+      /^add step$/i.test(b.textContent ?? ""),
+    );
+    if (!confirm) throw new Error("the add-step dialog has no confirm button");
+    fireEvent.click(confirm);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  }
+
+  async function savedTypes(onSave: ReturnType<typeof vi.fn>): Promise<string[]> {
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    return (onSave.mock.calls[0][0] as Step[]).map((s) => s.type);
+  }
+
+  it("offers a cursor gap before every step and after the last", () => {
+    renderEditor();
+    expect(screen.getAllByLabelText(/move insert point here/i)).toHaveLength(STEPS.length + 1);
+  });
+
+  it("opens at the end, unlabelled, and appends there by default", async () => {
+    // The end needs no label — steps appearing under the last row is what
+    // everyone already expects — so the label's absence is the cursor's
+    // position made visible.
+    const { onSave } = renderEditor();
+    expect(screen.queryByText(INSERT_HERE)).toBeNull();
+    await addStep("Wait (duration)");
+    expect(await savedTypes(onSave)).toEqual(["goto", "click", "fill", "wait"]);
+  });
+
+  it("puts a new step where the cursor was clicked, and says where that is", async () => {
+    const { onSave } = renderEditor();
+    // Gap 1: between the goto and the click.
+    fireEvent.click(screen.getAllByLabelText(/move insert point here/i)[1]);
+    expect(screen.getByText(INSERT_HERE)).toBeTruthy();
+    await addStep("Wait (duration)");
+    expect(await savedTypes(onSave)).toEqual(["goto", "wait", "click", "fill"]);
+  });
+
+  it("advances past what landed, so two adds keep their order", async () => {
+    // The backend's insertStep rule (`cursor = at + 1`). Without it the second
+    // add lands ABOVE the first, and a hand-composed sequence comes out
+    // reversed.
+    const { onSave } = renderEditor();
+    fireEvent.click(screen.getAllByLabelText(/move insert point here/i)[1]);
+    await addStep("Wait (duration)");
+    await addStep("Press key");
+    expect(await savedTypes(onSave)).toEqual(["goto", "wait", "press", "click", "fill"]);
+  });
+
+  it("follows a deletion above it, so it still names the same gap", async () => {
+    // Cursor between click and fill (gap 2); delete the goto above it. The
+    // cursor is a gap index, so unchanged it would now point AFTER the fill.
+    const { onSave } = renderEditor();
+    fireEvent.click(screen.getAllByLabelText(/move insert point here/i)[2]);
+    fireEvent.click(screen.getAllByLabelText(/delete step/i)[0]);
+    await addStep("Wait (duration)");
+    expect(await savedTypes(onSave)).toEqual(["click", "wait", "fill"]);
+  });
+
+  it("stays put when a step below it is deleted", async () => {
+    const { onSave } = renderEditor();
+    fireEvent.click(screen.getAllByLabelText(/move insert point here/i)[1]);
+    fireEvent.click(screen.getAllByLabelText(/delete step/i)[2]);
+    await addStep("Wait (duration)");
+    expect(await savedTypes(onSave)).toEqual(["goto", "wait", "click"]);
+  });
+
+  it("marks the step that just landed so the list scrolls it into view", async () => {
+    // jsdom has no layout, so the scroll itself is unobservable here; what is
+    // pinned is the marker StepRow scrolls on (`justAdded`), on exactly one
+    // row, the one that arrived.
+    renderEditor();
+    fireEvent.click(screen.getAllByLabelText(/move insert point here/i)[1]);
+    await addStep("Wait (duration)");
+    const marked = document.querySelectorAll("[data-just-added]");
+    expect(marked).toHaveLength(1);
+    expect(marked[0].textContent).toMatch(/wait/i);
   });
 });
