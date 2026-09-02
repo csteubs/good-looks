@@ -378,10 +378,15 @@ function recordFailure(entry, method, outcome, candidates, url) {
   }
 }
 
-/** Patch the page's locator factories to tag what they return, and the Locator
- *  prototype's actions to heal on a resolve failure. */
-export function installHealing(page) {
-  // Tag locators with the app's canonical key as they're created.
+/** Tag the locators a PAGE's factories return with the app's canonical key.
+ *
+ *  Per page instance, and exported on its own, because a run can open more
+ *  than one: the capture fixture calls this for every page the context
+ *  creates (the tabs fixture hands them over), and a page whose factories are
+ *  untagged is a page on which every action arrives with no key and healing
+ *  bails on its first line — silently, which is how the second tab of a run
+ *  went unhealed. */
+export function tagHealFactories(page) {
   Object.keys(FACTORIES).forEach(function (name) {
     const orig = page[name];
     if (typeof orig !== "function") return;
@@ -393,6 +398,21 @@ export function installHealing(page) {
       return loc;
     };
   });
+}
+
+// The Locator prototype is patched once per process. A second install (a
+// retry re-enters the page fixture; a second tab installs per page) must not
+// wrap the wrappers, or every retry would run inside the previous one's.
+let protoPatched = false;
+
+/** Patch the page's locator factories to tag what they return, and the Locator
+ *  prototype's actions to heal on a resolve failure. */
+export function installHealing(page) {
+  // Tag locators with the app's canonical key as they're created.
+  tagHealFactories(page);
+
+  if (protoPatched) return;
+  protoPatched = true;
 
   let proto;
   try {
@@ -473,6 +493,15 @@ export function installHealing(page) {
         // a successful heal may navigate, and the page it lands on is not the
         // page the element went missing from.
         const url = safeUrl(this);
+        // The page THIS locator lives on, not the page the fixture was
+        // installed with: a run that opened a second tab heals on that tab,
+        // and a probe evaluated on the opener would rank candidates on a
+        // document the element was never in.
+        // Falls back to the installed page for a locator that cannot say
+        // (a fake in a test, a Playwright without \`page()\`): the previous
+        // behaviour, never a throw from inside the heal.
+        const own = typeof this.page === "function" ? this.page() : null;
+        const pg = own && typeof own.evaluate === "function" ? own : page;
 
         // Before anything is healed. A successful heal changes the page (it
         // clicks something), and what matched at the moment of failure is the
@@ -491,9 +520,9 @@ export function installHealing(page) {
         const seedList = Array.isArray(entry.seeds) ? entry.seeds : [];
         for (let s = 0; s < seedList.length && s < 3; s++) {
           try {
-            const seeded = fromModel(page, seedList[s]);
+            const seeded = fromModel(pg, seedList[s]);
             if (!seeded) continue;
-            const seededRect = await measuredBox(seeded, page);
+            const seededRect = await measuredBox(seeded, pg);
             const result = await orig.apply(seeded, args);
             events.push({
               outcome: "healed",
@@ -522,7 +551,7 @@ export function installHealing(page) {
 
         let candidates = [];
         try {
-          candidates = await page.evaluate(entry.probe);
+          candidates = await pg.evaluate(entry.probe);
         } catch (probeErr) {
           process.stderr.write("[glaze-heal] probe failed: " + String(probeErr) + "\\n");
           throw err;
@@ -542,9 +571,9 @@ export function installHealing(page) {
         for (let i = 0; i < candidates.length && i < 3; i++) {
           const cand = candidates[i];
           try {
-            const healed = fromModel(page, cand.locator);
+            const healed = fromModel(pg, cand.locator);
             if (!healed) continue;
-            const rect = await measuredBox(healed, page);
+            const rect = await measuredBox(healed, pg);
             const result = await orig.apply(healed, args);
             events.push({
               outcome: "healed",

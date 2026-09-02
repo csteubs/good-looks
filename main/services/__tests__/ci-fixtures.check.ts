@@ -88,6 +88,7 @@ const appRunner = code("main/services/playwright-runner.ts");
     "settle-fixture-source",
     "signature-fixture-source",
     "user-page-fixture-source",
+    "tabs-fixture-source",
   ]) {
     assert(
       new RegExp(`shared/${mod}\\.mjs`).test(appRunner),
@@ -103,7 +104,7 @@ const appRunner = code("main/services/playwright-runner.ts");
   // The capture fixture imports the other four, so a partial set is an import
   // error rather than a disabled feature. Pinned as a set, not per file.
   const names = CAPABILITY_FIXTURES.map((f) => f.file);
-  for (const needed of ["glaze-settle.mjs", "glaze-signature.mjs", "glaze-user-page.mjs"]) {
+  for (const needed of ["glaze-settle.mjs", "glaze-signature.mjs", "glaze-user-page.mjs", "glaze-tabs.mjs"]) {
     assert(
       names.includes(needed),
       `${needed} ships with the capture fixture — it imports it, so a partial set will not load`,
@@ -161,6 +162,7 @@ const appRunner = code("main/services/playwright-runner.ts");
     ["wantsSettle", /const wantsSettle =\s*!imported/],
     ["wantsHeal", /const wantsHeal =\s*\n?\s*!imported/],
     ["wantsUserPage", /const wantsUserPage =\s*!imported/],
+    ["wantsFollowTabs", /const wantsFollowTabs =\s*!imported/],
     [
       "wantsDismiss",
       /const handlePopups =\s*\n?\s*!imported[\s\S]{0,300}?const armedRules = imported\s*\?\s*\[\]\s*:[\s\S]{0,400}?const wantsDismiss =/,

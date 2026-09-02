@@ -286,6 +286,28 @@ because the site put it there; your test now sees the site as a visitor does.
 
 ---
 
+## 10. Links that open a new tab
+
+A link with a new-tab target, or a button that calls `window.open`, is not a
+pop-up in either sense above — it is a second browser tab — and nothing here
+handles it, because nothing needs to. While you record, the trainer keeps every
+navigation in its one window, so your recording is one linear journey: the
+click, then the steps you took on the page it opened. When the test runs, the
+browser opens that page in a new tab exactly as a visitor's would, and the run
+follows it: every step after the click acts on the newest tab, and if that tab
+closes itself (a sign-in window often does), the run continues on the tab it
+came from.
+
+There is nothing to switch on and nothing to add to the test. The one thing you
+will see is a line in Step details while the run is being watched, under the
+step that opened the tab, reading *New Tab Opened (#N)* — N being how many tabs
+the run's browser had open at that moment — and the same line in the run's log.
+
+A test imported from another Playwright project is the exception: it runs as
+written, with its own handling of any tab it opens.
+
+---
+
 ## Related reading
 
 - **Settings → Overlay rules** — the default switch, the built-in handlers and

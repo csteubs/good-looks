@@ -106,8 +106,13 @@ for (const [name, src] of [
   );
   // Unconditional: heal-only and crawl-only runs wrap the same methods, so they
   // need the announcement just as much as a capturing run does.
+  // Anchored on the INDENT: four spaces is the fixture body itself, so a
+  // `patchOnce(page)` that moved inside an `if` (six or more) fails here.
+  // It sits after the heal and settle installs rather than beside the
+  // per-test state, because capture has to be the OUTERMOST wrapper.
   assert(
-    /specFile = testInfo\.file[\s\S]{0,80}?patchOnce\(page\)/.test(captureFixtureSource),
+    /\n {4}patchOnce\(page\);/.test(captureFixtureSource) &&
+      captureFixtureSource.indexOf("\n    patchOnce(page);") < captureFixtureSource.indexOf("await use("),
     "the action patch is installed for every run that loads the fixture",
   );
   assert(

@@ -10,6 +10,104 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-02 — The run follows the newest tab, and says so with one row
+
+**The report.** A test recorded on a site where a link opened in the same
+tab failed on every run: the run opened the URL in a different tab, and every
+assertion after the click failed against the opener.
+
+**Why it was right in the trainer and wrong in the run.** The trainer forces
+every navigation into its one window — the capture script rewrites a `_blank`
+target to `_self` before the browser follows it (`keepInWindow`), and
+`setWindowOpenHandler` denies every `window.open` and re-issues the URL in
+place (DECISIONS 2026-08-01). The recording is therefore LINEAR: a click, then
+steps on the document it opened. A run has none of that. Real Playwright
+honours the target, a second `Page` appears in the context, and the spec's one
+`page` (`async ({ page })`) stays on the opener. Nothing in the model could say
+otherwise: `root()` seeds every locator with the literal `"page"`.
+
+**What was chosen.** The run follows the newest tab, on its own, the way a
+person's attention does — a fixture (`shared/tabs-fixture-source.mjs`), on
+for every app-generated spec, invisible except for one row in Step details:
+`> New Tab Opened (#N)`, under the step that opened it, N being the tabs open
+in the run's browser at that moment. That was the requirement stated for it,
+and it ruled out the first draft of the plan, which asked the user to author
+`popup` and `switchPage` steps (kept as the deferred design in
+`docs/plans/multi-tab.md` for the one journey following cannot express: act
+on the opener WHILE the popup is open).
+
+**Why four mechanisms and not one.** A spike against real Playwright (the
+plan's appendix) found each necessary:
+
+- **A proxy page is not enough.** `expect(page).toHaveURL` after an anchor
+  click failed every time. Playwright's page matchers bind their receiver
+  ONCE at call time — `toHaveURLWithPredicate` calls
+  `page.mainFrame().waitForURL(...)` — and an anchor's popup arrives AFTER the
+  click resolves, so the matcher polled the opener for its whole timeout. A
+  `window.open` popup exists before the click resolves and passed. Hence the
+  **intent signal**: a context init script hooks `window.open` and
+  capture-phase clicks on `a[target]`/`area[target]`/`form[target]` and
+  reports through a binding, and the next action or assertion waits (bounded)
+  for the `page` event before it binds. The page's behaviour is unchanged; it
+  only says, synchronously, that a tab is about to exist.
+- **`expect` has to be wrapped.** Even with the tab present, `expect` binds
+  at call time, so the fixture's re-exported `expect` resolves a page or
+  recipe receiver when the matcher is CALLED, after tabs settle. The generated
+  spec imports `expect` from `@playwright/test` and the runner redirects that
+  import to the capture fixture, which is why the wrapper can sit there.
+- **Locators have to be lazy.** A popup that closes itself (an OAuth window,
+  300 ms in the spike) is gone by the time the next step runs; a locator built
+  on it at creation cannot act. A factory call through the proxy returns a
+  RECIPE materialized on the active page when it acts. A generated spec builds
+  each step's locator inline, so this is one materialization per step.
+- **One retry, keyed on `isClosed()`.** The run reaches the next step in
+  milliseconds and the popup takes hundreds to close, so the step binds the
+  popup and fails when it goes. It is retried once on the new active page —
+  and only when the bound page IS closed and the active page changed. The
+  error text was tried first and lost a run in eight: the same close surfaced
+  as "Target page, context or browser has been closed" and as "Protocol error
+  (Runtime.callFunctionOn): session closed".
+
+**The assertion wrapper announces its own step.** Playwright takes a step's
+location from the first frame outside its library; once `expect` goes through
+the fixture that frame is the fixture, and the step reporter's file guard
+drops it — correctly. So the wrapper announces begin/end through the same
+marker hooks the capture fixture's action wrapper uses. Without this every
+assertion in every recorded run would have left the progress bar on the step
+before it, which `e2e/tab-follow.spec.ts` asserts against.
+
+**The other fixtures had to follow the page.** Capture wrapped `PAGE_ACTIONS`
+on the fixture page INSTANCE (locator actions were on the prototype and
+already covered every page), log capture listened on one page, axe was a
+page-level init script, heal tagged one page's factories and ran its probe on
+the closed-over page, settle had the same split, the user stylesheet listened
+on one page, the dismissal counter was a page binding. Each gained a per-page
+half the tabs fixture calls for every page the context opens; axe and the
+counter moved to the context. Left as they were, a second tab would have had
+no screenshots, no console, no healing and no stylesheet — silently, with the
+run green. Manifest and log entries carry `page: n` for a later tab only.
+
+**Off for imported specs.** An imported spec that manages its own popups
+(`const [popup] = await Promise.all([page.waitForEvent("popup"), …])`) means
+`page` as the opener from then on; following would break it. `GLAZE_FOLLOW_TABS`
+is set by both runners for `!imported`, the gate `check:ci-fixtures`
+enumerates. No setting: the recording already made the choice.
+
+**Rejected: a same-tab run policy.** An init script that rewrites every
+target and replaces `window.open` with `location.assign` needs none of the
+above. It changes what the site does — a `noopener` popup that posts a message
+to its opener, a flow that closes itself, a page that reads `window.opener` —
+and the requirement was that the tab opens and the watcher sees it. It stays
+available as the user's own page init script.
+
+**A tab is not a step.** The marker carries no line, so `splitStepMarkers`
+hands it back BESIDE the transitions (`tabs`) rather than among them: every
+reader of `markers` indexes a step by `line`, and a tab among them is a step
+with none. The runner files it under the last step that began (`afterIndex`,
+-1 for a tab the page opened on load) and the console's `N/M steps` does not
+count it. Downloads are unaffected: a `_blank` link that serves an attachment
+fires `download` on the opener and creates no page, measured.
+
 ### 2026-09-02 — Edit Steps places a new step at an insert cursor, the trainer's control, not at the end
 
 **The report.** With the Edit Test → Edit Steps editor open, every step added

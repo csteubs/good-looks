@@ -66,6 +66,7 @@ import { retryFields } from "../shared/run-attempts.mjs";
 import { splitStepMarkers, type StepMarker } from "../shared/step-marker.mjs";
 import { stepReporterSource } from "../shared/step-reporter-source.mjs";
 import { userPageFixtureSource, USER_PAGE_FIXTURE_FILE } from "../shared/user-page-fixture-source.mjs";
+import { tabsFixtureSource, TABS_FIXTURE_FILE } from "../shared/tabs-fixture-source.mjs";
 import type { Step } from "../main/recorder/types.js";
 
 const pageHtml = (text: string) => `<!doctype html>
@@ -119,6 +120,7 @@ test.beforeAll(async () => {
   fs.writeFileSync(path.join(dir, SIGNATURE_FIXTURE_FILE), signatureFixtureSource);
   fs.writeFileSync(path.join(dir, DISMISS_FIXTURE_FILE), dismissFixtureSource);
   fs.writeFileSync(path.join(dir, USER_PAGE_FIXTURE_FILE), userPageFixtureSource);
+  fs.writeFileSync(path.join(dir, TABS_FIXTURE_FILE), tabsFixtureSource);
   fs.writeFileSync(path.join(dir, GLAZE_RUNTIME_FILE), glazeRuntimeSource);
   fs.symlinkSync(path.join(process.cwd(), "node_modules"), path.join(dir, "node_modules"));
 });

@@ -39,17 +39,28 @@ import { USER_CSS_ENV, USER_INIT_ENV, USER_PAGE_FIXTURE_FILE } from "./user-page
 import { SIGNATURE_COUNT_ENV, SIGNATURE_FIXTURE_FILE } from "./signature-fixture-source.mjs";
 import { STEP_MARKER } from "./step-marker.mjs";
 import { ATTEMPT_HELPERS } from "./attempt-artifacts.mjs";
+import { FOLLOW_TABS_ENV, TABS_FIXTURE_FILE } from "./tabs-fixture-source.mjs";
 
-export const captureFixtureSource = `import { test as base, expect } from "@playwright/test";
+export const captureFixtureSource = `import { test as base, expect as baseExpect } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
-import { installHealing } from "./glaze-heal.mjs";
-import { installSettle } from "./${SETTLE_FIXTURE_FILE}";
+import { installHealing, tagHealFactories } from "./glaze-heal.mjs";
+import { installSettle, installSettleOnPage } from "./${SETTLE_FIXTURE_FILE}";
 import { installSignatureHeaders, reportSignedRequests } from "./${SIGNATURE_FIXTURE_FILE}";
 import { dismissalsSoFar, installOverlayDismissal } from "./${DISMISS_FIXTURE_FILE}";
-import { installUserPage } from "./${USER_PAGE_FIXTURE_FILE}";
+import { installUserPage, installUserPageOn } from "./${USER_PAGE_FIXTURE_FILE}";
+import { followingExpect, installTabFollowing } from "./${TABS_FIXTURE_FILE}";
 
-export { expect };
+// Tab following (tabs-fixture-source.mjs). On for every app-generated spec:
+// the trainer records a linear journey, and a run that did not follow the
+// newest tab would strand every step after a \`_blank\` click on the opener.
+const TABS_ON = process.env.${FOLLOW_TABS_ENV} === "1";
+
+// The \`expect\` a redirected spec imports. When tabs are followed it resolves
+// the page and locator proxies at CALL time — Playwright's page matchers bind
+// their receiver once, so an \`expect(page)\` that started against the opener
+// would poll the opener for its whole timeout. Off, it is Playwright's own.
+export const expect = TABS_ON ? followingExpect(baseExpect) : baseExpect;
 
 const ON = process.env.GLAZE_CAPTURE_ARTIFACTS === "1";
 // Run-time Auto-Heal is gated independently of capture, but installed from
@@ -207,19 +218,39 @@ ${LOG_CAPTURE_HELPERS}
  * inside Playwright's event emitter would surface as an unhandled rejection and
  * fail a run that was otherwise fine.
  */
+/** Which tab a page is, 0 for the one the test started on. Stamped by the
+ *  tabs fixture; a page nothing stamped is the first. Only a later tab is
+ *  written into an entry, so a manifest predating tabs reads exactly as it
+ *  did. */
+function tabIndexOf(page) {
+  try {
+    const n = page && page.__glTabIndex;
+    return typeof n === "number" && n > 0 ? n : 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+/** Add the tab to an entry when it is not the first one. */
+function onTab(entry, page) {
+  const tab = tabIndexOf(page);
+  if (tab > 0) entry.page = tab;
+  return entry;
+}
+
 function installLogCapture(page, logs) {
   const started = new Map();
 
   page.on("console", (msg) => {
     try {
-      glazePush(logs.console, {
+      glazePush(logs.console, onTab({
         step: ctx ? ctx.index : 0,
         ts: Date.now(),
         type: String(msg.type()),
         text: glazeTruncate(msg.text()),
         url: glazeScrubUrl((msg.location && msg.location().url) || ""),
         line: (msg.location && msg.location().lineNumber) || 0,
-      }, MAX_CONSOLE_HEAD, MAX_CONSOLE_TAIL);
+      }, page), MAX_CONSOLE_HEAD, MAX_CONSOLE_TAIL);
     } catch (e) { /* never throw into the run */ }
   });
 
@@ -227,14 +258,14 @@ function installLogCapture(page, logs) {
   // most diagnostic single line available when a click "did nothing".
   page.on("pageerror", (err) => {
     try {
-      glazePush(logs.console, {
+      glazePush(logs.console, onTab({
         step: ctx ? ctx.index : 0,
         ts: Date.now(),
         type: "pageerror",
         text: glazeTruncate(String((err && err.stack) || err)),
         url: "",
         line: 0,
-      }, MAX_CONSOLE_HEAD, MAX_CONSOLE_TAIL);
+      }, page), MAX_CONSOLE_HEAD, MAX_CONSOLE_TAIL);
     } catch (e) { /* ignore */ }
   });
 
@@ -246,7 +277,7 @@ function installLogCapture(page, logs) {
     try {
       const t0 = started.get(req) || Date.now();
       started.delete(req);
-      glazePush(logs.network, Object.assign({
+      glazePush(logs.network, onTab(Object.assign({
         step: ctx ? ctx.index : 0,
         ts: Date.now(),
         ms: Date.now() - t0,
@@ -254,7 +285,7 @@ function installLogCapture(page, logs) {
         url: glazeScrubUrl(req.url()),
         resourceType: String(req.resourceType()),
         requestHeaders: glazeFilterHeaders(req.headers(), ALL_HEADERS),
-      }, fields), MAX_NETWORK_HEAD, MAX_NETWORK_TAIL);
+      }, fields), page), MAX_NETWORK_HEAD, MAX_NETWORK_TAIL);
     } catch (e) { /* ignore */ }
   };
 
@@ -400,7 +431,7 @@ async function capture(page, method, target, args, stepMs) {
   // \`ms\` is the SCREENSHOT's cost (and is summed into captureMs); \`stepMs\` is
   // how long the action itself took. Two different questions — what capture
   // costs, and why the suite is slow — and a single field cannot answer both.
-  const entry = { index: index, action: info.action, target: info.target, value: info.value, ok: ok, ts: Date.now(), ms: ms, stepMs: stepMs };
+  const entry = onTab({ index: index, action: info.action, target: info.target, value: info.value, ok: ok, ts: Date.now(), ms: ms, stepMs: stepMs }, page);
   if (rect) entry.rect = rect;
   if (violations) entry.a11y = violations;
   ctx.manifest.push(entry);
@@ -449,10 +480,18 @@ function wrap(obj, method, getPage) {
   };
 }
 
+/** The page-instance half of the patch: page-level actions on THIS page.
+ *  Locator actions live on the prototype and cover every page at once; these
+ *  do not, so a page the context opens later (a tab) gets its own call — or
+ *  its \`goto\` reports no step and takes no screenshot. */
+function patchPageActions(page) {
+  for (const m of PAGE_ACTIONS) wrap(page, m, function () { return page; });
+}
+
 function patchOnce(page) {
+  patchPageActions(page);
   if (patched) return;
   patched = true;
-  for (const m of PAGE_ACTIONS) wrap(page, m, function () { return page; });
   // Reach the Locator prototype from a throwaway locator and patch it once.
   try {
     const proto = Object.getPrototypeOf(page.locator("body"));
@@ -497,8 +536,62 @@ function reportDismissals() {
   } catch (e) { /* reporting is best-effort */ }
 }
 
-export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON || SIG_ON || DISMISS_ON || USER_PAGE_ON || SAVE_STATE) ? base.extend({
+export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON || SIG_ON || DISMISS_ON || USER_PAGE_ON || SAVE_STATE || TABS_ON) ? base.extend({
   page: async ({ page }, use, testInfo) => {
+    // Per-test state, read together: the spec Playwright resolved, and which
+    // attempt at it this is. Playwright numbers a retry from 1 and re-enters a
+    // \`page\` fixture for every attempt, so this is the one place that knows.
+    // Set FIRST, ahead of every install below, because the tabs fixture's
+    // markers and the assertion wrapper's announcements carry the attempt.
+    specFile = testInfo.file || "";
+    attemptNo = normalizeAttempt(testInfo.retry);
+    // Console + network, decided up front so the per-page installer below can
+    // close over it — a tab opened later records into the same stores.
+    const logs = LOGS_ON && DIR ? { console: glazeMakeStore(), network: glazeMakeStore() } : null;
+    // What a LATER page gets: the instance half of every install the first
+    // page gets below, in the same order. The prototype halves are already in
+    // place and cover every page; these are the ones that are not.
+    const installOnPage = (p) => {
+      if (USER_PAGE_ON) {
+        try { installUserPageOn(p); } catch (e) { /* best effort */ }
+      }
+      if (HEAL_ON) {
+        try { tagHealFactories(p); } catch (e) { /* best effort */ }
+      }
+      if (SETTLE_ON) {
+        try { installSettleOnPage(p); } catch (e) { /* best effort */ }
+      }
+      patchPageActions(p);
+      if (logs) installLogCapture(p, logs);
+    };
+    // Tab following goes on FIRST: it owns the context's page event, and the
+    // installs that follow need to have happened on the first page before a
+    // second can exist. The spec receives the proxy it hands back; every
+    // install below still targets the REAL first page.
+    let specPage = page;
+    if (TABS_ON) {
+      try {
+        specPage = await installTabFollowing(page, {
+          perPage: installOnPage,
+          attempt: attemptNo,
+          // The assertion wrapper announces its own step, the way \`wrap\` below
+          // announces an action: once \`expect\` goes through the tabs fixture
+          // the reporter files the step under that file and drops it.
+          announce: {
+            begin: (title) => {
+              const line = specCallerLine();
+              if (line !== null) emitStepMarker({ event: "begin", line: line, title: title });
+              return { line: line, title: title };
+            },
+            end: (a, ok, duration) => {
+              if (a && a.line !== null) emitStepMarker({ event: "end", line: a.line, title: a.title, ok: ok, duration: duration });
+            },
+          },
+        });
+      } catch (e) {
+        process.stderr.write("[glaze-tabs] install failed: " + String(e) + "\\n");
+      }
+    }
     // The signature goes on FIRST, and is the only one of these that is not an
     // action patch — it routes the network. Installed ahead of the three
     // wrappers so it can never end up inside one of them, where a heal retry
@@ -560,18 +653,14 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
     // Installed AFTER heal and settle so it is the outermost of the three — but
     // \`specCallerLine\` searches the whole stack rather than one frame, so a
     // future patch landing on either side of it does not silently stop progress.
-    // Per-test state, read together: the spec Playwright resolved, and which
-    // attempt at it this is. Playwright numbers a retry from 1 and re-enters a
-    // \`page\` fixture for every attempt, so this is the one place that knows.
-    specFile = testInfo.file || "";
-    attemptNo = normalizeAttempt(testInfo.retry);
     patchOnce(page);
     // Inject axe into every document, once, rather than evaluating its ~570KB
     // source per check. addInitScript survives navigation, which a per-check
-    // injection would not.
+    // injection would not. On the CONTEXT, so a tab the run opens has it too
+    // — a page-level script left every audit on a second tab returning null.
     if (A11Y_ON && AXE_PATH) {
       try {
-        await page.addInitScript({ path: AXE_PATH });
+        await page.context().addInitScript({ path: AXE_PATH });
       } catch (e) {
         process.stderr.write("[glaze-a11y] could not inject axe: " + String(e) + "\\n");
       }
@@ -583,7 +672,7 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
       // signed-request count has to be reported from this path too, or the one
       // run that is ONLY about signatures is the one that says nothing.
       try {
-        await use(page);
+        await use(specPage);
       } finally {
         await saveSessionState(page, testInfo);
         reportSignedRequests();
@@ -594,13 +683,12 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
     const attemptDir = attemptArtifactDir(attemptNo);
     try { fs.mkdirSync(attemptDir, { recursive: true }); } catch (e) { /* ignore */ }
     ctx = { dir: attemptDir, index: 0, manifest: [], startedAt: Date.now(), captureMs: 0, a11yMs: 0, a11yChecks: 0 };
-    const logs = LOGS_ON ? { console: glazeMakeStore(), network: glazeMakeStore() } : null;
     if (logs) installLogCapture(page, logs);
     // The action patch itself is already installed above — every run that loads
     // this fixture needs it for per-step progress, so it is no longer gated on
     // screenshots or a11y being on.
     try {
-      await use(page);
+      await use(specPage);
     } finally {
       await saveSessionState(page, testInfo);
       reportSignedRequests();

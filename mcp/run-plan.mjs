@@ -322,6 +322,17 @@ export function describeRun(
         "in this run and pass in an app run of the same test.",
     );
   }
+  // Tab following. Said only when a runner that KNOWS about it reports it off
+  // — an older caller passes no `ran.followTabs`, and a caveat on every one of
+  // its runs would be the kind people learn to skip. An imported spec is not
+  // followed by design and is not caveated: its `page` is its own.
+  if (ran.followTabs === false && !test?.sourceDir) {
+    skipped.push(
+      "Tab following — this run did not follow a tab the page opened, so a step after a " +
+        "link that opens one acts on the opener rather than the new tab, and can fail here " +
+        "where an app run of the same test passes.",
+    );
+  }
   const secrets = secretVariableNames(test);
   if (secrets.length > 0) {
     skipped.push(

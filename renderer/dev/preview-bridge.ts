@@ -2450,6 +2450,10 @@ function startFakeRun(
     // `line` mirrors the fixture's own getScript: the goto sits on line 4 and
     // every later step is imagined one line further down.
     later(() => emit("runner:step", { runId, index, status: "begin", ok: true, line: 4 + index }));
+    // The second step of every preview run opens a tab, so the
+    // "> New Tab Opened (#2)" row in Step details can be seen in a browser —
+    // the only place an agent can look at it.
+    if (index === 1) later(() => emit("runner:tab", { runId, count: 2, afterIndex: index }));
     later(() => {
       const ok = index !== failAt;
       emit("runner:step", { runId, index, status: "end", ok, line: 4 + index });

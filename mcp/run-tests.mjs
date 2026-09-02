@@ -79,6 +79,7 @@ import { seedsForTest } from "../shared/propagation.mjs";
 import { dismissEnv } from "../shared/dismiss-fixture-names.mjs";
 import { armedPopupRulesFor, resolveHandlePopups } from "../shared/popup-presets.mjs";
 import { userPageEnv } from "../shared/user-page-fixture-source.mjs";
+import { FOLLOW_TABS_ENV } from "../shared/tabs-fixture-source.mjs";
 // The CI secret contract — where a secret comes from without the app, and
 // the refusal when it comes from nowhere.
 import { describeMissingSecrets, resolveCiSecrets } from "../shared/ci-secrets.mjs";
@@ -646,6 +647,11 @@ export function createRunner({
     // `check:ci-fixtures` asserts the absence directly.
     const wantsUserPage =
       !imported && Boolean(settings.userStylesheet || settings.userInitScript);
+    // Tab following: every app-generated spec. The trainer records a linear
+    // journey, so a run has to follow the newest tab or a click that opens one
+    // strands every later step on the opener. Never an imported spec — one
+    // that manages its own popups means `page` as the opener from then on.
+    const wantsFollowTabs = !imported;
     // Handle pop-ups: the standing overlay rules armed by HOST from the test's
     // own starting URL, plus the built-in Klaviyo/DataGrail handlers — through
     // the same `armedPopupRulesFor` the app's runner and trainer call, gated
@@ -680,7 +686,8 @@ export function createRunner({
       wantsSettle ||
       wantsHeal ||
       wantsUserPage ||
-      wantsDismiss;
+      wantsDismiss ||
+      wantsFollowTabs;
 
     // ── The fixture gates (R8) ─────────────────────────────────────────────
     //
@@ -762,6 +769,7 @@ export function createRunner({
       if (wantsUserPage) {
         Object.assign(env, userPageEnv(settings));
       }
+      env[FOLLOW_TABS_ENV] = wantsFollowTabs ? "1" : "0";
       // ALWAYS, armed or not: `dismissEnv([])` sets the count to 0, and the
       // capture fixture reads that count to decide whether to install anything.
       // Assigning it only when armed would leave the variable absent, which the
@@ -829,7 +837,7 @@ export function createRunner({
     }
 
     const startedAt = Date.now();
-    const { exitCode, output, failedLine, maxAttempt } = await new Promise((resolve) => {
+    const { exitCode, output, failedLine, maxAttempt, tabsOpened } = await new Promise((resolve) => {
       const child = spawn(
         process.execPath,
         runArgs({
@@ -869,9 +877,13 @@ export function createRunner({
       // retry happened at all. Playwright says "1 flaky" in its summary line;
       // that is prose, and these markers are already parsed.
       let maxAttempt = 0;
+      // Tabs the browser opened, counted off the tabs fixture's markers so the
+      // run record can say so — the stderr line is prose in the log.
+      let tabsOpened = 0;
       const take = (chunk) => {
         const split = splitStepMarkers(buffered, chunk);
         buffered = split.rest;
+        tabsOpened += split.tabs.length;
         for (const marker of split.markers) {
           if (marker.event === "begin") lastLine = marker.line;
           if (!marker.ok) failedLine = marker.line;
@@ -901,6 +913,7 @@ export function createRunner({
           output: out,
           failedLine: failedLine ?? lastLine,
           maxAttempt,
+          tabsOpened,
         });
       });
     });
@@ -1106,6 +1119,10 @@ export function createRunner({
         // `ran.autoHeal` was, and the labels are what let `describeRun` say
         // WHICH rules instead of whether.
         overlayRules: armedRules.map((r) => r.label || r.host),
+        // Whether the run followed the newest tab, and how many it opened —
+        // the count comes off the fixture's own markers.
+        followTabs: wantsFollowTabs,
+        tabsOpened,
       },
       // CARRIED OUT of the run, not left only on the record. `--junit` builds
       // its report from THIS INVOCATION'S results and never reads run history:

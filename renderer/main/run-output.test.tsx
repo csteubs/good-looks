@@ -14,7 +14,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 
 import { toneFor } from "../lib/ai-debug-status";
 import type { AiDebugStatus, Step } from "../lib/recorder-types";
-import { RunOutput } from "./run-output";
+import { RunOutput, tabOpenedLabel } from "./run-output";
 import { summariseRun } from "../lib/run-summary";
 import type { RunInfo } from "./recorder-store";
 
@@ -294,6 +294,49 @@ describe("the Step details tab", () => {
     render(<Panel info={info({ code: 1, stepStatus: { 0: "passed" } })} steps={[step(), step()]} />);
     selectTab("Step details");
     expect(rows()[1].getAttribute("data-status")).toBe("idle");
+  });
+
+  it("shows a tab the run opened as a row under the step that opened it", () => {
+    // The one thing tab handling shows the user. The run follows the newest
+    // tab on its own; this row is how someone watching knows it happened,
+    // and WHERE it sits is the information: under the step that opened it.
+    render(
+      <Panel
+        info={info({ code: 0, stepStatus: { 0: "passed", 1: "passed", 2: "passed" }, tabEvents: [{ afterIndex: 1, count: 2 }] })}
+        steps={[step(), step(), step()]}
+      />,
+    );
+    selectTab("Step details");
+    const all = document.querySelectorAll('[data-gl="step-detail"], [data-gl="tab-event"]');
+    expect(Array.from(all).map((el) => el.getAttribute("data-gl"))).toEqual([
+      "step-detail",
+      "step-detail",
+      "tab-event",
+      "step-detail",
+    ]);
+    const tab = document.querySelector('[data-gl="tab-event"]')!;
+    expect(tab.textContent).toContain(tabOpenedLabel(2));
+    expect(tab.textContent).toContain("New Tab Opened (#2)");
+    // Not counted as a step: three steps, three "Step N" rows.
+    expect(rows()).toHaveLength(3);
+  });
+
+  it("shows a tab the page opened before any step above the first row", () => {
+    render(
+      <Panel
+        info={info({ code: 0, stepStatus: { 0: "passed" }, tabEvents: [{ afterIndex: -1, count: 2 }] })}
+        steps={[step()]}
+      />,
+    );
+    selectTab("Step details");
+    const all = document.querySelectorAll('[data-gl="step-detail"], [data-gl="tab-event"]');
+    expect(Array.from(all).map((el) => el.getAttribute("data-gl"))).toEqual(["tab-event", "step-detail"]);
+  });
+
+  it("shows no tab row for a run that opened none", () => {
+    render(<Panel info={info({ code: 0, stepStatus: { 0: "passed" } })} steps={[step()]} />);
+    selectTab("Step details");
+    expect(document.querySelector('[data-gl="tab-event"]')).toBeNull();
   });
 });
 

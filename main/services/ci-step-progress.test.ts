@@ -46,6 +46,27 @@ function drain(chunks: string[]): { visible: string; lastBegin: number | null; f
 
 const marker = (payload: object): string => `${STEP_MARKER}${JSON.stringify(payload)}\n`;
 
+describe("a tab the browser opened", () => {
+  it("is stripped from the output and counted, never mistaken for a step", () => {
+    // The MCP runner counts `split.tabs` onto the run record; the step index
+    // logic reads `split.markers` only. A tab among the transitions would be
+    // a step with no line — and printed raw, it would be a JSON line in an
+    // agent's context.
+    const { visible, lastBegin, failed } = drain([
+      marker({ event: "begin", line: 5, ok: true }),
+      marker({ event: "tab", count: 2 }),
+      marker({ event: "end", line: 5, ok: true }),
+    ]);
+    expect(visible).not.toContain(STEP_MARKER);
+    expect(visible).not.toContain("tab");
+    expect(lastBegin).toBe(5);
+    expect(failed).toBeNull();
+    const split = splitStepMarkers("", marker({ event: "tab", count: 2 }));
+    expect(split.tabs).toHaveLength(1);
+    expect(split.markers).toHaveLength(0);
+  });
+});
+
 describe("the markers never reach the run's output", () => {
   it("strips every marker and keeps everything else", () => {
     const { visible } = drain([

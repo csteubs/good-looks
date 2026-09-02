@@ -79,7 +79,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState, type ReactNode } from "react";
 
 import { StatusChip, TONE } from "../theme";
 import type { ToneName } from "../theme";
@@ -163,6 +163,12 @@ function writePanelHeight(h: number): void {
 
 /** The glyph for one step's outcome in the Step details tab. `undefined` is a
  *  step the run has not reached (or no run at all) — a dash, never a verdict. */
+/** The Step details row for a tab the run's browser opened. Exported so the
+ *  copy is asserted directly rather than re-typed in a test. */
+export function tabOpenedLabel(count: number): string {
+  return `New Tab Opened (#${count})`;
+}
+
 function stepGlyph(status: RunStepStatus | undefined) {
   if (status === "passed") return <Check className="size-3 shrink-0 text-support-green" aria-hidden="true" />;
   if (status === "failed") return <X className="size-3 shrink-0 text-support-red" aria-hidden="true" />;
@@ -239,6 +245,24 @@ export function RunOutput({
   const stepsPassed = statuses.filter((s) => s === "passed").length;
   const total = steps && steps.length > 0 ? steps.length : statuses.length;
   const hitRate = ran > 0 ? Math.round((stepsPassed / ran) * 100) : null;
+  // The one thing tab handling shows: a row under the step that opened a tab.
+  // The run follows the newest tab on its own (shared/tabs-fixture-source.mjs);
+  // this is how a person watching knows it happened. `afterIndex` -1 is a tab
+  // the page opened before any step began, shown above the first row.
+  const tabRows = (afterIndex: number): ReactNode =>
+    (info?.tabEvents ?? [])
+      .filter((t) => t.afterIndex === afterIndex)
+      .map((t, n) => (
+        <div
+          key={`tab-${afterIndex}-${n}`}
+          className="flex items-center gap-1.5 py-0.5 pl-5 text-tertiary"
+          data-gl="tab-event"
+          data-count={t.count}
+        >
+          <span aria-hidden="true">&gt;</span>
+          <span>{tabOpenedLabel(t.count)}</span>
+        </div>
+      ));
   const failedIndexes = Object.entries(info?.stepStatus ?? {})
     .filter(([, status]) => status === "failed")
     .map(([index]) => Number(index));
@@ -514,11 +538,12 @@ export function RunOutput({
           {steps && steps.length > 0 ? (
             <ScrollArea className="min-h-0 flex-1">
               <div className="px-3 py-2 font-mono text-[11px] leading-relaxed">
+                {tabRows(-1)}
                 {steps.map((step, i) => {
                   const status = info?.stepStatus[i];
                   return (
+                    <Fragment key={step.id}>
                     <div
-                      key={step.id}
                       className="flex items-center gap-1.5 py-0.5"
                       data-gl="step-detail"
                       data-status={status ?? "idle"}
@@ -543,6 +568,8 @@ export function RunOutput({
                         </span>
                       ) : null}
                     </div>
+                    {tabRows(i)}
+                    </Fragment>
                   );
                 })}
               </div>

@@ -1,3 +1,13 @@
+/** A tab the run's browser opened, reported on the same stdout channel by
+ *  the tabs fixture. Not a step: it carries no line, and the runner files it
+ *  under whichever step is running. */
+export interface TabMarker {
+  event: "tab";
+  /** How many tabs were open at that moment, the new one included. */
+  count: number;
+  attempt: number;
+}
+
 /** One step transition, as reported on stdout by the reporter. */
 export interface StepMarker {
   event: "begin" | "end";
@@ -16,6 +26,9 @@ export interface StdoutSplit {
   /** The chunk with every marker removed — what the user should see. */
   visible: string;
   markers: StepMarker[];
+  /** Tabs the browser opened, in order. Beside the transitions rather than
+   *  among them: every reader of `markers` indexes a step by `line`. */
+  tabs: TabMarker[];
   /** Trailing partial line, to be passed back in as `buffered` next time. */
   rest: string;
 }
