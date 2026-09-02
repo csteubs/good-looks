@@ -2045,8 +2045,6 @@ export const playwrightRunner = {
 
         // Persist this run to the log database (metadata + raw output). The
         // record id === the artifacts runId so later phases can join them.
-        const logText = (logBuffers.get(runId) ?? []).join("");
-        logBuffers.delete(runId);
         // A failure under something that intercepts the click, on a test that
         // chose NOT to handle pop-ups, is the one failure whose cause is a
         // setting rather than the page. Playwright's own wording is the
@@ -2054,8 +2052,15 @@ export const playwrightRunner = {
         // "not actionable"), and the remedy is named in the run options'
         // words. Only when the test opted out: with handling on, the covering
         // element was not one a rule or a preset matched, and pointing at the
-        // switch would be wrong.
-        if (exitCode !== 0 && !handlePopups && !rec.sourceDir && /intercepts pointer events/.test(logText)) {
+        // switch would be wrong. Emitted BEFORE the log is snapshotted below,
+        // so the line is in the persisted log a person reads later and not
+        // only in the live Output panel.
+        if (
+          exitCode !== 0 &&
+          !handlePopups &&
+          !rec.sourceDir &&
+          /intercepts pointer events/.test((logBuffers.get(runId) ?? []).join(""))
+        ) {
           emitOutput(
             runId,
             "system",
@@ -2063,6 +2068,8 @@ export const playwrightRunner = {
               "If that element was a pop-up or banner, turn Handle pop-ups on in the run options.\n",
           );
         }
+        const logText = (logBuffers.get(runId) ?? []).join("");
+        logBuffers.delete(runId);
         // What capture actually cost this run, straight from the fixture's
         // manifest. Absent for non-capture runs and pre-instrumentation ones.
         let captureOverheadMs: number | undefined;

@@ -88,6 +88,7 @@ describe("handler registration", () => {
       "tests:setBrowser",
       "tests:setHeadless",
       "tests:setTestTimeout",
+      "tests:setHandlePopups",
       "tests:setBaseUrl",
       "tests:duplicate",
       "runner:run",
@@ -775,6 +776,89 @@ describe("tests:setTestTimeout — per-test override", () => {
     await expect(
       invokeHandler("tests:setTestTimeout", { id: "t-timeout-bad", testTimeoutMs: 50 }),
     ).rejects.toThrow(/invalid test timeout/i);
+  });
+});
+
+// ── tests:setHandlePopups — the per-test Handle pop-ups pin ──────────────
+//
+// The field decides whether a run clicks pop-ups away, so it is a boundary
+// value: the run-option checkbox sends a boolean, and anything else over IPC
+// is refused rather than stored as a pin nobody chose. `false` is the
+// meaningful value (it is what turns the taught rules AND the presets off for
+// this test), which is why "persists false" is asserted separately from
+// "persists true" — a handler that only wrote truthy values would pass the
+// first and silently lose the second.
+describe("tests:setHandlePopups — the per-test Handle pop-ups pin", () => {
+  const setHandlePopups = (params: unknown) =>
+    invokeHandler<TestRecord>("tests:setHandlePopups", params);
+
+  it("persists true and false, and moves updatedAt", async () => {
+    // seedTest stamps updatedAt: 1, so "the clock moved" is unambiguous.
+    seedTest("t-popups");
+
+    const on = await setHandlePopups({ id: "t-popups", handlePopups: true });
+    expect(on.handlePopups).toBe(true);
+    expect(testStore.get("t-popups")?.handlePopups).toBe(true);
+    expect(on.updatedAt).toBeGreaterThan(1);
+
+    const off = await setHandlePopups({ id: "t-popups", handlePopups: false });
+    expect(off.handlePopups).toBe(false);
+    expect(testStore.get("t-popups")?.handlePopups).toBe(false);
+    expect(off.updatedAt).toBeGreaterThanOrEqual(on.updatedAt);
+  });
+
+  it("refuses anything that is not a boolean, and leaves the record alone", async () => {
+    // A rejected value must not half-land: the pin the record had stays, and
+    // updatedAt does not move, which pins that the throw happens BEFORE the
+    // mutate-and-save rather than after it.
+    seedTest("t-popups-bad", { handlePopups: false });
+    const before = testStore.get("t-popups-bad")!;
+
+    for (const bad of ["true", "false", "yes", 1, 0, null, undefined, { value: true }, [true]]) {
+      await expect(
+        setHandlePopups({ id: "t-popups-bad", handlePopups: bad }),
+        JSON.stringify(bad),
+      ).rejects.toThrow(/must be a boolean/);
+
+      const after = testStore.get("t-popups-bad")!;
+      expect(after.handlePopups, JSON.stringify(bad)).toBe(false);
+      expect(after.updatedAt, JSON.stringify(bad)).toBe(before.updatedAt);
+    }
+  });
+
+  it("rejects an unknown test id rather than inventing a record to pin", async () => {
+    await expect(setHandlePopups({ id: "t-popups-nope", handlePopups: true })).rejects.toThrow(
+      /not found/i,
+    );
+    expect(testStore.get("t-popups-nope")).toBeNull();
+  });
+});
+
+// ── recorder:start — the New Recording dialog's Handle pop-ups choice ───────
+//
+// The trainer path creates a real BrowserWindow, so `recorderService.start` is
+// stubbed and what is asserted is the BOUNDARY: a boolean crosses as itself,
+// and anything else crosses as `undefined` — which the service reads as
+// "follow the default" — rather than as a truthy string that would pin the
+// new test on. Same rule as `speed` on `runner:run`.
+describe("recorder:start — forwarding the Handle pop-ups choice", () => {
+  it("forwards true and false, and passes undefined for anything that is not a boolean", async () => {
+    const spy = vi.spyOn(recorderService, "start").mockResolvedValue({} as never);
+    try {
+      await invokeHandler("recorder:start", { url: "https://example.com", handlePopups: true });
+      await invokeHandler("recorder:start", { url: "https://example.com", handlePopups: false });
+      await invokeHandler("recorder:start", { url: "https://example.com", handlePopups: "true" });
+      await invokeHandler("recorder:start", { url: "https://example.com", handlePopups: 1 });
+      await invokeHandler("recorder:start", { url: "https://example.com" });
+
+      expect(spy).toHaveBeenCalledTimes(5);
+      const forwarded = spy.mock.calls.map(([params]) => params.handlePopups);
+      expect(forwarded).toEqual([true, false, undefined, undefined, undefined]);
+      // The rest of the dialog's payload still crosses untouched.
+      expect(spy.mock.calls[0][0]).toMatchObject({ url: "https://example.com", handlePopups: true });
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
