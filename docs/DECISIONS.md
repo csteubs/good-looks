@@ -14938,3 +14938,46 @@ because the inventory describes inputs the user may just have typed a
 password into. Proven fail-able by three mutations: the redact call removed,
 the post-answer guard removed, the default flipped to true — each turned
 exactly its own row red.
+
+## 2026-09-02 — The user-page e2e asserted half of what it claimed
+
+`e2e/record-then-run.spec.ts`'s fourth test inserted its init-script
+assertion as `{ type: "assert", assert: "attr", … }`. `"attr"` is not an
+`AssertKind`. `normalizeRawStep` gates `assert` through
+`oneOf(…, ASSERT_KINDS)` and DROPS a value it does not know, so the stored
+step had no kind, and `assertLine`'s `default:` arm emitted `toBeVisible()`
+on `html` — green with or without the init script. The stylesheet half
+(`"hidden"`) was real; the init-script half proved nothing, from the day it
+landed (2026-08-23) until the Handle pop-ups work (csteubs/good-looks#304)
+generated a spec from that step and read the output.
+
+Three things let it through, and each is the right behaviour somewhere
+else. The normalizer drops rather than throws because its input is a PAGE's
+JSON, and a refusal there is a page choosing which steps reach the
+generator. The generator defaults to `toBeVisible` because an assertion
+with no kind is what a record from before `assert` existed looks like. And
+the spec typed its steps with a local interface whose `assert` was
+`string`, cast every literal with `as Partial<Step>[]`, and so told tsc
+nothing — `e2e/` is in `tsconfig.json`'s `include`, and `type-check` would
+have refused `"attr"` against the real type.
+
+Fixing the kind exposed a second thing the vacuous assertion had covered:
+the init script itself never set anything. A new-document script runs while
+`document.documentElement` is still null (`readyState` "loading", no
+`<html>` yet — measured with a probe on real Chromium), so
+`document.documentElement.setAttribute(...)` there throws a TypeError that
+nothing reports, and the attribute the test asserted did not exist. With a
+real `toHaveAttribute` the test would have gone red in CI for a reason that
+was not the fixture's. The init script now leaves a window marker, and the
+fixture PAGE's own inline script copies it onto `html` — so the attribute
+is there only if the init script ran before the page's code, which is the
+claim the 2026-08-23 entry makes, now observable by a recorded step.
+
+The fix is the real kind, `"attribute"`, with the `attr` + `value` fields
+`assertLine` and the composer already agree on. Two guards go with it. The
+inserted steps are typed `RawStep` — the type `recorder:insertStep` itself
+takes — with the casts gone, so a kind spelt wrong is a type error in the
+gate. And the test reads the generated script BEFORE the run and asserts
+both lines are in it: a run can pass vacuously, a missing
+`toHaveAttribute` cannot. The same pattern the first test uses for "URL
+contains", for the same reason.

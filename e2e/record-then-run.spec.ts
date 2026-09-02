@@ -22,18 +22,20 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AddressInfo } from "node:net";
 
+import type { RawStep } from "../main/recorder/types.js";
 import { test, expect, type AppFixtures } from "./fixtures.js";
 
 interface Invoke {
   glaze: { ipc: { invoke(channel: string, params?: unknown): Promise<unknown> } };
 }
 
+/** What `recorder:getSteps` answers — only its length is read here. Steps
+ *  going the OTHER way are typed `RawStep`, the type `recorder:insertStep`
+ *  itself takes: a kind spelt wrong is then a type error, not a step whose
+ *  `assert` the normalizer drops and the generator emits as `toBeVisible`. */
 interface Step {
   id: string;
   type: string;
-  assert?: string;
-  value?: string;
-  locator?: { k?: string; v?: string; name?: string };
 }
 
 interface TestRecord {
@@ -59,6 +61,9 @@ const PAGE = `<!doctype html>
     document.getElementById("go").addEventListener("click", function () {
       document.querySelector('[data-testid="result"]').hidden = false;
     });
+    // The page's OWN code copies a marker the init script leaves, so the
+    // attribute exists only if the init script ran first (see the fourth test).
+    if (window.__glInit) document.documentElement.setAttribute("data-gl-init", window.__glInit);
   </script>
 </body></html>`;
 
@@ -154,7 +159,7 @@ async function recordSession(
   window: AppFixtures["window"],
   siteUrl: string,
   name: string,
-  extraSteps: Partial<Step>[],
+  extraSteps: RawStep[],
 ): Promise<TestRecord> {
   await invoke(window, "recorder:start", { url: siteUrl, name });
   await waitForPageReady(window);
@@ -226,7 +231,7 @@ test("a recording becomes a test that passes, with no healing", async ({ app, wi
       { type: "assert", assert: "url", value: "127.0.0.1" },
       { type: "assert", assert: "titleContains", value: "Shop" },
       { type: "assert", assert: "text", text: "Found 3", locator: { k: "testid", v: "result" } },
-    ] as Partial<Step>[]);
+    ]);
 
     // What the recorder wrote, before running it. If this contains the old
     // bare-string form, the run below fails for a reason worth naming here.
@@ -260,7 +265,7 @@ test("a recording with a false assertion produces a RED run", async ({ app, wind
   try {
     const record = await recordSession(app, window, site.url, "record-then-fail", [
       { type: "assert", assert: "url", value: "/definitely-not-this-path" },
-    ] as Partial<Step>[]);
+    ]);
 
     const { status, output } = await runTest(window, record.id);
     expect(status, `a false assertion must fail the run. Output:\n${output}`).toBe("failed");
@@ -298,20 +303,37 @@ test("the generated spec is on disk and is what the runner executed", async ({ a
 // The page stylesheet and init script reach a REAL run through the app's own
 // runner — the fixture is a string the Playwright CLI loads, so nothing
 // short of a run proves it installs. The stylesheet hides the heading; the
-// init script marks the document before the page's own code. A recorded
-// test then asserts both, and passes only if the fixture did its work.
+// init script leaves a marker the page's own script copies onto `html`. A
+// recorded test then asserts both, and passes only if the fixture did its
+// work — the attribute is there only if the init script ran BEFORE the
+// page's code, which is the claim.
+//
+// The marker goes through the page rather than being set by the init script
+// itself because a new-document script runs while `document.documentElement`
+// is still null: `documentElement.setAttribute(...)` there throws, sets
+// nothing, and reports nothing. This test once did exactly that, and its
+// assertion was vacuous enough (see below) never to notice.
 test("the page stylesheet and init script are applied in a run", async ({ app, window, userDataDir }) => {
   test.skip(!seedBrowsers(userDataDir), "no local Chromium matching this Playwright — run `npx playwright install chromium`");
   const site = await serveSite();
   try {
     await invoke(window, "recorder:setSettings", {
       userStylesheet: '[data-testid="heading"] { display: none !important; }',
-      userInitScript: 'document.documentElement.setAttribute("data-gl-init", "yes");',
+      userInitScript: 'window.__glInit = "yes";',
     });
     const record = await recordSession(app, window, site.url, "user-page", [
       { type: "assert", assert: "hidden", locator: { k: "testid", v: "heading" } },
-      { type: "assert", assert: "attr", attr: "data-gl-init", value: "yes", locator: { k: "css", v: "html" } },
-    ] as Partial<Step>[]);
+      // Set by the page's own script from the init script's marker: present
+      // only if the init script ran first.
+      { type: "assert", assert: "attribute", attr: "data-gl-init", value: "yes", locator: { k: "css", v: "html" } },
+    ]);
+    // Both assertions, in the script, BEFORE the run. This test once inserted
+    // `assert: "attr"` — not a kind — which the normalizer dropped and the
+    // generator emitted as `toBeVisible()` on `html`: green with or without
+    // the init script. A run can pass vacuously; a missing line cannot.
+    const script = await invoke<string>(window, "tests:getScript", { id: record.id });
+    expect(script).toContain(".toBeHidden(");
+    expect(script).toContain('.toHaveAttribute("data-gl-init", "yes")');
     const { status, output } = await runTest(window, record.id);
     expect(status, `the run should pass with the stylesheet and init script installed. Output:\n${output}`).toBe("passed");
     expect(output).toMatch(/\[glaze-user-page\] installed: init script \(\d+ chars\), stylesheet \(\d+ chars\)/);
