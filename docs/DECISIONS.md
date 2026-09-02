@@ -10,6 +10,64 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-02 — Edit Steps places a new step at an insert cursor, the trainer's control, not at the end
+
+**The report.** With the Edit Test → Edit Steps editor open, every step added
+through "+ Add step" landed at the bottom of the list, and the user dragged it
+up to where it belonged. The trainer has had an insert cursor since the C §6.2
+work (2026-08-12) — the gap between two rows that says where the next step
+goes — and the editor, which renders the same `StepRow`, the same drag and the
+same menu, never got one. `handleAdd` was `[...prev, ...newSteps]`.
+
+**Why the editor is the surface that needed it most.** The trainer's cursor
+was built for a continued test, where the browser is somewhere mid-list and a
+captured step must land there. But the editor is where a test recorded months
+ago gets fixed — a wait that a slower site now needs, a URL assertion after a
+redirect changed, a viewport before the step that depends on it — and the
+step that is missing from an old test is almost never the last one. Appending
+was the right default for a new recording and the wrong one here, and the
+drag that followed every add was the user doing the placement the control
+exists to do.
+
+**What landed, and the rules it follows.** `CursorGap` between every pair of
+rows (and before the first, after the last), on a `--tight` list, with
+`INSERT_HERE` shown everywhere except at the end — all three imported from
+`step-row.tsx` rather than reimplemented, so the editor and the two trainers
+say the same words with the same control. The cursor is a gap index into the
+draft and copies the backend's arithmetic: `insertStep` splices at the
+cursor and sets `cursor = at + 1`, so two adds keep their order; `deleteStep`
+pulls it back by one when the removed step was above it, so it still names
+the same gap; `reorderStep` leaves it alone. The step that arrives is marked
+`justAdded`, which is what makes StepRow scroll it into view — a step
+inserted mid-list in a list long enough to scroll is otherwise off-screen,
+and an add nobody can see reads as an add that did nothing (the trainer's
+2026-08-10 finding, the same shape).
+
+**Where it opens.** At the end. The trainer opens a continued test's cursor
+at index 1 (`initialCursor`) because opening a session executes the initial
+navigation and the cursor marks where the browser is. Nothing is executed
+here, so there is no such position; the end is the historical behaviour and
+the one a user adding a final assertion expects. A click on any gap moves it.
+
+**A React detail that is a rule.** Both mutations read `draft` from the
+render closure and call `setDraft(next)` with a value, rather than moving the
+cursor from inside a `setDraft((prev) => …)` updater. An updater must be
+pure — StrictMode runs it twice, and a `setCursor` inside it would advance
+the cursor twice per add in development and once in production, which is
+exactly the kind of difference that is never caught.
+
+**Guarded** by seven new cases in `edit-steps-view.test.tsx` — the gap count, the
+default, placement at a clicked gap with the label shown, order across two
+adds, the cursor following a deletion above it and staying put for one below
+it, and the `justAdded` marker on exactly one row — six of which fail against
+the unfixed editor (the default one passes on both, by design: it pins what
+did not change). And by a new §6 in `check:insert-cursor`, because the
+trainers' §3 assertions are the kind that pass in one rendering of a step
+list while a second one drifts, and this is now the third rendering. The
+native "+ Add step" menu is driven the way `test-detail-view.test.tsx` drives
+"Edit Steps" itself: by standing in for `glazeAPI.Menu.popup` and answering
+with the wanted item's `commandId`, since the items never enter the DOM.
+
 ### 2026-09-01 — Handle pop-ups: an opt-out switch and built-in vendor handlers, because a rule cannot be taught on a pop-up that did not show
 
 **The field report, and why every piece of it could not work.** A user on

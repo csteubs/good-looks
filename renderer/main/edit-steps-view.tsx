@@ -6,6 +6,11 @@
 // save — this editor's job is to warn up front that saving alone won't change
 // the run. Only locator-free step types can be added here; element-targeted
 // steps still need the trainer's browser picker.
+//
+// New steps land AT THE INSERT CURSOR, the same gap-between-rows control the
+// trainer has (CursorGap, step-row.tsx), not at the end: this is the editor
+// for a test recorded months ago, where the step that is missing is almost
+// never the last one.
 
 import * as React from "react";
 import {
@@ -28,7 +33,7 @@ import { Plus, ListPlus, TriangleAlert, Variable } from "lucide-react";
 
 import type { AssertKind, RawStep, Step, TestVariable, VariableKind } from "../lib/recorder-types";
 import { NewVariableForm, PlaintextVariableNotice } from "../components/variable-picker";
-import { StepRow } from "./step-row";
+import { CursorGap, INSERT_HERE, StepRow } from "./step-row";
 import { computeStepDepths } from "../lib/describe-step";
 import { clampViewportAxis, RESIZE_PRESETS } from "../lib/viewport-presets";
 
@@ -97,6 +102,20 @@ export function EditStepsView({
   onSave,
 }: EditStepsViewProps) {
   const [draft, setDraft] = React.useState<Step[]>(initialSteps);
+  // The insert cursor — WHERE "+ Add step" puts the next step, as a gap index
+  // into `draft`, exactly the trainer's `state.cursor`. It opens at the end
+  // (a saved test is not being executed, so there is no "where the browser
+  // is" for it to open at, as there is when a test is continued in the
+  // trainer), and every edit keeps it pointing at the same GAP: an insert
+  // advances it past what landed, a deletion above it pulls it back. Before
+  // this the editor appended unconditionally and the user dragged each new
+  // step up into place.
+  const [cursor, setCursorRaw] = React.useState(initialSteps.length);
+  const setCursor = (index: number) => setCursorRaw(Math.max(0, Math.min(draft.length, index)));
+  // The step that just landed, so StepRow scrolls it into view — a step
+  // inserted mid-list is otherwise invisible in a list long enough to scroll,
+  // which reads as the add having done nothing.
+  const [lastAddedId, setLastAddedId] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
   const [addKind, setAddKind] = React.useState<EditStepKind | null>(null);
   const [creatingVar, setCreatingVar] = React.useState(false);
@@ -106,8 +125,18 @@ export function EditStepsView({
 
   const depths = computeStepDepths(draft);
 
+  // Both mutations below read `draft` from the render closure rather than
+  // inside a `setDraft` updater: an updater must be pure (StrictMode runs it
+  // twice), and the cursor has to move in the same event as the list.
   const deleteStep = (id: string) => {
-    setDraft((prev) => prev.filter((s) => s.id !== id));
+    const at = draft.findIndex((s) => s.id === id);
+    if (at < 0) return;
+    const next = draft.filter((s) => s.id !== id);
+    // Same rule as the backend's deleteStep: a removal ABOVE the cursor
+    // shifts every later gap up by one, and the cursor follows so it still
+    // sits between the two steps the user put it between.
+    setCursorRaw(Math.max(0, Math.min(next.length, at < cursor ? cursor - 1 : cursor)));
+    setDraft(next);
   };
 
   const updateStep = (id: string, patch: Partial<Step>) => {
@@ -148,7 +177,14 @@ export function EditStepsView({
       id: uid(),
       timestamp: Date.now(),
     }));
-    setDraft((prev) => [...prev, ...newSteps]);
+    if (newSteps.length === 0) return;
+    // Splice at the cursor, then move the cursor past what landed — so two
+    // adds in a row keep their order, the way two captures in the trainer do
+    // (recorder-service's insertStep: `session.cursor = at + 1`).
+    const at = Math.max(0, Math.min(draft.length, cursor));
+    setDraft([...draft.slice(0, at), ...newSteps, ...draft.slice(at)]);
+    setCursorRaw(at + newSteps.length);
+    setLastAddedId(newSteps[newSteps.length - 1].id);
     setAddKind(null);
   };
 
@@ -165,7 +201,7 @@ export function EditStepsView({
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center justify-end gap-3 border-b border-separator px-4 py-2">
         <Text variant="small" color="tertiary" className="mr-auto">
-          Reorder by dragging, click the value to edit, or remove with ✕. Element-targeted steps need the trainer.
+          Click between steps to choose where new steps go. Reorder by dragging, click the value to edit, or remove with ✕. Element-targeted steps need the trainer.
         </Text>
         {onCreateVariable ? (
           <Button size="small" variant="glass" onClick={() => setCreatingVar((v) => !v)}>
@@ -226,29 +262,44 @@ export function EditStepsView({
           <div className="flex flex-1 flex-col items-center justify-center gap-2 p-4">
             <ListPlus className="size-6 text-tertiary" />
             <Text variant="small" color="secondary">
-              No steps. Add one below.
+              No steps. Add one with “Add step”.
             </Text>
           </div>
         ) : (
           <ScrollArea className="min-h-0 flex-1" scrollbars="both">
-            <div className="gl-step-list">
+            {/* `--tight`, as in both trainers: the rows are separated by their
+                own insert cursors, and a gap on top of that would double the
+                space between every step. */}
+            <div className="gl-step-list gl-step-list--tight">
+              <CursorGap active={cursor === 0} onClick={() => setCursor(0)} label={INSERT_HERE} />
               {draft.map((step, i) => (
-                <StepRow
-                  key={step.id}
-                  index={i}
-                  step={step}
-                  indent={depths[i]}
-                  onDelete={() => deleteStep(step.id)}
-                  onEdit={(patch) => updateStep(step.id, patch)}
-                  variables={variables}
-                  drag={{
-                    onDragStart: () => setDragId(step.id),
-                    onDragEnter: () => setOverIndex(i),
-                    onDragEnd: commitDrag,
-                    isDragging: dragId === step.id,
-                    isOver: overIndex === i && dragId !== null && dragId !== step.id,
-                  }}
-                />
+                <React.Fragment key={step.id}>
+                  <StepRow
+                    index={i}
+                    step={step}
+                    indent={depths[i]}
+                    onDelete={() => deleteStep(step.id)}
+                    onEdit={(patch) => updateStep(step.id, patch)}
+                    variables={variables}
+                    justAdded={step.id === lastAddedId}
+                    drag={{
+                      onDragStart: () => setDragId(step.id),
+                      onDragEnter: () => setOverIndex(i),
+                      onDragEnd: commitDrag,
+                      isDragging: dragId === step.id,
+                      isOver: overIndex === i && dragId !== null && dragId !== step.id,
+                    }}
+                  />
+                  {/* Labelled everywhere EXCEPT the end of the list, the
+                      trainer's rule: steps appearing under the last row is
+                      what everyone already expects, and anywhere else the
+                      label is the answer to "where did my step go". */}
+                  <CursorGap
+                    active={cursor === i + 1}
+                    onClick={() => setCursor(i + 1)}
+                    label={i + 1 === draft.length ? undefined : INSERT_HERE}
+                  />
+                </React.Fragment>
               ))}
             </div>
           </ScrollArea>
