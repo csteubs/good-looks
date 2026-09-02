@@ -206,10 +206,20 @@ function wrap(obj, method, getPage) {
  * screenshot. A screenshot taken before the settle would catch the page
  * mid-load, which is both a worse artifact and a source of visual-diff noise.
  */
-export function installSettle(page) {
-  if (!ON || patched) return;
-  patched = true;
+/** The page-instance half: page-level actions settle THIS page. Called for
+ *  every page a run opens (the tabs fixture hands later ones over), because a
+ *  page-level action on a second tab that settled nothing would hand control
+ *  back to the spec mid-load. */
+export function installSettleOnPage(page) {
+  if (!ON) return;
   for (const m of PAGE_ACTIONS) wrap(page, m, function () { return page; });
+}
+
+export function installSettle(page) {
+  if (!ON) return;
+  installSettleOnPage(page);
+  if (patched) return;
+  patched = true;
   try {
     const proto = Object.getPrototypeOf(page.locator("body"));
     for (const m of LOCATOR_ACTIONS) wrap(proto, m, function (self) { return self.page(); });

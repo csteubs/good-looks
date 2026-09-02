@@ -179,6 +179,9 @@ function Probe() {
       <span data-testid="run-finished">
         {runs["t1"]?.finishedAt === undefined ? "none" : "set"}
       </span>
+      <span data-testid="run-tabs">
+        {(runs["t1"]?.tabEvents ?? []).map((t) => `${t.afterIndex}:${t.count}`).join("|")}
+      </span>
       <span data-testid="run-step-lines">
         {Object.entries(runs["t1"]?.stepLines ?? {})
           .map(([i, v]) => `${i}@${v}`)
@@ -462,6 +465,18 @@ describe("run output", () => {
     emit("runner:step", { runId: "t1", index: 2, status: "begin", ok: true });
     expect(text("run-step-lines")).toBe("0@4|1@9");
     expect(text("run-steps")).toBe("0:passed|1:running|2:running");
+  });
+
+  it("keeps the tabs a run opened, under the step that opened each", () => {
+    // The one thing tab handling shows the user. The runner files a tab under
+    // the last step that began (-1 when none had), and the list survives the
+    // run ending so the row stays where it was.
+    renderStore();
+    emit("runner:tab", { runId: "t1", count: 2, afterIndex: -1 });
+    emit("runner:step", { runId: "t1", index: 0, status: "begin", ok: true });
+    emit("runner:tab", { runId: "t1", count: 3, afterIndex: 0 });
+    emit("runner:done", { runId: "t1", code: 0 });
+    expect(text("run-tabs")).toBe("-1:2|0:3");
   });
 
   it("leaves a reported outcome alone when the run ends", () => {

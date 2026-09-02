@@ -88,6 +88,43 @@ describe("splitStepMarkers", () => {
     expect(visible).toBe("");
   });
 
+  // ── Tabs ─────────────────────────────────────────────────────────────────
+  //
+  // The tabs fixture reports a tab the browser opened on the same channel. It
+  // is not a step: it carries no line, so it is handed back BESIDE the
+  // transitions — every reader of `markers` indexes a step by `line`, and a
+  // tab among them would be a step with none.
+
+  it("reports a tab beside the transitions, with the count of open tabs", () => {
+    const chunk =
+      marker({ event: "begin", line: 4 }) +
+      marker({ event: "tab", count: 2, attempt: 0 }) +
+      marker({ event: "end", line: 4, ok: true });
+    const { visible, markers, tabs } = splitStepMarkers("", chunk);
+    expect(visible).toBe("");
+    expect(markers.map((m) => `${m.line}:${m.event}`)).toEqual(["4:begin", "4:end"]);
+    expect(tabs).toEqual([{ event: "tab", count: 2, attempt: 0 }]);
+  });
+
+  it("drops a tab marker whose count is not a positive integer", () => {
+    // Same untrusted channel as every other marker: a page that echoed one
+    // could otherwise put a row in Step details.
+    const chunk =
+      marker({ event: "tab", count: 0 }) +
+      marker({ event: "tab", count: "2" }) +
+      marker({ event: "tab", count: 1.5 }) +
+      marker({ event: "tab" });
+    const { tabs, markers, visible } = splitStepMarkers("", chunk);
+    expect(tabs).toEqual([]);
+    expect(markers).toEqual([]);
+    expect(visible).toBe("");
+  });
+
+  it("carries a tab's attempt, normalized like a transition's", () => {
+    const { tabs } = splitStepMarkers("", marker({ event: "tab", count: 3, attempt: 1 }) + marker({ event: "tab", count: 2 }));
+    expect(tabs.map((t) => `${t.count}@${t.attempt}`)).toEqual(["3@1", "2@0"]);
+  });
+
   it("reports several markers in one chunk, in order", () => {
     const chunk =
       marker({ event: "begin", line: 4 }) +

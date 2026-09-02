@@ -99,12 +99,25 @@ export interface ReplayRun {
   error?: string;
 }
 
+/** A tab the run's browser opened, as the runner reported it: filed under
+ *  the step that was running (-1 when none had begun — a tab the page opened
+ *  on load), with how many tabs were open at that moment, the new one
+ *  included. This is the ONE thing tab handling shows the user: the run
+ *  follows the newest tab on its own, and Step details says so with a
+ *  "> New Tab Opened (#N)" row under the step that opened it. */
+export interface TabEvent {
+  afterIndex: number;
+  count: number;
+}
+
 export interface RunInfo {
   lines: string[];
   running: boolean;
   code: number | null;
   /** Per-step run status, keyed by step index (0-based). */
   stepStatus: Record<number, RunStepStatus>;
+  /** Tabs the browser opened during this run, in order. Absent until one does. */
+  tabEvents?: TabEvent[];
   /** The 1-based spec line each reported step index last ran from — what
    *  the Script IDE paints run status on. Absent for a run that reported
    *  nothing yet. */
@@ -569,6 +582,15 @@ export function RecorderProvider({
         return { ...prev, [runId]: { ...cur, stepStatus, ...(stepLines ? { stepLines } : {}) } };
       });
     });
+    const offTab = api.on<{ runId: string; count: number; afterIndex: number }>(
+      "runner:tab",
+      ({ runId, count, afterIndex }) => {
+        setRuns((prev) => {
+          const cur = prev[runId] ?? { lines: [], running: true, code: null, stepStatus: {}, startedAt: Date.now() };
+          return { ...prev, [runId]: { ...cur, tabEvents: [...(cur.tabEvents ?? []), { afterIndex, count }] } };
+        });
+      },
+    );
     const offDone = api.on<{ runId: string; code: number; recordId?: string }>(
       "runner:done",
       ({ runId, code, recordId }) => {
@@ -830,6 +852,7 @@ export function RecorderProvider({
       offFinished();
       offOut();
       offStep();
+      offTab();
       offDone();
       offRunsChanged();
       offAiDebugHistory();

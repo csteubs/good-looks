@@ -171,8 +171,11 @@ export async function installOverlayDismissal(page) {
   // dismiss — which for a run that navigates is reliably nothing. Playwright
   // re-installs a binding into every new document, so the tally accumulates
   // here, in the worker, where it survives.
+  // On the CONTEXT, like the init script below it: the watcher runs in every
+  // page the context opens, and a binding exposed on one page is absent from
+  // the next — the second tab's dismissals went uncounted that way.
   try {
-    await page.exposeBinding(BINDING, (_source, id) => {
+    await page.context().exposeBinding(BINDING, (_source, id) => {
       const index = Number(id);
       const rule = RULES[index];
       const label = rule ? rule.label || describeTarget(rule.target) : "rule " + id;

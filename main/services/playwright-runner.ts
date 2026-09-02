@@ -66,6 +66,7 @@ import {
   dismissFixtureSource,
 } from "../../shared/dismiss-fixture-source.mjs";
 import { USER_PAGE_FIXTURE_FILE, userPageEnv, userPageFixtureSource } from "../../shared/user-page-fixture-source.mjs";
+import { FOLLOW_TABS_ENV, TABS_FIXTURE_FILE, tabsFixtureSource } from "../../shared/tabs-fixture-source.mjs";
 import { SETTLE_FIXTURE_FILE, settleFixtureSource } from "../../shared/settle-fixture-source.mjs";
 import { healJournalStore } from "./heal-journal-store.js";
 import { describeStep } from "./script-generator.js";
@@ -455,6 +456,12 @@ function ensureDismissFixture(scriptsDir: string): void {
  *  Unconditional like the dismiss fixture: the capture fixture imports it. */
 function ensureUserPageFixture(scriptsDir: string): void {
   writeIfChanged(path.join(scriptsDir, USER_PAGE_FIXTURE_FILE), userPageFixtureSource);
+}
+
+/** The tab-following fixture (tabs-fixture-source.mjs). Unconditional like
+ *  the rest: the capture fixture imports it. */
+function ensureTabsFixture(scriptsDir: string): void {
+  writeIfChanged(path.join(scriptsDir, TABS_FIXTURE_FILE), tabsFixtureSource);
 }
 
 // `dismissEnv` lives in shared/dismiss-fixture-names.mjs (re-exported through
@@ -954,6 +961,9 @@ function emitOutput(runId: string, stream: "stdout" | "stderr" | "system", chunk
 // a trailing partial line until the next chunk completes it.
 const stdoutBuffers = new Map<string, string>();
 const stepLineMaps = new Map<string, Map<number, number> | null>();
+// The last step index that BEGAN on each run, so a tab the browser opens can
+// be filed under the step that opened it — the marker itself carries no line.
+const lastBegunIndex = new Map<string, number>();
 
 // Per-run accumulation of the visible console output (markers stripped), so a
 // completed run can be persisted to the run-history log database.
@@ -1007,7 +1017,19 @@ function emitStep(
     const map = attemptStatuses(runId, attempt);
     if (map) map[index] = ok ? "passed" : "failed";
   }
+  if (status === "begin") lastBegunIndex.set(runId, index);
   sendToMain("runner:step", { runId, index, status, ok, line });
+}
+
+/**
+ * A tab the run's browser opened, forwarded to the renderer as `runner:tab`
+ * so Step details can show "> New Tab Opened (#N)" under the step that
+ * opened it. `afterIndex` is that step — the last one that began — or -1
+ * when nothing has begun yet (a tab the page opened on load).
+ */
+function emitTab(runId: string, count: number): void {
+  const afterIndex = lastBegunIndex.get(runId) ?? -1;
+  sendToMain("runner:tab", { runId, count, afterIndex });
 }
 
 // Parse a stdout chunk: extract the step markers, map their line number to a
@@ -1018,8 +1040,11 @@ function emitStep(
 // WORKER lands after the `line` reporter's cursor-control prefix rather than at
 // the start of its line), and it is testable without a child process.
 function processStdout(runId: string, chunk: string): string {
-  const { visible, markers, rest } = splitStepMarkers(stdoutBuffers.get(runId) ?? "", chunk);
+  const { visible, markers, tabs, rest } = splitStepMarkers(stdoutBuffers.get(runId) ?? "", chunk);
   stdoutBuffers.set(runId, rest);
+  // A tab needs no line map: it is filed under the last step that began, and
+  // a run with no map (a hand-edited spec) still shows the row.
+  for (const tab of tabs) emitTab(runId, tab.count);
   // Markers are stripped whether or not this run can map them: a spec with no
   // line map (hand-edited past what the scanner recognizes) would otherwise
   // print raw `__GLAZE_STEP__:` lines into the user's Output panel.
@@ -1511,6 +1536,12 @@ export const playwrightRunner = {
         // overlay rules — somebody else's file is not redirected).
         const userPage = rec.sourceDir ? {} : userPageEnv(recorderSettingsStore.get());
         const userPageOn = Object.keys(userPage).length > 0;
+        // Tab following: every app-generated spec, never an imported one. The
+        // trainer records a linear journey, so a run has to follow the newest
+        // tab or a click that opens one strands every later step on the
+        // opener. An imported spec that manages its own popups means `page`
+        // as the opener from then on, and following would break it.
+        const followTabs = !rec.sourceDir;
         await announceSignatureState({
           runId,
           testHost,
@@ -1568,7 +1599,7 @@ export const playwrightRunner = {
         // the fixture is where capture, healing AND crawl's page-settling live
         // — so a heal-only or crawl-only run needs it too.
         if (
-          (captureArtifacts || healing || a11y || recordLogs || settling || signing || dismissing || userPageOn) &&
+          (captureArtifacts || healing || a11y || recordLogs || settling || signing || dismissing || userPageOn || followTabs) &&
           !rec.sourceDir
         ) {
           ensureCaptureFixture(scriptsDir);
@@ -1577,6 +1608,7 @@ export const playwrightRunner = {
           ensureSignatureFixture(scriptsDir);
           ensureDismissFixture(scriptsDir);
           ensureUserPageFixture(scriptsDir);
+          ensureTabsFixture(scriptsDir);
           const prepared = prepareCaptureSpec(scriptsDir, specToRun, recordId);
           if (prepared) {
             tempSpecPath = prepared;
@@ -1837,6 +1869,7 @@ export const playwrightRunner = {
             ...signatureEnv(signing ? signatureEntries : []),
             ...dismissEnv(dismissing ? overlayRules : []),
             ...userPage,
+            [FOLLOW_TABS_ENV]: followTabs ? "1" : "0",
           },
           processTimeoutMs,
         );
@@ -1963,6 +1996,7 @@ export const playwrightRunner = {
         // a browser install runs through the same `runCli` under the same runId
         // and would otherwise take the map with it.
         stepLineMaps.delete(runId);
+        lastBegunIndex.delete(runId);
         // Read once, up here, because both the replay summary below and the
         // overhead numbers further down need it — and the summary has to be
         // emitted before the log buffer is drained a few lines later.

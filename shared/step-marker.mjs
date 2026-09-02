@@ -50,7 +50,15 @@ function parseStepMarker(json) {
     return null;
   }
   if (!raw || typeof raw !== "object") return null;
-  const { event, line, ok, attempt } = raw;
+  const { event, line, ok, attempt, count } = raw;
+  // A tab opened. Not a step transition: it carries no line, and the runner
+  // files it under whichever step is running. `count` is how many tabs the
+  // run's browser had open at that moment, which is what the row shows.
+  if (event === "tab") {
+    if (typeof count !== "number" || !Number.isInteger(count) || count < 1) return null;
+    return { event, count, attempt: normalizeAttempt(attempt) };
+  }
+  // Every other event is a step transition or nothing.
   if (event !== "begin" && event !== "end") return null;
   if (typeof line !== "number" || !Number.isInteger(line) || line < 1) return null;
   // Absent means "fine" — a `begin` never carries one.
@@ -86,6 +94,9 @@ export function splitStepMarkers(buffered, chunk) {
   const rest = lines.pop() ?? "";
   let visible = "";
   const markers = [];
+  // Tabs are reported beside the transitions rather than among them: every
+  // reader of `markers` indexes a step by `line`, and a tab has none.
+  const tabs = [];
   for (const line of lines) {
     const at = line.indexOf(STEP_MARKER);
     if (at === -1) {
@@ -97,7 +108,9 @@ export function splitStepMarkers(buffered, chunk) {
     // had one, and adding one puts a blank line in the middle of the log.
     if (at > 0) visible += line.slice(0, at);
     const marker = parseStepMarker(line.slice(at + STEP_MARKER.length));
-    if (marker) markers.push(marker);
+    if (!marker) continue;
+    if (marker.event === "tab") tabs.push(marker);
+    else markers.push(marker);
   }
-  return { visible, markers, rest };
+  return { visible, markers, tabs, rest };
 }

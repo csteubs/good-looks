@@ -87,7 +87,9 @@ describe("the wiring the unit tests cannot reach", () => {
     // being the LAST disjunct rather than on the whole expression: every
     // fixture added since has inserted its own flag ahead of it, and pinning
     // the full list made this fail for the one reason it does not care about.
-    expect(captureFixtureSource).toMatch(/\|\| SAVE_STATE\) \? base\.extend/);
+    // Gates added after it (tab following, 2026-09-02) may follow; what is
+    // pinned is that SAVE_STATE alone is enough to extend.
+    expect(captureFixtureSource).toMatch(/\|\| SAVE_STATE(?: \|\| [A-Z_]+)*\) \? base\.extend/);
   });
 
   it("the generated config starts from GLAZE_STORAGE_STATE when set, untouched otherwise", () => {

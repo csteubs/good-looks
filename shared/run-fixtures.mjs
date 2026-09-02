@@ -35,6 +35,7 @@ import {
   signatureFixtureSource,
 } from "./signature-fixture-source.mjs";
 import { stepReporterSource } from "./step-reporter-source.mjs";
+import { TABS_FIXTURE_FILE, tabsFixtureSource } from "./tabs-fixture-source.mjs";
 import {
   USER_PAGE_FIXTURE_FILE,
   userPageFixtureSource,
@@ -87,6 +88,9 @@ export const CAPABILITY_FIXTURES = [
   // compiled TypeScript until then. `check:ci-fixtures` now derives the list
   // from the capture fixture's own imports rather than transcribing it.
   { file: DISMISS_FIXTURE_FILE, source: dismissFixtureSource },
+  // The SIXTH: tab following. Imported by the capture fixture exactly as
+  // unconditionally as the others, so it ships with them for the same reason.
+  { file: TABS_FIXTURE_FILE, source: tabsFixtureSource },
 ];
 
 /**
@@ -149,6 +153,16 @@ export const CI_FIXTURE_POLICY = [
       "a stale locator the app would have healed past, the false red that makes a team distrust " +
       "CI. The WRITEBACK is not on and cannot be: it would edit a tests.json which dies with the " +
       "container, so the fix would be lost and the run would still report a heal it did not keep.",
+  },
+  {
+    capability: "tab following",
+    onInCi: true,
+    why:
+      "A recorded journey is linear — the trainer forces every navigation into its one " +
+      "window — so a run has to follow the newest tab or a click that opens one strands every " +
+      "later step on the opener. Nothing to configure and no secret in it; the only gate is " +
+      "`!imported`, because an imported spec that manages its own popups means `page` as the " +
+      "opener from then on.",
   },
   {
     capability: "user stylesheet / init script",

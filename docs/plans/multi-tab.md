@@ -1,7 +1,12 @@
 # Multiple tabs — design
 
-**Status:** design, written 2026-09-02, revised the same day after a spike
-against real Playwright (see "What the spike proved"). Nothing below is built.
+**Status:** written 2026-09-02, revised the same day after a spike against
+real Playwright (see "What the spike proved"). **Phases 1 and 2 SHIPPED
+2026-09-02** — `shared/tabs-fixture-source.mjs`, the per-page fixture halves,
+both runners' `GLAZE_FOLLOW_TABS`, the `tab` marker, `runner:tab` and the
+Step details row; `e2e/tab-follow.spec.ts` (nine rows) and
+`main/services/tabs-fixture.test.ts` are the authority. See DECISIONS
+2026-09-02. The deferred design at the end is still deferred.
 
 Companion documents: [../ARCHITECTURE.md](../ARCHITECTURE.md) for what exists,
 [../DECISIONS.md](../DECISIONS.md) for why, [../IFRAMES.md](../IFRAMES.md) for

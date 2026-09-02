@@ -43,6 +43,23 @@ function note(msg) {
   }
 }
 
+/** The stylesheet on ONE page's documents. The init script is a context
+ *  init script and reaches every page on its own; the stylesheet goes in by
+ *  page listeners, so a page the context opens later needs its own call —
+ *  the capture fixture makes it for every page the tabs fixture reports. */
+export function installUserPageOn(page) {
+  if (!CSS) return;
+  const apply = async () => {
+    try {
+      await page.addStyleTag({ content: CSS });
+    } catch (e) {
+      // A document that navigated away mid-insert; the next event re-applies.
+    }
+  };
+  page.on("domcontentloaded", apply);
+  page.on("load", apply);
+}
+
 /** Install the user's stylesheet and init script on a page's context.
  *  Answers what was installed, for the run log. */
 export async function installUserPage(page) {
@@ -55,15 +72,7 @@ export async function installUserPage(page) {
     installed.push("init script (" + INIT.length + " chars)");
   }
   if (CSS) {
-    const apply = async () => {
-      try {
-        await page.addStyleTag({ content: CSS });
-      } catch (e) {
-        // A document that navigated away mid-insert; the next event re-applies.
-      }
-    };
-    page.on("domcontentloaded", apply);
-    page.on("load", apply);
+    installUserPageOn(page);
     installed.push("stylesheet (" + CSS.length + " chars)");
   }
   if (installed.length) note("installed: " + installed.join(", "));
