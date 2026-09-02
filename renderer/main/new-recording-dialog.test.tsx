@@ -315,14 +315,16 @@ describe("handle pop-ups while recording", () => {
   it("offers the box, on by default", async () => {
     open();
     const box = await screen.findByLabelText("Handle pop-ups while recording");
-    expect(box.getAttribute("data-state")).toBe("checked");
+    // A native checkbox (the dialog is a redesigned surface, so the SDK's
+    // data-state-carrying Checkbox is off limits): the property is the state.
+    expect((box as HTMLInputElement).checked).toBe(true);
   });
 
   it("seeds from the global default", async () => {
     settings = { defaultHandlePopups: false };
     open();
     const box = await screen.findByLabelText("Handle pop-ups while recording");
-    await waitFor(() => expect(box.getAttribute("data-state")).toBe("unchecked"));
+    await waitFor(() => expect((box as HTMLInputElement).checked).toBe(false));
     await startRecording();
     expect(startedHandlePopups()).toBe(false);
   });
@@ -340,7 +342,7 @@ describe("handle pop-ups while recording", () => {
     open();
     const box = await screen.findByLabelText("Handle pop-ups while recording");
     fireEvent.click(box);
-    await waitFor(() => expect(box.getAttribute("data-state")).toBe("unchecked"));
+    await waitFor(() => expect((box as HTMLInputElement).checked).toBe(false));
     await startRecording();
     expect(startedHandlePopups()).toBe(false);
   });

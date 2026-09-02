@@ -1,6 +1,5 @@
 import * as React from "react";
 import {
-  Checkbox,
   Dialog,
   Select,
   SelectContent,
@@ -189,10 +188,15 @@ export function NewRecordingDialog({
         <RunBrowserField value={browser.value} onChange={browser.onChange} />
 
         <div className="gl-create-field">
+          {/* A NATIVE checkbox, not the SDK one: this dialog is a redesigned
+              surface (check:sdk-retired), and the SDK Checkbox is rounded by
+              cva default with no variant to ask for otherwise. The same idiom
+              as the Visual screen's "Apply to all steps". */}
           <label className="flex cursor-pointer items-center gap-2">
-            <Checkbox
+            <input
+              type="checkbox"
               checked={handlePopups}
-              onCheckedChange={(v) => setHandlePopups(v === true)}
+              onChange={(e) => setHandlePopups(e.target.checked)}
               aria-label="Handle pop-ups while recording"
             />
             <span className="gl-section-title">Handle pop-ups while recording</span>
