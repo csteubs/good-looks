@@ -185,20 +185,21 @@ too, because a test file under `cli/` would match neither Vitest project.
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Dated record of *why* each feature landed the way it did |
 | [`docs/MCP-GUIDE.md`](docs/MCP-GUIDE.md) | Driving the app from an AI assistant, and where the Linear/GitHub/Slack integrations fit |
 | [`docs/CI-GUIDE.md`](docs/CI-GUIDE.md) | Running recorded tests from the CLI and from GitHub Actions |
+| [`docs/POPUPS-GUIDE.md`](docs/POPUPS-GUIDE.md) | Pop-ups, banners and dialogs: the Handle pop-ups run option, the built-in Klaviyo/DataGrail handlers, and teaching a rule for any other site |
 | [`docs/GITHUB-ACTION.md`](docs/GITHUB-ACTION.md) | The Action's full input/output reference |
 
 All are hand-maintained. `ARCHITECTURE.md` and `DECISIONS.md` were kept current
 automatically until 2026-08-06; they stay accurate now only if changes carry
 them, so update the relevant entry in the same commit.
 
-**Two of these are also the app's in-app manual.** Settings → Documentation
-renders `docs/MCP-GUIDE.md` and `docs/CI-GUIDE.md`, and the Help menu deep-links
-their sections. `renderer/lib/doc-blocks.ts` parses a subset of markdown and
+**Three of these are also the app's in-app manual.** Settings → Documentation
+renders `docs/MCP-GUIDE.md`, `docs/CI-GUIDE.md` and `docs/POPUPS-GUIDE.md`, and
+the Help menu deep-links their sections. `renderer/lib/doc-blocks.ts` parses a subset of markdown and
 throws on the rest; `check:docs-blocks` runs it in the gate, so a construct the
 pane cannot draw is a red build rather than a section that renders as nothing.
 Edit them as prose, but expect the gate to refuse an ordered list or a nested
-bullet — and note that topic slugs must stay unique **across** both files, since
-a slug names a topic rather than a document plus a topic.
+bullet — and note that topic slugs must stay unique **across** all three files,
+since a slug names a topic rather than a document plus a topic.
 
 Two subdirectories differ in kind. [`docs/plans/`](docs/plans/) is a historical
 record of intent — design documents written before larger features, kept for

@@ -956,6 +956,15 @@ export interface TestRecord {
    *  When absent, the global `RecorderSettings.defaultCaptureArtifacts`
    *  applies. Set from the test detail toolbar's "Capture screenshots" toggle. */
   captureArtifacts?: boolean;
+  /** Per-test "Handle pop-ups" preference: whether this test's runs (and a
+   *  trainer session continuing it) arm the standing overlay rules for its
+   *  host plus the built-in Klaviyo/DataGrail handlers. When absent, the
+   *  global `RecorderSettings.defaultHandlePopups` applies — absent means
+   *  INHERIT, the `speed`/`runBrowser` asymmetry, so a test that made no
+   *  choice follows the setting when it changes. Off is the escape for a test
+   *  whose subject IS the pop-up. Resolved through
+   *  shared/popup-presets.mjs `resolveHandlePopups` everywhere it is read. */
+  handlePopups?: boolean;
   /** Per-test headless-run preference, remembered between sessions. When absent,
    *  the global `RecorderSettings.defaultRunHeadless` applies. Set from the test
    *  detail toolbar's "Run headless" toggle. Only affects test runs, not the
@@ -2990,6 +2999,17 @@ export interface RecorderSettings {
    *  request URLs — cheap to collect, but data at rest the user didn't ask
    *  for. */
   defaultRecordLogs: boolean;
+  /** default value of the per-test "Handle pop-ups" toggle (default TRUE —
+   *  `DEFAULT_HANDLE_POPUPS` in shared/popup-presets.mjs). On means a run
+   *  and a trainer session arm the host's taught overlay rules AND the
+   *  built-in vendor handlers; off means nothing is clicked away. On by
+   *  default because taught rules were always on before the switch existed. */
+  defaultHandlePopups: boolean;
+  /** Built-in pop-up handlers switched OFF, by preset id (see
+   *  `POPUP_PRESETS`). Disable-never-delete, like a taught rule: the preset
+   *  stays listed so a run report naming it still resolves. Normalized to
+   *  known ids only. */
+  disabledPopupPresets: string[];
   /** EXPERIMENTAL. A test being re-run normally discards its AI debug session,
    *  so each run starts from a blank slate. With this on, a session that is
    *  STILL STREAMING survives instead — marked as belonging to the previous
@@ -4468,6 +4488,21 @@ export interface OverlayRule {
   disabled?: boolean;
   createdAt: number;
   updatedAt: number;
+}
+
+/**
+ * A rule as it is ARMED into a page — what the trainer's capture script and the
+ * run's dismissal env actually need. A stored `OverlayRule` is one of these; a
+ * built-in preset from shared/popup-presets.mjs is another, with no host and
+ * `builtIn` set. Kept apart from `OverlayRule` so nothing that persists a rule
+ * can be handed a preset by accident.
+ */
+export interface ArmedOverlayRule {
+  id: string;
+  label: string;
+  target: Locator;
+  host?: string;
+  builtIn?: boolean;
 }
 
 /**

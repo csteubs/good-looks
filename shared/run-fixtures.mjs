@@ -166,13 +166,15 @@ export const CI_FIXTURE_POLICY = [
   },
   {
     capability: "overlay dismissal",
-    onInCi: "when a rule is armed for the host",
+    onInCi: "when the test's Handle pop-ups option is on (the default)",
     why:
-      "ON as of R51 + this change. A rule is armed by HOST from the test's own starting URL, so a " +
-      "run against a host with no rules installs nothing and pays nothing — there is no setting " +
-      "to forget. The fixture itself is now written on EVERY capability run whether or not a rule " +
-      "fires, because the capture fixture imports it unconditionally: it is a dependency, not a " +
-      "capability, and leaving it out was breaking the load.",
+      "ON as of R51 + this change, gated since Handle pop-ups shipped. The host's taught rules " +
+      "and the built-in Klaviyo/DataGrail handlers are armed through the same " +
+      "`armedPopupRulesFor` the app and the trainer call, and the gate is the test's own " +
+      "`handlePopups` field with `defaultHandlePopups` underneath — so a test that keeps its " +
+      "pop-up in the app keeps it here too. The fixture itself is written on EVERY capability run " +
+      "whether or not a rule fires, because the capture fixture imports it unconditionally: it is " +
+      "a dependency, not a capability, and leaving it out was breaking the load.",
   },
 ];
 

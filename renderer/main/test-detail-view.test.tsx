@@ -53,7 +53,11 @@ const startRecording = vi.fn(async (_url: string, _name: string, _testId?: strin
 const setHeadless = vi.fn(async () => ({}) as TestRecord);
 const setBrowser = vi.fn(async () => ({}) as TestRecord);
 const setCaptureArtifacts = vi.fn(async () => ({}) as TestRecord);
+const setHandlePopups = vi.fn(async () => ({}) as TestRecord);
 const setTestTimeout = vi.fn(async () => ({}) as TestRecord);
+/** What `useRecorder().runs` answers — empty unless a test models a run in
+ *  progress, which is the one state that has to disable the run options. */
+let recorderRuns: Record<string, unknown> = {};
 // Typed with the real signature: the assertions below read BOTH arguments, and
 // the difference between `""` and `null` in the second one is the difference
 // between "clear it" and a value the backend refuses.
@@ -116,7 +120,7 @@ vi.mock("./recorder-store", () => ({
   useRecorder: () => {
     const [epoch, setEpoch] = React.useState(0);
     return {
-      runs: {},
+      runs: recorderRuns,
       run: (...a: unknown[]) => {
         run(...(a as []));
         setEpoch((e) => e + 1);
@@ -150,6 +154,7 @@ vi.mock("../lib/api", () => ({
       setHeadless: (...a: unknown[]) => setHeadless(...(a as [])),
       setBrowser: (...a: unknown[]) => setBrowser(...(a as [])),
       setCaptureArtifacts: (...a: unknown[]) => setCaptureArtifacts(...(a as [])),
+      setHandlePopups: (...a: unknown[]) => setHandlePopups(...(a as [])),
       setTestTimeout: (...a: unknown[]) => setTestTimeout(...(a as [])),
       setBaseUrl: (...a: Parameters<typeof setBaseUrl>) => setBaseUrl(...a),
       remove: async () => {},
@@ -264,6 +269,7 @@ beforeEach(() => {
   routeId = "t1";
   library = {};
   runs = [];
+  recorderRuns = {};
   proposals = [];
   signatures = [];
   flowUsage = [];
@@ -496,13 +502,14 @@ describe("run controls", () => {
       screen.getByLabelText(/capture screenshots on this run/i),
       screen.getByLabelText(/record console and network/i),
       screen.getByLabelText(/check accessibility/i),
+      screen.getByLabelText(/handle pop-ups on this run/i),
       screen.getByRole("button", { name: /^run test$/i }),
     ]) {
       expect(tools!.contains(el)).toBe(true);
     }
   });
 
-  it("stacks the four run toggles as one two-column block", async () => {
+  it("stacks the run toggles as one two-column block", async () => {
     renderView();
     await screen.findByText("Checkout");
     const block = screen
@@ -517,15 +524,97 @@ describe("run controls", () => {
     // INSIDE the block. A checkbox that escapes the grid breaks the
     // gang-of-four layout while every CSS assertion stays green.
     expect(block!.className).not.toContain("grid-cols-2");
-    // All four toggles live in the same block — a checkbox that escapes the
-    // grid silently breaks the gang-of-four layout without failing anything.
+    // Every toggle lives in the same block — a checkbox that escapes the grid
+    // silently breaks the layout without failing anything. Handle pop-ups is
+    // the fifth, and the one most likely to have been bolted on outside.
     for (const label of [
       /capture screenshots on this run/i,
       /record console and network/i,
       /check accessibility/i,
+      /handle pop-ups on this run/i,
     ]) {
       expect(block!.contains(screen.getByLabelText(label))).toBe(true);
     }
+  });
+});
+
+// The "Handle pop-ups" run option.
+//
+// The fifth toggle, and the first that defaults ON: the standing overlay rules
+// were always armed before it existed, so "unset" has to keep meaning armed or
+// every taught rule goes silently quiet the day the box ships. Three seeds are
+// pinned separately because each is a different fall-through, and the last —
+// true with NOTHING stored anywhere — is the one a lazy `?? false` gets wrong
+// without any test noticing, since the view renders either way.
+//
+// It is persisted and NOT passed to `run()`: the runner reads the record, the
+// way it reads `recordLogs`, so the unattended runner and the app cannot answer
+// the question differently for the same test.
+describe("the Handle pop-ups run option", () => {
+  /** The box, once the view has seeded its toggles from the record. Waits on
+   *  the headless box the way `captureBoxAfterInit` does — the record pins
+   *  headless ON so there is a transition to wait for — because the pop-ups
+   *  box's own initial state is `true`, and an assertion of "checked" made
+   *  before the seed lands would pass against the un-seeded default. */
+  async function popupsBoxAfterInit() {
+    await screen.findByText("Checkout");
+    const headless = screen.getByLabelText(/run this test headless/i);
+    await waitFor(() => expect(headless.getAttribute("data-state")).toBe("checked"));
+    return screen.getByLabelText(/handle pop-ups on this run/i);
+  }
+
+  it("seeds from the record when the test has decided", async () => {
+    test_ = record({ runHeadless: true, handlePopups: false });
+    settings = { ...settings, defaultHandlePopups: true };
+    renderView();
+    const box = await popupsBoxAfterInit();
+    expect(box.getAttribute("data-state")).toBe("unchecked");
+  });
+
+  it("seeds from the global default when the record is silent", async () => {
+    test_ = record({ runHeadless: true });
+    settings = { ...settings, defaultHandlePopups: false };
+    renderView();
+    const box = await popupsBoxAfterInit();
+    expect(box.getAttribute("data-state")).toBe("unchecked");
+  });
+
+  it("is on when neither the record nor the settings say anything", async () => {
+    // A settings file from before the key existed. Off here would switch every
+    // taught rule off for a user who never touched anything.
+    test_ = record({ runHeadless: true });
+    settings = { ...settings, defaultHandlePopups: undefined };
+    renderView();
+    const box = await popupsBoxAfterInit();
+    expect(box.getAttribute("data-state")).toBe("checked");
+  });
+
+  it("persists a change on the record, and does not pass it to run()", async () => {
+    test_ = record({ runHeadless: true });
+    renderView();
+    const box = await popupsBoxAfterInit();
+    fireEvent.click(box);
+    await waitFor(() => expect(setHandlePopups).toHaveBeenCalledWith("t1", false));
+    expect(box.getAttribute("data-state")).toBe("unchecked");
+
+    fireEvent.click(screen.getByRole("button", { name: /^run test$/i }));
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    // run(id, captureArtifacts, headless, browser, speed), exhaustively — the
+    // record carries the choice, so a sixth argument carrying it too is the
+    // regression this exists to catch (the runner would then have two answers).
+    expect(run).toHaveBeenCalledWith("t1", false, true, "chromium", undefined);
+  });
+
+  it("is disabled while this test is running", async () => {
+    recorderRuns = {
+      t1: { lines: [], running: true, code: null, stepStatus: {}, startedAt: 0 },
+    };
+    renderView();
+    await screen.findByText("Checkout");
+    const box = screen.getByLabelText(/handle pop-ups on this run/i);
+    await waitFor(() =>
+      expect(box.getAttribute("data-disabled") ?? box.getAttribute("disabled")).not.toBeNull(),
+    );
   });
 });
 

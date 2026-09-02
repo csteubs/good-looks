@@ -22,7 +22,7 @@ import {
 } from "./capture-script.js";
 import { parseCaptureMessage, parseDrainPayload } from "./capture-channel.js";
 import { normalizeRawStep } from "./types.js";
-import type { OverlayRule, RawStep } from "./types.js";
+import type { ArmedOverlayRule, RawStep } from "./types.js";
 
 /** The session nonce the harness installs the script with. Exported so a test
  *  can prove a message carries it — the page's own scripts run in a different
@@ -56,7 +56,7 @@ const NONCE = CAPTURE_NONCE;
 export function captureHarness(
   html: string,
   clock: { now(): number } = Date,
-  overlayRules: readonly OverlayRule[] = [],
+  overlayRules: readonly ArmedOverlayRule[] = [],
 ) {
   const frame = document.createElement("iframe");
   document.body.appendChild(frame);

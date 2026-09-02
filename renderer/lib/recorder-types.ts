@@ -735,6 +735,9 @@ export interface TestRecord {
   /** Per-test screenshot-capture preference (mirrors main TestRecord). */
   recordLogs?: boolean;
   captureArtifacts?: boolean;
+  /** Per-test "Handle pop-ups" preference (mirrors main TestRecord). Absent
+   *  means the global `defaultHandlePopups` applies. */
+  handlePopups?: boolean;
   /** Per-test headless-run preference (mirrors main TestRecord). */
   runHeadless?: boolean;
   /** Per-test browser-engine preference (mirrors main TestRecord). */
@@ -1518,6 +1521,12 @@ export interface RecorderSettings {
   /** default value of the per-test "Capture screenshots" toggle (default false). */
   defaultCaptureArtifacts: boolean;
   defaultRecordLogs: boolean;
+  /** default value of the per-test "Handle pop-ups" toggle (default true —
+   *  mirror of main types; the constant lives in shared/popup-presets.mjs). */
+  defaultHandlePopups: boolean;
+  /** Built-in pop-up handlers switched off, by preset id (mirror of main
+   *  types). */
+  disabledPopupPresets: string[];
   recordAllHeaders: boolean;
   /**
    * Fetch a third-party favicon for each site in the library instead of drawing

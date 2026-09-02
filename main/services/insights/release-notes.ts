@@ -24,6 +24,14 @@ export interface ReleaseNote {
 /** Newest first. Position is what "since" means — see `unseenNotes`. */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.1.0",
+    date: "2026-09-01",
+    highlights: [
+      "Handle pop-ups: a run option that clicks away Klaviyo forms, DataGrail consent banners and the overlay rules you taught — on by default, off per test when the pop-up is the point.",
+      "A new in-app guide, Pop-ups, banners and dialogs, in Settings → Documentation and the Help menu.",
+    ],
+  },
+  {
     version: "1.0.0",
     date: "2026-08-18",
     highlights: [

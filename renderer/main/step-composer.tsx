@@ -2128,7 +2128,10 @@ export function StepComposer({
           <>
             <Text size="small" className="text-secondary">
               Arms a one-shot answer for the NEXT alert, confirm or prompt — place it BEFORE the
-              step that triggers the dialog. Without one, runs auto-dismiss every dialog.
+              step that triggers the dialog. Without one, runs auto-dismiss every dialog. For a
+              pop-up or banner the page itself draws — a newsletter form, a cookie-consent banner
+              — use Handle pop-ups instead: it is in the run options, and in Settings → Overlay
+              rules.
             </Text>
             <Field label="Answer" orientation="vertical">
               <SegmentedControl

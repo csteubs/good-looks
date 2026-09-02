@@ -50,7 +50,7 @@ import { normalizeTestIdAttributes, TESTID_ATTRIBUTE_OVERRIDES } from "../../sha
 import { overlayVisibleSource, watcherSource } from "../../shared/overlay-rules.mjs";
 import { CAPTURE_MESSAGE_PREFIX } from "./capture-channel.js";
 import { CSS_ASSERT_PROPS } from "./types.js";
-import type { Locator, OverlayRule } from "./types.js";
+import type { ArmedOverlayRule, Locator } from "./types.js";
 
 /**
  * Where capture state lives, in the recorder's isolated world.
@@ -500,7 +500,7 @@ export const PICKED_HELPERS = `
 export function buildCaptureScript(
   nonce: string,
   extraTestIdAttributes: string[] = [],
-  overlayRules: readonly OverlayRule[] = [],
+  overlayRules: readonly ArmedOverlayRule[] = [],
 ): string {
   // Interpolated into an INJECTED script, so the list is re-normalized here
   // regardless of what the caller read from settings — one grammar, spelled

@@ -86,8 +86,6 @@ const captureScript = buildCaptureScript("check-nonce", [], [
     host: "example.com",
     label: "Close",
     target: { k: "testid", v: "close-btn" },
-    createdAt: 0,
-    updatedAt: 0,
   },
 ]);
 assert(

@@ -169,6 +169,9 @@ export const api = {
        *  means inherit the global default. Never affects the trainer, which
        *  always records in Chromium. */
       runBrowser?: RunBrowser,
+      /** Whether to click pop-ups away while recording, from the dialog's
+       *  "Handle pop-ups" box. Omitted means follow the global default. */
+      handlePopups?: boolean,
     ) =>
       ipc().invoke<RecorderState>("recorder:start", {
         url,
@@ -176,6 +179,7 @@ export const api = {
         testId,
         viewport,
         runBrowser,
+        handlePopups,
       }),
     pause: () => ipc().invoke<RecorderState>("recorder:pause"),
     resume: () => ipc().invoke<RecorderState>("recorder:resume"),
@@ -394,6 +398,8 @@ export const api = {
       ipc().invoke<TestRecord>("tests:setCaptureArtifacts", { id, captureArtifacts }),
     setRecordLogs: (id: string, recordLogs: boolean) =>
       ipc().invoke<TestRecord>("tests:setRecordLogs", { id, recordLogs }),
+    setHandlePopups: (id: string, handlePopups: boolean) =>
+      ipc().invoke<TestRecord>("tests:setHandlePopups", { id, handlePopups }),
     setHeadless: (id: string, runHeadless: boolean) =>
       ipc().invoke<TestRecord>("tests:setHeadless", { id, runHeadless }),
     setBrowser: (id: string, runBrowser: RunBrowser) =>

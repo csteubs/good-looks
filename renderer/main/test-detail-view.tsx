@@ -222,6 +222,11 @@ export function TestDetailView() {
   // one persists page-controlled text and request URLs, which is a different
   // decision from persisting pictures.
   const [recordLogs, setRecordLogs] = React.useState(false);
+  // Per-test "Handle pop-ups" gate. Unlike the three above it is ON by default:
+  // the standing overlay rules were always armed before this box existed, and
+  // a default of off would have silently switched every taught rule off. The
+  // record stores it only when the user has decided; absent means inherit.
+  const [handlePopups, setHandlePopups] = React.useState(true);
   // Per-test "Run headless" choice — remembers whether this test's runs open a
   // visible browser. Falls back to the global Settings default. Runs only; the
   // trainer/"Edit in Trainer" flow is always headed.
@@ -499,6 +504,7 @@ export function TestDetailView() {
     setCaptureArtifacts(test.captureArtifacts ?? defaults?.defaultCaptureArtifacts ?? false);
     setA11yChecks(test.a11yChecks ?? defaults?.defaultA11yChecks ?? false);
     setRecordLogs(test.recordLogs ?? defaults?.defaultRecordLogs ?? false);
+    setHandlePopups(test.handlePopups ?? defaults?.defaultHandlePopups ?? true);
     setRunHeadless(test.runHeadless ?? defaults?.defaultRunHeadless ?? false);
     setRunBrowser(test.runBrowser ?? defaults?.defaultRunBrowser ?? "chromium");
     // Timeout is the exception: only a stored per-test value seeds it. An
@@ -1408,7 +1414,7 @@ export function TestDetailView() {
               ) : null}
             </div>
             <span className="gl-detail-tool-rule" aria-hidden="true" />
-            {/* The gang of four, a compact 2×2 block. The column-track rule that
+            {/* The run toggles, a compact two-column block. The column-track rule that
                 keeps it from overlapping itself at narrow widths moved into
                 `.gl-run-options` (screens.css) in B5a — the reasoning is written
                 out there, and `check:narrow-layout` reads it from the stylesheet
@@ -1482,6 +1488,27 @@ export function TestDetailView() {
                   aria-label="Check accessibility on this run"
                 />
                 Check accessibility
+              </label>
+              <label className="gl-run-option">
+                {/* The runner reads this off the RECORD, exactly as it reads
+                    recordLogs — so it is persisted and never passed to run().
+                    Off means nothing is clicked away: the built-in Klaviyo and
+                    DataGrail handlers AND the rules taught for this host, because
+                    half a switch would leave a test that asserts on the consent
+                    banner watching it vanish anyway. */}
+                <Checkbox
+                  checked={handlePopups}
+                  onCheckedChange={(v) => {
+                    const next = v === true;
+                    setHandlePopups(next);
+                    api.tests.setHandlePopups(id, next).catch(() => {
+                      /* best-effort persist; the toggle still applies to this run */
+                    });
+                  }}
+                  disabled={runInfo?.running}
+                  aria-label="Handle pop-ups on this run"
+                />
+                Handle pop-ups
               </label>
             </div>
             <span className="gl-detail-tool-rule" aria-hidden="true" />

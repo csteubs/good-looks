@@ -25,7 +25,7 @@ import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 import { renderPane } from "../__tests__/harness";
 import { DocumentationPane } from "./documentation-pane";
-import { APP_DOCS, CI_GUIDE, MCP_GUIDE, docRowId } from "../../lib/docs";
+import { APP_DOCS, CI_GUIDE, MCP_GUIDE, POPUPS_GUIDE, docRowId } from "../../lib/docs";
 import { REQUIRED_TOPIC_SLUGS } from "../../lib/doc-blocks";
 
 const mcpServer = vi.fn(async () => ({
@@ -113,6 +113,18 @@ describe("topics", () => {
     // MCP guide. Nothing else on screen names the document a topic belongs to.
     const { container } = renderPane(<DocumentationPane topic="the-command-line" />);
     expect(container.querySelector(".gl-doc-eyebrow")?.textContent).toBe(CI_GUIDE.title);
+  });
+
+  it("opens the pop-ups guide at the topic the Overlay rules pane links to", () => {
+    // The third document, and the first one a SETTING deep-links into: the
+    // Handle pop-ups row's "How pop-up handling works" opens `handle-pop-ups`.
+    // A slug that resolved to the first topic of the first document would
+    // read as a working link that lands on the MCP guide.
+    const { container } = renderPane(<DocumentationPane topic="handle-pop-ups" />);
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(
+      titleOf("handle-pop-ups"),
+    );
+    expect(container.querySelector(".gl-doc-eyebrow")?.textContent).toBe(POPUPS_GUIDE.title);
   });
 
   it("opens on the first topic when nothing asked for one", () => {

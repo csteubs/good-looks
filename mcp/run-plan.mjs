@@ -16,6 +16,7 @@
 // failed, and said nothing about what it had skipped.
 
 import { armedRulesFor } from "../shared/overlay-rules.mjs";
+import { resolveHandlePopups } from "../shared/popup-presets.mjs";
 import { normalizeSignatureHost, signatureState } from "../shared/shopify-signature.mjs";
 import { manualProxyFor, playwrightProxyEnv, proxySettingsFrom } from "../shared/proxy-config.mjs";
 import { slowMoFor } from "../shared/run-pacing.mjs";
@@ -297,10 +298,24 @@ export function describeRun(
   // where this process can reach it), so the caveat is for the case that is left
   // — an IMPORTED spec, which is never redirected through our fixtures, and a
   // caller that predates `ran.overlayRules` and therefore did not arm them.
-  const armedHere = armedRulesFor(overlayRules, test?.url ?? "");
+  //
+  // Gated the way the run itself is gated: a test with Handle pop-ups OFF
+  // armed nothing on purpose, and that is said in the test's own words rather
+  // than as a watcher that failed to install — the two mean opposite things to
+  // someone reading a failure under a banner.
+  const taughtHere = armedRulesFor(overlayRules, test?.url ?? "");
+  const handlePopups = resolveHandlePopups(test?.handlePopups, settings.defaultHandlePopups);
   const armedInRun = ran.overlayRules ?? [];
-  if (armedHere.length > 0 && armedInRun.length === 0) {
-    const named = armedHere.map((r) => r.label || r.host).join(", ");
+  if (!handlePopups && taughtHere.length > 0) {
+    const named = taughtHere.map((r) => r.label || r.host).join(", ");
+    skipped.push(
+      `Handle pop-ups is off for this test, so its overlay rule${taughtHere.length === 1 ? "" : "s"} ` +
+        `(${named}) and the built-in handlers were not armed. A step that acts on something a ` +
+        "banner covers fails here by the test's own choice; turn Handle pop-ups on in its run " +
+        "options to have the banner clicked away.",
+    );
+  } else if (handlePopups && taughtHere.length > 0 && armedInRun.length === 0) {
+    const named = taughtHere.map((r) => r.label || r.host).join(", ");
     skipped.push(
       `Overlay rules (${named}) — this run installed no dismissal watcher, so the banner they ` +
         "dismiss is left on the page. A step that acts on something the banner covers can fail " +

@@ -213,6 +213,9 @@ server.registerTool(
       captureArtifacts: test.captureArtifacts,
       a11yChecks: test.a11yChecks,
       recordLogs: test.recordLogs,
+      // Absent means the global default applies — reported as-is so a caller
+      // can tell "inherits" from "pinned off".
+      handlePopups: test.handlePopups,
       isFlow: Boolean(test.isFlow),
       ...(test.isFlow ? { flowParams: test.flowParams ?? [] } : {}),
       imported: Boolean(test.sourceDir),

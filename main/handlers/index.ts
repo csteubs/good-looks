@@ -216,8 +216,15 @@ export function registerHandlers(): void {
         testId?: string;
         viewport?: { width: number; height: number } | null;
         runBrowser?: RunBrowser;
+        handlePopups?: boolean;
       },
-    ) => recorderService.start(params),
+    ) =>
+      recorderService.start({
+        ...params,
+        // Validated at the boundary like `speed` on `runner:run`: only a real
+        // boolean is a choice, anything else means "follow the default".
+        handlePopups: typeof params?.handlePopups === "boolean" ? params.handlePopups : undefined,
+      }),
   );
   ipcMain.handle("recorder:pause", async () => recorderService.pause());
   ipcMain.handle("recorder:resume", async () => recorderService.resume());
@@ -428,6 +435,13 @@ export function registerHandlers(): void {
       ) {
         void refreshProxy();
       }
+      // And for pop-up handling: a live recording arms the rules and presets
+      // at injection time, so a default or a preset switch flipped here should
+      // re-arm the page the user is looking at rather than wait for the next
+      // navigation. A no-op with no session.
+      if (params && ("defaultHandlePopups" in params || "disabledPopupPresets" in params)) {
+        recorderService.refreshOverlayRules();
+      }
       // The same argument, twice more, for the two appearance settings.
       //
       // Zoom is applied here in the backend because that is the only place it
@@ -602,6 +616,25 @@ export function registerHandlers(): void {
       const rec = testStore.get(params.id);
       if (!rec) throw new Error("Test not found: " + params.id);
       rec.recordLogs = params.recordLogs;
+      rec.updatedAt = Date.now();
+      testStore.save(rec);
+      return rec;
+    },
+  );
+
+  // Per-test "Handle pop-ups" toggle, remembered between sessions. Absent →
+  // the global default from RecorderSettings. Written as the boolean it was
+  // given, never coerced: a non-boolean over IPC is refused rather than
+  // stored as a pin nobody chose.
+  ipcMain.handle(
+    "tests:setHandlePopups",
+    async (_e, params: { id: string; handlePopups: boolean }) => {
+      const rec = testStore.get(params.id);
+      if (!rec) throw new Error("Test not found: " + params.id);
+      if (typeof params.handlePopups !== "boolean") {
+        throw new Error("handlePopups must be a boolean");
+      }
+      rec.handlePopups = params.handlePopups;
       rec.updatedAt = Date.now();
       testStore.save(rec);
       return rec;

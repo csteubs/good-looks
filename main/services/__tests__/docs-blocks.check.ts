@@ -36,7 +36,7 @@ const root = process.cwd();
 
 /** Every doc the renderer bundles. Adding one here and forgetting to import it
  *  is harmless; importing one and forgetting to list it is what this catches. */
-const SHIPPED_DOCS = ["docs/MCP-GUIDE.md", "docs/CI-GUIDE.md"];
+const SHIPPED_DOCS = ["docs/MCP-GUIDE.md", "docs/CI-GUIDE.md", "docs/POPUPS-GUIDE.md"];
 
 let failures = 0;
 

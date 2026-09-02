@@ -89,6 +89,10 @@ export const EXPORTED_FIELDS = Object.freeze([
   "a11yChecks",
   "recordLogs",
   "captureArtifacts",
+  // Read by the unattended runner to decide whether a run arms the host's
+  // overlay rules and the built-in pop-up handlers — a test that turned them
+  // off in the app must not have its consent banner clicked away in CI.
+  "handlePopups",
   "testTimeoutMs",
   "variables",
   "datasets",

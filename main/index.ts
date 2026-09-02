@@ -422,9 +422,9 @@ async function setupApplicationMenu() {
     // Each item deep-links a TOPIC of the Documentation pane. The slugs are a
     // contract with the documents in `docs/` that the pane ships — rename one
     // of those headings and `check:docs-blocks` fails rather than these items
-    // quietly opening the top of the document. Two documents are linked from
-    // here now, which is why the slugs have to stay unique across both: this
-    // menu names a topic, never a document plus a topic.
+    // quietly opening the top of the document. Three documents are linked from
+    // here now, which is why the slugs have to stay unique across all of them:
+    // this menu names a topic, never a document plus a topic.
     {
       role: "help",
       submenu: [
@@ -461,6 +461,19 @@ async function setupApplicationMenu() {
         {
           label: "Running in GitHub Actions",
           click: async () => await openSettingsPane("documentation/github-actions"),
+        },
+        { type: "separator" },
+        {
+          label: "Pop-ups, banners and dialogs",
+          click: async () => await openSettingsPane("documentation/which-kind-of-pop-up-is-it"),
+        },
+        {
+          label: "Handle pop-ups",
+          click: async () => await openSettingsPane("documentation/handle-pop-ups"),
+        },
+        {
+          label: "Pop-up troubleshooting",
+          click: async () => await openSettingsPane("documentation/pop-up-troubleshooting"),
         },
         { type: "separator" },
         {

@@ -53,4 +53,14 @@ describe("the dialog kind", () => {
     renderDialog();
     expect(screen.getByText(/BEFORE the step that triggers/i)).toBeTruthy();
   });
+
+  it("points a page-drawn pop-up at Handle pop-ups, not at this step", () => {
+    // This is the only entry in the Add-step menu that SOUNDS like a pop-up,
+    // so it is where someone with a newsletter modal lands — and a `dialog`
+    // step answers only the browser's own alert/confirm/prompt. Without the
+    // redirect the step is placed, arms nothing, and the modal stays.
+    renderDialog();
+    expect(screen.getByText(/use Handle pop-ups instead/)).toBeTruthy();
+    expect(screen.getByText(/Settings → Overlay\s+rules/)).toBeTruthy();
+  });
 });

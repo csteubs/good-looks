@@ -1,5 +1,6 @@
 import * as React from "react";
 import {
+  Checkbox,
   Dialog,
   Select,
   SelectContent,
@@ -47,6 +48,13 @@ export function NewRecordingDialog({
   // recorded as the test's first viewport step, so the test replays at the size
   // it was recorded at instead of the runner's own default.
   const [windowSize, setWindowSize] = React.useState<string>(DEFAULT_VIEWPORT_PRESET_ID);
+  // Whether the trainer clicks pop-ups away while this session records — the
+  // taught overlay rules for the host and the built-in Klaviyo/DataGrail
+  // handlers. Seeded from the global default and NOT persisted back to it: a
+  // session that wants the newsletter form left alone (to record signing up to
+  // it) is a decision about this recording, and a box that quietly rewrote the
+  // default would switch handling off for every test after it.
+  const [handlePopups, setHandlePopups] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const browser = useRunBrowserChoice(open);
   const canStart = url.trim().length > 0;
@@ -63,6 +71,7 @@ export function NewRecordingDialog({
       .then((s) => {
         setSpeed(s.defaultRunSpeed ?? "slow");
         setWindowSize(presetIdForViewport(s.defaultWindowSize ?? null));
+        setHandlePopups(s.defaultHandlePopups ?? true);
       })
       .catch(() => {
         /* keep defaults */
@@ -101,6 +110,7 @@ export function NewRecordingDialog({
             undefined,
             viewportForPresetId(windowSize),
             browser.toStore,
+            handlePopups,
           );
         } catch (err) {
           // A start that failed leaves the dialog up with the reason on it, the
@@ -177,6 +187,22 @@ export function NewRecordingDialog({
         </div>
 
         <RunBrowserField value={browser.value} onChange={browser.onChange} />
+
+        <div className="gl-create-field">
+          <label className="flex cursor-pointer items-center gap-2">
+            <Checkbox
+              checked={handlePopups}
+              onCheckedChange={(v) => setHandlePopups(v === true)}
+              aria-label="Handle pop-ups while recording"
+            />
+            <span className="gl-section-title">Handle pop-ups while recording</span>
+          </label>
+          <p className="gl-note">
+            Clicks away the pop-ups and banners this app knows how to close — the rules taught
+            for this site, plus the built-in Klaviyo and DataGrail handlers — so they do not
+            land in the recording. Untick it to record the pop-up itself.
+          </p>
+        </div>
 
         <div className="gl-create-field">
           <span className="gl-section-title">Run speed</span>

@@ -24,9 +24,12 @@ tests headlessly, and exits with a number your pipeline can act on.
 Three things are worth knowing before you start.
 
 - **It runs the same tests, the same way.** Screenshots, accessibility checks,
-  console and network recording, Auto-Heal and standing overlay rules all work
-  here, and each one follows the setting the test already carries. A run on a
-  build server is not a lesser run.
+  console and network recording, Auto-Heal and pop-up handling — the overlay
+  rules you taught and the built-in Klaviyo and DataGrail handlers, following
+  the test's own *Handle pop-ups* option — all work here, and each one follows
+  the setting the test already carries. A run on a build server is not a lesser
+  run. The Pop-ups guide, in the topics beside this one, says which of that
+  travels in an exported bundle and which stays on your Mac.
 - **It cannot read your secrets.** Secret variables, the Shopify crawler
   signature and a proxy password are encrypted to the app on your Mac. Nothing
   outside the app can decrypt them, so you supply secrets another way — see §6.

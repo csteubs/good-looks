@@ -93,6 +93,10 @@ export const REQUIRED_TOPIC_SLUGS = [
   "why-run-tests-outside-the-app",
   "the-command-line",
   "github-actions",
+  // docs/POPUPS-GUIDE.md
+  "which-kind-of-pop-up-is-it",
+  "handle-pop-ups",
+  "pop-up-troubleshooting",
 ] as const;
 
 /** Heading → slug. Drops a leading "3. " so the section numbering in the
