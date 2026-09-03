@@ -149,9 +149,12 @@ done until each of these is pinned by a test or a check.
    "on" (§12 asks whether a first-run prompt is acceptable, which is still
    opt-in).
 2. **Named hosts, written down.** Every host contacted is a line in the
-   renderer-egress allowlist (if the renderer contacts it) or the main-process
-   equivalent this plan adds, with its reason. An SDK that loads a remote
-   script at init is a second host and a second line.
+   renderer-egress allowlist (if the renderer contacts it) or in `check:main-egress`, the
+   main-process equivalent this plan adds in Phase 0 — there is none today:
+   every existing check pins a payload or the renderer, so `api.anthropic.com`,
+   `api.github.com` and Playwright's CDN are reachable from `main/` with
+   nothing written down — with its reason. An SDK that loads a remote script
+   at init is a second host and a second line.
 3. **A pure payload builder, and a planted-secret check over it.** Events,
    crash envelopes and feedback drafts are all built by pure functions with
    typed inputs that have nowhere to put a URL, a path or a free-text value,
@@ -204,7 +207,7 @@ the gate re-derives them, so the numbers here are a snapshot, not a contract.
 | Command palette ⌘K — every command runs through one `go()` wrapper | `command-palette.tsx:103` | chokepoint (command id + group) |
 | Keyboard shortcuts — six separate `keydown` listeners, no registry; ⌘R pause/resume in the trainer | `command-palette.tsx`, `recorder-service.ts:1947` | explicit per listener (a capture-phase listener is the alternative) |
 | Toasts — 248 call sites through one re-export | `renderer/ui/overlays.tsx:630` | chokepoint (toast kind; **never the message**, which quotes paths and URLs) |
-| Native popup menus — `Select`, `DropdownMenu`, Add-test, Manage-stats, assertion kinds; options **never enter the DOM** | `renderer/ui/native-menu.tsx:253,424`, `preload.ts:113` | chokepoint at `Menu.popup` (menu id + chosen command id) — DOM autocapture cannot see these |
+| Native popup menus — `Select`, `DropdownMenu`, Add-test, Manage-stats, step actions, assertion kinds; options **never enter the DOM** | nine `popup` call sites: `native-menu.tsx:253,424`, `step-row.tsx:428`, `library-sidebar.tsx:583`, `edit-steps-view.tsx:163`, `stats-view.tsx:409`, `trainer-actions.ts:145,169`, `url-bar.tsx:117` — all through `preload.ts:113` | chokepoint at `Menu.popup` with a required `menuId`; the chosen command id only for the fixed menus, "a pick happened" for `Select` rows (whose command ids can be a model name or a host) — DOM autocapture cannot see these |
 | Job ticker; AI debug chip; pending branch switch (module-level bus, no IPC) | `job-ticker.tsx:100`, `ai-debug-chip.tsx`, `pending-branch-switch.ts:29` | explicit |
 | Settings-open push (menu, Help, AI connection footer) | `root-view.tsx:130-143` | explicit (entry source) |
 
@@ -212,10 +215,10 @@ the gate re-derives them, so the numbers here are a snapshot, not a contract.
 
 | Surface | Where | Reported by |
 |---|---|---|
-| New recording; Generate test from prompt; Generate steps with AI; Import from git; Duplicate; Tags; Group name; Create flow; Missed runs; Load failed; Exit/save confirmation; Refine selector; Issue compose; AI debug (dialog + step dialog); Stats log inspector; Proxy validation | `renderer/main/*.tsx`, `renderer/components/issue-compose-dialog.tsx`, `renderer/settings/panes/proxy-pane.tsx` | explicit open / confirm / cancel per dialog, from one `useDialogEvent` hook |
+| New recording; Generate test from prompt; Generate steps with AI; Import from git; Duplicate; Tags; Group name; Create flow; Missed runs; Load failed; Exit/save confirmation; Refine selector; Issue compose; AI debug (dialog + step dialog); Stats log inspector; Proxy validation | `renderer/main/*.tsx`, `renderer/components/issue-compose-dialog.tsx`, `renderer/settings/panes/proxy-pane.tsx` | explicit open / confirm / cancel per dialog, from one `useDialogEvent` hook — and a **required `name` prop** on `Dialog` / `AlertDialog` in `renderer/ui/overlays.tsx` (no raw Radix dialog import exists outside `renderer/ui/`), so an anonymous dialog is a type error |
 | Test detail tabs — Steps (edit view + insert cursor), Script (CodeMirror + inspections + AI panel), Variables, Heals, Accessibility, run history, run output, run summary, triage, failure reason | `test-detail-view.tsx:1619` (`TabsRoot onValueChange`) and the per-tab mutations | chokepoint on tab change; explicit for edits (count of steps changed, never content) |
 | Stats panels — flake, cost, digest, divergence, step health, suite cost, report export | `renderer/main/*-panel.tsx` | route + explicit for actions (export kind) |
-| Visual, Accessibility, Heals, Insights, Branches, Routines actions — 8 + 11 `useMutation` hooks and the batch controls | the views' mutation hooks | react-query `MutationCache` observer (mutation key + outcome) |
+| Visual, Accessibility, Heals, Insights, Branches, Routines actions — 8 + 11 `useMutation` hooks and the batch controls | the views' mutation hooks | explicit outcome events at the handlers that matter (accept a heal, apply a propagation, generate a report, switch a branch); a `MutationCache` observer was considered and deferred — it needs a `mutationKey` on some sixty sites for a breadth the outcome events already give |
 
 ### 4.4 Settings
 
@@ -316,6 +319,13 @@ export const EVENTS = {
 } as const satisfies Catalog;
 ```
 
+Every entry also carries a **tier**: `product` (leaves the machine when
+consent is on) or `breadcrumb` (ring buffer only, never sent). `ipc_invoked`
+and `push_sent` are breadcrumb-tier — which is what keeps 287 channel names
+and the vendor's per-event bill out of the product stream — and credential
+channels carry a `silent` class in `IPC_CHANNEL_CLASS`, so a channel NAME
+cannot say that a credential was set.
+
 The property vocabularies are **declared as data and asserted equal to the
 modules that own them** — `SCREEN_IDS` against the router's route table
 (each entry already carries a `staticData.title`), `SETTING_ROW_IDS` against
@@ -359,6 +369,12 @@ acceptance rate DECISIONS 2026-08-23 says ghost text has no telemetry on);
 - Counts that reveal library shape (tests in the library, hosts with
   standing instructions, signatures registered) are buckets too, or absent —
   §12 asks.
+- **Every `RecorderSettings` key is classified once, as data**: `SAFE_VALUE`
+  (booleans, enums — the value travels), `KEY_ONLY` (numbers, lists — the
+  change travels, the value does not) or `NEVER` (free text, URLs, hosts —
+  not even the key name). `setting_changed` is built from that table, read
+  from the module the store reads, so a new key is unreportable until
+  somebody classifies it.
 
 ### 5.3 Never sent — the list, derived from §2.2
 
@@ -401,19 +417,28 @@ never carried it (the insights check's rule).
 ### 5.5 The coverage gate
 
 `check:analytics-coverage` (pure, `tsx`, source-level like
-`check:renderer-egress`) asserts four things, and fails naming the surface:
+`check:renderer-egress`) is a **bijection, not an allowlist**. One harvester
+per surface kind that already has an owning module — routes from the
+router's route table, panes from `PaneId`, rows from `SETTING_INDEX` *and*
+keys from `RecorderSettings`' defaults (both, because they already disagree
+by two rows), commands from the palette's builders, dialogs from the
+required `name` prop's call sites, menus from the nine `popup` sites'
+`menuId`, Help labels from the menu template, push channels from
+`sendToMain`, IPC channels from `ipcMain.handle`, MCP tools from
+`registerTool`, CLI subcommands from `cli/args.mjs` — and it asserts
+`harvested == SURFACES ∪ WITHHELD` and `SURFACES ⊆ harvested`, failing with
+the name of the surface on either side. `WITHHELD` is a map, not a list:
+every entry carries a written reason the check prints (the `push-consumers`
+argument against allowlists — a bare exception is the thing nobody
+re-reads). Every harvest has a **floor**, so a regex that stops matching
+fails as a broken check rather than passing as an empty set.
 
-1. Every route in the router's route table has a `screen_viewed` id in the
-   catalog, and vice versa.
-2. Every `SETTING_INDEX` row id is a legal `setting_changed.row`, and every
-   `RecorderSettings` key in `recorder-settings-store.ts`'s defaults is
-   reachable from some row (this is the assertion `settings-schema.test.ts`
-   already makes, reused — and the two unindexed rows fail it today).
-3. Every command id the palette builds is a legal `command_run.command`;
-   every dialog component name (`*-dialog.tsx`, `AlertDialog` users) is a
-   legal `dialog_opened.dialog`; every Help-menu label and every MCP tool and
-   CLI subcommand is in the catalog's surface list.
-4. The catalog has no property whose type is `string`.
+`check:analytics-schema` walks every `track(` call site and refuses what
+the type system cannot: a spread into the properties object, a template
+literal, `String(`, and any expression ending in `.message`, `.url`,
+`.href`, `.pathname` or `.name`; and it refuses a catalog property whose
+type is `string` or bare `number`, or whose name is on the reserved list
+(`url`, `host`, `name`, `path`, `message`, `query`, `value`).
 
 And `renderer/dev/preview-bridge.ts` gains an in-memory sink, so the browser
 preview can answer "which catalog events fired while I clicked through
@@ -479,6 +504,9 @@ its unit tests state intent. It owns:
   local sink), never coerced.
 - **The ring buffer** (last 200 events, in memory, no disk when consent is
   off) — also the breadcrumb trail §9 and §10 read.
+- **The ledger** — the exact bytes of every batch that left, kept locally
+  and capped, and shown by the Settings viewer (rule 8): "what was sent" is
+  answerable after the fact, not reconstructed from what should have been.
 - **The queue** — append-only JSONL under `userData/recorder/analytics/`,
   capped by count and age (Sentry's 30 / 30 days are sane defaults), flushed
   on a timer and at `before-quit`, batch POST through `appFetch` with a hard
@@ -503,7 +531,7 @@ its unit tests state intent. It owns:
 | `Menu.popup` wrapper (preload) | every native menu pick | nothing — but only if wrapped in the preload, since the wrappers in `native-menu.tsx` are not the only callers |
 | Command palette `go()` | every command by id | the same action reached by a button (which is why `via` is a property) |
 | `toast` re-export | every user-visible error by kind | the message (deliberately) |
-| react-query `MutationCache` | every mutation's outcome | reads |
+| explicit outcome events at mutation handlers | the outcomes the product questions need | the long tail of writes — a `MutationCache` observer is the later, breadth-only option |
 | `useDialogEvent()` | open / confirm / cancel, once adopted by every dialog | dialogs that do not adopt it — the coverage gate's job |
 
 The rule that follows: **chokepoints give breadth, explicit events give
@@ -630,6 +658,13 @@ knowledge and must be re-checked before a decision).
 - **Offline.** Envelopes are queued across processes: `maxQueueSize` 30,
   `maxAgeDays` 30, `flushAtStartup` false by default, `shouldSend` /
   `shouldStore` hooks.
+- **Its transport is Electron `net.request` on the SDK's own session
+  partition, not `appFetch`** (per the provider-first strategist's reading of
+  the SDK source; *re-verify before adopting*) — adopting it is a written
+  exception to rule 6. Its default integration set includes screenshots,
+  local variables and minidumps; if it ever ships, the integration list is
+  curated and **pinned by name in a check**, `beforeSend` runs
+  `redactWithSnapshot`, and `release` is `app.getVersion()`.
 - Session Replay and User Feedback integrations exist for the renderer
   (*capability under `app://` unverified*).
 
@@ -776,8 +811,12 @@ separately from analytics, because a minidump is memory and §2.2 lists what
 is in this app's memory: decrypted credentials, typed values, page content.
 Off by default in any case; if on, the `uploadToServer` decision is the
 user's, and §12 asks whether "prompt after a crash" is the acceptable
-middle. Re-exported from `main/shell/backend.ts` and stubbed in
-`shell-backend-stub.ts`, because only `main/shell/` may import `electron`.
+middle. If it is ever started it starts from `main/shell/` before `ready`,
+re-exported through `backend.ts` and stubbed in `shell-backend-stub.ts`,
+because only `main/shell/` may import `electron`; and `uploadToServer:
+false` still writes minidumps — memory of a process holding decrypted
+credentials — to disk beside the encrypted stores, which is why "never
+start it" is a real option in §12.
 
 ### 9.4 Log shipping, never automatic
 
@@ -791,7 +830,8 @@ Build it on the issue tracker that exists, not beside it.
 
 - **Entry points, each a catalog event:** Help → "Report a problem…"; ⌘K
   "Report a problem"; a "Something wrong here?" affordance in the settings
-  Diagnostics pane; and the existing per-failure "Send to the issue tracker"
+  Diagnostics pane; a "Report this" button on the root error boundary, with
+  the error event pre-attached; and the existing per-failure "Send to the issue tracker"
   action gains a "This is a bug in the app, not the site" checkbox that routes
   to the app's own tracker rather than the user's.
 - **Two destinations, one provider interface.** The user's tracker (Linear or
@@ -800,12 +840,16 @@ Build it on the issue tracker that exists, not beside it.
   about the app. The second needs a credential the *user* does not hold —
   §12 asks whether that is a public-issues repo with a scoped token shipped
   in the build, a relay endpoint the maintainer runs (the mailbox worker is
-  the precedent for "a small worker the repo owns"), or e-mail.
+  the precedent for "a small worker the repo owns"), or e-mail. One fact
+  shapes the answer: the GitHub provider declares `supportsImageUpload:
+  false` (`github-provider.ts:73`; Linear's is `true`), so a GitHub-hosted
+  inbox never receives a screenshot unless the relay stores it — a retention
+  obligation the maintainer would own.
 - **The draft is pure and pinned** the way `buildIssueDraft` is: title, free
   text the user typed, the current route and test id (id, not name), app
   version, Electron and OS versions, the settings snapshot as **key names and
   booleans only**, the last N breadcrumbs, the error events from §9.1, a
-  redacted `main.log` tail — every one shown in the compose dialog before
+  redacted `main.log` tail bounded at 200 lines and 32 KB — every one shown in the compose dialog before
   send, with the log tail and the screenshots behind their own checkboxes
   (consent per attachment, the mitigation `issue-payload.check.ts` already
   chose for screenshots).
@@ -825,9 +869,9 @@ relative to this repo's recent PRs (the multi-tab work was an L).
 
 | Phase | Scope | Deliverables | Size |
 |---|---|---|---|
-| **0 — Decide** | Answer §12. Fix `app:getInfo` (or delete it) so the app reports its real version; index the two settings rows that are outside `SETTING_INDEX`; route `mailbox-service.ts:58` through `appFetch` and `issue-tracker-service.ts:294` through `allRedactableValues()` — two inconsistencies with rules 4 and 6 that the inventory found and that would otherwise be "fixed by analogy" later | three small PRs; a DECISIONS entry recording the answers | S |
+| **0 — Decide** | Answer §12. Fix `app:getInfo` (or delete it) so the app reports its real version; index the two settings rows that are outside `SETTING_INDEX`; route `mailbox-service.ts:58` through `appFetch` and `issue-tracker-service.ts:294` through `allRedactableValues()` — two inconsistencies with rules 4 and 6 that the inventory found and that would otherwise be "fixed by analogy" later; add `check:main-egress` (an allowlist with reasons over absolute URLs in `main/**`, the renderer check's twin) so the provider host is later a one-line diff; widen `forwardRendererConsole` to take a `WebContents` and attach it to the trainer panel and the URL strip | four small PRs; a DECISIONS entry recording the answers and the vendor facts in §7 | S |
 | **1 — Catalog and local sink** | `shared/analytics-catalog.mjs` (+ `.d.mts`); `analytics-service.ts` with the null and local sinks; the `track()` renderer API and `analytics:track`; the router, palette, `save()`, `Menu.popup`, toast, `MutationCache` and IPC/push wrappers; `useDialogEvent` adopted by every dialog; the recorder, runner, batch, routine and agent lifecycle events; the Settings *Privacy* rows with the local event viewer; `check:analytics-coverage`, `check:analytics-egress`, `check:analytics-boot`; preview-bridge sink; ARCHITECTURE + DECISIONS. **Nothing leaves the machine.** | the catalog, the service, the gates, the viewer | L |
-| **2 — Provider adapter** | One adapter behind the sink interface (Amplitude HTTP API over `appFetch`, or PostHog — §12), the consent dialog and version, the queue with retry and age caps, EU/US zone as a setting, the allowlist entry with its reason, e2e row that an opted-in session sends exactly the catalog and an opted-out one opens no socket (a local HTTP listener as the collector, the way the agent-loop spec scripts an Ollama server) | one vendor, one host, one switch | M |
+| **2 — Provider adapter** | One adapter behind the sink interface (Amplitude HTTP API over `appFetch`, or PostHog — §12), the consent dialog and version, the queue with retry and age caps, EU/US zone as a setting, the `check:main-egress` entry with its reason, the write key as a build-time `define` in `scripts/build-main.mjs` (none exists there today; `vite.config.ts:71` has one for the display name) so dev and branch builds are inert by construction, a dashboards-as-data doc mapping each product question to its events and chart, e2e row that an opted-in session sends exactly the catalog and an opted-out one opens no socket (a local HTTP listener as the collector, the way the agent-loop spec scripts an Ollama server) | one vendor, one host, one switch | M |
 | **3 — Debug data, vendor-free** | `uncaughtException` / `unhandledRejection` in main; `window.onerror` / `unhandledrejection` in every app renderer; `forwardRendererConsole` on the trainer panel and the URL strip; `render-process-gone`, `child-process-gone`, `unresponsive` and utility-process exits as `error_seen` events; the ring buffer as breadcrumbs; `main.log` rotation | errors become events; the log stops growing forever | M |
 | **4 — Feedback filing** | *Report a problem…* in Help, ⌘K and Diagnostics; the `app-feedback` `DefectSource`; a pure `buildFeedbackDraft` pinned by `check:feedback-payload`; the compose dialog reused with per-attachment consent (screenshots, redacted log tail, breadcrumbs); the app's own destination (§12); a deep-link form back to a settings pane, with `check:deep-link` rows | a user can report a bug from anywhere in the app | M |
 | **5 — Crash reports** (optional) | `crashReporter` / `@sentry/electron` behind its own switch, minidump upload as prompt-after-crash or never (§12), the `@shell/backend` re-export and stub, `ELECTRON_RUN_AS_NODE` audit for the helper | native crashes reach a tracker | M |
@@ -842,6 +886,8 @@ gets error capture and a feedback door, which is most of the debugging value.
 | Check or test | Kind | Catches |
 |---|---|---|
 | `check:analytics-coverage` | pure `tsx`, source-level | a route, settings row, command, dialog, Help item, MCP tool or CLI subcommand with no catalog entry; a catalog entry with a `string` property |
+| `check:analytics-schema` | pure `tsx`, source-level | a `track(` call that spreads, templates, stringifies or reads `.message` / `.url` / `.name`; a catalog property typed `string` or named on the reserved list |
+| `check:main-egress` | pure `tsx`, source-level | an absolute URL in `main/**` with no allowlist reason — the provider host, the relay host, or the next favicon-shaped surprise |
 | `check:analytics-egress` | esbuild + `shell-backend-stub` | a planted marker in a test name, URL, step value, secret, log line, prompt, branch name or search query reaching the emitted bytes — asserting first that the marker **entered** the builder (the insights check's rule: absence proves nothing if the input never carried it) |
 | `check:analytics-boot` | boots real processes, like `check:mcp-boot` / `check:cli-exit` | the MCP server, the CLI, the e2e app and the preview opening any socket to a provider host; the CLI hanging on an SDK timer |
 | `analytics-service.test.ts` | vitest, node, deps-injected | consent re-read at flush; the null sink selected (not configured) for each environment; queue caps; opt-out deleting the queue and the id; one event per lifecycle transition with two windows open |
@@ -857,7 +903,337 @@ Two conventions the checks inherit: a new `check:*` must be in the
 bundled check does not type-check, so `npm run type-check` is the real gate
 for the service.
 
-<!-- WORKFLOW:QUESTIONS -->
+## 12. Open questions — the decisions only the owner can take
+
+Every question below changes the work materially. Each names why it matters
+in this repo, the realistic options, and the **default the phases in §11
+proceed under until it is answered**. Phase 0 and Phase 1 need none of them
+answered; each later phase is blocked by the ones marked for it.
+
+### 12.1 Goals and audience
+
+1. **Which product questions must the first release answer, and who reads
+   the answers?** The catalog only earns its egress if each event serves a
+   question. Options: a written list of 5–10 questions each mapped to events
+   and a chart (a dashboards-as-data doc) / adoption counts only, no funnels /
+   everything reportable, decide later. **Default:** the dashboards doc is
+   written first with roughly eight questions (activation funnel, adoption per
+   surface, AI acceptance per feature, heal acceptance, time-to-green,
+   retention, error and crash rates, feedback volume); every product-tier
+   event names the question it serves; anything unmapped is breadcrumb-tier.
+   Blocks Phase 2.
+2. **Is the audience for debug data the maintainer, users diagnosing their own
+   installs, or both?** Today the only sink is `main.log` with no reader.
+   Options: maintainer-facing (envelopes leave, opt-in) / user-facing only (an
+   in-app error inspector and "attach to feedback") / both. **Default:** both —
+   a local error ring always; hosted envelopes (class + fingerprint only)
+   behind their own switch. Blocks Phase 3 scope and whether an error vendor
+   exists at all.
+3. **"Every surface CAN be reported on" (a gate proves each surface has an
+   event) or "every surface IS reported" (everything emits once opted in)?**
+   Options: a bijection with a `WITHHELD` map whose reasons the check prints /
+   strict set equality, no exceptions / curated product events, coverage
+   measured informally. **Default:** the bijection with written reasons
+   (§5.5). Blocks the coverage gate's shape.
+
+### 12.2 Users and identity
+
+4. **What identity is attached to events?** No store holds a user e-mail
+   today; the GitHub and Linear tokens are the only identity-adjacent data.
+   Options: anonymous install id only / install id plus an optional
+   user-supplied handle / a GitHub login derived from the token / session-only
+   ids, unlinkable across launches. **Default:** anonymous install id; no
+   account identity, ever. Blocks the envelope and the consent copy.
+5. **When is the install id minted?** The four strategies split here.
+   Options: on opt-in, deleted on opt-out (nothing on disk before consent) /
+   at first launch, never sent until consent / at first launch, rotated on
+   opt-out. **Default:** on opt-in; deleted on opt-out; re-enabling mints a
+   fresh one. Blocks the consent store and the "nothing on disk before
+   consent" assertion.
+6. **May events carry a stable opaque per-test id?** A stable UUID lets
+   recording → run → heal be joined across sessions (time-to-green,
+   heal acceptance per test); a per-session keyed handle makes a test
+   unlinkable across launches and removes those dashboards. Options: stable
+   opaque test id (never the name) / per-session handle / no per-test
+   identity. **Default:** stable opaque test id, with test name, start URL and
+   hostname on the never-sent list. Blocks the product questions in 1.
+7. **Must the MCP server and CLI honour the app's opt-in state, or do they
+   emit nothing by design?** They share userData; any shared rule must be a
+   pure `.mjs` in `shared/`; the CLI must never keep the event loop alive.
+   Options: emit nothing, ever / read a shared consent rule and emit
+   `run_finished` under the install id / an explicit `--analytics` flag on the
+   CLI and Action (a new flag touches `cli/args.mjs`, the usage text and
+   `check:github-action`). **Default:** emit nothing; their runs are visible
+   only through the run record's `trigger` and, if 18 allows it, a bucketed
+   library snapshot the app emits. Blocks Phase 7.
+
+### 12.3 Consent and privacy posture
+
+8. **Is a first-run consent surface acceptable, or must the switches stay
+   off-until-found like every existing egress toggle?** Options:
+   off-until-found, no prompt / a non-blocking home card after first launch
+   that only opens the Privacy rows / the same card after the first saved
+   recording / a modal (still opt-in). **Default:** off-until-found plus a
+   dismissable card on packaged builds that only navigates to the rows; no
+   modal. Blocks Phase 2 and the e2e clean-console spec if a card renders at
+   boot.
+9. **How many switches?** Options: one "usage reports" switch / two (usage;
+   errors), feedback always explicit per send / three independent switches
+   (usage, errors, replay) each with its own confirm-on-enable dialog naming
+   host and payload. **Default:** three, each off, each with the
+   `AlertDialog` pattern; feedback is additionally explicit per report.
+   Blocks the Settings rows.
+10. **Where do the rows live?** `PaneId` is a closed union mirrored in three
+    records and a test that pins the last ungrouped segment. Options: rows in
+    Integrations / rows in Diagnostics / a new Privacy pane / a new pane that
+    also absorbs the existing egress switches. **Default:** rows in
+    Integrations, with a "What leaves this Mac" summary linking the existing
+    switches. Blocks Phase 2.
+11. **What does a `consentVersion` bump do?** Options: turns the switch off
+    until re-confirmed / only re-shows the notice / maintainer decides per
+    release, pinned by a test that the constant changed when the property set
+    did. **Default:** a hand-maintained constant; a bump turns the switch off;
+    a check fails when the envelope's property set changes without a bump.
+    Blocks the consent store.
+12. **Is EU data residency required, and is the zone user-selectable?**
+    Endpoints are verified (§7.1); the choice is policy. Options: EU only /
+    US default / a zone setting / self-hosted only (PostHog). **Default:** EU
+    as the only endpoint; no setting. Blocks Phase 2's allowlist line.
+13. **Which value classes may ever leave?** Options: enums, booleans,
+    bucketed counts and opaque ids only, numbers as "changed" / plus bucketed
+    numeric settings / plus raw numbers (never text). **Default:** the first;
+    `costHourlyRate` and every library-shape count are "changed: true" only.
+    Blocks the catalog's type rule.
+14. **Do IPC channel names ever reach the vendor?** They reveal feature use
+    (`shopify:*`, `proxy:*`) and credential lifecycle (`llm:setApiKey`).
+    Options: breadcrumb-tier, local only / `ipc_failed` with a `silent` class
+    for credential channels / failures only, for channels with no product
+    event. **Default:** local only. Blocks the IPC wrapper's tier.
+15. **Is unattended in-app activity (routines every minute, insights ticks,
+    propagation) reported under the install id?** Options: reported with
+    `trigger: schedule`, excluded from "active user" / kept local / not
+    counted anywhere. **Default:** reported with the trigger; "active user" is
+    renderer-originated events or `trigger: manual` only. Blocks the
+    engagement definition.
+16. **Is the recorded site's hostname ever a property?** Options: never;
+    scheme and `isLocalhost` booleans only / eTLD+1 hashed with the install
+    id / full hostname. **Default:** never.
+17. **Is the Settings search query reportable in any form?** It is free text
+    and host-bearing. Options: length bucket plus a zero-result boolean /
+    zero-result boolean only / not reported. **Default:** length bucket and
+    zero-result boolean; never the text.
+18. **May a bucketed daily library snapshot leave (tests, hosts with
+    standing instructions, signatures, runs by trigger, which integrations
+    are configured)?** It is a configuration fingerprint, and the only way to
+    see MCP/CLI adoption without those processes emitting. Options: bucketed
+    snapshot / counts on the never-sent list / integration booleans only.
+    **Default:** absent; revisit after Phase 2 with real volumes.
+
+### 12.4 Providers, transport and budget
+
+19. **Which analytics provider and transport?** The CSP blocks any CDN
+    snippet in every window; `connect-src https:` would let a bundled
+    renderer SDK POST from the two app windows where the renderer-egress
+    check cannot see it. Options: Amplitude HTTP API from main over
+    `appFetch`, no SDK anywhere / a bundled browser SDK in the renderer with
+    an allowlist entry / PostHog self-hosted behind the same sink interface /
+    FullStory self-hosted script (only if replay is wanted). **Default:**
+    Amplitude's HTTP API from main; the renderer emits over one IPC channel.
+    Blocks Phase 2.
+20. **Is honouring Settings → Proxy a hard requirement for every sink, or may
+    a vendor SDK own its transport "with disclosure"?** This decides whether
+    `@sentry/electron` (its transport is Electron `net`) is eligible at all.
+    Options: hard requirement / an exception for the error vendor, disclosed
+    in the row's risk copy / no requirement. **Default:** hard requirement;
+    a sink that cannot use `appFetch` gets a custom transport or is out.
+21. **Where does the write key live?** `check:repo-hygiene` would not see an
+    Amplitude key in source. Options: a build-time `define` in both
+    `vite.config.ts` and `scripts/build-main.mjs`, absent in every
+    non-package build / a named constant in source plus a hygiene pattern /
+    an environment variable read at runtime. **Default:** the `define`;
+    absence makes every sink a no-op, which is what keeps dev, e2e, CI, the
+    preview and branch builds inert by construction. Blocks Phase 2.
+22. **What is the budget and expected volume?** Pricing is unverified for
+    every vendor. Options: free tier, catalog sized to fit / a paid plan up to
+    a stated cap / self-hosted to avoid per-event cost. **Default:** free
+    tier; only product-tier events leave; queue capped at 500 events / 7 days.
+23. **Is an error vendor wanted at all, or do error envelopes (class +
+    fingerprint + surface) go through the analytics sink?** Options: no
+    vendor / Sentry with a curated integration list pinned by name and
+    `beforeSend` over the redaction snapshot / a self-hosted collector later.
+    **Default:** no error vendor in the first release. Blocks Phase 5.
+
+### 12.5 Session replay
+
+24. **Is replay of the app UI wanted at all?** Options: no (drops FullStory
+    from consideration) / deferred behind a masked-playback spike with a
+    block-everything default / yes, mask-by-default with an unmask allowlist /
+    yes, with the trainer surfaces excluded entirely. **Default:** not in
+    scope; §8 stays a spike gated on a later yes. Blocks Phase 6.
+25. **If enabled, are `RecordingView` and the trainer panel excluded entirely
+    or masked element by element, and does replay run in both windows (two
+    streams for one session)?** **Default:** both trainer surfaces and the
+    URL strip excluded; text masked everywhere else; one instance, in the
+    main window.
+
+### 12.6 Debug and crash data
+
+26. **Which crash surfaces are in scope?** Options: every app-owned process
+    and window, never `pageView` / the main window and main process only /
+    everything including child exit codes as health events. **Default:** all
+    app-owned surfaces: widen `forwardRendererConsole` to a `WebContents`,
+    attach it to the trainer panel and the URL strip, add the main-process
+    handlers and a child-exit event; `pageView` excluded by name. Blocks
+    Phase 3.
+27. **Native crash dumps: never start `crashReporter`, start it with
+    `uploadToServer: false` and offer dumps as a consented attachment, or
+    prompt-after-crash upload?** A minidump is process memory holding
+    decrypted credentials and typed values; even local-only dumps land on
+    disk beside the encrypted stores. **Default:** never start it; JS-level
+    envelopes only. Blocks Phase 5.
+28. **What error content may leave?** The redaction snapshot knows secrets,
+    not hostnames or the URLs a load-failed message quotes. Options: class +
+    in-bundle fingerprint + surface / plus a redacted message with a length
+    cap / plus in-bundle stack frames. **Default:** class + fingerprint +
+    surface; the message stays in the local ring for feedback attachment.
+29. **Does `uncaughtException` in main keep Electron's default dialog after
+    logging, or degrade silently like every other unattended path?**
+    **Default:** log and emit, then let Electron's default proceed; a
+    "Report this" surface appears on the next launch from the persisted
+    envelope.
+30. **Do analytics events double as the breadcrumb ring, and how many are kept
+    when the usage switch is off?** **Default:** one catalog, two consumers;
+    a bounded local ring of 200 in its own JSON store, present regardless of
+    consent, never sent unless attached to a report.
+31. **Does `main.log` gain rotation in this work?** A bounded, redacted tail
+    is a prerequisite for any log attachment. Options: rotation and a cap in
+    Phase 0 / a bounded tail read only / never attach logs. **Default:** a
+    bounded tail (200 lines / 32 KB) read backend-side and redacted; rotation
+    lands in Phase 3.
+
+### 12.7 Feedback filing
+
+32. **Where does app feedback land?** The user does not hold a maintainer
+    credential; the GitHub provider cannot carry images. Options: a relay
+    Worker the repo owns posting to a maintainer GitHub repository (images
+    stored by the Worker or dropped) / the same relay to a Linear team (images
+    travel) / a scoped token in the build posting to GitHub directly / e-mail
+    through the mailbox Worker. **Default:** a relay Worker under `workers/`
+    to a maintainer GitHub repository, text-only; attachments only if the
+    owner accepts Worker-side storage with a stated retention. Blocks
+    Phase 4.
+33. **May an app-bug report also go to the user's own tracker, and does the
+    per-failure dialog gain a "this is a bug in the app" switch?**
+    **Default:** a separate "Report a problem" dialog to the app's tracker;
+    the per-failure dialog untouched.
+34. **What does a report contain by default and what only behind a
+    checkbox?** Screenshots cannot be redacted and the debug captures include
+    the untrusted training page; step lists and replay logs carry typed
+    values. **Default:** versions, surface, settings snapshot (key names and
+    booleans/enums), the breadcrumb ring by default; log tail and screenshots
+    behind checkboxes with a backend-built preview; never the step list,
+    cookies or replay logs.
+35. **Which entry points?** **Default:** Help menu, ⌘K, and a "Report this"
+    on the error boundary with the error pre-attached; no entry in the
+    trainer panel (the main window's `RecordingView` shares the dialog).
+36. **Should a report link back into the app beyond `test/<id>`, and should an
+    About or version row exist?** The deep-link parser refuses every other
+    form by design; nothing exposes the app version to the renderer today.
+    **Default:** fix `app:getInfo` to return the real version and environment
+    flags (used by both the event context and the dialog); no new deep-link
+    forms.
+37. **Do CLI and Action users get a feedback path?** Today: exit code and the
+    JUnit report. Options: none / a `good-looks doctor`-style local bundle the
+    user files by hand / a flag that emits an envelope to stdout.
+    **Default:** none; documentation points at the app.
+
+### 12.8 Coverage and the catalog
+
+38. **What counts as a surface for the gate, and from which owning module is
+    each harvested?** **Default:** every kind with an owning module (§5.5);
+    keyboard chords and toasts withheld with a written reason; the two
+    unindexed settings rows indexed in Phase 0.
+39. **The required identity prop on primitives: `name` on
+    `Dialog`/`AlertDialog` and `menuId` on every popup, typed from the
+    catalog?** It touches every dialog file and the nine popup sites in one
+    PR. **Default:** yes, `name` and `menuId`, instrumented at the
+    `overlays.tsx` and `native-menu.tsx` seams rather than per component.
+    Blocks Phase 1's wide PR.
+40. **Where does the catalog live?** **Default:** `shared/` for the envelope,
+    the type rule, the tier and the never-sent list; per-kind vocabularies
+    asserted equal to their owners by a unit test rather than copied (§5.1).
+41. **Which product events are mandatory in the first catalog?** **Default:**
+    the full set in §5.1, each emitted at its backend seam so the trainer
+    panel's second rendering never double-counts.
+42. **Is `setting_changed` emitted from the renderer's optimistic `save()` or
+    from the backend handler, where values are normalised and where writes
+    from other views also land?** **Default:** the backend handler, with the
+    per-key classification (§5.2); credential channels emit outcome-only
+    events; `proxyUrl` removed from the store's local "Saved trainer
+    settings" log line while there.
+43. **Native-menu choices: the chosen command for fixed menus and only
+    "picked" for `Select` rows over user data?** **Default:** yes; the
+    catalog marks each `menuId` static or dynamic.
+
+### 12.9 Non-app surfaces, rollout and distribution
+
+44. **Do dev checkouts and branch builds ever emit?** Options: never, inert by
+    key absence / a maintainers-only "send from dev builds" row / an
+    environment-variable override. **Default:** never; `environment` remains
+    a context property when a packaged build sends.
+45. **Must the public GitHub Pages preview and the specimen page be proven
+    inert by a boot check with a socket spy, or is the preview bridge
+    answering "disabled" enough?** **Default:** both.
+46. **Must code signing, notarisation and an update channel land before a
+    write key ships?** The mac build is unsigned with target `dir`; a leaked
+    key cannot be rotated in installed copies. Options: yes, prerequisite /
+    no, a re-package is acceptable and the key is a public write key /
+    analytics ships behind the `define` only after the first signed release.
+    **Default:** not a prerequisite; the key is treated as
+    public-but-rotatable by re-packaging, and the risk is written into
+    DECISIONS. Blocks the ordering of Phase 2 against a distribution project.
+47. **What is the first shippable increment?** Options: local-first (catalog,
+    ring and gate with nothing leaving; sink later) / consent and sink first /
+    feedback first (highest user value, reuses the issue-tracker pipeline).
+    **Default:** local-first, as §11 orders it.
+
+### 12.10 Ownership, operations and gates
+
+48. **Who owns the vendor account, the relay Worker (deployment, its token,
+    screenshot retention) and the dashboards, and are dashboards kept as data
+    in the repo?** **Default:** the maintainer owns all three; dashboards are
+    documented event → properties → chart so a vendor swap re-creates them.
+49. **Does the "last N events sent" ledger live beside the switch or in
+    Diagnostics?** **Default:** beside the switch, readable and exportable.
+50. **Does a user-facing privacy document join the in-app manual?** Only
+    three docs are parsed today; slugs must be unique across all of them.
+    **Default:** a fourth shipped doc with its own slugs, linked from the
+    consent rows.
+51. **Which checks are required, and in what shape?** **Default:** all five
+    in §11.1 (`main-egress`, `analytics-egress`, `analytics-schema`,
+    `analytics-coverage`, `analytics-boot`), each wired into `test:checks` in
+    the same commit; plus one e2e row against a local collector, because
+    only a real window can show whether a socket opens.
+52. **Is instrumentation confined to the seams (components untouched), or
+    are auto-instrumenting hooks acceptable given the React compiler runs
+    only in the Vite build?** **Default:** seams only.
+
+### 12.11 Prerequisites
+
+53. **Are the two observed inconsistencies in scope for Phase 0** — the
+    mailbox probe's raw `fetch` and the issue tracker redacting over
+    `testSecretsStore.allValues()` — **or filed separately?** The second is
+    on the feedback path. **Default:** both in Phase 0, each with a
+    planted-secret row (suggested as separate tasks alongside this plan).
+54. **Should the capture script's verbatim recording of password-field values
+    be changed first (recorded as secret variables) before any attachment
+    or replay could include a step list?** It is a product behaviour change
+    with its own plan. **Default:** not a prerequisite; step lists, replay
+    logs and cookies are never attachable.
+55. **Are the stale `app:getInfo` scaffold, the two unindexed rows, the
+    main-window-only console forwarding and `proxyUrl` in the local settings
+    log all fixed in Phase 0 regardless of provider?** **Default:** all four,
+    each with a test that can fail.
 
 ## 13. Risks and rejected alternatives
 
@@ -888,6 +1264,12 @@ for the service.
   `userData/branch-builds/` shares userData; its events must carry *its*
   version (`app.getVersion()` of the running build) and the same install id,
   or version-cohort charts break the day someone tests a PR.
+- *A gate that goes red for non-bugs.* Twelve regex harvesters over TSX is
+  twelve places a legitimate refactor fails the build. The mitigations are
+  structural: one harvester per surface kind that has an owning module (no
+  harvester for keyboard chords or mutation keys in the first landing), a
+  `WITHHELD` map with reasons instead of set equality with no exceptions,
+  and floors that distinguish "nothing found" from "regex broke".
 - *Cost.* Every provider bills by event volume; `ipc_invoked` on 287
   channels for every user would dominate. It stays off unless a channel has
   no higher-level event, and the local viewer shows volume before anything
