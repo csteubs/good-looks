@@ -100,6 +100,18 @@ to its opener, a flow that closes itself, a page that reads `window.opener` —
 and the requirement was that the tab opens and the watcher sees it. It stays
 available as the user's own page init script.
 
+**The evidence says which tab.** A manifest entry on a later tab carries
+`page: n`, `buildReplay` carries it onto `ReplayStep.tab`, and the Visual tab
+shows a "Tab 2" chip on the step — without it the screenshot is simply of a
+different page and nothing says why. The run record carries `tabsOpened`
+(absent when none opened, so a run predating the field reads the same),
+written by both runners off the same markers, carried by the ingest gate, and
+reported by `triage_run` with a note that a failing step after that point
+acted on the newest tab. And the e2e spec's heal row is the one the plan
+called the row that matters most: Auto-Heal healing a stale locator ON the
+second tab, which is exactly what a per-page tagging that stopped at the
+first page would have silently not done.
+
 **A tab is not a step.** The marker carries no line, so `splitStepMarkers`
 hands it back BESIDE the transitions (`tabs`) rather than among them: every
 reader of `markers` indexes a step by `line`, and a tab among them is a step

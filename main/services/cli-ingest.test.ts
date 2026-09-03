@@ -213,6 +213,7 @@ describe("normalizeIngestedRun", () => {
         trigger: "root",
         endedBy: "exploded",
         healedSteps: "many",
+        tabsOpened: "several",
         note: "x".repeat(INGEST_MAX_TEXT + 1),
       }),
     );
@@ -222,7 +223,16 @@ describe("normalizeIngestedRun", () => {
     expect(out).not.toHaveProperty("trigger");
     expect(out).not.toHaveProperty("endedBy");
     expect(out).not.toHaveProperty("healedSteps");
+    expect(out).not.toHaveProperty("tabsOpened");
     expect(out).not.toHaveProperty("note");
+  });
+
+  it("carries how many tabs a CI run opened", () => {
+    // The follow-the-newest-tab fixture's only trace that outlives the log. A
+    // CI run is where a `_blank` link meets it most often, and the count is
+    // what lets the history say so without the log.
+    expect(normalizeIngestedRun(validRun({ tabsOpened: 2 }))?.tabsOpened).toBe(2);
+    expect(normalizeIngestedRun(validRun({}))).not.toHaveProperty("tabsOpened");
   });
 
   it("carries no key the sender invented", () => {

@@ -113,6 +113,13 @@ function StatusIcon({ status }: { status: ReplayStepStatus }) {
   );
 }
 
+/** The chip on a step that ran on a later tab: `tab` counts from 0 for the
+ *  tab the run started on, so the second tab reads "Tab 2". Exported so the
+ *  copy is asserted directly rather than re-typed. */
+export function tabChipLabel(tab: number): string {
+  return `Tab ${tab + 1}`;
+}
+
 function statusLabel(status: ReplayStepStatus): string {
   if (status === "passed") return "Passed";
   if (status === "failed") return "Failed";
@@ -1977,6 +1984,14 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
       <div className="gl-visual-step">
         <StatusIcon status={step.status} />
         <span className="gl-chip">{step.type}</span>
+        {/* A step the run took on a tab the page opened. The run follows the
+            newest tab on its own; without this the screenshot is simply of a
+            different page, and nothing says why. */}
+        {step.tab ? (
+          <span className="gl-chip" data-gl="visual-tab" title="This step ran on a tab the page opened">
+            {tabChipLabel(step.tab)}
+          </span>
+        ) : null}
         <code className="gl-mono-value flex-1" title={step.label}>
           {step.label}
         </code>

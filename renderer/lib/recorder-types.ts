@@ -1258,6 +1258,9 @@ export interface ReplayStep {
   actionIndex?: number;
   /** the acted-on element's normalized rect at capture time, when recorded. */
   rect?: NormalizedRect;
+  /** Which tab the step acted on, from 0; present only for a later tab.
+   *  Mirrors main/services/artifact-store.ts. */
+  tab?: number;
   diff?: VisualDiff;
   /** accessibility outcome for this step, when a11y checks ran. */
   a11y?: A11yResult;

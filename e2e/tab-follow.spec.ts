@@ -39,6 +39,8 @@ import { test, expect } from "@playwright/test";
 import { captureFixtureSource } from "../shared/capture-fixture-source.mjs";
 import { glazeRuntimeSource, GLAZE_RUNTIME_FILE } from "../shared/glaze-runtime-source.mjs";
 import { healFixtureSource, HEAL_FIXTURE_FILE } from "../shared/heal-fixture-source.mjs";
+import { buildHealMap } from "../shared/heal-map.mjs";
+import { HEAL_EVENTS_FILE } from "../shared/heal-artifacts.mjs";
 import { generateSpecDetailed } from "../main/services/script-generator.js";
 import { dismissFixtureSource, DISMISS_FIXTURE_FILE } from "../shared/dismiss-fixture-source.mjs";
 import { userPageFixtureSource, USER_PAGE_FIXTURE_FILE } from "../shared/user-page-fixture-source.mjs";
@@ -158,15 +160,25 @@ let n = 0;
 async function run(
   name: string,
   steps: Step[],
-  opts: { follow?: boolean; capture?: boolean; timeoutMs?: number } = {},
+  opts: { follow?: boolean; capture?: boolean; heal?: boolean; timeoutMs?: number } = {},
 ): Promise<RunResult> {
   const follow = opts.follow ?? true;
   const capture = opts.capture ?? false;
+  const heal = opts.heal ?? false;
   const id = `${name}-${++n}`;
   const { source, lineMap } = generateSpecDetailed({ name: id, url: base, steps }, {});
   const specPath = path.join(dir, `${id}.spec.ts`);
   fs.writeFileSync(specPath, source.replace(/from\s+["']@playwright\/test["']/, 'from "./glaze-capture.mjs"'));
   const artifactDir = path.join(dir, `${id}-artifacts`);
+  // Run-time Auto-Heal is nothing without its MAP (R49): the fixture rethrows
+  // untouched for a key it cannot find. Built through the shared builder, the
+  // way both runners build it.
+  const healDir = path.join(artifactDir, "heals");
+  const healMapPath = path.join(dir, `${id}.heal-map.json`);
+  if (heal) {
+    fs.mkdirSync(healDir, { recursive: true });
+    fs.writeFileSync(healMapPath, JSON.stringify(buildHealMap(steps, {})), "utf-8");
+  }
 
   const child = spawn(
     process.execPath,
@@ -194,6 +206,9 @@ async function run(
         GLAZE_ARTIFACT_DIR: capture ? artifactDir : "",
         GLAZE_TEST_ID: "t-tabs",
         GLAZE_RUN_ID: id,
+        GLAZE_HEAL: heal ? "1" : "0",
+        GLAZE_HEAL_MAP: heal ? healMapPath : "",
+        GLAZE_HEAL_DIR: heal ? healDir : "",
       },
     },
   );
@@ -355,6 +370,58 @@ test("a capture run's evidence follows the tab: screenshots and console say whic
   const ready = consoleLog.entries.find((e) => e.text.includes("help page ready"));
   expect(ready, "the second tab's console is captured").toBeTruthy();
   expect(ready?.page).toBe(1);
+});
+
+test("Auto-Heal heals a stale locator ON THE SECOND TAB", async () => {
+  // The heal fixture tags a page's locator factories per page and runs its
+  // probe on the locator's OWN page. Before the tabs work it tagged the
+  // fixture page only and probed the closed-over page — so a locator that
+  // went stale on a tab the page opened arrived with no key, and even keyed,
+  // its probe would have ranked candidates on the opener, where the element
+  // never was. Written-but-unwired is R49's shape: healing installed,
+  // reporting armed, healing nothing. This row is the one that notices.
+  //
+  // The recorded locator names a test id the help page no longer has; the
+  // fingerprint remembers the button as it was, and the probe finds it under
+  // its current id.
+  const stale: Step = {
+    id: "s-ok-stale",
+    type: "click",
+    locator: { k: "testid", v: "ok-old" },
+    // A short wait for the stale locator, so the failure that triggers the
+    // heal costs seconds rather than the test's whole budget.
+    timeoutMs: 2000,
+    fingerprint: {
+      tag: "button",
+      description: "button",
+      candidates: [{ k: "testid", v: "ok" }, { k: "role", v: "button", role: "button", name: "OK" }],
+      attributes: {},
+      text: "OK",
+      depth: 3,
+    },
+  } as Step;
+  const res = await run(
+    "heal",
+    [goto(), click("s-open", "help-link"), title("s-title", "Help"), stale, text("s-msg", "msg", "clicked")],
+    { heal: true, capture: true },
+  );
+  expect(res.code, res.output).toBe(0);
+  expect(res.output).toMatch(/\[glaze-heal\] healed/);
+  const events = JSON.parse(fs.readFileSync(path.join(res.artifactDir, "heals", HEAL_EVENTS_FILE), "utf-8")) as {
+    outcome: string;
+    url?: string;
+    appliedLocator?: { k: string; v: string };
+  }[];
+  const healed = events.find((e) => e.outcome === "healed");
+  expect(healed, `a heal event is recorded. Events: ${JSON.stringify(events)}`).toBeTruthy();
+  // On the tab the page opened, under the button's current id.
+  expect(healed?.url).toMatch(/\/help$/);
+  expect(healed?.appliedLocator).toEqual({ k: "testid", v: "ok" });
+  // And the healed click's evidence says which tab it ran on.
+  const manifest = JSON.parse(fs.readFileSync(path.join(res.artifactDir, "manifest.json"), "utf-8")) as {
+    steps: { action: string; page?: number }[];
+  };
+  expect(manifest.steps.filter((s) => s.action === "click" && s.page === 1).length).toBeGreaterThan(0);
 });
 
 test("CONTROL: with following off, the same journey goes red", async () => {
