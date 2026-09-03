@@ -15,7 +15,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { readJsonFile, resolveDataDir } from "./data-dir.mjs";
+import { appVersion, readJsonFile, resolveDataDir } from "./data-dir.mjs";
 import { resolveScriptPath, scriptsDirFor } from "../shared/script-path.mjs";
 import { createStore } from "./store.mjs";
 import { createRunner } from "./run-tests.mjs";
@@ -114,7 +114,12 @@ const { findPlaywrightCli, isBrowserInstalled, executeTest, runSelection } = cre
   trigger: "mcp",
 });
 
-const server = new McpServer({ name: "good-looks", version: "1.0.0" });
+// `name` is the protocol identifier clients key their configuration off, so it
+// stays `package.json`'s `name` rather than becoming the display name. The
+// version is READ (see `appVersion`): it was the literal "1.0.0", correct on
+// the day it was typed and stale from the next bump, and the handshake is the
+// one place a client is told which build it is talking to.
+const server = new McpServer({ name: "good-looks", version: appVersion(PROJECT_ROOT) });
 
 server.registerTool(
   "list_tests",

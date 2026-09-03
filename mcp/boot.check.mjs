@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 
 const MCP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SERVER = path.join(MCP_DIR, "server.mjs");
+const PKG = JSON.parse(fs.readFileSync(path.join(MCP_DIR, "..", "package.json"), "utf8"));
 
 let failures = 0;
 function assert(condition, label) {
@@ -129,6 +130,21 @@ try {
   const responses = parseResponses(out);
   const initialize = responses.find((r) => r.id === 1);
   assert(initialize?.result?.serverInfo?.name !== undefined, "it completes the initialize handshake");
+
+  // WHICH BUILD IS THE CLIENT TALKING TO. The handshake is the only place the
+  // server says, and it said "1.0.0" for every release after 1.0.0 — a literal
+  // in the `McpServer` constructor, correct on the day it was typed and wrong
+  // from the next bump onward. Nothing could have noticed: no tool returns it,
+  // no test read it, and a stale version in a handshake is not an error, just
+  // an answer. Asserted over the WIRE rather than against `appVersion()`,
+  // because the bug was never in reading package.json — it was in the server
+  // not asking.
+  assert(
+    initialize?.result?.serverInfo?.version === PKG.version,
+    `…reporting this build's version (package.json says ${PKG.version}, handshake said ${String(
+      initialize?.result?.serverInfo?.version,
+    )})`,
+  );
 
   const tools = responses.find((r) => r.id === 2)?.result?.tools ?? [];
   // A floor rather than an exact count: this check is about the server being
