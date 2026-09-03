@@ -411,8 +411,17 @@ function describeVia(decision: AppProxyDecision): string {
   return "direct";
 }
 
-/** A network failure as one sentence with the useful part kept. */
-function describeFetchError(err: unknown): string {
+/**
+ * A network failure as one sentence with the useful part kept.
+ *
+ * Exported because it belongs to `appFetch` rather than to the validator that
+ * first needed it: undici reports every proxy failure — a refused CONNECT, a
+ * 407, a re-signing certificate — as a bare `fetch failed`, with the real
+ * cause buried in a chain of `cause` links. Any caller that routes through the
+ * proxy inherits those failure modes and, without this, reports them all with
+ * the one sentence that names nothing.
+ */
+export function describeFetchError(err: unknown): string {
   const parts: string[] = [];
   let cursor: unknown = err;
   for (let depth = 0; cursor instanceof Error && depth < 4; depth++) {

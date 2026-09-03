@@ -18,10 +18,44 @@ import { logger } from "@shell/backend";
 import { messagesUrl } from "../../shared/email-code.mjs";
 
 import { mailboxStore } from "./mailbox-store.js";
+import { appFetch, describeFetchError } from "./proxy-service.js";
 
 /** Bounded so a hung endpoint does not hang the Settings pane. Generous
  *  against a cold Worker start, short against a black hole. */
 const PROBE_TIMEOUT_MS = 10_000;
+
+/**
+ * The whole probe under one deadline, not just the request.
+ *
+ * `AbortSignal.timeout` alone is not enough once the call goes through
+ * `appFetch`: the signal only reaches the request, and `appFetch` awaits a
+ * proxy DECISION first — in automatic mode a `session.resolveProxy` call that
+ * evaluates a PAC file, in manual mode a `safeStorage` decrypt of the proxy
+ * password. Neither takes the signal. A PAC host that accepts connections and
+ * never answers would hang the Settings pane past the bound, and then fail the
+ * request instantly against an already-fired signal — reporting "no answer"
+ * about an endpoint nothing had contacted.
+ *
+ * So the timer races the whole call and aborts it as it fires: whichever stage
+ * is slow, the pane gets an answer at the bound.
+ */
+async function withDeadline<T>(run: (signal: AbortSignal) => Promise<T>, ms: number): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      run(controller.signal),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error(`timed out after ${ms}ms`));
+        }, ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 /** A syntactically valid address that is nobody's. RFC 2606 reserves
  *  example.com precisely so a probe cannot collide with a real mailbox — and
@@ -55,10 +89,26 @@ export async function probeMailbox(): Promise<MailboxProbe> {
     };
   }
   try {
-    const response = await fetch(messagesUrl(credentials.endpoint, PROBE_ADDRESS, Date.now()), {
-      headers: { authorization: `Bearer ${credentials.token}` },
-      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-    });
+    // `appFetch`, not the global one. This request is made BY THE APP, from
+    // the main process, so it is app traffic and Settings > Proxy reaches app
+    // traffic only through here. A probe that went direct on a machine whose
+    // app traffic is proxied is not testing the path anything else uses.
+    //
+    // What it therefore does NOT do is predict the run's transport, and that
+    // is worth stating because it is the obvious thing to assume. A run polls
+    // this same endpoint through `page.request.fetch`, so it takes the
+    // browser context's proxy — the TEST class — while this takes the APP
+    // class. With `proxyTraffic` set to "both" or "none" the two agree; set to
+    // one class only, they do not, and the button still answers the question
+    // it asks: is the mailbox reachable, with this token, from this app.
+    const response = await withDeadline(
+      (signal) =>
+        appFetch(messagesUrl(credentials.endpoint, PROBE_ADDRESS, Date.now()), {
+          headers: { authorization: `Bearer ${credentials.token}` },
+          signal,
+        }),
+      PROBE_TIMEOUT_MS,
+    );
     if (response.status === 401 || response.status === 403) {
       return { ok: false, detail: `The mailbox rejected the token (${response.status}).` };
     }
@@ -94,11 +144,18 @@ export async function probeMailbox(): Promise<MailboxProbe> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.warn("mailbox", "The mailbox probe failed", { message });
+    // `describeFetchError`, not `error.message`, for everything that is not the
+    // deadline: going through the proxy adds failure modes undici reports as a
+    // bare "fetch failed" with the cause several links down — a refused
+    // CONNECT, a 407, a proxy that re-signs traffic. This module exists to
+    // separate causes that otherwise look identical, and an unreadable fourth
+    // one would send someone to re-paste a token that was never the problem.
     return {
       ok: false,
-      detail: message.includes("timed out" ) || message.includes("abort")
-        ? `No answer within ${PROBE_TIMEOUT_MS / 1000}s.`
-        : `Could not reach the mailbox: ${message}`,
+      detail:
+        message.includes("timed out") || message.includes("abort")
+          ? `No answer within ${PROBE_TIMEOUT_MS / 1000}s.`
+          : `Could not reach the mailbox: ${describeFetchError(error)}`,
     };
   }
 }

@@ -4,14 +4,15 @@
 // `process.env.GLAZE_SECRET_<NAME>` reference instead), but it DOES reach the
 // running browser — so it can still surface in a Playwright error message, a
 // failing assertion's diff, or a page-content dump in the run output. Those
-// paths all funnel into three places, and each is closed here:
+// paths all funnel into four places, and each is closed here:
 //
 //   • the run log written to disk           (run-history-store.append)
 //   • the outgoing webhook payload          (alert-service)
 //   • the prompt sent to a hosted LLM       (Debug with AI on the Claude provider)
+//   • the issue filed on a tracker          (issue-tracker-service)
 //
 // `redact` is pure so `check:variables` can assert the guarantee directly.
-// The snapshot exists because two of those three call sites are synchronous,
+// The snapshot exists because two of those four call sites are synchronous,
 // and reading the encrypted store is not.
 
 import { logger } from "@shell/backend";
@@ -43,8 +44,12 @@ let snapshot: string[] = [];
  * console and network traffic records the request that carries it. Different
  * paths in, one way out.
  *
- * Exported for the one redaction site that is async and therefore does not read
- * the snapshot — see `alert-service.sendAlert`.
+ * Exported for the redaction sites that are async and therefore do NOT read the
+ * snapshot: `alert-service.sendAlert` and its insights sibling, and the issue
+ * tracker's `redactionValues`. That is the whole reason this function is
+ * exported rather than private — and the reason widening it is not enough on
+ * its own, since a widening is silent at every call site that asks a store
+ * directly instead. `check:main-egress` is what refuses the next one.
  */
 export async function allRedactableValues(): Promise<string[]> {
   const [secrets, signatures, mailbox] = await Promise.all([
