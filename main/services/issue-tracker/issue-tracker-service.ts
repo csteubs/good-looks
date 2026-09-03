@@ -14,8 +14,7 @@
 
 import { logger } from "@shell/backend";
 
-import { redact } from "../secret-redaction.js";
-import { testSecretsStore } from "../test-secrets-store.js";
+import { allRedactableValues, redact } from "../secret-redaction.js";
 import { defectLoader } from "./defect-loader.js";
 import { issueConfigStore } from "./issue-config-store.js";
 import { issueLinkStore, type IssueLink } from "./issue-link-store.js";
@@ -41,6 +40,40 @@ import {
 const verified = new Map<ProviderId, ProviderAccount>();
 /** Last failure message, per provider. Cleared on success. */
 const lastError = new Map<ProviderId, string>();
+
+/**
+ * Everything that must not leave in an issue's text.
+ *
+ * `allRedactableValues()`, not `testSecretsStore.allValues()`, and that is the
+ * whole of `sendAlert`'s rule rather than half of it: THREE stores, because
+ * there are three ways a credential reaches a run's output — a secret variable
+ * typed into the page, a Shopify crawler signature this app attaches to the
+ * request, and the mailbox token the generated spec sends. Asking one of them
+ * is how a widened redaction set leaves a send path behind, which is the
+ * failure the note above `sendAlert` records.
+ *
+ * One function rather than the call repeated at each send, because what needs
+ * to be decided once is the FAILURE POSTURE, and this one fails OPEN: an issue
+ * still goes out when the set cannot be read. That is deliberate — filing is
+ * attended, the user is watching the dialog, and an unreadable store must not
+ * turn "file this issue" into an error they cannot act on. It is the opposite
+ * of `sendAlert`'s choice, which is unattended and sends nothing rather than
+ * risk it. What it must not be is SILENT: none of the three stores can reject
+ * today (each answers an unreadable blob with an empty list), so reaching this
+ * catch means one of them started to, and "redaction was skipped" would be
+ * indistinguishable from "nothing was configured" in the log of a path that
+ * ships text to a third party.
+ */
+async function redactionValues(): Promise<string[]> {
+  try {
+    return await allRedactableValues();
+  } catch (err) {
+    logger.warn("issues", "Could not read the redaction set; filing without it", {
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
+}
 
 /**
  * Turn anything thrown into a message safe to display.
@@ -284,6 +317,15 @@ export const issueTrackerService = {
    * refactor could route around. It matters even though the user typed some of
    * this — a step label recorded before variables existed has its typed value
    * baked in, and that label is in the draft they accepted without reading.
+   *
+   * The list comes from `redactionValues()` above — every store, and this is
+   * the LAST gate, over text this process did not build: `issues:createIssue`
+   * takes the title and the body from the renderer, because the compose dialog
+   * lets the user edit the draft before sending it. What the loader assembles
+   * is already redacted upstream (the run log as `run-history-store` writes it,
+   * the console and network files as `artifact-store` reads them, both over the
+   * full snapshot), so asking one store here was a layer of defence in depth
+   * covering less than the layers that hide its narrowness.
    */
   async createIssue(
     draft: { source: DefectSource; title: string; body: string; attachmentFiles: string[] },
@@ -291,7 +333,7 @@ export const issueTrackerService = {
     provider: ProviderId = issueConfigStore.activeProvider(),
   ): Promise<CreatedIssue> {
     const key = await requireKey(provider);
-    const secrets = await testSecretsStore.allValues().catch(() => [] as string[]);
+    const secrets = await redactionValues();
     const images = defectLoader.readImages(draft.source, draft.attachmentFiles);
     const created = await providerFor(provider).createIssue(key, {
       title: redact(draft.title, secrets),
@@ -347,7 +389,7 @@ export const issueTrackerService = {
     if (!draft) throw new IssueProviderError("unknown", "This defect's evidence is no longer on disk.");
 
     const key = await requireKey(provider);
-    const secrets = await testSecretsStore.allValues().catch(() => [] as string[]);
+    const secrets = await redactionValues();
     await providerFor(provider).addComment(
       key,
       link.issueId,
