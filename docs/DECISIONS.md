@@ -10,6 +10,70 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-03 — A retried run opens the same tabs again, and only the last attempt counts
+
+**The report.** `tabsOpened` summed every tab marker on the stream. Playwright
+re-runs a failed test from the top and the tabs fixture is a `page` fixture, so
+each attempt re-walks the journey and re-opens the same tabs: one `_blank`
+click that passed on the third attempt recorded 3, and `triage_run` told the
+reader in prose that the browser had opened three tabs.
+
+**What the number means.** The final attempt. It is the attempt whose outcome
+the record keeps, so it is the one the rest of the record already describes —
+the same reasoning `shared/run-attempts.mjs` applies to a retried run's other
+evidence. Per-attempt tabs are not lost, only unsummed: the markers carry
+`attempt`, and the log still holds every `New Tab Opened` line.
+
+**Where the rule lives.** `tabsOpenedFrom` in `shared/step-marker.mjs`, beside
+the marker it reads. Both runners had their own accumulator — the app a
+counter, the MCP a `+= split.tabs.length` — and two spellings of a retry rule
+is the drift this repo keeps paying for; the app's count and the CLI's would
+have answered differently for the same journey the day either was touched. It
+tallies per attempt and answers the highest, rather than trusting the markers
+to arrive in order.
+
+**Not fixed by the same change, deliberately.** The live `> New Tab Opened
+(#N)` row still fires for every tab in every attempt. That row reports what the
+browser is doing while the user watches it, and a retry genuinely does open
+another tab; suppressing it would make the display disagree with the browser in
+front of them. Only the recorded number is attempt-aware.
+
+### 2026-09-03 — A spread at the call site is how a run record loses a field, twice
+
+**The report.** `tabsOpened` shipped in #310 as "written by both runners". It
+was written by one. Every run started from the app recorded nothing, so
+`triage_run` answered `tabsOpened: 0` and omitted its note for exactly the runs
+the app drove, while the same journey through the CLI answered 1.
+
+**Why it compiled.** `playwright-runner.ts` passes the count the way it passes
+every optional field — `...(tabsOpened > 0 ? { tabsOpened } : {})` — and
+`runHistoryStore.append` REBUILDS the record from named keys rather than
+spreading its argument. A field the parameter type does not declare is
+therefore dropped, and TypeScript does not object: excess-property checking
+does not apply to spread properties. Nothing downstream complains either,
+because absent is the legitimate encoding of "no tabs opened".
+
+**This is the second time.** The comment the new spread sits beside already
+records `hasTrace`, `attempt` and `passedOnRetry` falling through the same hole
+in R24, with the same silence. The rebuild is deliberate and stays — it is what
+keeps an unknown key from reaching the store — so the cost of it is that every
+new field needs a line in two places and a test that reads the field back OUT
+of the file.
+
+**Why no guard yet.** `check:run-ingest` compares the ingest gate against
+`RunRecord` in both directions and passes here: the field is optional and the
+gate does produce it. The gap is that nothing compares what the app's own
+writer persists against the same interface. A source-level check over
+`append`'s call sites would close it and is worth doing; it is not in this
+change, because getting such a check wrong is worse than not having it, and
+that is a decision for the maintainer rather than a drive-by.
+
+**What landed.** The declaration, the conditional spread in the record literal
+under the same absent-when-zero rule as its neighbours, and three cases in
+`run-history-append.test.ts` — the file that exists because of the first
+occurrence. The positive case fails against the unfixed store with
+`expected undefined to be 2`, which is the whole point of it.
+
 ### 2026-09-03 — Two egress paths that did not follow the rule the repo had already written down
 
 **What was wrong.** Both rules were stated, both had a written rationale, and

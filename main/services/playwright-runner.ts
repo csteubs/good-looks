@@ -31,7 +31,8 @@ import { sendToMain } from "./app-window.js";
 import { getScriptsDir, testStore } from "./test-store.js";
 import { runHistoryStore } from "./run-history-store.js";
 import { stepReporterSource } from "../../shared/step-reporter-source.mjs";
-import { splitStepMarkers } from "../../shared/step-marker.mjs";
+import { splitStepMarkers, tabsOpenedFrom } from "../../shared/step-marker.mjs";
+import type { TabMarker } from "../../shared/step-marker.mjs";
 import { captureFixtureSource } from "../../shared/capture-fixture-source.mjs";
 import {
   SIGNATURE_COUNT_ENV,
@@ -964,9 +965,12 @@ const stepLineMaps = new Map<string, Map<number, number> | null>();
 // The last step index that BEGAN on each run, so a tab the browser opens can
 // be filed under the step that opened it — the marker itself carries no line.
 const lastBegunIndex = new Map<string, number>();
-// How many tabs each run's browser opened, off the same markers, for the run
-// record — the log has the lines, the history needs the number.
-const tabCounts = new Map<string, number>();
+// Tabs each run's browser opened, off the same markers, for the run record —
+// the log has the lines, the history needs the number. The MARKERS are kept
+// rather than a running total, because the number worth recording is the final
+// attempt's: a retry re-walks the journey and re-opens the same tabs
+// (`tabsOpenedFrom`).
+const tabMarkers = new Map<string, TabMarker[]>();
 
 // Per-run accumulation of the visible console output (markers stripped), so a
 // completed run can be persisted to the run-history log database.
@@ -1031,7 +1035,6 @@ function emitStep(
  * when nothing has begun yet (a tab the page opened on load).
  */
 function emitTab(runId: string, count: number): void {
-  tabCounts.set(runId, (tabCounts.get(runId) ?? 0) + 1);
   const afterIndex = lastBegunIndex.get(runId) ?? -1;
   sendToMain("runner:tab", { runId, count, afterIndex });
 }
@@ -1048,6 +1051,11 @@ function processStdout(runId: string, chunk: string): string {
   stdoutBuffers.set(runId, rest);
   // A tab needs no line map: it is filed under the last step that began, and
   // a run with no map (a hand-edited spec) still shows the row.
+  if (tabs.length > 0) {
+    const seen = tabMarkers.get(runId);
+    if (seen) seen.push(...tabs);
+    else tabMarkers.set(runId, [...tabs]);
+  }
   for (const tab of tabs) emitTab(runId, tab.count);
   // Markers are stripped whether or not this run can map them: a spec with no
   // line map (hand-edited past what the scanner recognizes) would otherwise
@@ -1920,8 +1928,9 @@ export const playwrightRunner = {
         // than behind a flag that does not exist here.
         const maxAttempt = byAttempt.size > 0 ? Math.max(...byAttempt.keys()) : 0;
         // Tabs this run opened, read before the map is dropped with the rest.
-        const tabsOpened = tabCounts.get(runId) ?? 0;
-        tabCounts.delete(runId);
+        // The FINAL attempt's, not the sum: a retry re-opens the same tabs.
+        const tabsOpened = tabsOpenedFrom(tabMarkers.get(runId) ?? []);
+        tabMarkers.delete(runId);
         // Salvage the failure trace BEFORE the scratch dir goes. The generated
         // config has said `trace: "retain-on-failure"` since it was written,
         // and this cleanup was deleting the result on every run — retention

@@ -408,6 +408,11 @@ export const runHistoryStore = {
       healFailedSteps?: number;
       /** a failed run salvaged its Playwright trace into the artifact dir */
       hasTrace?: boolean;
+      /** tabs the page opened and the run followed, off the tabs fixture's
+       *  markers. Declared here because the runner spreads it in, and a field
+       *  this type does not name is dropped without a compile error — the same
+       *  hole the three fields below fell through. */
+      tabsOpened?: number;
       /** highest attempt Playwright made, when the run retried — spread in via
        *  `retryFields` (shared/run-attempts.mjs), so a single-attempt run
        *  carries neither retry key */
@@ -494,6 +499,9 @@ export const runHistoryStore = {
       // `attempt: 0` on every row would be indistinguishable from a row
       // predating the field (see `retryFields` in shared/run-attempts.mjs).
       ...(run.hasTrace === true ? { hasTrace: true } : {}),
+      ...(Number.isInteger(run.tabsOpened) && (run.tabsOpened as number) > 0
+        ? { tabsOpened: run.tabsOpened }
+        : {}),
       ...(Number.isInteger(run.attempt) && (run.attempt as number) > 0
         ? { attempt: run.attempt }
         : {}),
