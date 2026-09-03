@@ -223,15 +223,34 @@ function offendersIn(
 const BARE_FETCH = /(^|[^A-Za-z0-9_$.])fetch\s*\(/;
 
 /** The same call spelled through a global object, which the dot in the class
- *  above would otherwise wave through. */
-const GLOBAL_FETCH = /\b(?:globalThis|global|window|self)\s*\.\s*fetch\s*\(/;
+ *  above would otherwise wave through. `\??\.` because `globalThis?.fetch(url)`
+ *  is one character away from the plain form and reads as ordinary caution. */
+const GLOBAL_FETCH = /\b(?:globalThis|global|window|self)\s*\??\.\s*fetch\s*\(/;
 
 /** …and through a computed property, which lives inside a literal and so is
  *  asked of the literal-preserving text. */
 const INDEXED_FETCH = /\[\s*["'`]fetch["'`]\s*\]\s*\(/;
 
+/**
+ * The global taken as a VALUE rather than called, which is how every
+ * call-shaped rule above is escaped: `const go = fetch` and then `go(url)`
+ * one line later, where nothing at the call site names `fetch` at all.
+ *
+ * Two shapes, because a binding is either assigned or destructured. Neither
+ * matches anything in shipped `main/**` today — `undiciFetch` is renamed
+ * inside a nested array pattern in the owner, which is exempt regardless.
+ */
+const TAKEN_FETCH = /(^|[^A-Za-z0-9_$.])fetch\s*(?:;|,|\)|\]|\}|$)/;
+const DESTRUCTURED_FETCH = /\{[^}]*\bfetch\b\s*(?::\s*[A-Za-z_$][\w$]*)?[^}]*\}\s*=/;
+
 function callsGlobalFetch(code: string, quoted: string = code): boolean {
-  return BARE_FETCH.test(code) || GLOBAL_FETCH.test(code) || INDEXED_FETCH.test(quoted);
+  return (
+    BARE_FETCH.test(code) ||
+    GLOBAL_FETCH.test(code) ||
+    INDEXED_FETCH.test(quoted) ||
+    TAKEN_FETCH.test(code) ||
+    DESTRUCTURED_FETCH.test(code)
+  );
 }
 
 /**
@@ -283,8 +302,12 @@ const FETCH_OWNERS: Array<{ file: string; why: string }> = [
     "  const r = await fetch(url);",
     "return fetch(url, init);",
     "const r = globalThis.fetch(url);",
+    "const r = await globalThis?.fetch(url);",
     "const r = window . fetch (url);",
     'const r = globalThis["fetch"](url);',
+    "  const go = fetch;",
+    "  const { fetch: go } = globalThis;",
+    "  const { fetch } = globalThis;",
   ];
   const negatives = [
     "  const res = await appFetch(`${base}/v1/models`, {",
@@ -293,12 +316,14 @@ const FETCH_OWNERS: Array<{ file: string; why: string }> = [
     "  const response = await net.fetch(`file://${real}`);",
     "  const res = await worker.fetch(get(URL_BASE), env);",
     "  const [{ fetch: undiciFetch }, dispatcher] = await Promise.all([",
+    "  fetchImpl: FetchLike,",
+    "  const doFetch: FetchLike = (url, init) => appFetch(url, init);",
   ];
   assert(
     // An explicit arrow, not a bare reference: `Array.every` passes the INDEX
     // as the second argument, which would silently land in `quoted`.
     positives.every((line) => callsGlobalFetch(line)),
-    "the detector still recognises a bare global fetch, however it is spelled",
+    "the detector still recognises the global fetch — called, optional-chained, indexed or merely taken",
   );
   assert(
     negatives.every((line) => !callsGlobalFetch(line)),
@@ -353,15 +378,17 @@ const FETCH_OWNERS: Array<{ file: string; why: string }> = [
     /appFetch\(messagesUrl\(/.test(mailbox),
     "the mailbox probe asks through appFetch, so Settings > Proxy reaches the app's own probe",
   );
-  // And the bound covers the WHOLE probe, not only the request. `appFetch`
-  // awaits a proxy decision first — a PAC evaluation, or a safeStorage decrypt
-  // — and an `AbortSignal` reaches neither, so a signal handed straight to the
-  // request would leave the Settings pane unbounded on exactly the machines
-  // this rule exists for. The pin is the deadline WRAPPING the call, which a
-  // signal passed as an argument cannot satisfy.
+  // The bound covering the WHOLE probe — `appFetch` awaits a proxy decision
+  // first, and an `AbortSignal` reaches neither the PAC evaluation nor the
+  // password decrypt — is a BEHAVIOUR, and `mailbox-service.test.ts` proves it
+  // by never settling the call and watching the deadline answer. It used to be
+  // pinned here as source text, and that pin went red against the very rewrite
+  // that introduced the deadline: it named the line it was replacing. Source
+  // gets the question source can answer — that the timeout constant is still
+  // spent on the probe rather than orphaned — and the test gets the rest.
   assert(
-    /withDeadline\([\s\S]{0,400}?appFetch\(/.test(mailbox) && /PROBE_TIMEOUT_MS,\s*\)/.test(mailbox),
-    "…and the bound wraps the whole call, so a hung proxy decision cannot hang the Settings pane either",
+    /PROBE_TIMEOUT_MS/.test(mailbox.slice(mailbox.indexOf("probeMailbox"))),
+    "…and the probe still spends its timeout constant (the bound itself is mailbox-service.test.ts's)",
   );
 }
 
@@ -595,7 +622,12 @@ const SINGLE_STORE_OWNERS: Array<{ file: string; why: string }> = [
   // sites redacted, so nothing looked wrong; the defect was which list they
   // handed to `redact`.
   const service = codeOf(join(root, "main/services/issue-tracker/issue-tracker-service.ts"));
-  const sites = service.match(/const secrets = await redactionValues\(\)/g) ?? [];
+  // The CALL, not the binding it lands in. Pinning `const secrets = await …`
+  // makes a pure rename of a local variable report "the redaction is missing",
+  // which is a check that punishes a refactor for a property it still has —
+  // and the same shape had already gone red once, against a rewrite that made
+  // the probe strictly MORE bounded than the line it was pinned to.
+  const sites = service.match(/await\s+redactionValues\(\)/g) ?? [];
   assert(
     sites.length === 2,
     `both issue send paths take their list from redactionValues() (found ${sites.length} of 2 — createIssue and commentRecurrence)`,
@@ -607,9 +639,18 @@ const SINGLE_STORE_OWNERS: Array<{ file: string; why: string }> = [
     (service.match(/allRedactableValues\(\)/g) ?? []).length === 1,
     "…and it reads allRedactableValues() exactly once, so there is one place the set is chosen",
   );
+  // And what is redacted, by the field rather than by the argument's name: the
+  // title and the body are what `issues:createIssue` takes from the renderer,
+  // so they are the two the last gate exists for.
+  for (const field of ["title", "body"]) {
+    assert(
+      new RegExp(`redact\\(\\s*draft\\.${field}`).test(service),
+      `…and draft.${field} still goes through redact() on its way out`,
+    );
+  }
   assert(
     (service.match(/redact\(/g) ?? []).length >= 3,
-    "…while the title, the body and the recurrence comment all still go through redact()",
+    "…with the recurrence comment redacted too, so all three send paths are covered",
   );
 }
 

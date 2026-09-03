@@ -10,6 +10,66 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-03 — The egress check's own two holes, found by reviewing it the way it reviews the tree
+
+`check:main-egress` landed yesterday with a rule stated as "every app request
+goes through `appFetch`" and a detector that actually enforced "the token
+`fetch` immediately before a paren". Those are not the same rule, and an
+adversarial pass over the check itself found the gap between them.
+
+**Four spellings walked straight past it**, each verified against the shipped
+detector: `const go = fetch` and then `go(url)` a line later, the same thing
+destructured out of `globalThis`, `globalThis?.fetch(url)`, and
+`Reflect.get(globalThis, "fetch")(url)`. The optional-chained one is the
+embarrassing member of that list — a single character away from a spelling the
+check already caught, and the character reads as ordinary caution rather than
+evasion.
+
+The fix follows the shape the undici and raw-client rules already had: stop
+asking only how the call is written and start asking whether the capability is
+taken. `globalThis?.fetch(` joins the qualified arm, and two new patterns
+catch the global bound as a VALUE — assigned, or destructured — because that
+is how every call-shaped rule is escaped: nothing at the call site names
+`fetch` at all. Both were dry-run across shipped `main/**` before landing and
+match nothing, which is what makes them free; `undiciFetch` is renamed inside
+a nested array pattern in the owner, which is exempt anyway. The battery grew
+from five spellings to nine, and each of the three realistic ones was planted
+in a real file and watched go red.
+
+**The other hole is the opposite failure, and it had already fired once.** The
+pins written "by name" keyed on local identifiers: `const secrets = await
+redactionValues()`, counted as exactly two. Renaming that local — a pure
+refactor that keeps the redaction exactly as it was — turns the check red
+saying the redaction is missing. That is a guard that punishes a change for a
+property it still has, and the fastest way to teach someone that the honest
+response to a red check is to loosen it.
+
+It is not hypothetical: the mailbox rows pinned `await appFetch(` and
+`signal: AbortSignal.timeout(PROBE_TIMEOUT_MS)`, and both went red against the
+rewrite that wrapped the probe in a deadline — a change that made it strictly
+MORE bounded than the line the pin named. Both had to be rewritten in the same
+session that wrote them.
+
+So the pins now name the CALL and the FIELD rather than the binding:
+`await\s+redactionValues\(\)`, and `redact(draft.title` / `redact(draft.body`
+— the two fields `issues:createIssue` takes from the renderer, which are what
+the last gate exists for. The deadline pin is gone from source entirely,
+because the bound covering the whole probe is a behaviour and
+`mailbox-service.test.ts` proves it by never settling the call and watching
+the answer arrive at the bound; source keeps only the question source can
+answer, that the timeout constant is still spent rather than orphaned. Each
+rebound pin was checked in both directions: the rename stays green, and
+deleting a `redact` call still goes red.
+
+**The general lesson, which is why this is an entry rather than a commit
+message.** A source check has two failure directions and they pull opposite
+ways. Too loose and it misses the thing it exists for; too literal and it
+fires on correct code, which is worse, because the first failure is silent and
+the second trains people to switch it off. The rule of thumb this settles on:
+pin the CAPABILITY where you can (an import, a call), never the identifier a
+local happens to carry, and when the property is genuinely behavioural, let a
+test own it and leave source the part source can prove.
+
 ### 2026-09-03 — The last scaffold channel goes; the app root stays where it is used
 
 **What was there.** `app:getProjectPath`, registered in `main/handlers/index.ts`
