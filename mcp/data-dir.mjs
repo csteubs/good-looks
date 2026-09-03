@@ -61,6 +61,22 @@ export function appName(projectRoot = PROJECT_ROOT) {
   return pkg.productName || pkg.name;
 }
 
+/** The app's version, which this server advertises to its MCP clients.
+ *
+ *  READ, never stated. It was the literal `"1.0.0"` in the `McpServer`
+ *  constructor, written when that was the version and silently wrong from the
+ *  next bump onward — the same shape as the `app:getInfo` scaffold deleted
+ *  alongside it (DECISIONS 2026-09-03), and less visible, since the only place
+ *  it surfaces is the initialize handshake. `projectRoot` is a parameter for
+ *  the reason `appName` gives above: `import.meta.url` moves under a bundler.
+ *
+ *  Pinned by `check:app-identity`, which fails on a version literal anywhere
+ *  outside the changelog. */
+export function appVersion(projectRoot = PROJECT_ROOT) {
+  const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"));
+  return pkg.version;
+}
+
 /**
  * Where Electron would put userData on this platform, for this app.
  *

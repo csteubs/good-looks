@@ -15,7 +15,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { readJsonFile, resolveDataDir } from "./data-dir.mjs";
+import { appVersion, readJsonFile, resolveDataDir } from "./data-dir.mjs";
 import { resolveScriptPath, scriptsDirFor } from "../shared/script-path.mjs";
 import { createStore } from "./store.mjs";
 import { createRunner } from "./run-tests.mjs";
@@ -114,7 +114,12 @@ const { findPlaywrightCli, isBrowserInstalled, executeTest, runSelection } = cre
   trigger: "mcp",
 });
 
-const server = new McpServer({ name: "good-looks", version: "1.0.0" });
+// `name` is the protocol identifier clients key their configuration off, so it
+// stays `package.json`'s `name` rather than becoming the display name. The
+// version is READ (see `appVersion`): it was the literal "1.0.0", correct on
+// the day it was typed and stale from the next bump, and the handshake is the
+// one place a client is told which build it is talking to.
+const server = new McpServer({ name: "good-looks", version: appVersion(PROJECT_ROOT) });
 
 server.registerTool(
   "list_tests",
@@ -1552,6 +1557,12 @@ server.registerTool(
         stepHealth(db, { testId: run.test_id }).find((s) => s.stepId === failingStepId) ?? null,
     });
 
+    // Off the run record rather than the metrics row: the count is history,
+    // not a metric, and a schema column for it would be a migration nothing
+    // reads. Said out loud when non-zero because a failing step on a tab the
+    // page opened is a different thing to look at than one on the opener —
+    // the screenshot is of another document, and so is the console.
+    const tabsOpened = listRuns().find((r) => r.id === runId)?.tabsOpened ?? 0;
     return jsonResult({
       runId,
       testId: run.test_id,
@@ -1560,6 +1571,15 @@ server.registerTool(
       browser: run.browser,
       startedAt: run.started_at,
       failingStep: steps.find((s) => s.step_id === result.failingStepId)?.label ?? null,
+      tabsOpened,
+      ...(tabsOpened > 0
+        ? {
+            tabsNote:
+              `The browser opened ${tabsOpened} tab${tabsOpened === 1 ? "" : "s"} during this run and the ` +
+              "run followed each one, so a step after that point acted on the newest tab: its " +
+              "screenshot, console and network describe that document, not the one the test started on.",
+          }
+        : {}),
       ...result,
       // What the cross-run half of the verdict was drawn from. Without it,
       // "does not fail on other engines" is unreadable — it means one thing

@@ -7,7 +7,6 @@
 import * as path from "path";
 import { fileURLToPath } from "url";
 
-import { appHandlers } from "./app.js";
 import {
   dock as dockTrainerPanel,
   getTrainerPanelDockState,
@@ -184,10 +183,25 @@ const __dirname = path.dirname(__filename);
 export function registerHandlers(): void {
   logger.info("handlers", "Registering IPC handlers...");
 
-  // Register app handlers using ipcMain API
-  ipcMain.handle("app:getInfo", async (_event) => {
-    return await appHandlers.getInfo();
-  });
+  // NO `app:getInfo`. The Glaze template shipped one, and it answered with the
+  // template's own identity — `name: "My Glaze App"`, `version: "1.0.0"`,
+  // `environment` off `NODE_ENV`, which nothing in a packaged Electron build
+  // sets. Nothing ever called it, so for its whole life the only thing it could
+  // do was lie to whoever wired it up next. The preload exposes a GENERIC
+  // `glaze.ipc.invoke(channel, …)` rather than a per-channel surface, so an
+  // unused channel is not inert: it is a name a future caller can reach by
+  // string, and this one would have handed back a different app's name and a
+  // version two minors behind. Removed rather than corrected for the reason
+  // renderer/preload.ts states about the rest of the template's surface —
+  // "only APIs with actual renderer call sites are exposed". Nothing is lost:
+  // the version has an honest source already in use — `app.getVersion()`, which
+  // reads package.json's `version` and is what the insights report's release
+  // notes are keyed on — and the name is the bundle's, which is what macOS
+  // draws. A future surface that genuinely needs this gets a channel built
+  // WITH its consumer, deriving `environment` from GOOD_LOOKS_E2E,
+  // GOOD_LOOKS_DEV_URL, CI and the git-checkout test rather than from
+  // NODE_ENV. Reinstating a hard-coded one is what `check:app-identity` now
+  // fails on. See DECISIONS 2026-09-03.
 
   // Return the .glaze project path (used for deep links back to the host)
   // __dirname = build/main, so two levels up is the app root

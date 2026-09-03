@@ -17,7 +17,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { RunReplaySummary, VisualDiff } from "../lib/recorder-types";
-import { DiffBadge, VisualView, framesOverThreshold } from "./visual-view";
+import { DiffBadge, VisualView, framesOverThreshold, tabChipLabel } from "./visual-view";
 
 let replays: RunReplaySummary[] = [];
 /** Mutable so the bezel tests can seed a run with a real frame; every other
@@ -1310,5 +1310,48 @@ describe("a step that captured no frame of its own", () => {
       if (!document.querySelector(".gl-visual-carried")) throw new Error("waiting");
     });
     expect(screen.queryByRole("button", { name: /ignore regions/i })).toBeNull();
+  });
+});
+
+describe("a step that ran on a tab the page opened", () => {
+  // The run follows the newest tab on its own (shared/tabs-fixture-source.mjs);
+  // the replay carries which tab a step acted on, and the step row says so.
+  // Without the chip the screenshot is simply of a different page, and nothing
+  // says why.
+  beforeEach(() => {
+    replays = [summary({ runId: "r1", stepCount: 2, changedSteps: 0 })];
+    replayDetail = {
+      testId: "t1",
+      runId: "r1",
+      testName: "Help",
+      status: "passed",
+      startedAt: 1_700_000_000_000,
+      finishedAt: 1_700_000_001_000,
+      failedIndex: null,
+      steps: [
+        { index: 0, stepId: "s1", label: "click help link", type: "click", status: "passed", screenshot: "0.png" },
+        { index: 1, stepId: "s2", label: "click OK", type: "click", status: "passed", screenshot: "1.png", tab: 1 },
+      ],
+    };
+    shot = "data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E";
+  });
+
+  afterEach(() => {
+    replayDetail = null;
+    shot = null;
+  });
+
+  it("says which tab the step ran on, and only for a step on a later tab", async () => {
+    renderVisual();
+    // The newest run is selected by default and the timeline opens on step 1,
+    // which ran on the first tab: no chip.
+    await screen.findByText("click help link");
+    expect(document.querySelector('[data-gl="visual-tab"]')).toBeNull();
+    // Step 2 ran on the tab the link opened.
+    fireEvent.click(screen.getByRole("button", { name: /next step/i }));
+    await screen.findByText("click OK");
+    await waitFor(() => expect(document.querySelector('[data-gl="visual-tab"]')).not.toBeNull());
+    expect(document.querySelector('[data-gl="visual-tab"]')?.textContent).toBe(tabChipLabel(1));
+    expect(tabChipLabel(1)).toBe("Tab 2");
   });
 });
