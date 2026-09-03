@@ -36,7 +36,7 @@ import { resolveScriptPath, scriptsDirFor } from "../shared/script-path.mjs";
 import { normalizeBaseUrl } from "../shared/base-url.mjs";
 import { readRunProvenance } from "../shared/run-provenance.mjs";
 import { normalizeRunTrigger } from "../shared/run-trigger.mjs";
-import { splitStepMarkers } from "../shared/step-marker.mjs";
+import { splitStepMarkers, tabsOpenedFrom } from "../shared/step-marker.mjs";
 import { retryFields } from "../shared/run-attempts.mjs";
 import { buildStepLineMapFromSource } from "../shared/step-line-map.mjs";
 import { recordRun } from "./metrics.mjs";
@@ -877,13 +877,16 @@ export function createRunner({
       // retry happened at all. Playwright says "1 flaky" in its summary line;
       // that is prose, and these markers are already parsed.
       let maxAttempt = 0;
-      // Tabs the browser opened, counted off the tabs fixture's markers so the
-      // run record can say so — the stderr line is prose in the log.
-      let tabsOpened = 0;
+      // Tabs the browser opened, off the tabs fixture's markers so the run
+      // record can say so — the stderr line is prose in the log. The markers
+      // are kept rather than a running total: the number worth recording is
+      // the FINAL attempt's, because a retry re-walks the journey and re-opens
+      // the same tabs (`tabsOpenedFrom`).
+      const tabMarkers = [];
       const take = (chunk) => {
         const split = splitStepMarkers(buffered, chunk);
         buffered = split.rest;
-        tabsOpened += split.tabs.length;
+        if (split.tabs.length > 0) tabMarkers.push(...split.tabs);
         for (const marker of split.markers) {
           if (marker.event === "begin") lastLine = marker.line;
           if (!marker.ok) failedLine = marker.line;
@@ -913,7 +916,7 @@ export function createRunner({
           output: out,
           failedLine: failedLine ?? lastLine,
           maxAttempt,
-          tabsOpened,
+          tabsOpened: tabsOpenedFrom(tabMarkers),
         });
       });
     });

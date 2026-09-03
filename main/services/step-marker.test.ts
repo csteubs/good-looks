@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { splitStepMarkers, STEP_MARKER } from "../../shared/step-marker.mjs";
+import { splitStepMarkers, STEP_MARKER, tabsOpenedFrom } from "../../shared/step-marker.mjs";
 
 const marker = (payload: Record<string, unknown>): string =>
   STEP_MARKER + JSON.stringify(payload) + "\n";
@@ -170,5 +170,44 @@ describe("splitStepMarkers", () => {
     const { markers } = splitStepMarkers("", chunk);
     expect(markers).toHaveLength(4);
     expect(markers.map((m) => m.attempt)).toEqual([0, 0, 0, 0]);
+  });
+});
+
+// How many tabs a RUN opened, which is not how many markers it emitted.
+//
+// Playwright re-runs a failed test from the top and the tabs fixture is a
+// `page` fixture, so every attempt re-walks the journey and re-opens the same
+// tabs. Summing them reported a one-tab journey that passed on the third
+// attempt as three tabs, and `triage_run` said so in prose. Only the final
+// attempt describes the outcome the record keeps.
+describe("tabsOpenedFrom", () => {
+  const tab = (attempt: number) => ({ event: "tab" as const, count: 2, attempt });
+
+  it("counts every tab when the run never retried", () => {
+    expect(tabsOpenedFrom([tab(0), tab(0), tab(0)])).toBe(3);
+  });
+
+  it("counts the FINAL attempt only, not the sum across attempts", () => {
+    // One _blank click, failed twice, passed on the third attempt: one tab.
+    expect(tabsOpenedFrom([tab(0), tab(1), tab(2)])).toBe(1);
+  });
+
+  it("counts every tab the final attempt opened", () => {
+    expect(tabsOpenedFrom([tab(0), tab(1), tab(1)])).toBe(2);
+  });
+
+  it("answers 0 for a run that opened none", () => {
+    expect(tabsOpenedFrom([])).toBe(0);
+  });
+
+  it("does not depend on the markers arriving in attempt order", () => {
+    expect(tabsOpenedFrom([tab(2), tab(0), tab(1), tab(2)])).toBe(2);
+  });
+
+  it("groups markers from a writer predating the attempt field into one attempt", () => {
+    // `normalizeAttempt` answers 0 for those; they must not each become their
+    // own attempt, which would report the last one as the whole run.
+    const legacy = { event: "tab" as const, count: 1, attempt: 0 };
+    expect(tabsOpenedFrom([legacy, legacy, legacy])).toBe(3);
   });
 });

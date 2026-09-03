@@ -10,6 +10,34 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-03 — A retried run opens the same tabs again, and only the last attempt counts
+
+**The report.** `tabsOpened` summed every tab marker on the stream. Playwright
+re-runs a failed test from the top and the tabs fixture is a `page` fixture, so
+each attempt re-walks the journey and re-opens the same tabs: one `_blank`
+click that passed on the third attempt recorded 3, and `triage_run` told the
+reader in prose that the browser had opened three tabs.
+
+**What the number means.** The final attempt. It is the attempt whose outcome
+the record keeps, so it is the one the rest of the record already describes —
+the same reasoning `shared/run-attempts.mjs` applies to a retried run's other
+evidence. Per-attempt tabs are not lost, only unsummed: the markers carry
+`attempt`, and the log still holds every `New Tab Opened` line.
+
+**Where the rule lives.** `tabsOpenedFrom` in `shared/step-marker.mjs`, beside
+the marker it reads. Both runners had their own accumulator — the app a
+counter, the MCP a `+= split.tabs.length` — and two spellings of a retry rule
+is the drift this repo keeps paying for; the app's count and the CLI's would
+have answered differently for the same journey the day either was touched. It
+tallies per attempt and answers the highest, rather than trusting the markers
+to arrive in order.
+
+**Not fixed by the same change, deliberately.** The live `> New Tab Opened
+(#N)` row still fires for every tab in every attempt. That row reports what the
+browser is doing while the user watches it, and a retry genuinely does open
+another tab; suppressing it would make the display disagree with the browser in
+front of them. Only the recorded number is attempt-aware.
+
 ### 2026-09-03 — A spread at the call site is how a run record loses a field, twice
 
 **The report.** `tabsOpened` shipped in #310 as "written by both runners". It

@@ -40,3 +40,8 @@ export declare const STEP_MARKER: string;
  *  output, which quotes page-controlled text, so a payload that is not exactly
  *  a step transition is dropped rather than coerced. */
 export declare function splitStepMarkers(buffered: string, chunk: string): StdoutSplit;
+
+/** How many tabs the run opened, from every tab marker it emitted. Counts the
+ *  FINAL attempt only: a retry re-walks the journey and re-opens the same
+ *  tabs, so summing them inflates a retried run's count. */
+export declare function tabsOpenedFrom(tabs: TabMarker[]): number;

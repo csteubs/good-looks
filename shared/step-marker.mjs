@@ -114,3 +114,32 @@ export function splitStepMarkers(buffered, chunk) {
   }
   return { visible, markers, tabs, rest };
 }
+
+/**
+ * How many tabs a run OPENED, given every tab marker it emitted.
+ *
+ * Not `tabs.length`. Playwright re-runs a failed test from the top, and the
+ * tabs fixture is a `page` fixture, so every attempt re-walks the journey and
+ * re-opens the same tabs: summing the markers reports a one-tab journey that
+ * passed on the third attempt as three tabs. Only the FINAL attempt describes
+ * what the recorded outcome actually did, which is the same rule
+ * `shared/run-attempts.mjs` applies to the rest of a retried run's evidence —
+ * the attempt whose result was kept is the one the record describes.
+ *
+ * Markers arrive in attempt order on one stdout, but this does not rely on
+ * that: it tallies per attempt and answers the highest one seen.
+ */
+export function tabsOpenedFrom(tabs) {
+  if (!Array.isArray(tabs) || tabs.length === 0) return 0;
+  const byAttempt = new Map();
+  for (const t of tabs) {
+    if (!t || t.event !== "tab") continue;
+    // `attempt` is already normalized to a non-negative integer by the parser;
+    // a marker from a writer predating the field reads 0, which groups every
+    // such marker into one attempt rather than scattering them.
+    const a = Number.isInteger(t.attempt) && t.attempt > 0 ? t.attempt : 0;
+    byAttempt.set(a, (byAttempt.get(a) ?? 0) + 1);
+  }
+  if (byAttempt.size === 0) return 0;
+  return byAttempt.get(Math.max(...byAttempt.keys())) ?? 0;
+}
