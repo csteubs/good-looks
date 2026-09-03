@@ -10,6 +10,214 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-03 — Two egress paths that did not follow the rule the repo had already written down
+
+**What was wrong.** Both rules were stated, both had a written rationale, and
+each had exactly one call site that asked a narrower question than the rule
+does. Neither was a bug anything in the toolchain could see: both deviations
+are valid code that calls a real function.
+
+`mailbox-service.ts` probed the test mailbox with the global `fetch`. Every
+other app-traffic request goes through `appFetch`, which is the only path
+Settings → Proxy reaches for the app's own Node-side requests — Chromium
+sessions and test runs each get the setting a different way, and
+`proxy-service.ts` opens by saying so. The probe is
+made BY THE APP, from the main process, so it is app traffic, and on a machine
+whose app traffic is proxied the Test button was not testing the path anything
+else in the app uses.
+
+**What it is NOT is a prediction of the run**, and that is worth writing down
+because it is what the fix looks like it should mean. A run polls this same
+endpoint through `page.request.fetch`, so it takes the browser context's proxy
+— the TEST class — while `appFetch` is hard-wired to the APP class
+(`decideAppProxy` asks `proxyAppliesTo(settings, "app")`). With `proxyTraffic`
+at "both" or "none" the two agree; set to one class only, they do not, and no
+swap on this side can make them. The button answers the question it asks: is
+the mailbox reachable, with this token, from this app. Routing an app-process
+request through the TEST proxy to make it predictive would be a different
+decision from the one the repo has already made about which traffic is which,
+and not one to take while fixing a bypass.
+
+Two things came with the swap, both of them the transport's own consequences
+rather than tidying. The bound now WRAPS the whole probe instead of riding on
+it as an `AbortSignal`: `appFetch` awaits a proxy decision before it touches
+the network — in automatic mode a `session.resolveProxy` that may evaluate a
+PAC file, in manual mode a `safeStorage` decrypt — and no signal reaches
+either, so a PAC host that accepts connections and never answers would hang
+the Settings pane past ten seconds and then fail instantly against an
+already-fired signal, reporting "no answer" about an endpoint nothing had
+contacted. And failures are rendered by `describeFetchError`, now exported from
+`proxy-service` because it belongs to `appFetch` rather than to the validator
+that first needed it: undici reports a refused CONNECT, a 407 and a re-signing
+certificate all as a bare "fetch failed", with the cause several `cause` links
+down. This module exists to separate causes that otherwise look identical, and
+an unreadable fourth one sends someone to re-paste a token that was never the
+problem.
+
+`issue-tracker-service.ts` redacted the outgoing issue title and body over
+`testSecretsStore.allValues()`. The app's rule is `allRedactableValues()` —
+three stores, because there are three ways a credential reaches a run's
+output: a secret variable typed into the page, a Shopify crawler signature
+this app attaches to a request, and the test-mailbox token the generated spec
+sends. Asking one of the three at the send meant the other two would have
+gone out as written.
+
+**Stated precisely, because the honest version is narrower than the alarming
+one.** No leak was demonstrated. The evidence a draft is built from is
+already redacted over the full set before it gets there: `run-history-store`
+redacts the log as it writes it, `artifact-store` redacts the console and
+network files as it reads them, and both use the snapshot, which
+`handlers/index.ts` refreshes the moment a signature or a mailbox token is
+saved or cleared. So the loader's own output was clean. What the send-time
+redaction actually guards is the text the backend did NOT construct:
+`issues:createIssue` takes `title` and `body` from the renderer as untrusted
+parameters, because the compose dialog lets the user edit the draft before
+sending it. Someone pasting the request that failed, header and all, into the
+body of the issue they are filing about it is the ordinary case, not a
+contrived one. That is the last gate before the text leaves the machine, and
+it was asking a third of the question.
+
+The general form is what makes it worth an entry: redaction here is
+defence in depth, and a layer of it that quietly covers less than the others
+is worse than one that is absent, because the layers above it are what make
+its narrowness invisible.
+
+**The second one is a repeat, which is the part worth recording.** `sendAlert`
+had the identical defect and was fixed, and the fix left a comment naming the
+failure: "widening the snapshot silently leaves this one behind — as it did
+when Shopify signatures were added to it". Widening a redaction set is silent
+at every call site that does not use it. Nothing carried that lesson to the
+next send path, because there was nothing that could: the fix was a call-site
+edit and the lesson was a comment on the call site it fixed.
+
+**Why the guard is a SOURCE check and not only a test.** Both defects are
+absences. A behavioural test proves the paths that exist today are closed and
+says nothing about the next service to reach the network or the next thing to
+file something — which is precisely how the second one happened after the
+first was fixed. `check:main-egress` scans shipped main-process source for a
+bare global `fetch` and for a redaction over one store, each with an allowlist
+of one file naming why it is allowed: `proxy-service.ts` IS the door, and
+`secret-redaction.ts` is where the three stores are composed. Adding an entry
+is deliberately a sentence someone has to write.
+
+**The reader is where the interesting bug was, and it was in the version of
+this check that passed.** Stripping `/* … */` across the file and then handling
+each line is the obvious order, and it is what `check:renderer-egress` does. It
+is wrong for any file containing `/*` inside a string or a line comment:
+`recorder-service.ts:2493` registers `onBeforeSendHeaders({ urls: ["*://*/*"] })`,
+and that glob opens a comment span that runs to the next `*/` in the file,
+blanking 77 lines of live code — the block where this app attaches the Shopify
+signature to an outgoing request, of all of them. Five files lost 229 lines that
+way, and the window MOVES whenever anyone writes a glob, an XPath or a CSS path
+into a string. A bare `fetch` inside one would have been invisible while the
+check reported green, which is a guard that is worse than no guard.
+
+The order is therefore inverted: per line first (blank the contents of string
+literals, then the line comment), and only then find block spans in the result,
+where a `/*` inside a literal can no longer open one. Every step preserves
+length and newlines, so the spans found in the masked text apply at the same
+offsets to a literal-preserving copy — which the two questions that live inside
+a literal need, `globalThis["fetch"](url)` and which module a file imports. The
+check now asserts the property directly on the file that found it: every line
+the reader empties must BE a comment line. **`check:renderer-egress` still has
+the original ordering, and 797 lines of shipped renderer code are invisible to
+it.** That is its own change, not this one, and it is filed as such.
+
+Each detector carries its own battery — five spellings that must match and six
+that must not for the fetch rule, three and four for the redaction one. A
+source scan has a failure mode a behavioural test does not: a regex that stops
+matching turns its whole section green and silent. The negatives are the
+weight the check actually has to carry, and every one is a real shape from
+this tree — `appFetch(`, an injected `fetchImpl(`, `net.fetch(` (Chromium's
+stack, which honours the session proxy this same service sets), a Cloudflare
+Worker's own `worker.fetch(`, `fetchModels(`, and the destructuring that
+renames undici's fetch on import. That last one is the one exempted spelling
+that WOULD be a bypass — undici's own fetch, called without a dispatcher,
+answers to no proxy setting — and it is unreachable rather than judged safe:
+getting the binding needs an undici import, which the second rule allows only
+in the file the first one already exempts. The two rules cover each other
+there, which is why they are two rules. Comments are stripped first, for the reason `check:renderer-egress`
+strips them: the prose around this rule names the banned call constantly, and
+a check that flags its own explanation gets switched off within a week.
+
+**Scope.** The walk covers all shipped `main/**`, not only `main/services/`.
+It came out free — 137 files outside the owner, and the only match in any of
+them was the one being fixed — and a bare `fetch` in a handler or a window is
+the same bug. `main/recorder/` is in scope and worth watching: it holds source
+text evaluated in the PAGE, where the global `fetch` is the page's and not the
+app's, so the first one to appear there needs an allowlist entry rather than a
+rewrite.
+
+Three guards go beyond the scan, each answering something a scan alone cannot.
+The first is a LIVE positive control: `proxy-service.ts` is exempt from the
+offender list, which is exactly what frees it to be the fixture, so the check
+asserts that the owner still shows exactly one bare global `fetch` through the
+same walk, the same blanking and the same regexes every other file goes
+through. A scan whose healthy state is zero findings is otherwise
+indistinguishable from a scan that read nothing. The second is an
+import rule: `const { fetch } = await import("undici")` reaches the network
+without ever writing `fetch(` anywhere a regex would see it, and undici is the
+only way to get such a handle, so only the owner may import it — on its own
+allowlist, because permission to build a dispatcher and permission to call the
+global `fetch` are two different decisions and one list would grant both to
+whoever needed either. The same argument extends one step further: a value
+import of `node:https`, `axios` or any other raw client is banned outright,
+since `https.request(url, …)` answers to no proxy setting and never writes
+`fetch(` either. Nothing under shipped `main/**` imports one, which is what
+makes that rule free — the first one to appear is a decision rather than a
+discovery. `node:net` is deliberately outside it: a raw socket is not an HTTP
+client, and a port check is a legitimate reason to reach for one. The third is the same pair of proofs for the redaction
+rule, whose healthy state is also zero findings: a method renamed during an
+unrelated refactor would otherwise turn it green and silent forever, and its
+live control is the composition itself.
+
+**The exceptions are line-scoped where the exception is a line.** A file-wide
+allowlist is right for a file that OWNS a rule's exception, and wrong for one
+line that needs one — `main/recorder/capture-script.ts` holds page-world source
+in a template, where the global `fetch` is the PAGE's and nothing to do with
+this app's proxy, and exempting that file to permit one such line would take the
+capture boundary out of both rules forever. So a line may carry
+`egress-ok: <reason>`, with the reason required for the reason the allowlists
+require one: what makes an exception safe is that somebody wrote down why.
+
+**The failure posture got named while it was being moved.** Both issue send
+paths now take the list from one `redactionValues()`, and the reason to have a
+function at all is that what needs deciding once is what happens when the set
+cannot be read. It fails OPEN: the issue still goes out. That is the opposite
+of `sendAlert`, which sends nothing rather than risk it, and the difference is
+attendance — filing is a button someone is watching, and an unreadable store
+must not turn it into an error they cannot act on. What it must not be is
+silent. None of the three stores can reject today (each answers an unreadable
+blob with an empty list, so the catch is currently unreachable), which is
+precisely why reaching it deserves a log line: "redaction was skipped" and
+"nothing was configured" would otherwise look identical in the log of a path
+that ships text to a third party.
+
+**One stale sentence found on the way in, and it is the one that matters
+most.** The single place the repo documents how to add a check — CLAUDE.md's
+"Adding a check?" note, and the `Regression checks` bullet in ARCHITECTURE —
+told contributors to bundle with
+`--alias:@glaze/core/backend=./main/services/__tests__/glaze-backend-stub.ts`.
+Both halves were retired by the port off the SDK: the specifier is
+`@shell/backend` and the file is `shell-backend-stub.ts`, which is what every
+one of the ninety-nine existing checks actually uses. Following the
+instruction verbatim produces a bundle that fails to resolve, on the first
+thing a contributor does after reading it. The same bullet still claimed
+"Eighteen exist" and listed sixteen. Corrected here rather than filed, because
+this change is the one that used that instruction.
+
+**The behavioural half plants for real.** `issue-tracker-service.test.ts` now
+writes a signature, a mailbox token and a secret variable through the stores'
+own write paths, reads each back through its own reader, asserts all four
+values are in the draft handed to `createIssue`, and only then asserts none
+survives into what the faked provider was given. Every one of those stores
+answers an unreadable blob with an empty list, so without the read-back the
+test would pass just as well against a plant that never landed. Reverting the
+one-line fix turns exactly the leak assertion red and leaves the plants green,
+which is the split that says the test is measuring the right thing. The
+endpoint has its own row asserting it SURVIVES: it is not a credential, and a
+run that cannot say which host it polled is a run nobody can debug.
+
 ### 2026-09-03 — The app stops stating who it is, and reads instead
 
 **What was there.** `main/handlers/app.ts` — the Glaze template's app-handlers

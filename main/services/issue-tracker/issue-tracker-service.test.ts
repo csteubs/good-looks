@@ -16,6 +16,12 @@
 //     not have to paste it again.
 //   • `disconnect()` clears the defaults with the key, because a team id is
 //     only meaningful inside the workspace that key opened.
+//
+// A fourth arrived later and is why the stores below are the real ones too:
+// what an issue SAYS is redacted over `allRedactableValues()`, not over the
+// secret-variable store alone. That distinction is invisible in a mocked test —
+// both spellings redact — so the credentials are planted for real and the
+// assertion is made against what the provider was actually handed.
 
 import * as fs from "fs";
 import * as os from "os";
@@ -80,6 +86,15 @@ function makeProvider(over: Partial<IssueProvider> = {}): IssueProvider {
 
 let dir: string;
 let service: typeof import("./issue-tracker-service.js").issueTrackerService;
+/** The three credential stores, bound in the SAME post-reset generation the
+ *  service resolves. A top-level import would survive `vi.resetModules()` with
+ *  its in-process cache intact and answer the next test from the previous
+ *  test's plant — against a different temp dir, which is what makes that
+ *  failure read as a passing redaction. */
+let shopifySignatureStore: typeof import("../shopify-signature-store.js").shopifySignatureStore;
+let mailboxStore: typeof import("../mailbox-store.js").mailboxStore;
+let testSecretsStore: typeof import("../test-secrets-store.js").testSecretsStore;
+let allRedactableValues: typeof import("../secret-redaction.js").allRedactableValues;
 
 /**
  * Build a provider error from the SAME module instance the service will use.
@@ -109,6 +124,10 @@ beforeEach(async () => {
   // The symptom is every save failing with "secure storage is unavailable".
   const backend = await import("../__tests__/shell-backend-stub.js");
   backend.setEncryptionAvailable(true);
+  ({ shopifySignatureStore } = await import("../shopify-signature-store.js"));
+  ({ mailboxStore } = await import("../mailbox-store.js"));
+  ({ testSecretsStore } = await import("../test-secrets-store.js"));
+  ({ allRedactableValues } = await import("../secret-redaction.js"));
   const types = await import("./types.js");
   providerError = (kind, message) => new types.IssueProviderError(kind, message);
   ({ issueTrackerService: service } = await import("./issue-tracker-service.js"));
@@ -271,5 +290,157 @@ describe("listing requires a key", () => {
     await service.connect(KEY);
     await service.listContainers();
     expect(fake.provider.listContainers).toHaveBeenCalledWith(KEY);
+  });
+});
+
+describe("what an issue says is redacted over every store", () => {
+  // THREE stores, because there are three ways a credential reaches a run's
+  // output — and therefore three ways one reaches a draft built from that
+  // output. A secret variable is typed INTO the page and comes back in an
+  // assertion diff. A Shopify crawler signature is attached to the request BY
+  // THIS APP and comes back in a recorded header or a Playwright error. The
+  // test-mailbox token is attached BY THE GENERATED SPEC and comes back on a
+  // failed fetch. `issue-tracker-service` asked only the first of the three, so
+  // the other two would have gone out as written — and this is the last gate,
+  // over text the backend did not build: `issues:createIssue` takes the title
+  // and body from the renderer, because the compose dialog lets the user edit
+  // the draft before sending it.
+  //
+  // Every plant below is planted for REAL, through the store's own write path,
+  // and read back through the store's own reader before the send. A mocked
+  // store would make this test pass against the bug it exists to catch: both
+  // spellings call `redact`, and the whole defect is WHICH LIST they hand it.
+
+  /** Realistic in shape, nobody's in fact. `redact` skips values under four
+   *  characters, so a short marker would be dropped by design and the
+   *  assertion would pass without redacting anything. */
+  const SIGNATURE = "sig1=:Z0xQTEFOVEVEU0lHTkFUVVJFVkFMVUVOT1RSRUFM:";
+  const SIGNATURE_INPUT =
+    'sig1=("@authority");created=1735689600;expires=4102444799;' +
+    'keyid="GLPLANTEDKEYIDNOTREAL";alg="ed25519";tag="web-bot-auth"';
+  const MAILBOX_ENDPOINT = "https://mailbox.example.workers.dev/messages";
+  const MAILBOX_TOKEN = "GLPLANTEDMAILBOXTOKEN-not-real";
+  const VARIABLE_VALUE = "GLPLANTEDVARIABLEVALUE-not-real";
+
+  const SOURCE = { kind: "failure", testId: "t-1", runId: "r-1", stepId: "s-1" } as const;
+  const DESTINATION = { containerId: "team-eng", subContainerId: null, labelIds: [] };
+
+  /** Plant one of each, then prove each landed. Without these three oracles the
+   *  test cannot tell "redacted" from "the store never held it" — and a store
+   *  that quietly returns nothing is the likelier of the two, since every one
+   *  of them answers an unreadable blob with an empty list. */
+  async function plantCredentials(): Promise<void> {
+    await testSecretsStore.set("t-1", "PASSWORD", VARIABLE_VALUE);
+    await shopifySignatureStore.upsert({
+      host: "shop.example.com",
+      signatureInput: SIGNATURE_INPUT,
+      signature: SIGNATURE,
+    });
+    await mailboxStore.set(MAILBOX_ENDPOINT, MAILBOX_TOKEN);
+
+    expect(await testSecretsStore.allValues()).toContain(VARIABLE_VALUE);
+    expect(await shopifySignatureStore.headerValuesForRedaction()).toContain(SIGNATURE);
+    expect(await mailboxStore.credentials()).toEqual({
+      endpoint: MAILBOX_ENDPOINT,
+      token: MAILBOX_TOKEN,
+    });
+  }
+
+  /**
+   * A deliberately worst-case body — NOT one the loader builds.
+   *
+   * Worth being exact about, because the loader cannot produce this and
+   * `check:issue-payload` is what guarantees it cannot: `FailureRequest` has
+   * three fields and none is a header bag, and the evidence it does carry is
+   * already redacted upstream over the full set. What this is, is what
+   * `issues:createIssue` actually accepts — a title and a body sent as strings
+   * from the renderer, because the compose dialog lets the user edit the
+   * draft. Someone pasting the request that failed, header and all, into the
+   * issue they are filing about it is the ordinary case; the send-time
+   * redaction is the last thing standing between that and the tracker.
+   */
+  function hostileDraft() {
+    return {
+      source: SOURCE,
+      title: `403 from the signed request (${SIGNATURE})`,
+      body: [
+        "**What failed**",
+        "",
+        `\`Error: expect(received).toBeVisible() — signed in as ${VARIABLE_VALUE}\``,
+        `\`signature: ${SIGNATURE}\``,
+        `\`signature-input: ${SIGNATURE_INPUT}\``,
+        `\`authorization: Bearer ${MAILBOX_TOKEN}\``,
+        `\`polled: ${MAILBOX_ENDPOINT}\``,
+      ].join("\n"),
+      attachmentFiles: [] as string[],
+    };
+  }
+
+  function sentIssue(): { title: string; body: string } {
+    const calls = (fake.provider.createIssue as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.length).toBe(1);
+    // The SECOND argument — the first is the key. Asserting on the return value
+    // instead would assert against a fixture that never contained a plant.
+    return calls[0][1] as { title: string; body: string };
+  }
+
+  it("planted values reach the draft, so the assertion below cannot pass vacuously", async () => {
+    await plantCredentials();
+    const draft = hostileDraft();
+    for (const value of [SIGNATURE, SIGNATURE_INPUT, MAILBOX_TOKEN, VARIABLE_VALUE]) {
+      expect(`${draft.title}\n${draft.body}`).toContain(value);
+    }
+    // And the redaction set the send will use really holds all four. This is
+    // the half that was wrong: `testSecretsStore.allValues()` holds ONE.
+    const redactable = await allRedactableValues();
+    expect(redactable).toEqual(
+      expect.arrayContaining([VARIABLE_VALUE, SIGNATURE, SIGNATURE_INPUT, MAILBOX_TOKEN]),
+    );
+  });
+
+  it("strips a crawler signature and a mailbox token, not just secret variables", async () => {
+    await plantCredentials();
+    await service.connect(KEY);
+
+    await service.createIssue(hostileDraft(), DESTINATION);
+
+    const sent = sentIssue();
+    const text = `${sent.title}\n${sent.body}`;
+    expect(text).not.toContain(VARIABLE_VALUE);
+    expect(text).not.toContain(SIGNATURE);
+    expect(text).not.toContain(SIGNATURE_INPUT);
+    expect(text).not.toContain(MAILBOX_TOKEN);
+    // Both halves. `not.toContain` also passes against a body that arrived
+    // empty, or against a redactor handed an empty list on text that never had
+    // the value — so the marker has to be there too, in the title AND the body.
+    expect(sent.title).toContain("[redacted]");
+    expect(sent.body).toContain("[redacted]");
+    expect(sent.body).toContain("What failed");
+  });
+
+  it("keeps the mailbox ENDPOINT, which is not a credential", async () => {
+    // A run that cannot say which host it polled is a run nobody can debug —
+    // the same reason `allRedactableValues` takes the token and leaves the
+    // endpoint. An over-broad redaction is its own bug.
+    await plantCredentials();
+    await service.connect(KEY);
+
+    await service.createIssue(hostileDraft(), DESTINATION);
+
+    expect(sentIssue().body).toContain(MAILBOX_ENDPOINT);
+  });
+
+  it("files an issue unchanged when there is nothing stored to redact", async () => {
+    // The guarantee above is a redaction of what IS STORED, never a promise
+    // that a draft carries no credentials: with no plants the list is empty and
+    // the text passes through untouched. Worth its own row because the
+    // assertions above are all `not.toContain`, and a redactor that mangled
+    // ordinary text would satisfy every one of them.
+    await service.connect(KEY);
+    await service.createIssue(
+      { source: SOURCE, title: "Plain failure", body: "Nothing secret here.", attachmentFiles: [] },
+      DESTINATION,
+    );
+    expect(sentIssue()).toMatchObject({ title: "Plain failure", body: "Nothing secret here." });
   });
 });
