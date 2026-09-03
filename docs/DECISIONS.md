@@ -295,7 +295,6 @@ every plist assertion happily certifying the previous identity.
 Every one of the four new assertions was confirmed to fail against the restored
 scaffold before landing.
 
-
 ### 2026-09-02 — The run follows the newest tab, and says so with one row
 
 **The report.** A test recorded on a site where a link opened in the same
