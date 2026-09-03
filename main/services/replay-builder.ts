@@ -113,12 +113,17 @@ export function buildReplay(params: {
   // attempted. Anything joining logs to steps on those runs was therefore
   // joining against nothing, silently.
   const actionByStep: (number | undefined)[] = [];
+  // Which tab the action ran on, for a step on a later tab. Same entry, same
+  // pass, for the same reason as the rest: one correlation, one chance to be
+  // wrong.
+  const tabByStep: (number | undefined)[] = [];
   const shotByStep: (string | null)[] = params.steps.map((s, i) => {
     const method = s.type === "if" || s.type === "endif" ? null : captureMethod(s);
     if (method && shotPtr < shots.length && shots[shotPtr].action === method) {
       const entry = shots[shotPtr++];
       rectByStep[i] = entry.rect;
       actionByStep[i] = entry.index;
+      if (typeof entry.page === "number" && entry.page > 0) tabByStep[i] = entry.page;
       // Recorded whether or not the screenshot succeeded, and on a11y-only runs
       // where `ok` is false because no screenshot was ever attempted.
       a11yByStep[i] = entry.a11y;
@@ -170,6 +175,7 @@ export function buildReplay(params: {
       screenshot: shotByStep[i],
       ...(actionByStep[i] !== undefined ? { actionIndex: actionByStep[i] } : {}),
       ...(rectByStep[i] ? { rect: rectByStep[i] } : {}),
+      ...(tabByStep[i] !== undefined ? { tab: tabByStep[i] } : {}),
       // Raw violations only at this stage. Comparing them against the accepted
       // baseline is `enrichWithA11y`'s job, exactly as pixel diffing is
       // `enrichWithVisualDiffs`' — buildReplay stays a pure correlation of what

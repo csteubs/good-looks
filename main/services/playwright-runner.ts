@@ -964,6 +964,9 @@ const stepLineMaps = new Map<string, Map<number, number> | null>();
 // The last step index that BEGAN on each run, so a tab the browser opens can
 // be filed under the step that opened it — the marker itself carries no line.
 const lastBegunIndex = new Map<string, number>();
+// How many tabs each run's browser opened, off the same markers, for the run
+// record — the log has the lines, the history needs the number.
+const tabCounts = new Map<string, number>();
 
 // Per-run accumulation of the visible console output (markers stripped), so a
 // completed run can be persisted to the run-history log database.
@@ -1028,6 +1031,7 @@ function emitStep(
  * when nothing has begun yet (a tab the page opened on load).
  */
 function emitTab(runId: string, count: number): void {
+  tabCounts.set(runId, (tabCounts.get(runId) ?? 0) + 1);
   const afterIndex = lastBegunIndex.get(runId) ?? -1;
   sendToMain("runner:tab", { runId, count, afterIndex });
 }
@@ -1915,6 +1919,9 @@ export const playwrightRunner = {
         // project can carry one — so this is written unconditionally rather
         // than behind a flag that does not exist here.
         const maxAttempt = byAttempt.size > 0 ? Math.max(...byAttempt.keys()) : 0;
+        // Tabs this run opened, read before the map is dropped with the rest.
+        const tabsOpened = tabCounts.get(runId) ?? 0;
+        tabCounts.delete(runId);
         // Salvage the failure trace BEFORE the scratch dir goes. The generated
         // config has said `trace: "retain-on-failure"` since it was written,
         // and this cleanup was deleting the result on every run — retention
@@ -2137,6 +2144,9 @@ export const playwrightRunner = {
               datasetName: params.datasetName,
               healedSteps,
               healFailedSteps,
+              // Only when one opened: absent and zero read the same, and an
+              // absent field is what a run predating tabs carries.
+              ...(tabsOpened > 0 ? { tabsOpened } : {}),
               // Spread rather than written flat, so a run that ran once carries
               // neither key. An `attempt: 0` on every record ever written would
               // be indistinguishable from a run that predates the field, and
