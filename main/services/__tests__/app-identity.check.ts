@@ -106,9 +106,15 @@ function assertNone(hits: string[], label: string): void {
 // (renderer/preload.ts) instead of a per-channel surface, so a re-added
 // handler has no declaration anywhere to contradict and no caller to fail —
 // exactly the shape that let the first one live. The runtime half is
-// `main/handlers/handlers.test.ts`, which asserts the channel is not
+// `main/handlers/handlers.test.ts`, which asserts the channels are not
 // registered; neither half subsumes the other, since a scaffold could be
 // written back as a service the handler calls.
+//
+// The scan takes a LIST of channels, not one name, because the template
+// shipped two and the getInfo deletion took only the one it was scoped to:
+// `app:getProjectPath` survived it by a day, still answering with the app root
+// as "the .glaze project path (used for deep links back to the host)" for an
+// app that has no host. Both are named below; see DECISIONS 2026-09-03.
 //
 // "The reported version equals package.json's" is asserted as its
 // contrapositive: the app must never STATE a version, only read one.
@@ -192,12 +198,29 @@ function assertNone(hits: string[], label: string): void {
   );
   assertNone(template, "no source states the template's app name");
 
-  const getInfo = files.flatMap((f) =>
-    codeLines(f)
-      .filter(({ text }) => text.includes("app:getInfo"))
-      .map(({ n }) => `${rel(f)}:${n}`),
-  );
-  assertNone(getInfo, "no source registers the template's app:getInfo channel");
+  // BOTH deleted template channels, scanned as a list rather than one needle.
+  // `app:getProjectPath` was `app:getInfo`'s sibling and outlived it by a day:
+  // the getInfo deletion was scoped to getInfo, so the scan it added named one
+  // string and the other went on returning `__dirname/../..` as "the .glaze
+  // project path (used for deep links back to the host)" — for an app with no
+  // host, whose own `goodlooks://` links select a view from record ids and
+  // never carry a path. A list is what makes the next one an ENTRY rather than
+  // a second scan somebody has to remember to write.
+  //
+  // The runtime half (`main/handlers/handlers.test.ts`) now asserts the
+  // stronger property this cannot: that registerHandlers() opens no `app:*`
+  // channel at all. This stays a source scan for the reason the section header
+  // gives — a re-added handler has no declaration to contradict and no caller
+  // to fail — and it reaches files the runtime half never loads.
+  const TEMPLATE_CHANNELS = ["app:getInfo", "app:getProjectPath"];
+  for (const channel of TEMPLATE_CHANNELS) {
+    const hits = files.flatMap((f) =>
+      codeLines(f)
+        .filter(({ text }) => text.includes(channel))
+        .map(({ n }) => `${rel(f)}:${n}`),
+    );
+    assertNone(hits, `no source registers the template's ${channel} channel`);
+  }
 
   // A version the app STATES rather than reads. The changelog is the one
   // exemption, because writing versions down is what it is for.
