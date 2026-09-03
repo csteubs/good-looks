@@ -4,9 +4,6 @@
  * Register all your IPC handlers here
  */
 
-import * as path from "path";
-import { fileURLToPath } from "url";
-
 import {
   dock as dockTrainerPanel,
   getTrainerPanelDockState,
@@ -177,9 +174,6 @@ function asMessages(v: unknown): LlmMessage[] {
   });
 }
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 export function registerHandlers(): void {
   logger.info("handlers", "Registering IPC handlers...");
 
@@ -203,11 +197,32 @@ export function registerHandlers(): void {
   // NODE_ENV. Reinstating a hard-coded one is what `check:app-identity` now
   // fails on. See DECISIONS 2026-09-03.
 
-  // Return the .glaze project path (used for deep links back to the host)
-  // __dirname = build/main, so two levels up is the app root
-  ipcMain.handle("app:getProjectPath", async () => {
-    return path.join(__dirname, "..", "..");
-  });
+  // NO `app:getProjectPath` either, and it is the same scaffold one field over.
+  // The template shipped it beside `app:getInfo`; the getInfo deletion left it
+  // standing only because it was outside the scope asked for. It returned
+  // `__dirname/../..` — the app root — under the comment "the .glaze project
+  // path (used for deep links back to the host)", and BOTH halves of that
+  // sentence had stopped being true. There is no host: this is a standalone
+  // Electron app with no Glaze SDK and nothing to deep-link back TO
+  // (PORTING.md). And the app's own deep links point the other way — a
+  // `goodlooks://` URL selects a VIEW, built by shared/deep-link.mjs out of
+  // record ids, and no part of it is ever a filesystem path.
+  //
+  // Nothing called it, and the argument for deleting rather than repointing is
+  // the preload's, exactly as it was for getInfo: `glaze.ipc.invoke(channel, …)`
+  // is generic, so an unused channel is not inert — it is a name a future
+  // caller reaches by string, and this one would have handed the RENDERER an
+  // absolute main-process path with no stated contract about what to do with
+  // it. The app root is a main-process fact and stays one: the single place
+  // that needs it, `main/services/mcp-install.ts`, resolves the same two
+  // levels itself, beside the consumer that gives the value its meaning. A
+  // renderer surface that genuinely needs a path gets a channel built WITH its
+  // consumer, named for what it answers rather than for a departed host.
+  //
+  // Removing it left `registerHandlers()` with no `app:*` channels at all, and
+  // took the file's `path` / `fileURLToPath` imports and its `__filename` /
+  // `__dirname` pair with it — this was their only reader. See DECISIONS
+  // 2026-09-03.
 
   // NO `window:openSettings` / `window:closeSettings`. Settings is a route in
   // the main window now (docs/plans/settings-view.md), so opening it is
