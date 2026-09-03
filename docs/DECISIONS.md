@@ -10,6 +10,42 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-03 — A spread at the call site is how a run record loses a field, twice
+
+**The report.** `tabsOpened` shipped in #310 as "written by both runners". It
+was written by one. Every run started from the app recorded nothing, so
+`triage_run` answered `tabsOpened: 0` and omitted its note for exactly the runs
+the app drove, while the same journey through the CLI answered 1.
+
+**Why it compiled.** `playwright-runner.ts` passes the count the way it passes
+every optional field — `...(tabsOpened > 0 ? { tabsOpened } : {})` — and
+`runHistoryStore.append` REBUILDS the record from named keys rather than
+spreading its argument. A field the parameter type does not declare is
+therefore dropped, and TypeScript does not object: excess-property checking
+does not apply to spread properties. Nothing downstream complains either,
+because absent is the legitimate encoding of "no tabs opened".
+
+**This is the second time.** The comment the new spread sits beside already
+records `hasTrace`, `attempt` and `passedOnRetry` falling through the same hole
+in R24, with the same silence. The rebuild is deliberate and stays — it is what
+keeps an unknown key from reaching the store — so the cost of it is that every
+new field needs a line in two places and a test that reads the field back OUT
+of the file.
+
+**Why no guard yet.** `check:run-ingest` compares the ingest gate against
+`RunRecord` in both directions and passes here: the field is optional and the
+gate does produce it. The gap is that nothing compares what the app's own
+writer persists against the same interface. A source-level check over
+`append`'s call sites would close it and is worth doing; it is not in this
+change, because getting such a check wrong is worse than not having it, and
+that is a decision for the maintainer rather than a drive-by.
+
+**What landed.** The declaration, the conditional spread in the record literal
+under the same absent-when-zero rule as its neighbours, and three cases in
+`run-history-append.test.ts` — the file that exists because of the first
+occurrence. The positive case fails against the unfixed store with
+`expected undefined to be 2`, which is the whole point of it.
+
 ### 2026-09-02 — The run follows the newest tab, and says so with one row
 
 **The report.** A test recorded on a site where a link opened in the same

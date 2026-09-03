@@ -9,6 +9,12 @@
 // true, and `flakeSignal` (shared/run-attempts.mjs) never saw a retried pass
 // from an app run, so a test that only ever passes by retrying read "stable".
 //
+// It happened again with `tabsOpened` (the tabs the page opened and the run
+// followed): the runner spread it in, this type did not name it, and the count
+// reached the record for a CLI run and never for an app one — so `triage_run`
+// told a reader the browser opened no tabs on exactly the runs the app drove.
+// A field the runner passes is only persisted if it is asserted here.
+//
 // Driven against the real store writing into a throwaway userData dir.
 
 import * as fs from "node:fs";
@@ -92,5 +98,36 @@ describe("append: hasTrace / attempt / passedOnRetry", () => {
     const all = runHistoryStore.list();
     expect("attempt" in (all.find((r) => r.id === "r4") ?? {})).toBe(false);
     expect("attempt" in (all.find((r) => r.id === "r5") ?? {})).toBe(false);
+  });
+});
+
+describe("append: tabsOpened", () => {
+  it("persists the count the runner passes, through the file", () => {
+    // The runner spreads it in only when positive; the store must still name
+    // it, or the spread is dropped with no compile error.
+    const opened = 2;
+    const rec = runHistoryStore.append(
+      { ...base("t1"), ...(opened > 0 ? { tabsOpened: opened } : {}) },
+      "log",
+    );
+    expect(rec.tabsOpened).toBe(2);
+
+    const stored = runHistoryStore.list().find((r) => r.id === "t1");
+    expect(stored?.tabsOpened).toBe(2);
+  });
+
+  it("absent stays absent for a run that opened no tabs", () => {
+    // Absent must keep reading the same as a row predating the field, which is
+    // why the runner sends nothing at zero and the store refuses one anyway.
+    runHistoryStore.append({ ...base("t2") }, "log");
+    runHistoryStore.append({ ...base("t3"), tabsOpened: 0 }, "log");
+    const all = runHistoryStore.list();
+    expect("tabsOpened" in (all.find((r) => r.id === "t2") ?? {})).toBe(false);
+    expect("tabsOpened" in (all.find((r) => r.id === "t3") ?? {})).toBe(false);
+  });
+
+  it("a non-integer count is refused, not stored", () => {
+    runHistoryStore.append({ ...base("t4"), tabsOpened: 1.5 as unknown as number }, "log");
+    expect("tabsOpened" in (runHistoryStore.list().find((r) => r.id === "t4") ?? {})).toBe(false);
   });
 });
