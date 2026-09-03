@@ -168,7 +168,7 @@ done until each of these is pinned by a test or a check.
    sockets bypasses a setting the user relied on.
 7. **Inert where there is no user.** e2e (`e2e/fixtures.ts`), the browser
    preview (`renderer/dev/preview-bridge.ts`), CI, the MCP server and the CLI
-   (§4.4) either do not load the layer or load a sink that writes nowhere.
+   (§4.7) either do not load the layer or load a sink that writes nowhere.
 8. **Visible.** Settings shows what is on, where it goes, and a way to see the
    last N events sent (the same "can anyone tell?" principle as the trainer's
    `signedRequests` tally).
@@ -176,7 +176,7 @@ done until each of these is pinned by a test or a check.
 ## 4. The reportable set — every surface, by the seam that reports it
 
 The inventory below was built by reading the tree on 2026-09-03 and is the
-input to the coverage gate in §5.4: **a surface is reportable when it is
+input to the coverage gate in §5.5: **a surface is reportable when it is
 either covered by a chokepoint or named in the catalog with an explicit
 event**. The last column says which. Counts are what the tree holds today;
 the gate re-derives them, so the numbers here are a snapshot, not a contract.
@@ -226,7 +226,7 @@ the gate re-derives them, so the numbers here are a snapshot, not a contract.
 | Credential rows — Anthropic key, LM Studio token, webhook URL, Slack URL, GitHub token, issue-tracker connection, Shopify signatures, mailbox, proxy password; each has its own set / clear / test channel and never travels through `save()` | `settings-controller.tsx:391-885` | chokepoint at the credential channels: outcome only (set / cleared / tested-ok / tested-failed) |
 | Egress-enable confirmations (`AlertDialog` on the webhook and Slack switches) | `integrations-pane.tsx:475-494, 571-587` | explicit: shown / confirmed / cancelled — the consent events this plan's own switch will emit too |
 | Section reset; Storage prune; Stats reset / delete (no confirmation today) | `settings-view.tsx:274`, `settings-controller.tsx:917-960` | explicit |
-| Two rows not in `SETTING_INDEX` (`extra-testid-attributes`, `default-batch-headless`) | `recording-pane.tsx`, `test-defaults-pane.tsx` | **gap** — index them first (the gate in §5.4 fails on them otherwise) |
+| Two rows not in `SETTING_INDEX` (`extra-testid-attributes`, `default-batch-headless`) | `recording-pane.tsx`, `test-defaults-pane.tsx` | **gap** — index them first (the gate in §5.5 fails on them otherwise) |
 
 ### 4.5 The trainer
 
@@ -285,9 +285,10 @@ the git-checkout test, as §5.4 says.
 
 ### 5.1 One catalog, as data
 
-`renderer/lib/analytics-catalog.ts` (pure, DOM-free, node-project tested —
-the same shape as `settings-schema.ts` and `release-notes.ts`) is the single
-source of truth: every event the app can emit, with its name, the surface it
+`shared/analytics-catalog.mjs` (+ a hand-written `.d.mts`, the `shared/`
+rule: pure, no `fs`, no IPC — because the main process validates against it
+and the renderer emits from it, and neither can import the other's
+TypeScript) is the single source of truth: every event the app can emit, with its name, the surface it
 belongs to, its allowed properties and their types. Nothing may call
 `track()` with a name that is not in it — the call takes the catalog entry,
 not a string, so an event that is not declared does not type-check.
@@ -302,18 +303,41 @@ export const EVENTS = {
   step_captured:        { surface: "trainer", props: { kind: STEP_KINDS, origin: ["captured", "manual", "verified", "suggested"], count: INT } },
   run_finished:         { surface: "run",     props: { status: ["passed", "failed", "cancelled"], trigger: RUN_TRIGGERS, browser: RUN_BROWSERS, durationBucket: BUCKETS, retried: BOOL, healed: INT } },
   egress_consent:       { surface: "settings", props: { feature: EGRESS_FEATURES, decision: ["shown", "confirmed", "cancelled"] } },
+  ai_offered:           { surface: "ai",      props: { feature: AI_FEATURES, provider: LLM_PROVIDERS } },
+  ai_resolved:          { surface: "ai",      props: { feature: AI_FEATURES, outcome: ["accepted", "rejected", "edited", "timed_out", "failed"] } },
+  heal_proposed:        { surface: "heals",   props: { source: ["run", "ci"], kind: HEAL_KINDS } },
+  heal_resolved:        { surface: "heals",   props: { outcome: ["accepted", "reverted", "expired"] } },
   error_seen:           { surface: "any",     props: { where: ["main", "renderer", "utility", "child"], kind: ERROR_KINDS, screen: SCREEN_IDS_OR_NONE } },
+  process_gone:         { surface: "any",     props: { process: ["renderer", "utility", "child"], reason: GONE_REASONS, window: WINDOW_IDS_OR_NONE } },
+  feedback_opened:      { surface: "feedback", props: { source: ["help", "palette", "diagnostics", "run"] } },
+  feedback_sent:        { surface: "feedback", props: { destination: ["app", "own_tracker"], attachments: ATTACHMENT_FLAGS } },
+  session_started:      { surface: "app",     props: { coldStartBucket: BUCKETS, firstRun: BOOL } },
   // …
 } as const satisfies Catalog;
 ```
 
-The property vocabularies are **imported from the modules that own them**
-— `SCREEN_IDS` from the router's route table, `SETTING_ROW_IDS` from
-`SETTING_INDEX`, `COMMAND_IDS` from the palette's command builders,
-`STEP_KINDS` from `main/recorder/types.ts` — the same rule `agent-prompts.ts`
-follows ("deriving their vocabulary from main/recorder/types.ts constants"),
-so a renamed route or a new step kind cannot leave a stale name in the
+The property vocabularies are **declared as data and asserted equal to the
+modules that own them** — `SCREEN_IDS` against the router's route table
+(each entry already carries a `staticData.title`), `SETTING_ROW_IDS` against
+`SETTING_INDEX`, `COMMAND_IDS` against the palette's command builders,
+`STEP_KINDS` against `main/recorder/types.ts`, `AI_FEATURES` against the six
+places the app offers a model's output (suggestion strip, trainer agent,
+AI-debug fix, ghost text, Generate steps, Generate test). A `.mjs` cannot
+import those TypeScript modules, but `analytics-catalog.test.ts` (node
+project) can import both sides and assert set equality, which is the
+`export-egress` / `push-consumers` discipline: a renamed route or a new step
+kind fails the gate naming the stale entry rather than leaving one in the
 catalog.
+
+The **outcome pairs** are the part no chokepoint produces and the part the
+product questions in §12 are answered from: `recording_started` →
+`recording_finished(saved | abandoned)`; `run_finished(passed, trigger:
+manual)`; `ai_offered` → `ai_resolved` across all six AI features (the
+acceptance rate DECISIONS 2026-08-23 says ghost text has no telemetry on);
+`heal_proposed` → `heal_resolved`, fed by the heal journal's
+`pending | accepted | reverted` statuses; `feedback_opened` →
+`feedback_sent`. The activation funnel is `session_started(firstRun)` →
+`recording_finished(saved)` → `run_finished(passed)` per install.
 
 ### 5.2 Naming and the property rule
 
@@ -346,15 +370,20 @@ e-mail addresses; the userData path or any path; error **messages** (the
 error **class** is fine); search queries; free-text settings; credential
 hosts; the machine name or username; the IP address (`trackingOptions.ipAddress: false`).
 `check:analytics-egress` plants a distinctive marker in every one of these
-places and asserts the emitted bytes never contain it — including the case
-where the marker is a substring of an enum value, which is the
-`"undefined"`-string class of bug this repo has met before.
+places and asserts the emitted bytes never contain it — after asserting the
+marker **entered** the builder, since absence proves nothing when the input
+never carried it (the insights check's rule).
 
 ### 5.4 Identity, sessions, context
 
 - **Identity is an install id**: a UUID minted once into
-  `userData/recorder/analytics-id.json`, rotated by a button in Settings
-  ("Reset analytics identity"), deleted with opt-out. No user id, no e-mail,
+  `userData/recorder/analytics-id.json` **at consent time** (nothing is
+  minted for a user who never opts in), rotated by a button in Settings
+  ("Reset analytics identity"), deleted with opt-out. Test and run ids are
+  the app's own opaque UUIDs; the stricter option — a per-session keyed
+  hash, so a journey is analysable within a session and unlinkable across
+  sessions — is a §12 question, because it also removes "time to green"
+  across days from the answerable set. No user id, no e-mail,
   no machine id; the MCP server and CLI share the store but **do not emit**
   (§4.7), so the id never travels from a context without a user.
 - **Session** = one app launch to quit, or 30 minutes idle; the id is minted
@@ -427,8 +456,9 @@ one consent gate, one ring buffer and one redaction pass for two windows and
 every backend producer. The renderer's whole analytics surface is
 `track()` → `ipc().invoke("analytics:track", …)`, which the preview bridge
 stubs like any other channel. Amplitude's HTTP API is a plain JSON POST, so
-the adapter is a hundred lines over `appFetch` with no SDK at all; the Node
-SDK is an option, the browser SDK is not.
+the adapter is a hundred lines over `appFetch` with no SDK at all — and no
+SDK is the right number: the Node SDK's transport bypasses the proxy (§7.1)
+and the browser SDK is a renderer SDK.
 
 **Session replay is the exception** — it can only run in a renderer, which
 is why it is a separate decision (§8) with its own consent and its own
@@ -498,6 +528,8 @@ the user reads the new dialog.
 A **first-run prompt** is a §12 question; the default is *no prompt* — the
 repo's precedent is off-until-found with confirm-on-enable, and a prompt at
 first launch is the one place a user cannot yet judge what the app holds.
+The middle shape, if one is wanted: a dismissable home-screen card that
+**only opens the Privacy rows** and turns nothing on.
 
 ## 7. Providers — what was verified
 
@@ -529,7 +561,11 @@ knowledge and must be re-checked before a decision).
 - **Delivery.** `flushIntervalMillis` 1000 / `flushQueueSize` 30 /
   `flushMaxRetries` 5 in the browser (10000 / 200 / 12 in core); unsent events
   are kept under an `AMP_unsent` storage key; `offline: false` by default.
-  The node package uses its own HTTP client (proxy support *unverified*).
+  **The Node SDK's transport is `http`/`https`.request with a hard-coded
+  option set and no agent, proxy or custom-fetch hook** (verified in
+  `analytics-node/src/transports/http.ts`), so it cannot honour Settings →
+  Proxy; the core config does accept a `transportProvider`, but the HTTP V2
+  API is a plain JSON POST and needs no SDK at all (§6.1).
 - **Session replay** is a separate plugin, `@amplitude/plugin-session-replay-browser`:
   rrweb DOM snapshots, **no remote script**, `sampleRate` required, all inputs
   masked by default, `.amp-mask` / `.amp-block` classes and a `privacyConfig`
@@ -541,7 +577,9 @@ knowledge and must be re-checked before a decision).
 
 ### 7.2 FullStory
 
-- **Package.** `@fullstory/browser` (`fullstorydev/fullstory-browser-sdk`).
+- **Package.** `@fullstory/browser` 2.1.0 (`fullstorydev/fullstory-browser-sdk`),
+  whose one runtime dependency is `@fullstory/snippet` — the README calls it
+  "a wrapper around Fullstory's hosted recording script".
   `init({ orgId, host, script, namespace, devMode, recordCrossDomainIFrames,
   recordOnlyThisIFrame, debug, cookieDomain, assetMapId, startCaptureManually,
   appHost })`.
@@ -619,9 +657,27 @@ control".
 | Hosts contacted | 1 | 2 (script CDN + ingest) unless self-hosted script | 1 | 1 (or self-hosted) |
 | Fits rule 2 (no remote code at launch) | yes | only self-hosted | yes | yes (full bundle) |
 
-Nothing here forces one vendor. The architecture in §6 puts a **sink
+Nothing here forces one vendor, and the architecture in §6 puts a **sink
 interface** between the app and the provider, so the decision in §12 changes
-an adapter, not the catalog, the consent surface or the gates.
+an adapter, not the catalog, the consent surface or the gates. The
+recommendation this plan proceeds under, until §12 says otherwise, and which
+four independently written strategies converged on when scored against this
+repo:
+
+- **Analytics: Amplitude, through its HTTP V2 API from the main process**
+  over `appFetch` — no `@amplitude/*` package in any window, no Node SDK
+  (its transport bypasses the proxy), EU zone as a setting. PostHog is the
+  fallback if §12 answers "self-host".
+- **Session replay: not in scope** for the first phases; if revisited,
+  Amplitude's replay plugin or PostHog's recorder, bundled, mask-everything
+  (§8). **FullStory is rejected for this app**: its SDK is a loader for a
+  hosted script every window's CSP blocks, self-hosting it means shipping a
+  third-party executable, Electron is undocumented, and its strength —
+  autocapture of a DOM — is the one thing §2.2 says must not be captured.
+- **Debug data: vendor-free first** (§9), `@sentry/electron` only if native
+  minidumps are wanted (§12), behind its own switch.
+- **Feedback: the issue-tracker seam that exists** (§10), with the app's own
+  destination decided in §12.
 
 ## 8. Session replay — scope, if at all
 
@@ -690,30 +746,44 @@ feedback flow ships with breadcrumbs (§9.2) and screenshots-with-consent
 The order below is the order of value per unit of risk; each step is a
 phase-3 deliverable in §11.
 
-1. **App-level error capture with no vendor.** `process.on("uncaughtException")`
-   and `unhandledRejection` in main (log, then let Electron's default dialog
-   behaviour stand — today the app has no handler at all), a renderer error
-   boundary that records the route and component stack to `main.log` through
-   the existing console forwarder, and `render-process-gone` /
-   `child-process-gone` / `unresponsive` recorded as *events* (kind, reason,
-   exit code, window label) rather than only log lines. This is the data the
-   feedback flow attaches, and it is useful with no provider at all.
-2. **Breadcrumbs = the analytics events, kept locally.** The last N catalog
-   events (§5) in a ring buffer in main — route changes, commands, dialog
-   opens, IPC failures — are the "what were they doing" a crash report needs.
-   One producer, two consumers; no second instrumentation.
-3. **A crash reporter.** Electron's `crashReporter` (through `@sentry/electron`
-   or bare `crashReporter.start` to a self-hosted minidump endpoint) — opt-in
-   separately from analytics, because a minidump is memory and §2.2 lists
-   what is in this app's memory. Off by default in any case; if on, the
-   `uploadToServer` decision is the user's, and the plan asks in §12 whether
-   "prompt after a crash" is the acceptable middle.
-4. **Log shipping — never automatic.** `main.log` routinely carries page
-   content and hostnames. It is attached to a *feedback report* after
-   redaction and a preview, and only then (§10).
+### 9.1 App-level error capture, with no vendor
 
-Rotation is a prerequisite for 4 and cheap: `main.log` grows without bound
-today.
+`process.on("uncaughtException")` and `unhandledRejection` in main (log,
+then let Electron's default dialog behaviour stand — today the app has no
+handler at all); `window.onerror` / `unhandledrejection` in every app
+renderer and a root error boundary that records the route and component
+stack through the existing console forwarder — which is attached to the
+main window only (`main/index.ts:278`) and must be attached to the trainer
+panel and the URL strip too; and `render-process-gone`,
+`child-process-gone`, `unresponsive` and the TypeScript utility process's
+exit recorded as *events* (`error_seen`, `process_gone`: kind, reason, exit
+code, window label) rather than only log lines. This is the data the
+feedback flow attaches, and it is useful with no provider at all.
+
+### 9.2 Breadcrumbs are the analytics events, kept locally
+
+The last N catalog events (§5) in a ring buffer in main — route changes,
+commands, dialog opens, IPC failures — are the "what were they doing" a
+crash report needs. One producer, two consumers; no second instrumentation,
+and the buffer exists whether or not analytics is on (it never leaves the
+process on its own).
+
+### 9.3 A crash reporter
+
+Electron's `crashReporter` (through `@sentry/electron`, or bare
+`crashReporter.start` to a self-hosted minidump endpoint) — opt-in
+separately from analytics, because a minidump is memory and §2.2 lists what
+is in this app's memory: decrypted credentials, typed values, page content.
+Off by default in any case; if on, the `uploadToServer` decision is the
+user's, and §12 asks whether "prompt after a crash" is the acceptable
+middle. Re-exported from `main/shell/backend.ts` and stubbed in
+`shell-backend-stub.ts`, because only `main/shell/` may import `electron`.
+
+### 9.4 Log shipping, never automatic
+
+`main.log` routinely carries page content and hostnames. It is attached to
+a *feedback report* after redaction and a preview, and only then (§10).
+Rotation is a prerequisite and cheap: `main.log` grows without bound today.
 
 ## 10. Feedback filing
 
@@ -756,7 +826,7 @@ relative to this repo's recent PRs (the multi-tab work was an L).
 | Phase | Scope | Deliverables | Size |
 |---|---|---|---|
 | **0 — Decide** | Answer §12. Fix `app:getInfo` (or delete it) so the app reports its real version; index the two settings rows that are outside `SETTING_INDEX`; route `mailbox-service.ts:58` through `appFetch` and `issue-tracker-service.ts:294` through `allRedactableValues()` — two inconsistencies with rules 4 and 6 that the inventory found and that would otherwise be "fixed by analogy" later | three small PRs; a DECISIONS entry recording the answers | S |
-| **1 — Catalog and local sink** | `analytics-catalog.ts`; `analytics-service.ts` with the null and local sinks; the `track()` renderer API and `analytics:track`; the router, palette, `save()`, `Menu.popup`, toast, `MutationCache` and IPC/push wrappers; `useDialogEvent` adopted by every dialog; the recorder, runner, batch, routine and agent lifecycle events; the Settings *Privacy* rows with the local event viewer; `check:analytics-coverage`, `check:analytics-egress`, `check:analytics-boot`; preview-bridge sink; ARCHITECTURE + DECISIONS. **Nothing leaves the machine.** | the catalog, the service, the gates, the viewer | L |
+| **1 — Catalog and local sink** | `shared/analytics-catalog.mjs` (+ `.d.mts`); `analytics-service.ts` with the null and local sinks; the `track()` renderer API and `analytics:track`; the router, palette, `save()`, `Menu.popup`, toast, `MutationCache` and IPC/push wrappers; `useDialogEvent` adopted by every dialog; the recorder, runner, batch, routine and agent lifecycle events; the Settings *Privacy* rows with the local event viewer; `check:analytics-coverage`, `check:analytics-egress`, `check:analytics-boot`; preview-bridge sink; ARCHITECTURE + DECISIONS. **Nothing leaves the machine.** | the catalog, the service, the gates, the viewer | L |
 | **2 — Provider adapter** | One adapter behind the sink interface (Amplitude HTTP API over `appFetch`, or PostHog — §12), the consent dialog and version, the queue with retry and age caps, EU/US zone as a setting, the allowlist entry with its reason, e2e row that an opted-in session sends exactly the catalog and an opted-out one opens no socket (a local HTTP listener as the collector, the way the agent-loop spec scripts an Ollama server) | one vendor, one host, one switch | M |
 | **3 — Debug data, vendor-free** | `uncaughtException` / `unhandledRejection` in main; `window.onerror` / `unhandledrejection` in every app renderer; `forwardRendererConsole` on the trainer panel and the URL strip; `render-process-gone`, `child-process-gone`, `unresponsive` and utility-process exits as `error_seen` events; the ring buffer as breadcrumbs; `main.log` rotation | errors become events; the log stops growing forever | M |
 | **4 — Feedback filing** | *Report a problem…* in Help, ⌘K and Diagnostics; the `app-feedback` `DefectSource`; a pure `buildFeedbackDraft` pinned by `check:feedback-payload`; the compose dialog reused with per-attachment consent (screenshots, redacted log tail, breadcrumbs); the app's own destination (§12); a deep-link form back to a settings pane, with `check:deep-link` rows | a user can report a bug from anywhere in the app | M |
@@ -766,7 +836,6 @@ relative to this repo's recent PRs (the multi-tab work was an L).
 
 Phases 3 and 4 do not depend on 2: a team that never picks a vendor still
 gets error capture and a feedback door, which is most of the debugging value.
-
 
 ### 11.1 What the gate gains — each check named for the silent failure it catches
 
