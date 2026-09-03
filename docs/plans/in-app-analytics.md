@@ -95,8 +95,10 @@ accident. The never-sent list in §5.3 is derived from it.
 - **AI material:** prompts, answers, standing instructions per host
   (`aiInstructionsByHost`), the AI-debug transcripts.
 - **Identity-adjacent:** git branch names and PR titles (Branches view), the
-  user's email if configured for the mailbox or an issue tracker, the
-  machine's userData path.
+  mailbox address every `emailCode` step carries and the mailbox endpoint
+  and token (`main/recorder/types.ts:517`, `mailbox-store.ts`) — so e-mail
+  addresses do live in the library even though no store holds the user's
+  own — and the machine's userData path.
 
 ### 2.3 Debug data and feedback today
 
@@ -194,9 +196,12 @@ the gate re-derives them, so the numbers here are a snapshot, not a contract.
 | Boot plate (cold start, skip) | `renderer/theme/shell/boot-plate.tsx` | explicit (`bootDurationMs`) |
 | Main window; trainer panel window (`alwaysOnTop`, docks beside the training browser); recorder window holding `pageView` (**untrusted**, `recorder-incognito-<uuid>`, no preload) and `chromeView` (the read-only URL strip) | `main/index.ts:249`, `main/windows/trainer-panel-window.ts:299`, `main/services/recorder-service.ts:2209-2327` | window lifecycle in main; the untrusted view is **never** instrumented |
 | Hidden PDF window (insight report export); TypeScript `utilityProcess`; Playwright CLI child per run; batch runner; routine scheduler (unattended, every 60 s); insights ticks; propagation service | `insight-report-pdf.ts`, `ts-service/client.ts:58`, `playwright-runner.ts:1165`, `batch-runner.ts`, `routine-scheduler.ts:100` | lifecycle events in main, tagged by `trigger` (`manual` / `schedule` / `mcp` / `cli`) — "active user" means `manual` |
-| Application menu (App, File, Edit, View, Window, Help — 13 Help items, all documentation) | `main/index.ts:383-484` | `openSettingsPane` funnel + explicit per item |
+| Application menu (App, File, Edit, View, Window, Help — twelve Help items, all documentation) | `main/index.ts:383-484` | `openSettingsPane` funnel + explicit per item |
 | `goodlooks://` deep links | `main/shell/deep-link.ts` | explicit (`hasRun`, `hasStep` — never the URL) |
 | Desktop notifications (run, AI debug, insights) | `run-notifier.ts:141`, `ai-debug-notifier.ts:47`, `insights-notifier.ts` | explicit (kind only) |
+| Native OS dialogs — the open-file picker behind Import from files (Home, the rail's Add menu, ⌘K `import-files`), the save dialogs behind report export and the PDF, message and error boxes | `preload.ts:69-80`, `renderer/lib/import-from-files.ts:28`, `report-emitter.ts:117`, `insight-report-pdf.ts:33` | explicit at the `dialog:*` host channels (kind and outcome; never a path) — none of them enters any DOM |
+| External link opens (documentation links, PR links) and clipboard writes (the MCP install command, which names the Electron binary's path) | `host-handlers.ts` `shell:openExternal`, `documentation-pane.tsx:75,225-254`, `branch-menu.tsx:80` | explicit (link kind; never the URL or the copied text) |
+| The training browser's **native HTTP basic-auth prompt** — shown on a 401 when the test has no password variable | `recorder-service.ts:2450-2457` | explicit, kind only: an OS dialog no renderer or replay sees, and a credential typed into it |
 
 ### 4.2 Shell chrome and global controls
 
@@ -205,19 +210,23 @@ the gate re-derives them, so the numbers here are a snapshot, not a contract.
 | App strip: back / forward, breadcrumb, history keys | `renderer/main/app-strip.tsx` | router subscription |
 | Library rail: test rows, groups, tags, Add menu, custom order, the Routines rail, the Branches row + flyout, the Insights row | `library-sidebar.tsx`, `routines-rail.tsx`, `branches-rail-row.tsx`, `insights-rail-row.tsx` | explicit on row activation (test **id**, never name) |
 | Command palette ⌘K — every command runs through one `go()` wrapper | `command-palette.tsx:103` | chokepoint (command id + group) |
-| Keyboard shortcuts — six separate `keydown` listeners, no registry; ⌘R pause/resume in the trainer | `command-palette.tsx`, `recorder-service.ts:1947` | explicit per listener (a capture-phase listener is the alternative) |
+| Keyboard shortcuts — seven separate `keydown` listeners (two on `document`), no registry, plus CodeMirror's own keymaps, snippets and the play-step chord; ⌘R pause/resume in the trainer | `layout.tsx:1127`, `boot-plate.tsx:122`, `rail-flyout.tsx:227`, `primitives/menu.tsx:116`, `command-palette.tsx`, `use-play-step-shortcut.ts`, `editor-keymaps.ts`; `recorder-service.ts:1947` | explicit per listener — a window-level capture listener would miss the `document` ones and the editor's |
 | Toasts — 248 call sites through one re-export | `renderer/ui/overlays.tsx:630` | chokepoint (toast kind; **never the message**, which quotes paths and URLs) |
 | Native popup menus — `Select`, `DropdownMenu`, Add-test, Manage-stats, step actions, assertion kinds; options **never enter the DOM** | nine `popup` call sites: `native-menu.tsx:253,424`, `step-row.tsx:428`, `library-sidebar.tsx:583`, `edit-steps-view.tsx:163`, `stats-view.tsx:409`, `trainer-actions.ts:145,169`, `url-bar.tsx:117` — all through `preload.ts:113` | chokepoint at `Menu.popup` with a required `menuId`; the chosen command id only for the fixed menus, "a pick happened" for `Select` rows (whose command ids can be a model name or a host) — DOM autocapture cannot see these |
 | Job ticker; AI debug chip; pending branch switch (module-level bus, no IPC) | `job-ticker.tsx:100`, `ai-debug-chip.tsx`, `pending-branch-switch.ts:29` | explicit |
+| DOM menus, distinct from the native popups: the rail flyout (portalled, its own `document` keydown), the library's Radix context menus (group Rename / Ungroup; per-test Reveal in Finder / Duplicate / Delete / Tags), the tag-cluster delete dialog | `renderer/theme/shell/rail-flyout.tsx`, `library-sidebar.tsx:367-379,624-648`, `tag-cluster.tsx:115-122` | explicit on item select (item id) — these ARE visible to DOM autocapture, which is one more reason not to rely on it |
+| Home: the four primary buttons (Record, Generate, Import folder, Import git) and the stat tiles that navigate (Tests, Green · 7d, Heals to review) — the activation funnel's first clicks | `home-view.tsx:114,206-245` | explicit (button id) |
 | Settings-open push (menu, Help, AI connection footer) | `root-view.tsx:130-143` | explicit (entry source) |
 
 ### 4.3 Dialogs and panels
 
 | Surface | Where | Reported by |
 |---|---|---|
-| New recording; Generate test from prompt; Generate steps with AI; Import from git; Duplicate; Tags; Group name; Create flow; Missed runs; Load failed; Exit/save confirmation; Refine selector; Issue compose; AI debug (dialog + step dialog); Stats log inspector; Proxy validation | `renderer/main/*.tsx`, `renderer/components/issue-compose-dialog.tsx`, `renderer/settings/panes/proxy-pane.tsx` | explicit open / confirm / cancel per dialog, from one `useDialogEvent` hook — and a **required `name` prop** on `Dialog` / `AlertDialog` in `renderer/ui/overlays.tsx` (no raw Radix dialog import exists outside `renderer/ui/`), so an anonymous dialog is a type error |
+| New recording; Generate test from prompt; Generate steps with AI; Import from git; Duplicate; Tags; Group name; Create flow; Flow arguments (`flow-args-fields.tsx:139`); Missed runs; Load failed; Exit/save confirmation; Refine selector; Issue compose; AI debug (dialog + step dialog); Stats log inspector; Proxy validation; Delete test; Rename test; script-changed-on-disk and diverge confirmations; the Accessibility tab's accept-this-step / accept-every / forget / accept-rule-everywhere dialogs (`a11y-panel.tsx:75,271,285`, `a11y-view.tsx:219`); the Heals view's delete-record dialog (`heals-view.tsx:369`); Visual's Masks & baselines and annotation edit/clear (`visual-view.tsx:1187,1105,1117`); Routines' schedule picker (`schedule-picker.tsx:270`), open-N-windows and delete-routine confirmations (`batch-view.tsx:2179-2208`); Stats' reset / delete-all / delete-AI-history confirmations and Delete logs by date (`stats-view.tsx:443-449,997-1025`) | `renderer/main/*.tsx`, `renderer/components/issue-compose-dialog.tsx`, `renderer/settings/panes/proxy-pane.tsx` | explicit open / confirm / cancel per dialog, from one `useDialogEvent` hook — and a **required `name` prop** on `Dialog` / `AlertDialog` in `renderer/ui/overlays.tsx` (no raw Radix dialog import exists outside `renderer/ui/`), so an anonymous dialog is a type error |
 | Test detail tabs — Steps (edit view + insert cursor), Script (CodeMirror + inspections + AI panel), Variables, Heals, Accessibility, run history, run output, run summary, triage, failure reason | `test-detail-view.tsx:1619` (`TabsRoot onValueChange`) and the per-tab mutations | chokepoint on tab change; explicit for edits (count of steps changed, never content) |
-| Stats panels — flake, cost, digest, divergence, step health, suite cost, report export | `renderer/main/*-panel.tsx` | route + explicit for actions (export kind) |
+| Stats: the category board and six dashboards (outcomes, speed, steps, a11y, visual, AI debug), the weekly digest, the flake / cost / divergence / step-health / suite-cost panels, report export, the Manage menu (reset, delete all, delete by date, delete AI-debug history, reveal logs folder), the pager | `renderer/main/stats/*-dashboard.tsx`, `category-board.tsx`, `digest-panel.tsx`, `renderer/main/*-panel.tsx`, `stats-view.tsx:409-436`, `pager.tsx` | route (`$category`, `$facet`) + explicit for actions (export kind, manage choice, page turned) — the dashboards are what a product manager asks adoption of, so each is a facet id, not "Stats" |
+| Test detail below the tab strip: run history, run summary, run triage, failure reason, step health, heals panel, script outline, script AI panel, script change rows, variable picker, diff view | `run-history-panel.tsx`, `run-summary-panel.tsx`, `run-triage.tsx`, `run-failure-reason.tsx`, `step-health-panel.tsx`, `heals-panel.tsx`, `script-outline-panel.tsx`, `script-ai-panel.tsx`, `script-change-row.tsx`, `renderer/components/variable-picker.tsx`, `diff-view.tsx` | explicit for the decisions made there (triage verdict, failure reason chosen, heal accepted, change applied) — where the outcome events of §5.1 are actually clicked |
+| Script editor: ghost-text accept (Tab) / dismiss (Escape) — the acceptance rate DECISIONS 2026-08-23 says nothing measures — keymap choice, snippet expansion | `renderer/main/ghost-text.ts:70`, `editor-keymaps.ts`, `editor-snippets.ts` | explicit (`ai_resolved` for ghost text; kind only for the rest) |
 | Visual, Accessibility, Heals, Insights, Branches, Routines actions — 8 + 11 `useMutation` hooks and the batch controls | the views' mutation hooks | explicit outcome events at the handlers that matter (accept a heal, apply a propagation, generate a report, switch a branch); a `MutationCache` observer was considered and deferred — it needs a `mutationKey` on some sixty sites for a breadth the outcome events already give |
 
 ### 4.4 Settings
@@ -225,7 +234,7 @@ the gate re-derives them, so the numbers here are a snapshot, not a contract.
 | Surface | Where | Reported by |
 |---|---|---|
 | 18 panes on the board, in the rail, and by search | `renderer/lib/settings-schema.ts` (`PANES`) | router subscription (`$pane`) + explicit for search (query **length** and match count only) |
-| ~90 rows in `SETTING_INDEX` — every persisted write goes through **one** optimistic `save(patch)` | `settings-controller.tsx:365` → `recorder:setSettings` | chokepoint: row id + key **names** + boolean/enum values; numbers and free text never (`userStylesheet`, `userInitScript`, `aiInstructions*`, `proxyUrl`, `costHourlyRate`) |
+| 96 rows in `SETTING_INDEX` — every persisted write goes through **one** optimistic `save(patch)` | `settings-controller.tsx:365` → `recorder:setSettings` | chokepoint: row id + key **names** + boolean/enum values; numbers and free text never (`userStylesheet`, `userInitScript`, `aiInstructions*`, `proxyUrl`, `costHourlyRate`) |
 | Credential rows — Anthropic key, LM Studio token, webhook URL, Slack URL, GitHub token, issue-tracker connection, Shopify signatures, mailbox, proxy password; each has its own set / clear / test channel and never travels through `save()` | `settings-controller.tsx:391-885` | chokepoint at the credential channels: outcome only (set / cleared / tested-ok / tested-failed) |
 | Egress-enable confirmations (`AlertDialog` on the webhook and Slack switches) | `integrations-pane.tsx:475-494, 571-587` | explicit: shown / confirmed / cancelled — the consent events this plan's own switch will emit too |
 | Section reset; Storage prune; Stats reset / delete (no confirmation today) | `settings-view.tsx:274`, `settings-controller.tsx:917-960` | explicit |
@@ -243,6 +252,8 @@ the gate re-derives them, so the numbers here are a snapshot, not a contract.
 | Trainer panel dock / undock (reason: user / no room / full screen / session ended); viewport-narrowed toast | `trainer-panel-window.ts:400-441`, `viewport-narrowed-notice.ts:78` | explicit |
 | Page guards on the untrusted view — navigation blocked, permission denied, popup opened, basic-auth prompt, overlay rule saved, signature not sent | `recorder-service.ts:1804, 2370, 2552` | main-process events: **kind only** |
 | The URL strip (`chromeView`) — copy, assert menu | `url-bar.tsx:105-125` | explicit through IPC; its own CSP has no `https:` in `connect-src`, so it can send nothing itself |
+| The trainer panel's **own** exit dialog and its **own** `Toaster` — the recorder store raises thirteen toasts in both windows | `trainer-panel-view.tsx:836`, `renderer/trainer/index.tsx:52` | main-process events for the lifecycle; the toast seam must dedupe per window or every trainer toast counts twice |
+| Drag-and-drop reordering — steps, flow scope, routine order — the gesture before `reorderStep`, which can be abandoned mid-drag | `step-row.tsx`, `edit-steps-view.tsx`, `flow-scope-editor.tsx`, `batch-view.tsx` | explicit (`drop` with a kind; the abandoned drag is the interesting count) |
 
 ### 4.6 Backend-only surfaces
 
@@ -253,7 +264,7 @@ the gate re-derives them, so the numbers here are a snapshot, not a contract.
 | Run completion record (status, duration, browser, trigger, retries, heals) | `playwright-runner.ts` | derived event from the record — the one place run outcomes are already summary-only |
 | Debug screenshots (⌘⌥⇧S, Capture now, MCP `capture_app`) | `debug-capture.ts:164` | explicit (source; never the images) |
 
-### 4.7 Beyond the main window — thirteen execution surfaces, three with a user
+### 4.7 Beyond the main window — fifteen execution surfaces, three with a user
 
 | Surface | Has a user? | Recommendation |
 |---|---|---|
@@ -265,10 +276,10 @@ the gate re-derives them, so the numbers here are a snapshot, not a contract.
 | TypeScript `utilityProcess` (`ts-service/`) | no | exit / unavailable as `error_seen` from the client side; no SDK in the child (it resolves `typescript` from the runner's tree and must stay that way) |
 | Playwright CLI child per run | no | the run record is the event |
 | MCP server (`mcp/server.mjs`) | an AI client, often CI | **inert** — no user, no consent surface, plain `.mjs` with no build step; if §12 says otherwise, the opt-in RULE goes in `shared/` and each side reads it |
-| `good-looks` CLI (`bin/good-looks.mjs`) | a CI runner | **inert** — and structurally: the CLI never calls `process.exit`, so an SDK with an exit-time flush or a keep-alive timer would hang or truncate piped stdout (`check:cli-exit`) |
-| GitHub Action (`action.yml`) | no | inert; always CI |
+| `good-looks` CLI — the subcommands are dispatched in `bin/good-looks.mjs:49-145` (`run`, `install`, `export`, `ingest`, `data-dir`, `help`, `--version`); `cli/args.mjs` parses only `run` and `install` flags, so a harvester reads `bin/`, not `cli/` | a CI runner | **inert** — and structurally: the CLI never calls `process.exit`, so an SDK with an exit-time flush or a keep-alive timer would hang or truncate piped stdout (`check:cli-exit`) |
+| GitHub Action (`action.yml` — inputs including `install-deps` and `working-directory`, outputs `exit-code` and `junit`) | no | inert; always CI; an input is attacker-controlled the moment a workflow passes it a PR title, so no analytics flag is ever added there |
 | Mailbox worker (`workers/mailbox`) | no (user-deployed) | not an app surface; Cloudflare's own observability |
-| Browser preview (`npm run dev:web`; **published to public GitHub Pages from `main`** when `ENABLE_PAGES` is set) | a visitor | in-memory sink only, selected by `window.__preview`; the shared renderer entry must refuse any provider client there — a demo on a public URL against fixtures must not phone home |
+| Browser preview (`npm run dev:web`; **published to public GitHub Pages from `main`** when `ENABLE_PAGES` is set; its `?view=` set includes `trainer-panel`, `chrome` and `bar-lab` beyond the ones CLAUDE.md lists) | a visitor | in-memory sink only, selected by `window.__preview`; the shared renderer entry must refuse any provider client there — a demo on a public URL against fixtures must not phone home |
 | Specimen page (`?view=specimen`) | no | inert by construction (no app root) |
 | e2e-launched app (`GOOD_LOOKS_E2E=1`, throwaway `--user-data-dir`) | no | null sink; first-run identity logic must tolerate a fresh userData every test |
 | Branch builds (`userData/branch-builds/`, **same userData as the checkout**) | the maintainer | events carry the running build's `app.getVersion()` and a `branch` flag; the consent and identity files are read forward-compatibly and never migrated destructively |
@@ -511,7 +522,14 @@ its unit tests state intent. It owns:
   capped by count and age (Sentry's 30 / 30 days are sane defaults), flushed
   on a timer and at `before-quit`, batch POST through `appFetch` with a hard
   timeout, retries with backoff, every failure logged and swallowed
-  (rule 5).
+  (rule 5). Nothing in the app reads `navigator.onLine` or `net.isOnline`,
+  so the queue assumes it may be offline indefinitely and the age cap is
+  what bounds it. And **the app takes no single-instance lock**
+  (`second-instance` is handled for deep links, `requestSingleInstanceLock`
+  is never called), so two instances or a branch relaunch can share
+  userData: the queue, the consent file and the install id are written
+  atomically (temp file + rename, the credential stores' pattern) and
+  re-read rather than cached — §12 asks whether the lock should come first.
 - **Redaction at the send site** over `allRedactableValues()` (rule 4).
 - **Environment gating** — the null sink is *selected*, not merely
   configured, when `GOOD_LOOKS_E2E=1`, in the preview, under `CI`, and in
@@ -792,8 +810,15 @@ main window only (`main/index.ts:278`) and must be attached to the trainer
 panel and the URL strip too; and `render-process-gone`,
 `child-process-gone`, `unresponsive` and the TypeScript utility process's
 exit recorded as *events* (`error_seen`, `process_gone`: kind, reason, exit
-code, window label) rather than only log lines. This is the data the
-feedback flow attaches, and it is useful with no provider at all.
+code, window label) rather than only log lines. Two things the inventory
+found decide the shape: the renderer contains **no `console.error` at all**
+— every handled failure is one of 247 `toast.*` calls, so the toast seam,
+not the console forwarder, is where handled errors become `error_seen`
+(kind only); and the untrusted `pageView` uses `console-message` as its
+**capture channel** (`recorder-service.ts:2637`), so error capture is never
+attached there, and the breadcrumb ring is fed by the catalog, never by
+`logger` — the page-guard log lines already carry URLs. This is the data
+the feedback flow attaches, and it is useful with no provider at all.
 
 ### 9.2 Breadcrumbs are the analytics events, kept locally
 
@@ -870,8 +895,8 @@ relative to this repo's recent PRs (the multi-tab work was an L).
 | Phase | Scope | Deliverables | Size |
 |---|---|---|---|
 | **0 — Decide** | Answer §12. Fix `app:getInfo` (or delete it) so the app reports its real version; index the two settings rows that are outside `SETTING_INDEX`; route `mailbox-service.ts:58` through `appFetch` and `issue-tracker-service.ts:294` through `allRedactableValues()` — two inconsistencies with rules 4 and 6 that the inventory found and that would otherwise be "fixed by analogy" later; add `check:main-egress` (an allowlist with reasons over absolute URLs in `main/**`, the renderer check's twin) so the provider host is later a one-line diff; widen `forwardRendererConsole` to take a `WebContents` and attach it to the trainer panel and the URL strip | four small PRs; a DECISIONS entry recording the answers and the vendor facts in §7 | S |
-| **1 — Catalog and local sink** | `shared/analytics-catalog.mjs` (+ `.d.mts`); `analytics-service.ts` with the null and local sinks; the `track()` renderer API and `analytics:track`; the router, palette, `save()`, `Menu.popup`, toast, `MutationCache` and IPC/push wrappers; `useDialogEvent` adopted by every dialog; the recorder, runner, batch, routine and agent lifecycle events; the Settings *Privacy* rows with the local event viewer; `check:analytics-coverage`, `check:analytics-egress`, `check:analytics-boot`; preview-bridge sink; ARCHITECTURE + DECISIONS. **Nothing leaves the machine.** | the catalog, the service, the gates, the viewer | L |
-| **2 — Provider adapter** | One adapter behind the sink interface (Amplitude HTTP API over `appFetch`, or PostHog — §12), the consent dialog and version, the queue with retry and age caps, EU/US zone as a setting, the `check:main-egress` entry with its reason, the write key as a build-time `define` in `scripts/build-main.mjs` (none exists there today; `vite.config.ts:71` has one for the display name) so dev and branch builds are inert by construction, a dashboards-as-data doc mapping each product question to its events and chart, e2e row that an opted-in session sends exactly the catalog and an opted-out one opens no socket (a local HTTP listener as the collector, the way the agent-loop spec scripts an Ollama server) | one vendor, one host, one switch | M |
+| **1 — Catalog and local sink** | `shared/analytics-catalog.mjs` (+ `.d.mts`); `analytics-service.ts` with the null and local sinks; the `track()` renderer API and `analytics:track`; the router, palette, `save()`, `Menu.popup`, toast, `MutationCache` and IPC/push wrappers; `useDialogEvent` adopted by every dialog; the recorder, runner, batch, routine and agent lifecycle events; the Settings *Privacy* rows with the local event viewer; `check:analytics-coverage`, `check:analytics-schema`, `check:analytics-egress`, `check:analytics-boot`; preview-bridge sink; the new store wired into the existing deletion affordances (Delete stats & logs, Delete logs by date, `runs:deleteAll`) and `retention.ts`, which today sweeps run artifacts only; ARCHITECTURE + DECISIONS. **Nothing leaves the machine.** | the catalog, the service, the gates, the viewer | L |
+| **2 — Provider adapter** | One adapter behind the sink interface (Amplitude HTTP API over `appFetch`, or PostHog — §12), the consent dialog and version, the queue with retry and age caps, EU/US zone as a setting, the `check:main-egress` entry with its reason, the write key as a build-time `define` in `scripts/build-main.mjs` (none exists there today; `vite.config.ts:71` has one for the display name) so dev and branch builds are inert by construction, a dashboards-as-data doc mapping each product question to its events and chart, e2e row that an opted-in session sends exactly the catalog and an opted-out one opens no socket (a local HTTP listener as the collector, the way the agent-loop spec scripts an Ollama server) — **after** widening `e2e/app-launch.spec.ts:133-138`, whose clean-console assertion drops any error mentioning `127.0.0.1` or `localhost`, which is exactly where the collector would sit | one vendor, one host, one switch | M |
 | **3 — Debug data, vendor-free** | `uncaughtException` / `unhandledRejection` in main; `window.onerror` / `unhandledrejection` in every app renderer; `forwardRendererConsole` on the trainer panel and the URL strip; `render-process-gone`, `child-process-gone`, `unresponsive` and utility-process exits as `error_seen` events; the ring buffer as breadcrumbs; `main.log` rotation | errors become events; the log stops growing forever | M |
 | **4 — Feedback filing** | *Report a problem…* in Help, ⌘K and Diagnostics; the `app-feedback` `DefectSource`; a pure `buildFeedbackDraft` pinned by `check:feedback-payload`; the compose dialog reused with per-attachment consent (screenshots, redacted log tail, breadcrumbs); the app's own destination (§12); a deep-link form back to a settings pane, with `check:deep-link` rows | a user can report a bug from anywhere in the app | M |
 | **5 — Crash reports** (optional) | `crashReporter` / `@sentry/electron` behind its own switch, minidump upload as prompt-after-crash or never (§12), the `@shell/backend` re-export and stub, `ELECTRON_RUN_AS_NODE` audit for the helper | native crashes reach a tracker | M |
@@ -1218,7 +1243,7 @@ answered; each later phase is blocked by the ones marked for it.
     are auto-instrumenting hooks acceptable given the React compiler runs
     only in the Vite build?** **Default:** seams only.
 
-### 12.11 Prerequisites
+### 12.11 Prerequisites and state on disk
 
 53. **Are the two observed inconsistencies in scope for Phase 0** — the
     mailbox probe's raw `fetch` and the issue tracker redacting over
@@ -1234,6 +1259,25 @@ answered; each later phase is blocked by the ones marked for it.
     main-window-only console forwarding and `proxyUrl` in the local settings
     log all fixed in Phase 0 regardless of provider?** **Default:** all four,
     each with a test that can fail.
+56. **Should the app take `requestSingleInstanceLock()` before it writes any
+    per-install file?** Two instances, or a branch relaunch, share userData
+    with no locking today; the stores are read-modify-write JSON.
+    Options: take the lock in `main/shell/` (a second launch focuses the
+    first — a behaviour change users will notice) / atomic writes and
+    re-reads only / leave it. **Default:** atomic writes and re-reads; the
+    lock is a separate decision because it changes what a second click on
+    the dock icon does.
+57. **Do the analytics queue, ledger, breadcrumb ring and install id join the
+    existing deletion affordances (Delete stats & logs, Delete logs by date,
+    the retention sweep), and what is their retention?** A user who asks
+    "what does this app hold about me" should get one answer. **Default:**
+    yes to all three affordances; queue 7 days, ledger and ring 200 entries,
+    the id until opt-out.
+58. **May the Privacy rows (the ledger, the install id) appear in debug
+    screenshots?** `capture_app` hands PNGs of every app window to whichever
+    MCP client asks while debug screenshots are on. **Default:** yes — the
+    ledger holds nothing the never-sent list forbids, by construction; the
+    install id is shown truncated.
 
 ## 13. Risks and rejected alternatives
 
@@ -1270,10 +1314,29 @@ answered; each later phase is blocked by the ones marked for it.
   harvester for keyboard chords or mutation keys in the first landing), a
   `WITHHELD` map with reasons instead of set equality with no exceptions,
   and floors that distinguish "nothing found" from "regex broke".
-- *Cost.* Every provider bills by event volume; `ipc_invoked` on 287
-  channels for every user would dominate. It stays off unless a channel has
-  no higher-level event, and the local viewer shows volume before anything
-  is sent.
+- *Two writers, one userData.* No single-instance lock, and a branch relaunch
+  shares the checkout's userData; the identity and consent files are the
+  first per-install state this app has written that must survive that.
+- *A pull request runs on the maintainer's library.* The branch switcher
+  builds and relaunches any PR's head against the real userData; a
+  telemetry change in a PR runs there. The write key being a package-time
+  `define`, absent from every checkout build, is what keeps that from being
+  an exfiltration path.
+- *The key leaks into children.* Playwright children inherit the app's
+  environment (`playwright-runner.ts:1165-1167`), and the Action maps inputs
+  to env; a key or a sink selector carried as an environment variable would
+  reach every spec process and every CI job. Hence the `define`, never env.
+- *Local time versus UTC.* Routines fire on local-time cadences
+  (`shared/routine-schedule.mjs:25`) and events are stamped in UTC; DST and
+  travelling laptops shift `schedule` runs relative to event time, and
+  clocks can simply be wrong. Timestamps are stamped in main from one
+  clock, and a test of any bucketing `delete`s `TZ` rather than assigning
+  it (CLAUDE.md's gotcha).
+- *Cost.* Every provider bills by event volume; `recorder:state` is pushed on
+  every transition and `runner:output` per stdout chunk, so a generic
+  wrapper produces hundreds of breadcrumbs per run; `ipc_invoked` on 287
+  channels for every user would dominate. Breadcrumb tier never leaves, and
+  the local viewer shows volume before anything is sent.
 
 **Rejected**
 
