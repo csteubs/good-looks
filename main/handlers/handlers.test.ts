@@ -131,6 +131,35 @@ describe("handler registration", () => {
   it("does not register the template's `app:getInfo` — nothing calls it, and it lied", () => {
     expect(registeredChannels()).not.toContain("app:getInfo");
   });
+
+  // ITS SURVIVING SIBLING, deleted 2026-09-03 for the same reason and pinned
+  // the same way. `app:getProjectPath` returned `__dirname/../..` under the
+  // comment "the .glaze project path (used for deep links back to the host)",
+  // and there is no host — this app has no Glaze SDK and nothing to link back
+  // to, while its own `goodlooks://` links select a VIEW from record ids and
+  // never carry a path. Nothing called it either, so it had the same absent
+  // symptom, and the same generic `glaze.ipc.invoke(channel, …)` means the
+  // channel is reachable by string the moment it is registered. The app root
+  // is a main-process fact: `main/services/mcp-install.ts` resolves it beside
+  // the consumer that gives it meaning, which is where a path belongs.
+  //
+  // Asserted as its own `it` rather than folded into the one above, because
+  // the two would then pass and fail together — a re-add of one would be
+  // reported as a failure naming both, and the first thing anybody would do is
+  // read the wrong comment.
+  it("does not register the template's `app:getProjectPath` — there is no host to link back to", () => {
+    expect(registeredChannels()).not.toContain("app:getProjectPath");
+  });
+
+  // The pair above is only half the claim. Both were `app:*`, they were the
+  // only two, and nothing has replaced them — so the honest assertion is that
+  // registerHandlers() opens NO `app:` channel at all. It catches a third
+  // scaffold nobody thought to name here, which is exactly how the second one
+  // survived the first one's deletion. A legitimate `app:*` channel arriving
+  // later with a real consumer updates this test as part of landing it.
+  it("registers no `app:*` channel at all — both template ones are gone and none replaced them", () => {
+    expect(registeredChannels().filter((c) => c.startsWith("app:"))).toEqual([]);
+  });
 });
 
 describe("proxy handlers — the password's write-only contract, over real stores", () => {

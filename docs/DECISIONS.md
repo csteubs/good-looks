@@ -129,6 +129,65 @@ message whose page is null, a `WebError` whose `error()` throws, a request
 whose `frame()` throws. Five of its eight assertions fail against the old
 per-page installer.
 
+### 2026-09-03 — The last scaffold channel goes; the app root stays where it is used
+
+**What was there.** `app:getProjectPath`, registered in `main/handlers/index.ts`
+directly beneath the deleted `app:getInfo` and left standing by that deletion,
+which was scoped to getInfo and said so. Its body was one line —
+`path.join(__dirname, "..", "..")` — under the comment "Return the .glaze
+project path (used for deep links back to the host)".
+
+**Both halves of that comment had stopped being true.** There is no host: this
+is a standalone Electron app with no Glaze SDK and no host application, which
+is the first thing PORTING.md records. And the app's own deep links point the
+other way — a `goodlooks://` URL selects a VIEW, parsed by `shared/deep-link.mjs`
+out of record ids, and no part of one is ever a filesystem path. So the channel
+handed a renderer an absolute main-process path in the name of a feature that
+does not exist, for a direction of travel this app does not have.
+
+**Nothing called it, and that was checkable exhaustively rather than by
+sampling.** The renderer's only IPC funnel is a generic
+`glaze.ipc.invoke(channel, …)` in `renderer/preload.ts`, so every call site
+passes its channel as a string literal — which makes grepping for the literal a
+proof rather than a heuristic. The string appeared in exactly one place in the
+tree: the registration. `renderer/dev/preview-bridge.ts` was checked separately
+and for a specific reason, since it synthesizes answers for unhandled channels
+(`defaultFor`) and is therefore the one shape in which an indirect reach could
+hide; it names no `app:` channel at all.
+
+**Deleted rather than repointed, and the argument is the preload's again.** The
+alternative was to keep the channel and correct the comment to name a real
+consumer. There is no real consumer, and manufacturing one would be building
+the wrong thing: the app root is a MAIN-PROCESS fact. The single place that
+needs it — `main/services/mcp-install.ts`, which resolves `mcp/server.mjs` for
+the Documentation pane's copyable `claude mcp add …` line — computes the same
+two levels itself, in the file whose docblock explains what the value means in
+a packaged `.app` versus a dev checkout. That is where a path belongs: beside
+the consumer that gives it a contract. An unused channel is not inert under a
+generic invoke surface, because a channel with no declaration and no caller is
+a name the next person reaches by string and believes.
+
+**Removing it emptied the `app:` namespace, and that is the assertion worth
+having.** `registerHandlers()` now opens no `app:*` channel at all.
+`handlers.test.ts` pins each deleted channel by name — separately, so a re-add
+of one is not reported as a failure naming both, which would send the reader to
+the wrong comment — and then pins the namespace being empty. The namespace
+assertion is the one that would have caught this scaffold on the day the first
+one was deleted: naming channels catches the mistakes somebody already thought
+of, and the second template channel surviving the first one's removal is
+precisely the mistake nobody thought of. `check:app-identity`'s source scan took
+the same lesson and now iterates a LIST of template channels rather than
+matching one needle, so the next entry is an entry.
+
+**The imports went too.** `path` and `fileURLToPath` were in
+`main/handlers/index.ts` only to build the `__filename`/`__dirname` pair, and
+the pair existed only for this handler. Nothing else in the file read either,
+so all four lines went with it — verified by scan, not assumed: what remains of
+those names in the file is comment prose describing the deletion.
+
+**Each assertion was confirmed to fail against the restored handler** before
+landing, per the repo's "verify a test can fail" rule.
+
 ### 2026-09-03 — A retried run opens the same tabs again, and only the last attempt counts
 
 **The report.** `tabsOpened` summed every tab marker on the stream. Playwright
