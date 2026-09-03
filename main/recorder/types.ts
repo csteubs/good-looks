@@ -2569,6 +2569,12 @@ export interface RunRecord {
    *  something was silently substituted is not the same evidence as one that
    *  passed outright. */
   healedSteps?: number;
+  /** How many tabs the run's browser opened beyond the one it started on —
+   *  counted off the tabs fixture's markers by both runners (2026-09-02).
+   *  Absent when none did, so a run predating the field and a run that
+   *  opened none read the same. The run followed each of them; this is the
+   *  count a reader of the history gets without opening the log. */
+  tabsOpened?: number;
   /** How many attempts Playwright made at this test, minus one. 0 — or absent,
    *  on a run recorded before R24 — is a run that ran once.
    *

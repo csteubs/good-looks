@@ -79,6 +79,11 @@ export interface ArtifactStepEntry {
   /** accessibility violations found after this action, when a11y checks were
    *  on. Compacted by the fixture — see A11yViolation. */
   a11y?: A11yViolation[];
+  /** Which tab this action ran on, 1-based from the SECOND tab: the run
+   *  follows the newest tab (shared/tabs-fixture-source.mjs) and the fixture
+   *  stamps a later tab's index here. Absent on the first tab, so a manifest
+   *  predating tabs reads as it always did. */
+  page?: number;
 }
 
 /** A normalized (0–1) rectangle in page/viewport space. */
@@ -185,6 +190,11 @@ export interface ReplayStep {
   actionIndex?: number;
   /** the acted-on element's normalized rect at capture time, when recorded. */
   rect?: NormalizedRect;
+  /** Which tab the step acted on, counted from 0 for the tab the run started
+   *  on. Present only for a later tab — the manifest entry's `page` — so the
+   *  Visual tab can say a screenshot is of tab 2 rather than leaving the
+   *  reader to notice the page changed. */
+  tab?: number;
   /** visual-diff result for this step's screenshot, when captured (Phase 3). */
   diff?: VisualDiff;
   /** accessibility result for this step, when a11y checks were on. Reported

@@ -1044,6 +1044,9 @@ export function createRunner({
       // rule as the app's runner and the same module, so a run that recovered
       // reads identically wherever it happened — see shared/run-attempts.mjs.
       ...retryFields({ status, maxAttempt }),
+      // Tabs the browser opened, off the fixture's markers — the same field
+      // the app's runner writes, so a CI run's history reads the same.
+      ...(tabsOpened > 0 ? { tabsOpened } : {}),
       ...(batchId ? { batchId } : {}),
       // Both stored, like the app: the id joins back to the row, and the name
       // survives the row being renamed or deleted. A sweep whose history can't

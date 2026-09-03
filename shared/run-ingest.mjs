@@ -241,6 +241,10 @@ export function normalizeIngestedRun(value) {
   opt("batchId", text(raw.batchId));
   opt("healedSteps", num(raw.healedSteps));
   opt("healFailedSteps", num(raw.healFailedSteps));
+  // Tabs the run's browser opened. A CI run is where a `_blank` link meets
+  // the follow-the-newest-tab fixture most often, and the count is the only
+  // trace of it that outlives the log.
+  opt("tabsOpened", num(raw.tabsOpened));
   // R24, and the reason it is not optional-in-spirit: CI is where `--retries`
   // is actually used, so a run that recovered on a retry is exactly the run
   // this command carries back — and without these two it arrives looking like
