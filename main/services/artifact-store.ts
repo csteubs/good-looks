@@ -282,6 +282,13 @@ export interface ConsoleEntry {
   text: string;
   url: string;
   line: number;
+  /** Which tab produced this, 1-based, and ONLY for a tab the page opened —
+   *  the same rule the manifest's `page` follows, so a log file predating tabs
+   *  reads exactly as it did. Absent means the tab the test started on, or a
+   *  run with no tab vocabulary at all. Written since 2026-09-02, declared
+   *  here since 2026-09-03: the fixture had been recording it into a file
+   *  whose type said it did not exist. */
+  page?: number;
 }
 
 export interface NetworkEntry {
@@ -297,6 +304,10 @@ export interface NetworkEntry {
   failure?: string;
   requestHeaders?: Record<string, string>;
   responseHeaders?: Record<string, string>;
+  /** As `ConsoleEntry.page`. Every recorded request has one, because a request
+   *  the fixture cannot attribute to a page is not recorded at all — a tab's
+   *  own navigation has no frame yet, so nothing can name it. */
+  page?: number;
 }
 
 /** One step run-time Auto-Heal tried to rescue and could not.

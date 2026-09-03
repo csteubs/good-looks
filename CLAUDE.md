@@ -342,9 +342,15 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                     imported one. Its only user-visible trace is the
                     "> New Tab Opened (#N)" row in Step details, off the tab
                     marker step-marker.mjs hands back BESIDE the transitions.
-                    e2e/tab-follow.spec.ts is the authority — nine rows and a
-                    control with following off; docs/plans/multi-tab.md the
-                    design and the spike it came from
+                    e2e/tab-follow.spec.ts is the authority — eleven rows
+                    and a control with following off; docs/plans/multi-tab.md
+                    the design and the spike it came from. What a tab SAYS
+                    is not this fixture's business: console, page errors and
+                    network are subscribed on the CONTEXT by the capture
+                    fixture, once, before any tab can exist. A per-page
+                    subscription only lands after the tab's document has
+                    already spoken — the flake this was found by
+                    (DECISIONS 2026-09-03)
                     browser-install.mjs is the same shape for the runner's "is
                     the browser there" question: which `<engine>-<revision>`
                     directories the BUNDLED CLI launches, read from its
@@ -506,7 +512,7 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 6617 Vitest tests across 361 files and 97 checks in the chain as of 2026-09-03 (99 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 6634 Vitest tests across 362 files and 97 checks in the chain as of 2026-09-03 (99 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
 
 **A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS — or a real navigation — gets checked: `click-navigation.spec.ts` (a click that changes route is recorded, including one a client-side router intercepts; the failure it was written against loses six clicks out of six and jsdom cannot host it, because nothing there has a navigation that destroys the document mid-read), `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `dialog-lifecycle.spec.ts` (whether the dialog that started a recording is still on top of the app afterwards — the existing recording spec invokes `recorder:start` over IPC, so it opens no dialog and could never see one left behind), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app), `verified-steps.spec.ts` (that an AI-proposed step is actually TRIED on the live page before it is inserted, that the first failure stops the rest, and that capture does not record the try a second time — a live session acting on a real page, which nothing in jsdom can host), `ts-service.spec.ts` (that the app forks the TypeScript service through a real `utilityProcess` and it answers — the child path, the node_modules resolution and `process.parentPort` exist nowhere else; `check:ts-service` boots the same built file under plain Node), `recorder-shortcuts.spec.ts` (that ⌘R pauses/resumes a live session INSTEAD of the View menu's Reload winning the chord and reloading the window — only a real menu, a real webContents and a real key event can say who wins, and the key must go through `sendInputEvent`, because CDP-synthesized input never reaches `before-input-event`), `agent-loop.spec.ts` (that the trainer agent's proposed steps are TRIED on the live page through the same verify gate as everything else — a scripted Ollama-protocol server, pointed at via `llm:setConfig`'s `baseUrls` override, proposes one click that resolves and one that cannot: one insertion, the failure fed back as prompt evidence, the goal's group bracketing what landed, no double-capture, and an assertion card inserting only on accept — the loop's state machine is unit-tested with stubbed deps, but only the real llm-service, page executor and step list can prove the assembled thing). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
 
@@ -515,9 +521,13 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 `frame-parity.spec.ts`, `retry-evidence.spec.ts` and `tab-follow.spec.ts`
 (the run following a tab the page opened — Playwright's page matchers bind
 their receiver once, inside its own library, which nothing in jsdom can
-reproduce; nine rows through the real CLI on real generated specs, the last a
-CONTROL with following off that must go red. **Changing what the tabs fixture
-follows, waits for, or retries? Add a row.**)
+reproduce; eleven rows through the real CLI on real generated specs, the last
+a CONTROL with following off that must go red. Two of the rows are not about
+following at all but about a tab's EVIDENCE — console capture is subscribed on
+the context rather than per page, because a per-page subscription is not in
+force until after the tab's document has spoken. **Changing what the tabs
+fixture follows, waits for, or retries — or where a run's console, page errors
+or network are subscribed? Add a row.**)
 — the second answers the neighbouring question, not
 "what does this step MEAN" but "which element does it POINT AT". Element context
 is resolved twice, by a DOM walk in the trainer (`ctxFilter` inside `matchesFor`)

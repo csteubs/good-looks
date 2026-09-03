@@ -22,10 +22,17 @@
 // REAL CLI with the shipped fixtures, the same harness `step-progress.spec.ts`
 // uses, and asserts the exit code, the marker stream and the artifacts.
 //
+// Two rows are about a tab's EVIDENCE rather than about following it, and they
+// live here because that is where the tabs are: what a run RECORDS from a tab
+// — its console, its page errors, its network — is subscribed once on the
+// CONTEXT, because a per-page subscription is not in force until after the
+// page it is for has already spoken (DECISIONS 2026-09-03).
+//
 // The last test is the control: with following OFF the anchor journey must go
 // RED, or the rows above prove nothing.
 //
-// Changing what the fixture follows, waits for, or retries? Add a row.
+// Changing what the fixture follows, waits for, or retries — or where a run's
+// console, page errors or network are subscribed? Add a row.
 
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
@@ -74,13 +81,21 @@ function pageFor(url: string): { status: number; body: string; headers?: Record<
   <form action="/help" target="_blank"><button data-testid="submit">Submit</button></form>
   <button data-testid="closer" onclick="window.open('/closer')">Closer</button>
   <a data-testid="download" href="/report.bin" target="_blank" download>Download</a>
+  <a data-testid="opened-link" href="/opened" target="_blank">Opened</a>
+  <button data-testid="slowpop" onclick="(function(){var w=window.open('/slow-help');setTimeout(function(){try{w.console.log('popup pre-commit')}catch(e){}},100)})()">Slow popup</button>
 </body></html>`,
     };
   }
-  if (p === "/help") {
+  // `/slow-help` is `/help` with its response held back, so the opener can log
+  // into the popup while it is still on about:blank — BEFORE the document
+  // commits and before Playwright reports the page at all. See the row that
+  // asks for "popup pre-commit".
+  if (p === "/help" || p === "/slow-help") {
     return {
       status: 200,
-      body: `<!doctype html><html><head><title>Help</title></head><body>
+      body: `<!doctype html><html><head>
+  <script>console.log("help page parsing");</script>
+  <title>Help</title></head><body>
   <h1 data-testid="heading">Help page</h1>
   <button data-testid="ok">OK</button>
   <p data-testid="msg">waiting</p>
@@ -92,6 +107,24 @@ function pageFor(url: string): { status: number; body: string; headers?: Record<
   </script>
 </body></html>`,
     };
+  }
+  if (p === "/opened") {
+    // Everything a tab can produce before anyone could attach to it: a console
+    // line, a subresource request, and an uncaught error — all from the first
+    // script in <head>, while the document is still parsing.
+    return {
+      status: 200,
+      body: `<!doctype html><html><head>
+  <script>
+    console.log("opened tab parsing");
+    fetch("/ping");
+    throw new Error("opened tab exploded");
+  </script>
+  <title>Opened</title></head><body><h1 data-testid="heading">Opened</h1></body></html>`,
+    };
+  }
+  if (p === "/ping") {
+    return { status: 200, body: "pong", headers: { "content-type": "text/plain" } };
   }
   if (p === "/closer") {
     return {
@@ -116,8 +149,14 @@ let dir: string;
 test.beforeAll(async () => {
   server = http.createServer((req, res) => {
     const page = pageFor(req.url ?? "/");
-    res.writeHead(page.status, page.headers ?? { "content-type": "text/html; charset=utf-8" });
-    res.end(page.body);
+    const send = (): void => {
+      res.writeHead(page.status, page.headers ?? { "content-type": "text/html; charset=utf-8" });
+      res.end(page.body);
+    };
+    // The one deliberately slow route: it holds the popup on about:blank long
+    // enough for the opener to log into it before the document commits.
+    if ((req.url ?? "").startsWith("/slow-help")) setTimeout(send, 500);
+    else send();
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -246,6 +285,18 @@ const urlContains = (id: string, value: string): Step =>
   ({ id, type: "assert", assert: "url", value }) as Step;
 const text = (id: string, testid: string, value: string): Step =>
   ({ id, type: "assert", assert: "text", locator: { k: "testid", v: testid }, text: value }) as Step;
+const wait = (id: string, ms: number): Step => ({ id, type: "wait", waitMs: ms }) as Step;
+
+interface ConsoleLog {
+  entries: { text: string; type: string; page?: number }[];
+}
+interface NetworkLog {
+  entries: { url: string; page?: number }[];
+}
+const readConsole = (res: RunResult): ConsoleLog =>
+  JSON.parse(fs.readFileSync(path.join(res.artifactDir, "console.json"), "utf-8")) as ConsoleLog;
+const readNetwork = (res: RunResult): NetworkLog =>
+  JSON.parse(fs.readFileSync(path.join(res.artifactDir, "network.json"), "utf-8")) as NetworkLog;
 
 /** The journey every row shares: open the help tab, act on it, assert on it. */
 function helpJourney(opener: Step): Step[] {
@@ -370,6 +421,101 @@ test("a capture run's evidence follows the tab: screenshots and console say whic
   const ready = consoleLog.entries.find((e) => e.text.includes("help page ready"));
   expect(ready, "the second tab's console is captured").toBeTruthy();
   expect(ready?.page).toBe(1);
+});
+
+test("a tab's console is captured from the moment it exists, not from when we attach", async () => {
+  // THE ROW THAT FAILS WITHOUT THE FIX, and it fails every time rather than
+  // sometimes. Console capture used to be subscribed PER PAGE, from inside the
+  // tabs fixture's `page` handler — so the earliest it could exist was after
+  // the tab's document did, and a document that logs while it parses raced it.
+  // On CI that race was lost and the entry was simply absent.
+  //
+  // Following is OFF here, which turns the race into a certainty: with no tab
+  // following there is no `page` handler at all, so nothing is ever attached
+  // to the tab and NOTHING it produces is recorded. That is a lab condition
+  // in the same spirit as this file's CONTROL row rather than a shipped
+  // configuration — both runners gate log recording and tab following on the
+  // same "not an imported test", so today a capture run always follows. It
+  // removes the timing from the race so the property can be ASSERTED instead
+  // of sampled, and it is the shape the bug takes the day those two gates
+  // move apart.
+  //
+  // The journey stays on the opener, so it passes with following off: the tab
+  // is opened and left alone, and the only question asked is whether its
+  // evidence reached disk.
+  const res = await run(
+    "orphan-tab",
+    [goto(), click("s-open", "opened-link"), wait("s-wait", 1500), title("s-home", "Home")],
+    { capture: true, follow: false },
+  );
+  expect(res.code, res.output).toBe(0);
+  expect(res.tabs, "following is off, so no tab marker is emitted").toEqual([]);
+
+  const entries = readConsole(res).entries;
+  const parsing = entries.find((e) => e.text.includes("opened tab parsing"));
+  expect(parsing, `the opened tab's parse-time console line is captured. Got: ${JSON.stringify(entries.map((e) => e.text))}`).toBeTruthy();
+  // An uncaught error from that same script, through the context's `weberror`
+  // — the same channel, the same fix, and the entry type readers already match.
+  const boom = entries.find((e) => e.text.includes("opened tab exploded"));
+  expect(boom, "…and so is the error it threw while parsing").toBeTruthy();
+  expect(boom?.type).toBe("pageerror");
+  // With following off nothing stamps a tab index, and an entry that cannot
+  // name its tab says nothing rather than claiming the first one.
+  expect(parsing?.page).toBeUndefined();
+
+  // The other half: network rides the same context subscription, and an entry
+  // names its tab from the request's OWN frame rather than from whichever page
+  // a listener was attached to.
+  const net = readNetwork(res).entries;
+  expect(net.find((e) => e.url.includes("/ping")), "the opened tab's subresource request too").toBeTruthy();
+  // And the one request that is still absent, on purpose: a tab's own
+  // navigation is issued before its frame exists, so nothing can say which tab
+  // it belongs to, and it is left out rather than filed under the opener.
+  expect(
+    net.some((e) => e.url.endsWith("/opened")),
+    "a tab's own document has no frame to name it, so it is not recorded",
+  ).toBe(false);
+});
+
+test("a followed tab's console is captured from before its document commits, and tagged to that tab", async () => {
+  // The same property with following ON, where there IS a tab vocabulary — and
+  // the shape that loses without the fix EVERY time rather than sometimes.
+  //
+  // Playwright buffers what a page logs before it marks it initialized and
+  // REPLAYS those messages on the context immediately after emitting the
+  // `page` event, in the same synchronous stack (`Page._markInitialized` in
+  // playwright-core). A per-page listener cannot exist yet — the client has
+  // not seen the `page` event, let alone answered it — so the server's
+  // dispatch check finds no page subscription and drops them. `/slow-help`
+  // holds its response back so the opener can log into the popup while it is
+  // still on about:blank, which is exactly that window: measured lost 10 times
+  // out of 10 per page, 0 out of 10 on the context.
+  //
+  // The parse-time line is the reported flake itself — logged after the
+  // document commits, so it is a genuine race that a laptop usually wins and a
+  // loaded CI runner does not. Both are asserted here, so the row states the
+  // whole property and still fails on any machine without the fix.
+  const res = await run(
+    "parse-tag",
+    [goto(), click("s-slow", "slowpop"), title("s-title", "Help"), text("s-heading", "heading", "Help page")],
+    { capture: true },
+  );
+  expect(res.code, res.output).toBe(0);
+  expect(res.tabs.map((t) => t.count)).toEqual([2]);
+  const entries = readConsole(res).entries;
+  const texts = JSON.stringify(entries.map((e) => e.text));
+
+  const preCommit = entries.find((e) => e.text.includes("popup pre-commit"));
+  expect(preCommit, `a line logged before the tab's document committed is captured. Got: ${texts}`).toBeTruthy();
+  expect(preCommit?.page, "…and it is filed under the tab it was logged into").toBe(1);
+
+  const parsing = entries.find((e) => e.text.includes("help page parsing"));
+  expect(parsing, `and so is one logged during its initial parse. Got: ${texts}`).toBeTruthy();
+  expect(parsing?.page, "…filed under the same tab").toBe(1);
+
+  // Once, not once per page: a context subscription made twice would double
+  // every line in the file.
+  expect(entries.filter((e) => e.text.includes("help page parsing")).length).toBe(1);
 });
 
 test("Auto-Heal heals a stale locator ON THE SECOND TAB", async () => {

@@ -10,6 +10,125 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-03 — A tab's evidence was subscribed after the tab had already spoken
+
+**The report.** `e2e/tab-follow.spec.ts`'s capture row flaked on CI: the help
+page's own `console.log` was missing from `console.json` and the entry read
+`undefined`. Everything before it in the same run had passed — the manifest
+entry for the click on the second tab said `page: 1`, its screenshot existed —
+so following was working. Only the console had lost.
+
+**The mechanism, in two regimes.** Console capture was subscribed PER PAGE:
+`page.on("console")`, once for the first page and again for every tab through
+the tabs fixture's `perPage` hook. A page-level subscription in Playwright is
+not in force when `on()` returns — the client sends an asynchronous
+`updateSubscription` for it (`ChannelOwner.on` → `_updateSubscription`), and
+until the server has recorded that, the server's `_shouldDispatchEvent` drops
+that page's console messages on the floor. They are not queued; they are gone.
+So anything the tab logs after Playwright reports it is a race between the
+tab's own script and a round trip, which a laptop usually wins and a loaded CI
+runner does not — measured here at 1 loss in 10 idle and 5 to 10 in 12 under
+load. That is the flake.
+
+**And for anything logged BEFORE that, it is not a race at all.** Playwright
+buffers a page's console messages until it marks the page initialized, and
+`Page._markInitialized` then emits the context's `page` event and REPLAYS the
+buffer immediately after it, in the same synchronous stack — before a byte has
+reached the client. When the dispatch check runs for those replayed messages
+the page's subscription set is necessarily empty, because the client has not
+seen the `page` event yet, let alone answered it. A `_blank` popup is marked
+initialized when its destination document commits, so everything logged into it
+while it was still on `about:blank` was lost every single time. Measured ten
+out of ten. That regime is what makes this assertable rather than samplable,
+and it is the row that carries the weight below.
+
+**And a third case, which is neither: the tab nobody attached to.** Run the
+fixture with tab following off and there is no `page` handler at all, so
+nothing is ever attached to a new tab and NOTHING it produces is recorded.
+Neither runner ships that combination today — both gate log recording and tab
+following on the same "not an imported test" (`wantsLogs`/`wantsFollowTabs` in
+`mcp/run-tests.mjs`, `recordLogs`/`followTabs` in the app's) — but it is what
+the bug becomes the day those gates move apart, and it is the shape one of the
+new e2e rows is built on.
+
+**The fix.** `installLogCapture(context, logs)` subscribes `console`,
+`weberror` (the context-level `pageerror`), `request`, `response` and
+`requestfailed` on the CONTEXT, exactly once, first thing in the `page`
+fixture, ahead of tab following. A context subscription is in force before any
+second page can exist and covers every page in the context, the first one
+included, so there is no per-page attach left to lose. `ConsoleMessage.page()`
+and `WebError.page()` supply the page the existing `onTab` tagging already
+wanted, and the client emits the context's `page` event before the console
+event, so the tab index the tabs fixture stamps is there by the time an entry
+is written. The entry still records `type: "pageerror"`: `weberror` is the
+channel, not the vocabulary, and no reader of `console.json` should have to
+know which one it arrived by.
+
+**Page errors were not part of the bug, and the entry says so.** `pageerror` is
+dispatched unconditionally — it is in neither subscription mapping, so
+`page.on("pageerror")` sends no `updateSubscription` at all — and a per-page
+listener registered from the `page` handler did receive the replayed ones. They
+move for the third case above, and so that "what a run saw the page say" has
+one mechanism rather than two.
+
+**Once, not once per page — and not latched.** Two subscriptions would record
+every entry twice, which is the failure a careless split of this function would
+produce, so `check:log-capture` pins exactly one `context.on(...)` per event and
+zero `page.on(...)`, plus the install landing before `installTabFollowing`. The
+obvious hardening — a `WeakSet` latch keyed on the context — would be wrong:
+Playwright gives every test and every retry its own context, so the invariant
+already holds, and under a REUSED context a latch would make the second test
+record nothing rather than make the first record twice. `logs` is a fresh store
+per test; a stale listener writes into a store already on disk.
+
+**And the tag it writes is now declared.** `ConsoleEntry`/`NetworkEntry` in
+`main/services/artifact-store.ts` — and their renderer mirror in
+`renderer/lib/recorder-types.ts` — did not have a `page` field, though the
+fixture has been writing one since tabs landed. Nothing dropped it (`readLogs`
+passes entries through), but a reader had no way to know it was there, which is
+the same shape as the `runHistoryStore.append` entry two above: a field written
+and undeclared is a field the next person does not know they may read.
+
+**Network moves with it, and the objection to moving it turned out to be
+answerable.** `request`/`response`/`requestfailed` are subscription-gated
+exactly like console, so the per-page listener had the same race — measured
+here at 3 losses in 8 for a tab's subresource with the client's event loop kept
+busy, and 0 in 8 from the context. The reason not to move them looked solid: a
+context listener is handed a `Request`, and a tab's own navigation request has
+no frame yet, so `request.frame()` throws "Frame for this navigation request is
+not available, because the request was issued before the frame was created" —
+which would file the second tab's document under the first. But that is an
+argument for not GUESSING, not for staying per page. The listener resolves each
+entry's page from the request's own frame and records nothing when it cannot,
+which is exactly the set a per-page listener saw: measured, the opener's own
+document and every subresource resolve; the popup's document throws, and a
+per-page listener never saw it either, because the page it belongs to did not
+exist when it was issued. So the recorded set is unchanged, the attribution is
+now the request's own rather than a closure's, and the race is gone. A service
+worker's request is skipped by the same rule, as it was before.
+
+**Proving it, which took two rows rather than one.** A row that fails one run
+in three is not a regression test, so both rows are built on the deterministic
+regime instead. The first turns the loss total: capture on, following OFF, a
+page the site opens that logs, fetches and throws from the first script in its
+`<head>`. Nothing attaches to that tab at all, so all three are absent — a lab
+condition, in the same spirit as this file's existing CONTROL row, since both
+runners gate logs and following together today. The second keeps following ON,
+where there is a tab to name: `/slow-help` holds its response back so the
+opener can log into the popup while it is still on `about:blank`, which is
+exactly the replay window above, and it asserts the tag (`page: 1`) as well as
+the line. It asserts the reported parse-time line beside it, so the row states
+the whole property while still failing on any machine. Both fail three runs out
+of three without the fix. Both are in `e2e/tab-follow.spec.ts`, because the
+fixture ships as SOURCE that this repo does not execute anywhere else — the
+blind spot `check:runtime-boot` exists for. A third piece of coverage runs on a
+laptop: `main/services/capture-fixture-logs.test.ts` pulls the shipped
+`installLogCapture` out of the fixture string and drives it against a fake
+context, for the cases real Playwright cannot be made to produce on demand — a
+message whose page is null, a `WebError` whose `error()` throws, a request
+whose `frame()` throws. Five of its eight assertions fail against the old
+per-page installer.
+
 ### 2026-09-03 — A retried run opens the same tabs again, and only the last attempt counts
 
 **The report.** `tabsOpened` summed every tab marker on the stream. Playwright
