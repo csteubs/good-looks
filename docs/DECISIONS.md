@@ -74,6 +74,83 @@ under the same absent-when-zero rule as its neighbours, and three cases in
 occurrence. The positive case fails against the unfixed store with
 `expected undefined to be 2`, which is the whole point of it.
 
+### 2026-09-03 — The app stops stating who it is, and reads instead
+
+**What was there.** `main/handlers/app.ts` — the Glaze template's app-handlers
+module, unchanged since the port — exported one method behind the `app:getInfo`
+IPC channel, and its whole body was three literals: `name: "My Glaze App"`,
+`version: "1.0.0"`, and `environment: process.env.NODE_ENV || "production"`.
+Under it sat `// TODO: Add your app handlers here`. The app is called Good
+Looks!, its version was 1.1.0, and `NODE_ENV` is set by nothing in a packaged
+Electron build — so all three fields were wrong, and the third was wrong in the
+way that reads as right.
+
+**Why nobody noticed.** Nothing called it. Not one file in `renderer/`, `mcp/`,
+`cli/`, `e2e/` or `shared/` — the only invocation of `appHandlers.getInfo()`
+anywhere was inside the `ipcMain.handle` body registering it. A handler with no
+caller has no symptom: it cannot fail a test, cannot render wrong, cannot throw.
+That is what carried it through the whole SDK port intact.
+
+**Deleted rather than corrected, and the reason is the preload.** The obvious
+move is to swap the literals for `app.getName()` and `app.getVersion()` and
+derive `environment` the way the branch switcher does. It was rejected. The
+bridge does not expose a per-channel surface — `renderer/preload.ts` gives the
+renderer a GENERIC `glaze.ipc.invoke(channel, …)`, so a channel has nothing
+declaring it and nothing calling it until somebody invokes it by string. A
+corrected `app:getInfo` would therefore still be a channel with no consumer,
+carrying an `environment` field whose vocabulary nobody had chosen, waiting for
+its first caller to inherit whatever the guess was. `renderer/preload.ts`
+already states the rule the port applied to the rest of that template surface:
+"only APIs with actual renderer call sites are exposed", which is why
+location/systemPreferences/webUtils are not there. This is the same rule one
+layer in. The app is not left unable to say who it is: the insights report
+already reads `app.getVersion()`, and the NAME comes from the bundle
+(`build.productName`, which is what macOS draws in the menu bar and the Dock —
+nothing in `main/` calls `app.getName()` today, because nothing has needed to).
+And
+`docs/plans/in-app-analytics.md` §5.4 already has the analytics context stamped
+in MAIN rather than fetched over IPC, so the deletion costs that plan nothing.
+When a renderer surface genuinely needs this, it arrives WITH its consumer and
+picks its `environment` vocabulary then, from `GOOD_LOOKS_E2E`,
+`GOOD_LOOKS_DEV_URL`, `CI` and the git-checkout test — never `app.isPackaged`,
+which is true under `npm run dev`'s branded bundle (DECISIONS 2026-08-11).
+
+**The same literal, one process over.** Auditing for it found `mcp/server.mjs`
+announcing `new McpServer({ name: "good-looks", version: "1.0.0" })` — the
+version every MCP client is told in the initialize handshake, stale since the
+1.1.0 bump. It is a quieter instance of the identical mistake: no tool returns
+it, nothing reads it back, and a wrong version in a handshake is not an error,
+just an answer. It now reads `appVersion()`, a sibling of `data-dir.mjs`'s
+existing `appName()` and parameterised the same way, because `import.meta.url`
+moves under a bundler. The server's `name` deliberately did NOT change to the
+display name: it is the identifier clients key their configuration off.
+
+**Two guards, because neither covers the other.** `handlers.test.ts` asserts
+`app:getInfo` is not in `registeredChannels()` — runtime, so it catches a re-add
+however it is spelled, including one whose literals read `"1.2.0"`.
+`check:app-identity` scans source for three things: the template's name, the
+channel, and any `version: "x.y.z"` literal outside the changelog. The scan
+skips comment lines and test fixtures, which it has to — the two files that
+establish this rule both NAME the strings it forbids, and a guard that failed on
+its own enforcement would be deleted by the next person to hit it.
+`check:mcp-boot` gained the third: `serverInfo.version` against `package.json`,
+asserted over the WIRE rather than against `appVersion()`, because the bug was
+never in reading `package.json`, it was in the server not asking.
+
+**"The reported version equals package.json's" is pinned as its
+contrapositive.** `app.getVersion()` IS `package.json`'s `version` by Electron's
+own contract, so asserting equality against a code path that goes through it
+proves nothing. A literal is the only way to be wrong. So the check asserts the
+app never STATES a version — the changelog excepted, since writing versions down
+is what it is for, and `release-notes.test.ts` already pins its newest entry
+against `package.json`. `check:app-identity` also gained the assertion its own
+older half had been assuming: that `DEV_APP_NAME` still equals
+`build.productName`. Nothing enforced it, so renaming the app would have left
+every plist assertion happily certifying the previous identity.
+
+Every one of the four new assertions was confirmed to fail against the restored
+scaffold before landing.
+
 ### 2026-09-02 — The run follows the newest tab, and says so with one row
 
 **The report.** A test recorded on a site where a link opened in the same

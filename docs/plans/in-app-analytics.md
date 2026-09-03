@@ -416,9 +416,12 @@ never carried it (the insights check's rule).
 - **Session** = one app launch to quit, or 30 minutes idle; the id is minted
   in main and stamped on every event, so both windows and every process agree.
 - **Context stamped in main on every event**: app version
-  (`app.getVersion()` — the `app:getInfo` handler still answers
-  `"My Glaze App" / "1.0.0"` from the SDK scaffold and must be fixed or
-  removed first), Electron and Chromium versions, OS and arch, locale,
+  (`app.getVersion()` — the `app:getInfo` handler that answered
+  `"My Glaze App" / "1.0.0"` from the SDK scaffold was DELETED on 2026-09-03,
+  along with the MCP server's matching `"1.0.0"` literal; nothing called
+  either, and `check:app-identity` now fails on a version the app states
+  rather than reads, so this context has one honest source to take), Electron
+  and Chromium versions, OS and arch, locale,
   `environment` (`packaged` / `dev` / `e2e` / `ci` — **not** from
   `app.isPackaged`, which is true under `npm run dev`'s branded bundle; from
   `GOOD_LOOKS_E2E`, `GOOD_LOOKS_DEV_URL`, `CI` and the git-checkout test the
@@ -894,7 +897,7 @@ relative to this repo's recent PRs (the multi-tab work was an L).
 
 | Phase | Scope | Deliverables | Size |
 |---|---|---|---|
-| **0 — Decide** | Answer §12. Fix `app:getInfo` (or delete it) so the app reports its real version; index the two settings rows that are outside `SETTING_INDEX`; route `mailbox-service.ts:58` through `appFetch` and `issue-tracker-service.ts:294` through `allRedactableValues()` — two inconsistencies with rules 4 and 6 that the inventory found and that would otherwise be "fixed by analogy" later; add `check:main-egress` (an allowlist with reasons over absolute URLs in `main/**`, the renderer check's twin) so the provider host is later a one-line diff; widen `forwardRendererConsole` to take a `WebContents` and attach it to the trainer panel and the URL strip | four small PRs; a DECISIONS entry recording the answers and the vendor facts in §7 | S |
+| **0 — Decide** | Answer §12. ~~Fix `app:getInfo` (or delete it) so the app reports its real version~~ **done 2026-09-03: deleted, with `check:app-identity` extended to fail on any stated app name or version**; index the two settings rows that are outside `SETTING_INDEX`; route `mailbox-service.ts:58` through `appFetch` and `issue-tracker-service.ts:294` through `allRedactableValues()` — two inconsistencies with rules 4 and 6 that the inventory found and that would otherwise be "fixed by analogy" later; add `check:main-egress` (an allowlist with reasons over absolute URLs in `main/**`, the renderer check's twin) so the provider host is later a one-line diff; widen `forwardRendererConsole` to take a `WebContents` and attach it to the trainer panel and the URL strip | four small PRs; a DECISIONS entry recording the answers and the vendor facts in §7 | S |
 | **1 — Catalog and local sink** | `shared/analytics-catalog.mjs` (+ `.d.mts`); `analytics-service.ts` with the null and local sinks; the `track()` renderer API and `analytics:track`; the router, palette, `save()`, `Menu.popup`, toast, `MutationCache` and IPC/push wrappers; `useDialogEvent` adopted by every dialog; the recorder, runner, batch, routine and agent lifecycle events; the Settings *Privacy* rows with the local event viewer; `check:analytics-coverage`, `check:analytics-schema`, `check:analytics-egress`, `check:analytics-boot`; preview-bridge sink; the new store wired into the existing deletion affordances (Delete stats & logs, Delete logs by date, `runs:deleteAll`) and `retention.ts`, which today sweeps run artifacts only; ARCHITECTURE + DECISIONS. **Nothing leaves the machine.** | the catalog, the service, the gates, the viewer | L |
 | **2 — Provider adapter** | One adapter behind the sink interface (Amplitude HTTP API over `appFetch`, or PostHog — §12), the consent dialog and version, the queue with retry and age caps, EU/US zone as a setting, the `check:main-egress` entry with its reason, the write key as a build-time `define` in `scripts/build-main.mjs` (none exists there today; `vite.config.ts:71` has one for the display name) so dev and branch builds are inert by construction, a dashboards-as-data doc mapping each product question to its events and chart, e2e row that an opted-in session sends exactly the catalog and an opted-out one opens no socket (a local HTTP listener as the collector, the way the agent-loop spec scripts an Ollama server) — **after** widening `e2e/app-launch.spec.ts:133-138`, whose clean-console assertion drops any error mentioning `127.0.0.1` or `localhost`, which is exactly where the collector would sit | one vendor, one host, one switch | M |
 | **3 — Debug data, vendor-free** | `uncaughtException` / `unhandledRejection` in main; `window.onerror` / `unhandledrejection` in every app renderer; `forwardRendererConsole` on the trainer panel and the URL strip; `render-process-gone`, `child-process-gone`, `unresponsive` and utility-process exits as `error_seen` events; the ring buffer as breadcrumbs; `main.log` rotation | errors become events; the log stops growing forever | M |
@@ -1164,9 +1167,13 @@ answered; each later phase is blocked by the ones marked for it.
 36. **Should a report link back into the app beyond `test/<id>`, and should an
     About or version row exist?** The deep-link parser refuses every other
     form by design; nothing exposes the app version to the renderer today.
-    **Default:** fix `app:getInfo` to return the real version and environment
+    **Default:** a NEW channel answering the real version and environment
     flags (used by both the event context and the dialog); no new deep-link
-    forms.
+    forms. Not a repair of `app:getInfo`, which was deleted on 2026-09-03 —
+    correcting a channel nothing called would have shipped a second scaffold,
+    this time with a caller's worth of confidence behind it. Whatever replaces
+    it arrives WITH its consumer, and derives `environment` from the signals
+    §5.4 names rather than from `NODE_ENV`.
 37. **Do CLI and Action users get a feedback path?** Today: exit code and the
     JUnit report. Options: none / a `good-looks doctor`-style local bundle the
     user files by hand / a flag that emits an envelope to stdout.
@@ -1258,7 +1265,10 @@ answered; each later phase is blocked by the ones marked for it.
 55. **Are the stale `app:getInfo` scaffold, the two unindexed rows, the
     main-window-only console forwarding and `proxyUrl` in the local settings
     log all fixed in Phase 0 regardless of provider?** **Default:** all four,
-    each with a test that can fail.
+    each with a test that can fail. The first is DONE (2026-09-03): the
+    scaffold and its channel are gone, the MCP handshake reports the real
+    build, and both halves were confirmed to fail against the restored
+    scaffold before landing. Three remain.
 56. **Should the app take `requestSingleInstanceLock()` before it writes any
     per-install file?** Two instances, or a branch relaunch, share userData
     with no locking today; the stores are read-modify-write JSON.

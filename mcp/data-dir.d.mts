@@ -11,6 +11,10 @@
  *  parameter because a bundling caller moves `import.meta.url`. */
 export declare function appName(projectRoot?: string): string;
 
+/** The app's version — `package.json`'s `version`, read rather than stated.
+ *  Same `projectRoot` parameter, for the same bundling reason. */
+export declare function appVersion(projectRoot?: string): string;
+
 /** Where Electron would put userData on this platform, for this app. */
 export declare function electronDefaultDir(name?: string, platform?: string): string;
 

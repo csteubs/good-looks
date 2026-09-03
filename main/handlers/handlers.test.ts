@@ -113,6 +113,24 @@ describe("handler registration", () => {
       expect(channels.has(c), `missing channel: ${c}`).toBe(true);
     }
   });
+
+  // THE SCAFFOLD MUST NOT COME BACK. The Glaze template registered
+  // `app:getInfo`, whose whole body was three hard-coded literals: the
+  // template's name ("My Glaze App"), the template's version ("1.0.0") and
+  // `process.env.NODE_ENV`, which nothing sets in a packaged Electron build.
+  // Nothing ever called it, which is exactly why it survived the whole SDK
+  // port: a handler with no caller has no symptom.
+  //
+  // Its absence is worth a test rather than a comment because the preload
+  // exposes a GENERIC `glaze.ipc.invoke(channel, …)` (renderer/preload.ts) —
+  // there is no per-channel surface to declare, so nothing else in the repo
+  // would notice the channel reappearing until something invoked it by string
+  // and believed the answer. Asserting on `registeredChannels()` catches a
+  // re-add wherever it is written, which grepping for the literals does not:
+  // the next version of this mistake reads `"1.2.0"`.
+  it("does not register the template's `app:getInfo` — nothing calls it, and it lied", () => {
+    expect(registeredChannels()).not.toContain("app:getInfo");
+  });
 });
 
 describe("proxy handlers — the password's write-only contract, over real stores", () => {
