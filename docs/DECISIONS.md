@@ -10,6 +10,74 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-04 — One reader for both egress checks, and the CLI's redaction budget covers what it was handed
+
+Two follow-ups from the egress work, plus a correction to what that work
+claimed.
+
+**Both egress checks read source the same wrong way, three months apart.** The
+obvious pipeline strips `/* … */` across the whole file and then walks the
+lines, and it is wrong for any file holding `/*` inside a string or a line
+comment: the glob opens a comment span running to the next `*/` anywhere after
+it, and everything between is gone before the scan reads it. It was found in
+`check:main-egress` while writing it; `check:renderer-egress` had shipped with
+it since the favicon fix. The reader now lives once, in
+`main/services/__tests__/source-scan.ts`, and both import it. Two spellings is
+how one of them drifts back, and one of them had drifted for the whole life of
+the other.
+
+The renderer check's pin is four `?raw` import lines in `renderer/lib/docs.ts`
+— the lines that decide WHICH documents get inlined into the bundle, which is
+the second scan's own subject. Under the old order they were invisible.
+Reverting the ordering names all four; planting a third-party URL in that
+window is caught, at the right line number, which the old reader also got wrong
+because it DELETED spans rather than blanking them (245 lines of drift in
+`batch-view.tsx`).
+
+**The correction, and it is the part worth reading.** The 2026-09-03 entry said
+this cost 229 lines across five files in `main/**` and 797 in `renderer/**`.
+Both were wrong, threefold and far worse respectively. The measurement asked
+"does this blanked line start with `//` or `*`" and counted everything else as
+lost code — but a block comment's continuation lines start with neither, and a
+JSX `{/* … */}` block is pages of them. Diffing the two READERS against each
+other, which is the only measurement that answers the question, gives 101 lines
+across four files in `main/**` and **five, in two files**, in `renderer/**`.
+
+The defect was real and one of the `main/**` windows sits squarely on the block
+where the app attaches a Shopify signature to an outgoing request. But five
+lines is not 797, no URL was hidden in any of them, and the entry now says so.
+A number quoted in a decision record is load the record has to carry; this one
+could not.
+
+**The CLI's redaction budget now covers the mailbox token.** R7's rule is that
+whatever supplies a credential to a run also feeds the redaction, and
+`resolveCiSecrets` implements it for declared secret variables. The test
+mailbox is not one: the `emailCode` step reads `GLAZE_MAILBOX_TOKEN` from the
+environment itself, so on a CI runner the token is present, is sent as a
+bearer, and is named by nothing in `test.variables`. `ambientCiSecretValues`
+is the sibling that answers "what was this process handed", and `cli/run.mjs`
+unions it into what the JUnit report redacts over. The ENDPOINT is deliberately
+excluded, for the reason `secret-redaction.ts` gives: a run that cannot say
+which host it polled is a run nobody can debug.
+
+**Stated narrowly, because the narrow version is the true one.** This is not a
+hole in `<failure>` text. `junitReportFor` names its eight fields explicitly
+rather than spreading them — the comment there says why, and it is the same
+allowlist discipline `buildIssueDraft` uses — so a Playwright error quoting the
+request cannot reach the report at all: a failure reduces to "Failed at step N
+of M · exit 1". The one free-text field that survives is `note`, set from
+`String(err)` when the RUNNER throws, and that is what the test drives. So the
+gap was in the budget rather than in a demonstrated leak, which is still worth
+closing: a budget that does not cover what the process was handed is one nobody
+can reason about, and the next field added to that allowlist is the one that
+would have needed it.
+
+Checked rather than assumed: a Shopify crawler signature cannot reach an
+unattended run at all. `mcp/store.mjs` reads the plaintext register — hosts and
+expiries — and the header values live in an encrypted blob beside it that no
+CLI process can open. `GLAZE_MAILBOX_TOKEN` is the only credential-bearing
+variable on that path.
+
 ### 2026-09-03 — The egress check's own two holes, found by reviewing it the way it reviews the tree
 
 `check:main-egress` landed yesterday with a rule stated as "every app request
@@ -409,10 +477,18 @@ each line is the obvious order, and it is what `check:renderer-egress` does. It
 is wrong for any file containing `/*` inside a string or a line comment:
 `recorder-service.ts:2493` registers `onBeforeSendHeaders({ urls: ["*://*/*"] })`,
 and that glob opens a comment span that runs to the next `*/` in the file,
-blanking 77 lines of live code — the block where this app attaches the Shopify
-signature to an outgoing request, of all of them. Five files lost 229 lines that
+blanking 48 lines of live code — the block where this app attaches the Shopify
+signature to an outgoing request, of all of them. Four files lost 101 lines that
 way, and the window MOVES whenever anyone writes a glob, an XPath or a CSS path
-into a string. A bare `fetch` inside one would have been invisible while the
+into a string.
+
+(Those two figures read 77 and 229 when this entry first landed, and both were
+wrong. The measurement counted every continuation line of a legitimate block
+comment as lost code, because it tested "does this line start with `*`" rather
+than comparing the two readers against each other. Corrected on 2026-09-04 by
+diffing the readers directly, which is the only measurement that answers the
+question. The defect was real and the block it hid is the one named above; the
+magnitude was inflated roughly threefold.) A bare `fetch` inside one would have been invisible while the
 check reported green, which is a guard that is worse than no guard.
 
 The order is therefore inverted: per line first (blank the contents of string
@@ -423,8 +499,9 @@ offsets to a literal-preserving copy — which the two questions that live insid
 a literal need, `globalThis["fetch"](url)` and which module a file imports. The
 check now asserts the property directly on the file that found it: every line
 the reader empties must BE a comment line. **`check:renderer-egress` still has
-the original ordering, and 797 lines of shipped renderer code are invisible to
-it.** That is its own change, not this one, and it is filed as such.
+the original ordering. That was reported here as 797 lines of shipped renderer
+code; the corrected measurement is 5, in two files, and none of them carries a
+URL — see the 2026-09-04 entry.** That is its own change, not this one, and it is filed as such.
 
 Each detector carries its own battery — five spellings that must match and six
 that must not for the fetch rule, three and four for the redaction one. A

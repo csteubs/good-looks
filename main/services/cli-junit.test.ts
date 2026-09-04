@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { junitReportFor, writeJunitReport } from "../../cli/junit.mjs";
+import { ambientCiSecretValues } from "../../shared/ci-secrets.mjs";
 
 const tmp = mkdtempSync(join(tmpdir(), "gl-junit-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -94,6 +95,65 @@ describe("redaction", () => {
     });
     expect(xml).not.toContain("hunter2");
     expect(xml).toContain("[redacted]");
+  });
+
+  it("strips the mailbox token, which no test declares and the environment supplies", () => {
+    // The gap this closes, stated narrowly because the narrow version is the
+    // true one. `resolveCiSecrets` answers "what did this test ask for", and
+    // the mailbox token is asked for by nothing: the `emailCode` step reads
+    // `GLAZE_MAILBOX_TOKEN` from the environment itself. So on a runner it is
+    // present, is sent as a bearer, and is named by no `test.variables` entry
+    // — outside the budget R7 says must cover whatever supplies a run.
+    //
+    // What it is NOT is a hole in `<failure>` text. `junitReportFor` names its
+    // eight fields explicitly rather than spreading, exactly so a field added
+    // later cannot leak, and a Playwright error is not among them: a failure
+    // reduces to "Failed at step N of M · exit 1". `note` is the one free-text
+    // field that survives, set from `String(err)` when the RUNNER throws, and
+    // it is what this test drives.
+    const TOKEN = "GLMAILBOXTOKEN-not-real-0123456789";
+    const failure = {
+      ...passed,
+      status: "skipped" as const,
+      testName: "signs in with a code",
+      note: `Error: could not start the run with authorization: Bearer ${TOKEN}`,
+    };
+
+    // Not vacuous: the token really is in the text the report is built from,
+    // and the resolver really does hand it over when the environment has it.
+    expect(junitReportFor([failure])).toContain(TOKEN);
+    expect(ambientCiSecretValues({ GLAZE_MAILBOX_TOKEN: TOKEN })).toEqual([TOKEN]);
+
+    const xml = junitReportFor([failure], {
+      secretValues: ambientCiSecretValues({ GLAZE_MAILBOX_TOKEN: TOKEN }),
+    });
+    expect(xml).not.toContain(TOKEN);
+    expect(xml).toContain("[redacted]");
+    // …and the reason is still legible, which is the point of redacting rather
+    // than dropping the message.
+    expect(xml).toContain("could not start the run");
+  });
+
+  it("keeps the mailbox ENDPOINT, which is not a credential", () => {
+    // A run that cannot say which host it polled is a run nobody can debug —
+    // the same rule `main/services/secret-redaction.ts` states for the app.
+    const URL = "https://mailbox.example.workers.dev/messages";
+    expect(
+      ambientCiSecretValues({ GLAZE_MAILBOX_URL: URL, GLAZE_MAILBOX_TOKEN: "tok-0123456789" }),
+    ).toEqual(["tok-0123456789"]);
+    const xml = junitReportFor([{ ...passed, testName: `polled ${URL}` }], {
+      secretValues: ambientCiSecretValues({ GLAZE_MAILBOX_URL: URL, GLAZE_MAILBOX_TOKEN: "tok-0123456789" }),
+    });
+    expect(xml).toContain("mailbox.example.workers.dev");
+  });
+
+  it("contributes nothing when the environment has no mailbox token", () => {
+    // The empty and absent cases both mean "no credential here", and an empty
+    // string in the list is what `redact` would otherwise have to defend
+    // against — it is filtered at the source instead.
+    expect(ambientCiSecretValues({})).toEqual([]);
+    expect(ambientCiSecretValues({ GLAZE_MAILBOX_TOKEN: "" })).toEqual([]);
+    expect(ambientCiSecretValues()).toEqual([]);
   });
 
   it("survives a non-string in the value list instead of throwing the report away", () => {

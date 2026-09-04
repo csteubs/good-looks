@@ -100,6 +100,47 @@ export function resolveCiSecrets(test, { env = {}, fileValues = {} } = {}) {
   return out;
 }
 
+/**
+ * Credentials this process was handed by the ENVIRONMENT rather than declared
+ * as a test's secret variable.
+ *
+ * `resolveCiSecrets` above answers "what did this test ask for", and that is
+ * the right question for supplying a value — a variable belongs to a test. It
+ * is the wrong question for REDACTION, because a credential can reach a run
+ * without any test declaring it. The test mailbox is the one that does:
+ * `shared/glaze-runtime-source.mjs` reads `GLAZE_MAILBOX_TOKEN` straight from
+ * the environment inside the `emailCode` step, so on a CI runner the token is
+ * present, is sent as a bearer, and is named by nothing in `test.variables`.
+ *
+ * A failure inside that step — a 401 from the mailbox, a timeout, any
+ * Playwright error quoting the request — then carries a live bearer token into
+ * whatever the run produces, and `junitReportFor` writes that into a file a CI
+ * system publishes as a build artifact. The app has no equivalent gap:
+ * `allRedactableValues()` covers the mailbox token for every one of its send
+ * paths. It is only out here, where the encrypted store cannot be read and the
+ * environment is the whole supply, that the budget has to be widened by hand.
+ *
+ * The ENDPOINT is deliberately absent. `GLAZE_MAILBOX_URL` is not a credential
+ * — it is guarded by the token, the Worker fails closed without one, and
+ * `main/services/secret-redaction.ts` states the cost of redacting it: a run
+ * that cannot say which host it polled is a run nobody can debug.
+ *
+ * Nothing else on this path qualifies today, and that was checked rather than
+ * assumed. A Shopify crawler signature cannot reach an unattended run at all:
+ * `mcp/store.mjs` reads the plaintext register — hosts and expiries — and the
+ * header values live in an encrypted blob beside it that this process cannot
+ * open. If a credential ever does arrive by a new variable, it belongs here,
+ * because "what this process resolved" is the budget and a value outside it is
+ * a value nothing will strip.
+ *
+ * @param {Record<string, string | undefined>} env
+ * @returns {string[]} values to redact, never to inject as a variable
+ */
+export function ambientCiSecretValues(env = {}) {
+  const token = env.GLAZE_MAILBOX_TOKEN;
+  return typeof token === "string" && token !== "" ? [token] : [];
+}
+
 /** The sentence a refusal prints. Names the variables to set rather than saying
  *  "secrets are unavailable", because the operator's next question is always
  *  "what do I call them" and the answer is derivable but not guessable. */
