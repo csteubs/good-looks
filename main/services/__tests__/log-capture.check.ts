@@ -12,8 +12,13 @@
 //   - an elided header is still reported BY NAME, so a gap is visible;
 //   - the caps bound a pathological run without silently losing the count.
 //
+// And one thing about the fixture that OWNS them rather than the helpers: WHERE
+// console capture is subscribed. That is not a helper question, but it is the
+// same kind of silent failure and it has no other home — see the last section.
+//
 // Run with: npm run check:log-capture
 
+import { captureFixtureSource } from "../../../shared/capture-fixture-source.mjs";
 import {
   ELIDED,
   HEADER_ALLOWLIST,
@@ -202,6 +207,75 @@ const { glazeFilterHeaders, glazeScrubUrl, glazeTruncate, glazeMakeStore, glazeP
   for (let i = 0; i < 5; i++) glazePush(small, { i }, 10, 20);
   const drained = glazeDrain(small) as { entries: unknown[]; dropped: number };
   assert(drained.entries.length === 5 && drained.dropped === 0, "an under-cap run drops nothing");
+}
+
+// ── Where recording is SUBSCRIBED ────────────────────────────────────
+//
+// A page-level subscription is not in force when `page.on(...)` returns — the
+// client sends an asynchronous `updateSubscription` for it, and the server
+// drops that page's events until it lands. Worse, Playwright buffers what a
+// page says before it marks the page initialized and replays it on the context
+// in the same synchronous stack as the `page` event, when no page-level
+// subscription can exist yet. So a tab the site opened, which only reaches us
+// through that event, loses its earliest output every time and its parse-time
+// output intermittently.
+//
+// Nothing else notices. The run passes, the file is written, and the tab's
+// evidence is simply not in it — which is the evidence someone reaches for
+// when a step on that tab "did nothing". `e2e/tab-follow.spec.ts` proves the
+// behaviour against real Playwright; this pins the shape so it cannot drift
+// back to per-page in a refactor nobody runs the e2e suite for.
+{
+  // Comments quote the very calls this section forbids, so they are stripped
+  // before counting. Line-based and conservative: nothing in the fixture's
+  // string literals starts a line with `//` or `*`.
+  const code = captureFixtureSource
+    .split("\n")
+    .filter((line) => {
+      const t = line.trim();
+      return !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*");
+    })
+    .join("\n");
+  const count = (needle: string): number => code.split(needle).length - 1;
+
+  for (const event of ["console", "weberror", "request", "response", "requestfailed"]) {
+    assert(
+      count(`context.on("${event}"`) === 1,
+      `${event} is subscribed on the CONTEXT, exactly once (twice would record every entry twice)`,
+    );
+  }
+  for (const event of ["console", "pageerror", "request", "response", "requestfailed"]) {
+    assert(
+      count(`page.on("${event}"`) === 0,
+      `…and never per page, where the subscription lands after the page has already spoken`,
+    );
+  }
+
+  // One install, called once. Not latched, deliberately: Playwright gives every
+  // test (and every retry) its own context, and a latch keyed on the context
+  // would make a REUSED one record nothing for the second test rather than
+  // record twice for the first.
+  assert(count("installLogCapture(") === 2, "one installer, one call site");
+
+  // The entry a reader matches on is unchanged: `weberror` is the channel, not
+  // the vocabulary.
+  assert(/type: "pageerror"/.test(code), 'a page error still records as type "pageerror"');
+
+  // A network entry names its tab from the REQUEST's own frame, and an entry
+  // whose page cannot be resolved is dropped rather than filed under the first
+  // tab — a navigation request has no frame yet, and so does a service
+  // worker's.
+  assert(/const owner = pageOf\(req\);/.test(code), "a network entry resolves its own page");
+  assert(/if \(!owner\) return;/.test(code), "…and an entry that cannot name its page is not recorded");
+
+  // Ordering, anchored on the CALL rather than the definition: the context
+  // subscription has to exist before tab following can hand a page over.
+  const atInstall = code.indexOf("installLogCapture(page.context(), logs)");
+  const atFollowing = code.indexOf("installTabFollowing(page, {");
+  assert(
+    atInstall > 0 && atFollowing > 0 && atInstall < atFollowing,
+    "…and it is installed BEFORE tab following, so no page can exist unsubscribed",
+  );
 }
 
 if (failures > 0) {

@@ -2132,6 +2132,9 @@ export interface ConsoleEntry {
   text: string;
   url: string;
   line: number;
+  /** The tab that produced it, 1-based and only for a tab the page opened —
+   *  see the main-side `ConsoleEntry` in artifact-store.ts. */
+  page?: number;
 }
 
 export interface NetworkEntry {
@@ -2146,6 +2149,7 @@ export interface NetworkEntry {
   failure?: string;
   requestHeaders?: Record<string, string>;
   responseHeaders?: Record<string, string>;
+  page?: number;
 }
 
 export interface RunLogs {
