@@ -42,7 +42,7 @@
 import process from "node:process";
 import { readFileSync } from "node:fs";
 
-import { resolveCiSecrets } from "../shared/ci-secrets.mjs";
+import { ambientCiSecretValues, resolveCiSecrets } from "../shared/ci-secrets.mjs";
 import { resolveDataDir } from "../mcp/data-dir.mjs";
 import { createStore } from "../mcp/store.mjs";
 import { createRunner } from "../mcp/run-tests.mjs";
@@ -364,14 +364,22 @@ export async function runCommand(options, { out, err, env = process.env } = {}) 
       // this process cannot open, which is exactly why the report is scoped to
       // runs this invocation produced and is built from their results rather
       // than from run history.
+      //
+      // Plus what the ENVIRONMENT supplied without any test declaring it. The
+      // mailbox token is the one that arrives that way — the `emailCode` step
+      // reads `GLAZE_MAILBOX_TOKEN` itself — so it is present on the runner,
+      // sent as a bearer, and named by nothing in `test.variables`. A 401 or a
+      // timeout inside that step quotes the request, and this report is a file
+      // a CI system publishes.
       const byId = new Map(store.listTests().map((t) => [t.id, t]));
       const secretValues = [
-        ...new Set(
-          outcome.results.flatMap((r) => {
+        ...new Set([
+          ...outcome.results.flatMap((r) => {
             const test = byId.get(r.testId);
             return test ? resolveCiSecrets(test, { env, fileValues: secretFile }).values : [];
           }),
-        ),
+          ...ambientCiSecretValues(env),
+        ]),
       ];
       const written = writeJunitReport(options.junit, outcome.results, { secretValues });
       out(`JUnit report: ${written.path} (${written.count} test${written.count === 1 ? "" : "s"})`);

@@ -318,12 +318,34 @@ assert(
   `${UNATTENDED_EMIT_PATH} reads no run history — a report scoped wider than this ` +
     "invocation could include an app run whose secret values are unreadable here",
 );
+// The CALL, not the import line. This pinned the exact spelling of
+// `import { resolveCiSecrets } from …` and went red the moment a second name
+// was added to the same import — on a change that WIDENED the redaction, which
+// is a guard punishing a fix for the property it is meant to protect.
 assert(
-  /import \{ resolveCiSecrets \} from "\.\.\/shared\/ci-secrets\.mjs"/.test(
+  /resolveCiSecrets\(test, \{ env, fileValues: secretFile \}\)\.values/.test(
     withoutComments(read("cli/run.mjs")),
   ),
   "cli/run.mjs resolves the secret values through resolveCiSecrets — R7's rule that " +
     "whatever supplies a secret to a run also feeds the redaction",
+);
+// …and the half `resolveCiSecrets` structurally cannot answer. A credential
+// can reach a run without any test declaring it: the `emailCode` step reads
+// `GLAZE_MAILBOX_TOKEN` from the environment itself, so it is supplied, sent as
+// a bearer, and named by nothing in `test.variables`. R7's rule is about what
+// SUPPLIES the run, not about what a test asked for.
+assert(
+  /ambientCiSecretValues\(env\)/.test(withoutComments(read("cli/run.mjs"))),
+  "…and unions in the credentials the ENVIRONMENT supplied, which no test declares",
+);
+assert(
+  /GLAZE_MAILBOX_TOKEN/.test(withoutComments(read("shared/ci-secrets.mjs"))) &&
+    !/GLAZE_MAILBOX_URL/.test(
+      withoutComments(read("shared/ci-secrets.mjs")).slice(
+        withoutComments(read("shared/ci-secrets.mjs")).indexOf("export function ambientCiSecretValues"),
+      ),
+    ),
+  "…the token and NOT the endpoint — a run that cannot say which host it polled is one nobody can debug",
 );
 assert(
   /writeJunitReport\(options\.junit, outcome\.results, \{ secretValues \}\)/.test(

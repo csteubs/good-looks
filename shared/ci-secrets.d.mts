@@ -29,6 +29,16 @@ export declare function resolveCiSecrets(
   options?: { env?: Record<string, string | undefined>; fileValues?: Record<string, string> },
 ): ResolvedCiSecrets;
 
+/** Credentials handed to this process by the ENVIRONMENT rather than declared
+ *  as a test's secret variable, and therefore invisible to `resolveCiSecrets`.
+ *  Today that is the test-mailbox bearer token, which the `emailCode` step
+ *  reads straight from `GLAZE_MAILBOX_TOKEN`. To redact, never to inject — the
+ *  endpoint is deliberately excluded, since it is not a credential and a run
+ *  that cannot name the host it polled is one nobody can debug. */
+export declare function ambientCiSecretValues(
+  env?: Record<string, string | undefined>,
+): string[];
+
 /** The sentence a refusal prints — names the variables to set, because the
  *  operator's next question is always "what do I call them". */
 export declare function describeMissingSecrets(

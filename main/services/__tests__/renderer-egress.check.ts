@@ -22,8 +22,12 @@
 //
 // Run with: npm run check:renderer-egress
 
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
+
+// The reader is shared with `check:main-egress`: both checks had the same bug
+// in their own copy of it, three months apart. See `source-scan.ts`.
+import { scanFile, walk } from "./source-scan.js";
 
 const root = process.cwd();
 
@@ -36,16 +40,6 @@ function assert(condition: boolean, label: string): void {
   } else {
     console.log(`ok   ${label}`);
   }
-}
-
-function walk(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    if (name === "node_modules" || name.startsWith(".")) continue;
-    const p = join(dir, name);
-    if (statSync(p).isDirectory()) walk(p, out);
-    else if (/\.tsx?$/.test(p)) out.push(p);
-  }
-  return out;
 }
 
 /**
@@ -111,14 +105,22 @@ const ALLOWED: Array<{ needle: string; why: string }> = [
     // sidebar quotes the exact string this check was written to ban. A check
     // that flags its own explanation gets switched off within a week.
     //
-    // Block comments are stripped from the whole file before splitting, because
-    // a URL on a continuation line of a `/* */` block has no `//` on it to
-    // recognise. Line comments are stripped only where `//` is not preceded by
-    // a colon, or the pattern would eat the scheme of every URL it is looking
-    // for.
-    const src = readFileSync(file, "utf-8").replace(/\/\*[\s\S]*?\*\//g, "");
-    src.split("\n").forEach((rawLine, i) => {
-      const line = rawLine.replace(/(^|[^:])\/\/.*$/, "$1");
+    // The reader is `source-scan.ts`, shared with `check:main-egress`, and the
+    // ORDER it applies is the whole point: this check used to strip `/* … */`
+    // across the file before touching a line, so a `/*` inside a string opened
+    // a comment span running to the next `*/` anywhere after it. Five lines of
+    // live renderer code were invisible that way, all of them imports, and a
+    // hardcoded third-party URL inside one of those windows would have passed —
+    // none was there, which is luck rather than design. Blanking rather than
+    // deleting also keeps the line numbers below true; deleting the spans
+    // shifted every offender reported after the first block comment, by 245
+    // lines in `batch-view.tsx`.
+    //
+    // The URL is matched against `quoted`, not `code`: a URL this check cares
+    // about lives INSIDE a string literal, so blanking string contents would
+    // hide every one of them.
+    const { quoted } = scanFile(file);
+    quoted.forEach((line, i) => {
       const m = /https?:\/\/[^\s"'`)]+/.exec(line);
       if (!m) return;
       scanned++;
@@ -148,6 +150,46 @@ const ALLOWED: Array<{ needle: string; why: string }> = [
       : `an outbound host this app decided to contact on its own:\n     ${offenders.join(
           "\n     ",
         )}\n\n     If this is deliberate, add it to ALLOWED in this file WITH THE REASON,\n     and make sure the user can see and refuse it.`,
+  );
+}
+
+// ── The reader itself, pinned ─────────────────────────────────────────
+
+{
+  // The scan above is only worth its assertions if the text it scanned is the
+  // text in the file. This check read source for months with the block-comment
+  // strip running FIRST, so a `/*` inside a string literal opened a span to the
+  // next `*/` anywhere after it, and everything between was gone before the URL
+  // pattern saw it.
+  //
+  // `renderer/lib/docs.ts` is the fixture, and a good one: `doc-blocks.ts`
+  // holds `/*` inside a string, and under the old order that swallowed this
+  // file's four `?raw` imports — the very lines that decide WHICH documents get
+  // inlined into the renderer bundle, which is the second scan's whole subject.
+  //
+  // Pinned as specific lines that must survive rather than as "no code was
+  // blanked", because there is no reliable way to ask a raw line whether it is
+  // code: a block comment's continuation lines start with neither `//` nor `*`,
+  // and English prose about importing contains the word `import`. Naming the
+  // lines is exact, and it fails saying which one went missing.
+  const mustSurvive: Array<{ file: string; needle: string }> = [
+    { file: "renderer/lib/docs.ts", needle: 'from "../../docs/MCP-GUIDE.md?raw"' },
+    { file: "renderer/lib/docs.ts", needle: 'from "../../docs/CI-GUIDE.md?raw"' },
+    { file: "renderer/lib/docs.ts", needle: 'from "../../docs/POPUPS-GUIDE.md?raw"' },
+    { file: "renderer/lib/import-warnings.ts", needle: 'from "./api"' },
+  ];
+  const missing = mustSurvive.filter(({ file, needle }) => {
+    // `quoted` keeps string contents, which is what the URL scan reads and what
+    // these lines live in.
+    return !scanFile(join(root, file)).quoted.join("\n").includes(needle);
+  });
+  assert(
+    missing.length === 0,
+    missing.length === 0
+      ? "the reader keeps live code the old block-first ordering swallowed, so this scan sees the whole renderer"
+      : `the reader blanked live code, which this scan then cannot see:\n     ${missing
+          .map((m) => `${m.file} — ${m.needle}`)
+          .join("\n     ")}\n\n     The block-comment strip must run AFTER the per-line pass, not before it.`,
   );
 }
 
@@ -191,10 +233,7 @@ const ALLOWED: Array<{ needle: string; why: string }> = [
   // The regression that actually happened, pinned by name. The general rule
   // above would catch it too, but a check that names the bug it was written for
   // is the one someone understands when it fires.
-  const sidebar = readFileSync(join(root, "renderer/main/library-sidebar.tsx"), "utf-8").replace(
-    /\/\*[\s\S]*?\*\//g,
-    "",
-  );
+  const sidebar = scanFile(join(root, "renderer/main/library-sidebar.tsx")).quoted.join("\n");
   assert(
     !/google\.com\/s2\/favicons/.test(sidebar),
     "the library sidebar does not send every test's hostname to a favicon service",
@@ -222,7 +261,10 @@ const ALLOWED: Array<{ needle: string; why: string }> = [
   const hardcoded: string[] = [];
   for (const file of walk(join(root, "renderer"))) {
     if (/\.test\.tsx?$/.test(file) || file.includes("/dev/")) continue;
-    const src = readFileSync(file, "utf-8");
+    // `quoted` rather than the raw source: a `<SiteIcon favicon>` written into
+    // a comment as an example is not a call site, and this rule's whole subject
+    // is call sites.
+    const src = scanFile(file).quoted.join("\n");
     for (const m of src.matchAll(/<SiteIcon\b[^>]*?>/gs)) {
       if (/\bfavicon(\s*=\s*\{\s*true\s*\})?(\s|\/|>)/.test(m[0])) {
         hardcoded.push(`${file.slice(root.length + 1)}: ${m[0].slice(0, 60)}`);
