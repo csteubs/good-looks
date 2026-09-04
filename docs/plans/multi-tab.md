@@ -4,8 +4,8 @@
 real Playwright (see "What the spike proved"). **Phases 1 and 2 SHIPPED
 2026-09-02** — `shared/tabs-fixture-source.mjs`, the per-page fixture halves,
 both runners' `GLAZE_FOLLOW_TABS`, the `tab` marker, `runner:tab` and the
-Step details row; `e2e/tab-follow.spec.ts` (ten rows, the heal-on-tab-2 row
-included) and `main/services/tabs-fixture.test.ts` are the authority. The
+Step details row; `e2e/tab-follow.spec.ts` (twelve rows, the heal-on-tab-2 and
+the two console-subscription rows included) and `main/services/tabs-fixture.test.ts` are the authority. The
 manifest's `page` reaches the Visual tab as a "Tab 2" chip, `RunRecord.tabsOpened`
 is written by both runners and carried by ingest, and `triage_run` reports
 it. See DECISIONS 2026-09-02. The deferred design at the end is still
@@ -194,8 +194,10 @@ every tab.
    fixture, before the signature, so it owns `context.on("page")`.
 2. **Per-page installs.** Each fixture splits its install into a prototype
    half (once per process, the existing `patched` latches) and an instance
-   half taking a page: capture (`PAGE_ACTIONS` wrap, `installLogCapture`, axe
-   — or move axe to `context().addInitScript`, which is simpler and right),
+   half taking a page: capture (`PAGE_ACTIONS` wrap, axe — or move axe to
+   `context().addInitScript`, which is simpler and right; `installLogCapture`
+   was on this list and came OFF it on 2026-09-03, because a per-page
+   subscription is not in force until after the page has already spoken),
    heal (factory tagging per page; the probe and the rebuild use `loc.page()`
    instead of the closed-over page; an install guard like settle's, so the
    prototype half cannot double-wrap), settle (instance half), user stylesheet

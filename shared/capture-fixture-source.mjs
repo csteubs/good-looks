@@ -238,10 +238,46 @@ function onTab(entry, page) {
   return entry;
 }
 
-function installLogCapture(page, logs) {
-  const started = new Map();
-
-  page.on("console", (msg) => {
+/**
+ * Everything a run records about what the page said and did — console, uncaught
+ * page errors, network — subscribed ONCE on the CONTEXT.
+ *
+ * NOT per page, and the difference is a whole tab's evidence. A page-level
+ * subscription is not in force when \`page.on("console")\` RETURNS: the client
+ * sends an asynchronous \`updateSubscription\` for it, and until the server has
+ * recorded that, the server's own dispatch check drops that page's console
+ * messages on the floor. A tab the site opened only reaches us through the
+ * context's \`page\` event, so the earliest a per-page listener can exist is
+ * AFTER the tab's document does — and a document that logs while it parses
+ * wins that race often enough to have flaked CI.
+ *
+ * Worse for anything logged before that: Playwright buffers a page's console
+ * messages until it marks the page initialized, then emits the \`page\` event
+ * and REPLAYS the buffer immediately after it in the same synchronous stack.
+ * The page's subscription set cannot be anything but empty at that moment, so
+ * every one of those was lost every time — a popup logged into while it was
+ * still on about:blank said nothing at all.
+ *
+ * A context subscription is in force before any second page can exist and
+ * covers every page in the context, the first one included, so there is no
+ * per-page attach left to lose.
+ *
+ * Exactly one registration, for the same reason: two would record every line
+ * twice. NOT latched, though, and that is the deliberate half: Playwright
+ * gives every test — and every retry — its own context, so this runs once per
+ * context as it stands. A latch keyed on the context would not make that
+ * safer; it would make a REUSED context record nothing for the second test
+ * rather than twice for the first, which is the worse of the two failures.
+ *
+ * \`weberror\` is the context-level \`pageerror\`. That one was NOT losing to
+ * any of the above — a page error is dispatched unconditionally, subscription
+ * or not — and moves so that a tab nothing attached to still reports one, and
+ * so that "what the page said" has one mechanism rather than two. The entry
+ * keeps the type string "pageerror": that is what a reader of console.json
+ * matches on, and the channel it arrived by is not a reader's business.
+ */
+function installLogCapture(context, logs) {
+  context.on("console", (msg) => {
     try {
       glazePush(logs.console, onTab({
         step: ctx ? ctx.index : 0,
@@ -250,14 +286,15 @@ function installLogCapture(page, logs) {
         text: glazeTruncate(msg.text()),
         url: glazeScrubUrl((msg.location && msg.location().url) || ""),
         line: (msg.location && msg.location().lineNumber) || 0,
-      }, page), MAX_CONSOLE_HEAD, MAX_CONSOLE_TAIL);
+      }, msg.page()), MAX_CONSOLE_HEAD, MAX_CONSOLE_TAIL);
     } catch (e) { /* never throw into the run */ }
   });
 
   // An uncaught page exception is not a console message, and it is usually the
   // most diagnostic single line available when a click "did nothing".
-  page.on("pageerror", (err) => {
+  context.on("weberror", (webError) => {
     try {
+      const err = webError.error();
       glazePush(logs.console, onTab({
         step: ctx ? ctx.index : 0,
         ts: Date.now(),
@@ -265,11 +302,37 @@ function installLogCapture(page, logs) {
         text: glazeTruncate(String((err && err.stack) || err)),
         url: "",
         line: 0,
-      }, page), MAX_CONSOLE_HEAD, MAX_CONSOLE_TAIL);
+      }, webError.page()), MAX_CONSOLE_HEAD, MAX_CONSOLE_TAIL);
     } catch (e) { /* ignore */ }
   });
 
-  page.on("request", (req) => {
+  // Network, on the same subscription and for the same reason: a request is
+  // gated exactly like a console message, so a per-page listener lost a tab's
+  // subresources under load (measured 3 in 8 with a busy client event loop, 0
+  // in 8 from the context).
+  //
+  // The page an entry belongs to comes from the request's own frame rather
+  // than from a closure, and an entry whose page cannot be resolved is NOT
+  // RECORDED. That is not a new gap: a tab's own navigation request has no
+  // frame yet (\`request.frame()\` throws "Frame for this navigation request is
+  // not available"), and a per-page listener never saw it either, because the
+  // page it belongs to does not exist when it is issued. What changes is that
+  // the reason is now stated instead of implied — and the alternative, filing
+  // the second tab's document under the first, is the kind of plausible-and-
+  // wrong this repo refuses elsewhere. Service-worker requests are skipped by
+  // the same rule, as they were before.
+  const started = new Map();
+
+  const pageOf = (req) => {
+    try {
+      const frame = req.frame();
+      return frame ? frame.page() : null;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  context.on("request", (req) => {
     try { started.set(req, Date.now()); } catch (e) { /* ignore */ }
   });
 
@@ -277,6 +340,8 @@ function installLogCapture(page, logs) {
     try {
       const t0 = started.get(req) || Date.now();
       started.delete(req);
+      const owner = pageOf(req);
+      if (!owner) return;
       glazePush(logs.network, onTab(Object.assign({
         step: ctx ? ctx.index : 0,
         ts: Date.now(),
@@ -285,11 +350,11 @@ function installLogCapture(page, logs) {
         url: glazeScrubUrl(req.url()),
         resourceType: String(req.resourceType()),
         requestHeaders: glazeFilterHeaders(req.headers(), ALL_HEADERS),
-      }, fields), page), MAX_NETWORK_HEAD, MAX_NETWORK_TAIL);
+      }, fields), owner), MAX_NETWORK_HEAD, MAX_NETWORK_TAIL);
     } catch (e) { /* ignore */ }
   };
 
-  page.on("response", (res) => {
+  context.on("response", (res) => {
     let headers = {};
     try { headers = res.headers(); } catch (e) { headers = {}; }
     record(res.request(), {
@@ -301,7 +366,7 @@ function installLogCapture(page, logs) {
 
   // A request that never got a response — blocked, DNS failure, CORS refusal —
   // has no status at all, and is exactly the case a failing test needs.
-  page.on("requestfailed", (req) => {
+  context.on("requestfailed", (req) => {
     let failure = "";
     try { failure = (req.failure() && req.failure().errorText) || ""; } catch (e) { failure = ""; }
     record(req, { status: 0, ok: false, failure: glazeTruncate(failure) });
@@ -545,9 +610,18 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
     // markers and the assertion wrapper's announcements carry the attempt.
     specFile = testInfo.file || "";
     attemptNo = normalizeAttempt(testInfo.retry);
-    // Console + network, decided up front so the per-page installer below can
-    // close over it — a tab opened later records into the same stores.
+    // Console + network, decided up front so every listener below closes over
+    // it — a tab opened later records into the same two stores.
     const logs = LOGS_ON && DIR ? { console: glazeMakeStore(), network: glazeMakeStore() } : null;
+    // Recording goes on the CONTEXT, once, and BEFORE anything else — ahead of
+    // tab following, ahead of the spec, ahead of any page a site can open.
+    // That is the whole point: a subscription made after a tab exists is a
+    // subscription that missed whatever its document said while it parsed, and
+    // one made after the tab was ANNOUNCED missed everything it said before
+    // that. See installLogCapture.
+    if (logs) {
+      try { installLogCapture(page.context(), logs); } catch (e) { /* best effort */ }
+    }
     // What a LATER page gets: the instance half of every install the first
     // page gets below, in the same order. The prototype halves are already in
     // place and cover every page; these are the ones that are not.
@@ -562,7 +636,6 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
         try { installSettleOnPage(p); } catch (e) { /* best effort */ }
       }
       patchPageActions(p);
-      if (logs) installLogCapture(p, logs);
     };
     // Tab following goes on FIRST: it owns the context's page event, and the
     // installs that follow need to have happened on the first page before a
@@ -683,7 +756,6 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
     const attemptDir = attemptArtifactDir(attemptNo);
     try { fs.mkdirSync(attemptDir, { recursive: true }); } catch (e) { /* ignore */ }
     ctx = { dir: attemptDir, index: 0, manifest: [], startedAt: Date.now(), captureMs: 0, a11yMs: 0, a11yChecks: 0 };
-    if (logs) installLogCapture(page, logs);
     // The action patch itself is already installed above — every run that loads
     // this fixture needs it for per-step progress, so it is no longer gated on
     // screenshots or a11y being on.
