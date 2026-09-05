@@ -717,6 +717,27 @@ npm run lint && npm run type-check && npm run test:all && npm run build
 
 **5. Open a pull request.** `.github/pull_request_template.md` carries the checklist, including the two security boundaries below.
 
+**Title it plainly. Say what changed and where.** A PR title is an index entry,
+not a headline: it is read in a list of fifty, out of context, months later, by
+someone trying to find the change that touched a thing. Name the surface and the
+change to it, in under about ten words.
+
+```
+Update Utility Toolbar Layout on Test Step Edit View
+Fix the Stats board's stale verdict dot after a run
+Add a --json flag to `good-looks run`
+```
+
+**No metaphor, no aphorism, no title that only makes sense once you have read
+the diff.** "The script bar is five clusters, and the gap says which" is the
+failure this rule exists against — it names nothing, tells a reader in a list
+nothing, and cannot be searched for. The same rule governs the **commit subject
+line**, because that is what a PR title is usually taken from. The reasoning,
+the rejected alternative and the failure a guard was built against belong in the
+commit body, the PR description and `docs/DECISIONS.md` — all three are read
+deliberately, by someone who already found their way there. The title is how
+they find it.
+
 ### CI
 
 `.github/workflows/repo-hygiene.yml` runs on every push and pull request and checks repo hygiene — no generated files committed, no absolute paths, no secrets, lockfile in sync.
