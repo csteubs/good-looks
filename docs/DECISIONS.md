@@ -10,6 +10,75 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-05 — The script bar is five clusters, and the gap says which
+
+The Script tab's utility bar sat directly under the test view's tab strip with
+four pixels between them and nothing else. `.gl-detail-tabs` padded 8px above
+its tablist and **zero** below it, so the bar's own 4px was the entire gutter
+between a 26px hairline box and a row of 30px hairline boxes standing on the
+same `--gl-ink` ground. Two bands of controls read as one undifferentiated row.
+`.gl-run-head` — the run panel's tab strip, the same `gl-tabs`-over-utility-row
+markup one screen down — has always closed itself with `border-bottom: 1px
+solid var(--gl-line)`, and that is all this needed: the strip becomes a band,
+the bar becomes a band, and the gutter goes from 4px to 13px with a hairline
+at 9px.
+
+**The bar was also clipping its own button, and had been since it shipped.**
+`max-height: 38px` was written as "4px padding either side of a 30px button,
+plus a bit". Tailwind's preflight makes every box `border-box`, so the number
+bounds the padding and the bottom hairline too: 4 + 30 + 4 + 1 = 39. The button
+the rule exists to hold lost a pixel off its bottom edge for its whole life,
+which is exactly the class of bug jsdom renders identically in both states.
+`check:script-bar` now DERIVES that floor from `.gl-btn`'s own height and the
+bar's own padding rather than hardcoding it, so raising the padding fails
+against the "condensed" cap (≤ 40px) instead of silently clipping again.
+
+**What actually made the bar hard to read was not the spacing.** It was one
+right-aligned run of controls with the readouts sprinkled through it — "Types
+ready" landing between Outline and Explain failure, a label splitting what
+otherwise reads as a row of four buttons. Three options were mocked up. Two of
+them fixed the banding and left that run alone; the one built is the one that
+reorganises it, because the banding was the symptom and the run was the fault.
+
+Five clusters now, and the rule they encode is positional rather than cosmetic:
+
+- **The live page** — its toggle and Pick locator together, the host it is
+  showing TRAILING them. Pick locator used to sit beside Outline and only ever
+  as the `else` of the ternary that offers Record here; it is disabled until the
+  toggle beside it is on, and what it inserts is what that page was asked for.
+- **The view control** — Outline.
+- **The AI pair** — Explain failure and Ask AI, mounted only when at least one
+  is offered, because an empty cluster still spends the bar's cluster gap.
+- **The readouts** — the type service's state, the caret's step, the pre-save
+  verdict, the hand-edited chip. Everything the editor KNOWS, at the far end,
+  beside the actions it informs.
+- **The mode** — Record here + Edit script while reading, Cancel + Save anyway
+  + Save while editing. Record here belongs to that pair rather than to Outline:
+  it is one of the two ways INTO a change, which is what the bar's right end has
+  always held.
+
+`gap` carries the grouping: 6px inside a cluster, 10px between a control and
+its own readout, 20px between clusters. No dividers — this design system's
+hairlines are containers, and four of them in a 39px band is a fence, not a
+grouping. `check:script-bar` compares the two numbers rather than asserting
+either, because the arrangement only works while the outer gap reads as
+visibly wider than the inner one.
+
+**And no auto margins.** The bar right-aligned everything with
+`justify-content: flex-end` and then let `.gl-script-live` AND
+`.gl-script-check-msg` each claim `margin-right: auto` — so the entire
+left-hand cluster slid sideways the moment the caret readout appeared. Two
+halves and `space-between` place them now, and the check refuses an auto side
+margin on any of the bar's eight rules.
+
+The DOM half is `"the script bar's clusters"` in `test-detail-view.test.tsx`,
+and it states the design law rather than the markup: **no readout is inside a
+cluster of controls, and no readout has a control after it inside its own.**
+That is one predicate over the rendered bar in every state it has, so the next
+readout added to this row cannot land where "Types ready" did without a named
+failure. The gaps that SAY a cluster is a cluster are `check:script-bar`'s —
+jsdom has no layout engine and would report the broken arrangement as passing.
+
 ### 2026-09-04 — One reader for both egress checks, and the CLI's redaction budget covers what it was handed
 
 Two follow-ups from the egress work, plus a correction to what that work
