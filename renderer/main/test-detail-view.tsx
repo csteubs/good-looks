@@ -1693,138 +1693,175 @@ export function TestDetailView() {
               </ScrollArea>
             </TabsContent>
             <TabsContent value="script" className="flex min-h-0 flex-1 flex-col">
+              {/* Five clusters, and no readout ever between two buttons. Left
+                  to right: the live page with what it is showing TRAILING its
+                  controls, the script's own view control, the AI pair, then —
+                  at the far end, beside the actions they inform — everything
+                  the editor knows, and the one cluster that commits. The
+                  arrangement used to be a single right-aligned run in which
+                  "Types ready" landed between Outline and Explain failure,
+                  splitting a row of buttons with a label. `check:script-bar`
+                  pins the CSS half; "the script bar's clusters" in
+                  test-detail-view.test.tsx pins this half. */}
               <div className="gl-detail-script-bar">
-                <span className="gl-script-live" data-gl="script-live">
-                  <Btn
-                    tone={livePage.open ? "go" : "ghost"}
-                    onClick={() => void toggleLivePage()}
-                    disabled={liveBusy || !liveUrl}
-                    title={
-                      livePage.open
-                        ? "Close the live page"
-                        : "Open this test's site in a Playwright browser the editor can ask: match counts after every locator, the caret's element outlined, Pick locator"
-                    }
-                    aria-pressed={livePage.open}
-                  >
-                    {liveBusy ? "Live page…" : livePage.open ? "Live page ●" : "Live page"}
-                  </Btn>
-                  {livePage.open ? (
-                    <span className="gl-script-live-status" title={livePage.url}>
-                      {livePage.picking ? "Click an element in the live page…" : hostOf(livePage.url)}
+                <span className="gl-script-bar-left">
+                  <span className="gl-script-live" data-gl="script-live">
+                    <span className="gl-script-group">
+                      <Btn
+                        tone={livePage.open ? "go" : "ghost"}
+                        onClick={() => void toggleLivePage()}
+                        disabled={liveBusy || !liveUrl}
+                        title={
+                          livePage.open
+                            ? "Close the live page"
+                            : "Open this test's site in a Playwright browser the editor can ask: match counts after every locator, the caret's element outlined, Pick locator"
+                        }
+                        aria-pressed={livePage.open}
+                      >
+                        {liveBusy ? "Live page…" : livePage.open ? "Live page ●" : "Live page"}
+                      </Btn>
+                      {/* The live page's OTHER control, not Outline's
+                          neighbour: it is disabled until the toggle beside it
+                          is on, and what it inserts is what that page was
+                          asked for. */}
+                      {editingScript ? (
+                        <Btn
+                          onClick={() => void pickLocator()}
+                          disabled={!livePage.open || Boolean(livePage.picking)}
+                          title={
+                            livePage.open
+                              ? "Click an element in the live page; its locator is inserted at the caret"
+                              : "Open the live page to pick a locator from it"
+                          }
+                        >
+                          Pick locator
+                        </Btn>
+                      ) : null}
                     </span>
-                  ) : livePage.closedReason ? (
-                    <span className="gl-script-live-status" data-muted="">
-                      {livePage.closedReason}
-                    </span>
-                  ) : null}
-                  <Btn
-                    onClick={() => setOutlineOpen((v) => !v)}
-                    aria-pressed={outlineOpen}
-                    title="The steps as a list to jump to, and where the caret's locator is used across the library"
-                  >
-                    Outline
-                  </Btn>
-                  {tsStatusQuery.data ? (
-                    <span
-                      className="gl-script-live-status"
-                      data-gl="ts-status"
-                      {...(tsAvailable ? {} : { "data-muted": "" })}
-                      title={tsAvailable ? `TypeScript ${tsStatusQuery.data.typescript ?? ""} — completions, hover, type errors and inspections` : tsStatusQuery.data.reason}
-                    >
-                      {tsAvailable ? "Types ready" : "Types unavailable"}
-                    </span>
-                  ) : null}
-                  {typeof failedStepIndex === "number" && runOutput ? (
-                    <Btn
-                      tone="ai"
-                      onClick={() => openAi("explain")}
-                      title="Ask the instant model why the last run failed, starting from the caret's statement"
-                    >
-                      Explain failure
-                    </Btn>
-                  ) : null}
-                  {editingScript ? (
-                    <Btn tone="ai" onClick={() => openAi("rewrite")} title="Rewrite the selection or the whole file with AI (⌘K)">
-                      Ask AI
-                    </Btn>
-                  ) : null}
-                  {editingScript ? (
-                    <Btn
-                      onClick={() => void pickLocator()}
-                      disabled={!livePage.open || Boolean(livePage.picking)}
-                      title={
-                        livePage.open
-                          ? "Click an element in the live page; its locator is inserted at the caret"
-                          : "Open the live page to pick a locator from it"
-                      }
-                    >
-                      Pick locator
-                    </Btn>
-                  ) : (
-                    <Btn
-                      onClick={recordHere}
-                      title={
-                        caretStep
-                          ? `Open the trainer with new steps landing after step ${caretStep.index + 1}`
-                          : "Open the trainer with new steps landing at the end"
-                      }
-                    >
-                      Record here
-                    </Btn>
-                  )}
-                </span>
-                {caretStep && (!editingScript || scriptCheck.status === "idle") ? (
-                  <span className="gl-script-check-msg" data-checking="" data-gl="caret-step">
-                    step {caretStep.index + 1} · {caretStep.label}
+                    {livePage.open ? (
+                      <span className="gl-script-live-status" title={livePage.url}>
+                        {livePage.picking ? "Click an element in the live page…" : hostOf(livePage.url)}
+                      </span>
+                    ) : livePage.closedReason ? (
+                      <span className="gl-script-live-status" data-muted="">
+                        {livePage.closedReason}
+                      </span>
+                    ) : null}
                   </span>
-                ) : null}
-                {editingScript ? (
-                  <>
-                    {scriptCheck.status === "checking" ? (
+                  <span className="gl-script-group">
+                    <Btn
+                      onClick={() => setOutlineOpen((v) => !v)}
+                      aria-pressed={outlineOpen}
+                      title="The steps as a list to jump to, and where the caret's locator is used across the library"
+                    >
+                      Outline
+                    </Btn>
+                  </span>
+                  {/* The holo-treated pair, together and mounted only when at
+                      least one of them is offered — an empty cluster would
+                      still spend the bar's cluster gap on nothing. */}
+                  {editingScript || (typeof failedStepIndex === "number" && runOutput) ? (
+                    <span className="gl-script-group" data-gl="script-ai">
+                      {typeof failedStepIndex === "number" && runOutput ? (
+                        <Btn
+                          tone="ai"
+                          onClick={() => openAi("explain")}
+                          title="Ask the instant model why the last run failed, starting from the caret's statement"
+                        >
+                          Explain failure
+                        </Btn>
+                      ) : null}
+                      {editingScript ? (
+                        <Btn tone="ai" onClick={() => openAi("rewrite")} title="Rewrite the selection or the whole file with AI (⌘K)">
+                          Ask AI
+                        </Btn>
+                      ) : null}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="gl-script-bar-right">
+                  <span className="gl-script-bar-status" data-gl="script-status">
+                    {tsStatusQuery.data ? (
+                      <span
+                        className="gl-script-live-status"
+                        data-gl="ts-status"
+                        {...(tsAvailable ? {} : { "data-muted": "" })}
+                        title={tsAvailable ? `TypeScript ${tsStatusQuery.data.typescript ?? ""} — completions, hover, type errors and inspections` : tsStatusQuery.data.reason}
+                      >
+                        {tsAvailable ? "Types ready" : "Types unavailable"}
+                      </span>
+                    ) : null}
+                    {caretStep && (!editingScript || scriptCheck.status === "idle") ? (
+                      <span className="gl-script-check-msg" data-checking="" data-gl="caret-step">
+                        step {caretStep.index + 1} · {caretStep.label}
+                      </span>
+                    ) : null}
+                    {editingScript && scriptCheck.status === "checking" ? (
                       <span className="gl-script-check-msg" data-checking="" role="status">
                         Checking with Playwright…
                       </span>
-                    ) : scriptCheck.status === "failed" ? (
+                    ) : null}
+                    {editingScript && scriptCheck.status === "failed" ? (
                       <span className="gl-script-check-msg" role="status">
                         {scriptCheck.errors.length === 1
                           ? "Playwright can't load this script — 1 problem"
                           : `Playwright can't load this script — ${scriptCheck.errors.length} problems`}
                       </span>
                     ) : null}
-                    <Btn
-                      onClick={() => {
-                        setEditingScript(false);
-                        setScriptCheck(IDLE_CHECK);
-                        setAiPanel(null);
-                        aiOriginRef.current = null;
-                      }}
-                    >
-                      Cancel
-                    </Btn>
-                    {scriptCheck.status === "failed" ? (
-                      <Btn tone="stop" onClick={() => void writeScriptDraft()}>
-                        Save anyway
-                      </Btn>
-                    ) : null}
-                    <Btn tone="go" onClick={saveScript} disabled={scriptCheck.status === "checking"}>
-                      {scriptCheck.status === "checking" ? "Checking…" : "Save"}
-                    </Btn>
-                  </>
-                ) : (
-                  <>
-                    {test.scriptEdited ? <span className="gl-chip">Edited manually</span> : null}
-                    <Btn
-                      onClick={() => {
-                        setScriptDraft(scriptQuery.data ?? "");
-                        setScriptBase(scriptQuery.data ?? "");
-                        setScriptCheck(IDLE_CHECK);
-                        setEditingScript(true);
-                      }}
-                    >
-                      Edit script
-                    </Btn>
-                  </>
-                )}
+                    {!editingScript && test.scriptEdited ? <span className="gl-chip">Edited manually</span> : null}
+                  </span>
+                  {/* The bar's right end is always the MODE: the two ways into
+                      a change while reading, Cancel and Save while making one.
+                      Record here belongs to that pair rather than beside
+                      Outline, where it only ever sat as Pick locator's `else`. */}
+                  <span className="gl-script-group" data-gl="script-commit">
+                    {editingScript ? (
+                      <>
+                        <Btn
+                          onClick={() => {
+                            setEditingScript(false);
+                            setScriptCheck(IDLE_CHECK);
+                            setAiPanel(null);
+                            aiOriginRef.current = null;
+                          }}
+                        >
+                          Cancel
+                        </Btn>
+                        {scriptCheck.status === "failed" ? (
+                          <Btn tone="stop" onClick={() => void writeScriptDraft()}>
+                            Save anyway
+                          </Btn>
+                        ) : null}
+                        <Btn tone="go" onClick={saveScript} disabled={scriptCheck.status === "checking"}>
+                          {scriptCheck.status === "checking" ? "Checking…" : "Save"}
+                        </Btn>
+                      </>
+                    ) : (
+                      <>
+                        <Btn
+                          onClick={recordHere}
+                          title={
+                            caretStep
+                              ? `Open the trainer with new steps landing after step ${caretStep.index + 1}`
+                              : "Open the trainer with new steps landing at the end"
+                          }
+                        >
+                          Record here
+                        </Btn>
+                        <Btn
+                          onClick={() => {
+                            setScriptDraft(scriptQuery.data ?? "");
+                            setScriptBase(scriptQuery.data ?? "");
+                            setScriptCheck(IDLE_CHECK);
+                            setEditingScript(true);
+                          }}
+                        >
+                          Edit script
+                        </Btn>
+                      </>
+                    )}
+                  </span>
+                </span>
               </div>
               {outlineOpen ? (
                 <ScriptOutlinePanel

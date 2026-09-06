@@ -3388,37 +3388,86 @@
   cursor: pointer;
 }
 
+/* The test view's tab strip is its OWN band, closed by a hairline. Without
+ * one it padded 8px above the tablist and nothing below, so the script bar's
+ * own 4px was the entire gutter between a 26px hairline box and a row of 30px
+ * hairline boxes on the same ground — two bands of controls reading as one
+ * undifferentiated row. `.gl-run-head` below has always closed itself the same
+ * way, for the same reason. */
 .gl-detail-tabs {
   flex: 0 0 auto;
-  padding: 8px 16px 0;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--gl-line);
 }
 
 /* Horizontal padding matches `Toolbar`'s `px-4` (16px), not the 12px this bar
  * used before — that mismatch put Edit script's right edge 4px inside of Run
  * test's, above. `max-height` is `.gl-btn`'s fixed 30px plus this bar's own
- * vertical padding: the bar can never grow past its one button, which is what
- * "condensed" means here — it used to carry 6px of padding on each side of
- * that same 30px button for no reason tied to its content. */
+ * vertical padding AND its bottom hairline: the bar can never grow past its
+ * one button, which is what "condensed" means here — it used to carry 6px of
+ * padding on each side of that same 30px button for no reason tied to its
+ * content. It also may not grow LESS: Tailwind's preflight makes every box
+ * border-box, so the 38px this shipped with was one pixel short of the
+ * 4 + 30 + 4 + 1 it wraps and clipped the button it exists to hold.
+ *
+ * Two children, `space-between`, and NO auto margins anywhere inside. The bar
+ * used to fight itself over them — `.gl-script-live` and `.gl-script-check-msg`
+ * each claimed `margin-right: auto`, so the whole left-hand cluster slid
+ * sideways the moment the caret readout appeared. */
 .gl-detail-script-bar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 20px;
   flex: 0 0 auto;
-  max-height: 38px;
+  max-height: 39px;
   padding: 4px 16px;
   border-bottom: 1px solid var(--gl-line);
 }
 
-/* The live page's cluster, leftmost in the script bar: the toggle, the
- * page's host (or the reason it closed), and Pick / Record here. `min-width:
- * 0` so a long host ellipsizes rather than pushing Save off the row. */
+/* The bar's two halves: what you can DO to the script, and what the editor
+ * knows about it plus the one action that commits. */
+.gl-script-bar-left,
+.gl-script-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-width: 0;
+}
+
+/* One cluster of controls. Buttons only — a readout inside one is the bug this
+ * whole arrangement exists to prevent: "Types ready" used to sit between
+ * Outline and Explain failure, splitting what reads as a row of buttons with a
+ * label. The gap here is deliberately a THIRD of the bar's own, so proximity
+ * alone says which controls belong together; `check:script-bar` pins the
+ * ordering of the two numbers. */
+.gl-script-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Everything the editor KNOWS rather than everything it can do: whether the
+ * type service answered, which step the caret is in, the pre-save check's
+ * verdict, and whether the script was hand-edited. Readouts live here and
+ * nowhere else in the bar. */
+.gl-script-bar-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* The live page's cluster, leftmost in the script bar: its two controls in a
+ * `.gl-script-group`, then the page's host (or the reason it closed) TRAILING
+ * them. Trailing is the point — the readout is what the toggle reports, so it
+ * belongs beside the pair and never between them. `min-width: 0` so a long
+ * host ellipsizes rather than pushing Save off the row. */
 .gl-script-live {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
-  margin-right: auto;
 }
 
 .gl-script-live-status {
@@ -3436,10 +3485,11 @@
   color: var(--gl-tx-3);
 }
 
-/* The verdict of the pre-save check, on the bar's left. `margin-right: auto`
- * is what keeps the buttons right-aligned under Run test when it appears. */
+/* The verdict of the pre-save check, in the bar's status zone beside the
+ * commit buttons it is about. It carried `margin-right: auto` while the bar
+ * right-aligned everything; the zone places it now, and a second auto margin
+ * in a `space-between` row is what made the left cluster jump. */
 .gl-script-check-msg {
-  margin-right: auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -2043,6 +2043,202 @@ describe("the Script tab's live page", () => {
   });
 });
 
+describe("the script bar's clusters", () => {
+  // The bar shipped as one right-aligned run of controls, and "Types ready"
+  // landed in the middle of it — between Outline and Explain failure, a label
+  // splitting what otherwise reads as a row of four buttons. What replaces it
+  // is five clusters, and the contract that keeps them honest is POSITIONAL
+  // rather than cosmetic: a readout never sits inside a cluster of controls,
+  // and never has a control after it inside its own. jsdom cannot see the gaps
+  // that say a cluster is a cluster — `check:script-bar` owns those two numbers
+  // and their ratio — but every placement they depend on is right here.
+  const SCRIPT = [
+    'import { test, expect } from "@playwright/test";',
+    'test("Checkout", async ({ page }) => {',
+    '  await page.goto("https://example.com");',
+    '  await page.getByTestId("go").click();',
+    "});",
+  ].join("\n");
+
+  beforeEach(() => {
+    livePage = { open: false };
+    getScript.mockReset();
+    getScript.mockImplementation(async () => SCRIPT);
+    checkScript.mockReset();
+    checkScript.mockImplementation(async () => ({ ok: true, errors: [], tests: [], durationMs: 1 }));
+    previewScript.mockReset();
+    previewScript.mockImplementation(async (_id: string, source: string) => {
+      const lines = source.split("\n");
+      const at = (n: number) => lines.slice(0, n - 1).join("\n").length + (n > 1 ? 1 : 0);
+      return {
+        tracked: true,
+        steps: 2,
+        skipped: 0,
+        stepRanges: [3, 4].map((n) => ({ from: at(n) + 2, to: at(n) + lines[n - 1].length })),
+        skippedRanges: [],
+        newlySkipped: [],
+        stepList: [
+          { id: "a", type: "goto", url: "https://example.com", timestamp: 0 },
+          { id: "b", type: "click", locator: { k: "testid", v: "go" }, timestamp: 0 },
+        ] as unknown as Step[],
+      };
+    });
+  });
+
+  async function openScriptTab() {
+    renderView();
+    await screen.findByText("Checkout");
+    selectTab(/Script/);
+    return await screen.findByRole("textbox");
+  }
+
+  const bar = () => document.querySelector(".gl-detail-script-bar") as HTMLElement;
+  /** Everything in the bar that READS OUT rather than acts: the live page's
+   *  host, the type service's state, the caret's step, the check's verdict,
+   *  and the hand-edited chip. */
+  const readouts = (root: ParentNode) =>
+    Array.from(root.querySelectorAll<HTMLElement>(".gl-script-live-status, .gl-script-check-msg, .gl-chip"));
+  const controls = (root: ParentNode) => Array.from(root.querySelectorAll<HTMLElement>(".gl-btn"));
+  const labels = (els: HTMLElement[]) => els.map((el) => (el.textContent ?? "").trim());
+
+  /** Every way the bar can break the rule the restyle exists to enforce, as
+   *  sentences — an empty list is the assertion, so a failure names the
+   *  offending control rather than reporting `false !== true`. */
+  function clusterViolations(): string[] {
+    const out: string[] = [];
+    for (const group of Array.from(bar().querySelectorAll<HTMLElement>(".gl-script-group"))) {
+      for (const stray of readouts(group)) {
+        out.push(`"${(stray.textContent ?? "").trim()}" is inside a cluster of controls`);
+      }
+    }
+    for (const readout of readouts(bar())) {
+      const parent = readout.parentElement as HTMLElement;
+      for (const control of controls(parent)) {
+        // Node.DOCUMENT_POSITION_FOLLOWING: the control comes AFTER the label,
+        // which is the shape of "a label splitting a row of buttons".
+        if (readout.compareDocumentPosition(control) & 4) {
+          out.push(
+            `"${(readout.textContent ?? "").trim()}" sits before "${(control.textContent ?? "").trim()}" in the same cluster`,
+          );
+        }
+      }
+    }
+    return out;
+  }
+
+  it("never puts a readout between two controls, reading or editing", async () => {
+    const ta = await openScriptTab();
+    // Reading: Live page + its host, Outline, Types, the caret's step, Record
+    // here + Edit script.
+    fireEvent.click(screen.getByRole("button", { name: "Live page" }));
+    await screen.findByText("example.com");
+    const v = EditorView.findFromDOM(ta)!;
+    act(() => v.dispatch({ selection: { anchor: v.state.doc.line(4).from + 4 } }));
+    await screen.findByText(/step 2 ·/);
+    expect(readouts(bar()).length).toBeGreaterThan(1);
+    expect(clusterViolations()).toEqual([]);
+
+    // Editing: Pick locator joins the live cluster and Ask AI appears, which is
+    // the state the old bar read worst in.
+    fireEvent.click(screen.getByRole("button", { name: "Edit script" }));
+    await screen.findByRole("button", { name: "Save" });
+    expect(controls(bar()).length).toBeGreaterThan(4);
+    expect(clusterViolations()).toEqual([]);
+  });
+
+  it("reads the type service's state out in the status zone, not between Outline and the AI buttons", async () => {
+    // The exact placement the restyle was asked for. `ts.ensure` answers
+    // "unavailable" in tests, which is the same readout in its other state.
+    await openScriptTab();
+    const ts = await screen.findByText("Types unavailable");
+    expect(ts.closest(".gl-script-bar-status")).not.toBeNull();
+    expect(ts.closest(".gl-script-group")).toBeNull();
+  });
+
+  it("keeps the bar's two halves whatever the readouts have to say", async () => {
+    // `space-between` over exactly two children is what places the clusters
+    // now. The bar used to lean on `margin-right: auto` claimed by BOTH the
+    // live cluster and the check message, so the left-hand controls slid
+    // sideways the moment the caret readout appeared.
+    const ta = await openScriptTab();
+    const halves = () => Array.from(bar().children).map((el) => el.className);
+    expect(halves()).toEqual(["gl-script-bar-left", "gl-script-bar-right"]);
+
+    const v = EditorView.findFromDOM(ta)!;
+    act(() => v.dispatch({ selection: { anchor: v.state.doc.line(4).from + 4 } }));
+    await screen.findByText(/step 2 ·/);
+    expect(halves()).toEqual(["gl-script-bar-left", "gl-script-bar-right"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit script" }));
+    await screen.findByRole("button", { name: "Save" });
+    expect(halves()).toEqual(["gl-script-bar-left", "gl-script-bar-right"]);
+  });
+
+  it("ends the bar with the mode: Record here beside Edit script", async () => {
+    // Record here used to sit beside Outline, and only because it was Pick
+    // locator's `else`. It is one of the two ways INTO a change, which is what
+    // the bar's right end holds.
+    await openScriptTab();
+    const commit = bar().querySelector('[data-gl="script-commit"]') as HTMLElement;
+    expect(labels(controls(commit))).toEqual(["Record here", "Edit script"]);
+    expect(readouts(commit)).toEqual([]);
+  });
+
+  it("gives the live page both its controls, and its host after them", async () => {
+    // Pick locator is disabled until the toggle beside it is on and inserts
+    // what that page was asked for, so it belongs to the live page rather than
+    // to Outline. The host TRAILS the pair — it is what the toggle reports.
+    const ta = await openScriptTab();
+    fireEvent.click(screen.getByRole("button", { name: "Edit script" }));
+    await screen.findByRole("button", { name: "Save" });
+    const live = bar().querySelector('[data-gl="script-live"]') as HTMLElement;
+    expect(labels(controls(live))).toEqual(["Live page", "Pick locator"]);
+    expect(labels(controls(bar().querySelector('[data-gl="script-commit"]') as HTMLElement))).toEqual([
+      "Cancel",
+      "Save",
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Live page" }));
+    const host = await screen.findByText("example.com");
+    expect(host.parentElement).toBe(live);
+    expect(host.previousElementSibling?.className).toBe("gl-script-group");
+    expect(ta).toBe(screen.getByRole("textbox"));
+  });
+
+  it("reads the pre-save verdict out beside the buttons that answer it", async () => {
+    // The verdict and Save anyway are one decision. It used to reach its place
+    // by claiming the bar's auto margin, which is what fought the live cluster.
+    checkScript.mockResolvedValue({
+      ok: false,
+      errors: [{ message: "SyntaxError: x", line: 1, column: 1 }],
+      tests: [],
+      durationMs: 1,
+    });
+    const ta = await openScriptTab();
+    fireEvent.click(screen.getByRole("button", { name: "Edit script" }));
+    await screen.findByRole("button", { name: "Save" });
+    setDraft(ta, "broken(");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const verdict = await screen.findByText(/can't load this script — 1 problem/);
+    expect(verdict.closest(".gl-script-bar-status")).not.toBeNull();
+    const commit = bar().querySelector('[data-gl="script-commit"]') as HTMLElement;
+    expect(labels(controls(commit))).toEqual(["Cancel", "Save anyway", "Save"]);
+    expect(clusterViolations()).toEqual([]);
+  });
+
+  it("puts the hand-edited chip with the readouts, not in the commit cluster", async () => {
+    test_ = record({ scriptEdited: true });
+    await openScriptTab();
+    const chip = await screen.findByText("Edited manually");
+    expect(chip.closest(".gl-script-bar-status")).not.toBeNull();
+    expect(labels(controls(bar().querySelector('[data-gl="script-commit"]') as HTMLElement))).toEqual([
+      "Record here",
+      "Edit script",
+    ]);
+  });
+});
+
 describe("the Heals tab badge", () => {
   it("counts a pending propagation proposal with the other reviews", async () => {
     // One badge for heals, script changes and propagated fixes alike: three
