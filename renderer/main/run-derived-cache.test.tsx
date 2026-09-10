@@ -98,6 +98,7 @@ vi.mock("../lib/api", () => ({
     },
     artifacts: { list: counted("replays", () => []) },
     a11y: { rollup: counted("a11y-rollup", () => null) },
+    siteHealth: { overview: counted("site-health", () => null) },
     metrics: {
       stepHealth: counted("metrics", () => ({ available: true, rows: [] })),
       slowness: async () => null,
@@ -146,6 +147,11 @@ function Consumers() {
   // so the push that announces the run is also the one that must refresh the
   // proposals every badge counts.
   useQuery({ queryKey: ["propagations", "all"], queryFn: counted("propagations", () => []) });
+  // Site Health: the per-domain series, read from metrics.db rows a run's
+  // teardown writes — and read from a route that is only mounted while you
+  // stand on it, the a11y rollup's shape exactly. The key is prefixed, so one
+  // entry covers the overview, every host detail and the per-test tab.
+  useQuery({ queryKey: ["site-health", "overview", 0], queryFn: counted("site-health", () => null) });
   return null;
 }
 
@@ -184,6 +190,7 @@ describe("run-derived caches", () => {
     await waitFor(() => expect(calls.captureOverhead).toBe(before.captureOverhead + 1));
     await waitFor(() => expect(calls["a11y-rollup"]).toBe(before["a11y-rollup"] + 1));
     await waitFor(() => expect(calls.propagations).toBe(before.propagations + 1));
+    await waitFor(() => expect(calls["site-health"]).toBe(before["site-health"] + 1));
   });
 
   it("refetches them when a batch finishes, not only a single run", async () => {
@@ -243,6 +250,7 @@ describe("run-derived caches", () => {
         "replays",
         "run-totals",
         "runs",
+        "site-health",
       ].sort(),
     );
   });

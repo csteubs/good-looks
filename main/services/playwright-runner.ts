@@ -1627,7 +1627,7 @@ export const playwrightRunner = {
         // the fixture is where capture, healing AND crawl's page-settling live
         // — so a heal-only or crawl-only run needs it too.
         if (
-          (captureArtifacts || healing || a11y || recordLogs || siteHealth || settling || signing || dismissing || userPageOn || followTabs) &&
+          (captureArtifacts || healing || a11y || recordLogs || settling || signing || siteHealth || dismissing || userPageOn || followTabs) &&
           !rec.sourceDir
         ) {
           ensureCaptureFixture(scriptsDir);
