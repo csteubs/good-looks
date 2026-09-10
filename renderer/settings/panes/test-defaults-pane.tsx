@@ -234,6 +234,23 @@ export function TestDefaultsPane() {
             onCheckedChange={(checked) => void save({ defaultA11yChecks: checked })}
           />
         </SettingRow>
+
+        {/* Global rather than per test, unlike its three siblings: a domain's
+            score is a rollup across every test that reaches it, and a
+            per-test switch would make the series depend on which tests had
+            it on. The rail's Site Health row shows only while this is on. */}
+        <SettingRow
+          id="site-health-checks"
+          label="Check Site Health"
+          summary="Scores every page a run loads for SEO and performance, grouped by domain in the Site Health view. A low score cannot fail a run."
+          details="Applies to every test, including unattended runs from the CLI and CI. Off by default because it is one more read per action and one more file per run. Nothing leaves the machine: the readings are counts, lengths and timings taken in the page."
+        >
+          <Switch
+            id="site-health-checks"
+            checked={settings.siteHealthChecks ?? false}
+            onCheckedChange={(checked) => void save({ siteHealthChecks: checked })}
+          />
+        </SettingRow>
       </PaneSection>
     </>
   );

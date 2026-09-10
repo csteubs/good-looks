@@ -10,6 +10,89 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-09-10 — Site Health: a score per domain, from readings the run already takes
+
+The ask was an SEO score per domain and site performance statistics, as a rail
+view between Heals and Insights, grouped by domain with the change over time
+made obvious. What landed is one view, **Site Health**, with an SEO /
+Performance switch, and the shape of it was settled by four constraints rather
+than by taste.
+
+**The reading is taken IN THE RUN, not by a separate audit.** A Lighthouse run
+per page would have meant a second browser, a second navigation and a second
+minute per page, on a machine that has just loaded the page once already. The
+capture fixture already hooks every action; a context init script
+(`glazeSiteHealthInit`, buffered `PerformanceObserver`s for paint, LCP,
+layout-shift, longtask and event) plus one `page.evaluate` per action gives
+the same vitals Lighthouse's lab run reads, from the page the test actually
+exercised, on every engine the run uses. It is a separate fixture module
+(`glaze-site-health.mjs`) for a mechanical reason: the document-response
+memory it needs is a second `context.on("response")`, and `check:log-capture`
+pins the capture fixture's own at exactly one. The scoring — Lighthouse's SEO
+audit list at Lighthouse's weights, the log-normal performance curve at
+Lighthouse's control points — lives in `shared/site-health.mjs`, because the
+app, the CLI and the MCP all read it, and three spellings of "what is a 54"
+would drift the day the second was written.
+
+**Facts cross the page boundary; verdicts never do.** The reader returns
+counts, lengths, attribute values and timings, every string capped and every
+list bounded in the page, and the app rebuilds the reading on the way in
+(`normalizeSiteHealthReading`). No page text beyond the title travels, and a
+URL is origin + path — a query string is where a session token sits. This is
+the capture boundary rule (CLAUDE.md) applied to a new channel.
+
+**Two homes for the numbers, because retention prunes.** The per-page artifact
+(`site-health.json`) is subject to the ten-runs-per-test rule like every
+other artifact. The per-host SUMMARY is on the `RunRecord`, which is not — and
+`host_health` in metrics.db is rolled up from the summary, never from the
+artifact, so a domain's series is as long as its run history rather than as
+long as its screenshots. `page_health` comes from the artifact and is rolled up
+before the prune, like every other per-step row. Schema 2, drop-and-replay.
+
+**Global, never per test.** Screenshots, a11y and logs are per-test choices
+with a global default; this one is a single switch (`siteHealthChecks`, off).
+A domain's score is a rollup across every test that reaches it, and a per-test
+switch would make the series a function of which tests happened to have it on
+— a drop that was really three tests being switched off. The rail row is
+hidden while the switch is off; the ROUTE stays registered (a deep link and the
+palette land on a screen that explains the switch).
+
+**The copy carries no status words.** The mockup review was explicit: a 54 may
+be fine, and "Needs work" is the app's opinion where the user's is the one that
+counts. What the view adds is the CHANGE — "−4 vs prior", against the prior
+period of the same length — and "change detected 28 Aug (−22)" off the series,
+which are facts. Score text is right-aligned in a bounded box so a bar can
+never run into it; the payload column is "Transferred", not "Weight"; every
+vital card explains itself on hover; the Domains label is the sort control,
+lowest first by default, shared by both tabs. The one hue on the screen is
+amber on a vital over its published target, which is a threshold and not an
+opinion.
+
+**Unattended runs measure too, and `ingest` carries it back.** The CI runner
+reads the same settings file, arms the same fixture, and writes the summary
+onto its record; `good-looks ingest` admits the summary through the run gate,
+copies `site-health.json` by validated id (BOTH segments, since the test id is
+a path segment there), and — new with this — rolls every ingested run into
+metrics.db through the MCP's own `recordRun`. Before that an ingested run
+reached the database only if the app happened to rebuild it, so the CI runs
+that measure a site most often were the ones the series never saw.
+
+**Filing a score is the a11y send with a different anchor.** The defect source
+is `{ kind: "site-health", host, category, testId, runId, sinceMs }`: the
+subject is the host and the category, the run is where the screenshot comes
+from, the window is what the user was looking at (so the draft's delta is the
+one on their screen). The link is keyed on host + category, never the run, so a
+score filed once is found again on every later run. The deep link is a new
+form — `goodlooks://site-health/<host>/<category>` — parsed by the same module
+as the test links, with the host through `normalizeSiteHost`, so a link can
+only ever name a domain the app could have measured.
+
+Rejected: a PageSpeed Insights integration for v1 (the storage is shaped for
+field data later — `source: "lab"` on every reading); a Speed Index (needs a
+filmstrip); a per-test switch (above); colouring scores by band (above). The
+plan, with the mockup and the settled decisions table, is
+`docs/plans/site-health.md`.
+
 ### 2026-09-05 — The script bar is five clusters, and the gap says which
 
 The Script tab's utility bar sat directly under the test view's tab strip with

@@ -52,8 +52,20 @@ import {
   VISUAL_FRAMES,
   visualFrame,
   SETTINGS,
+  SITE_HEALTH_ARTIFACTS,
+  SITE_HEALTH_HOST_ROWS,
+  SITE_HEALTH_PAGE_ROWS,
   TESTS,
 } from "./preview-fixtures";
+import {
+  priorWindow,
+  scoreReading,
+  siteHealthHostDetail,
+  siteHealthOverview,
+  type SiteHealthHostResult,
+  type SiteHealthOverviewResult,
+  type SiteHealthTestResult,
+} from "../../shared/site-health.mjs";
 // Annotating the handlers with the app's own return types is what actually
 // prevents shape drift. The runtime coverage test in preview-bridge.test.ts
 // pins channel NAMES; only the type-checker can catch a fixture that answers
@@ -300,6 +312,12 @@ function costFiller(): RunRecord[] {
  *  once the bridge exists; a handler reached before then has nobody
  *  listening anyway. */
 let bridgeEmit: (channel: string, payload: unknown) => void = () => {};
+
+/** A real-clock `sinceMs` moved onto the fixture's pinned clock (0 stays 0). */
+function shiftToFixtureClock(sinceMs: number): number {
+  if (sinceMs <= 0) return 0;
+  return Math.max(1, sinceMs - (Date.now() - NOW));
+}
 
 function seed() {
   return {
@@ -1415,6 +1433,60 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
           steps: REPLAY.steps,
         },
       ]),
+    /** Site Health, shaped by the REAL `siteHealthOverview` / `siteHealthHostDetail`
+     *  over fixture rows (the app's handler shapes metrics.db rows the same
+     *  way). The window arithmetic is the view's whole point — "−4 vs prior"
+     *  — so it is not faked either: the rows are filtered here exactly as the
+     *  handler's query filters them, prior window included. */
+    "siteHealth:overview": (p): SiteHealthOverviewResult => {
+      // The view asks in REAL time ("the last 30 days" from Date.now()) and
+      // the fixture's clock is pinned at NOW, so the window is shifted onto
+      // the fixture's clock — otherwise the preview shows the empty state on
+      // any day but the fixture's own.
+      const sinceMs = shiftToFixtureClock(Number(p?.sinceMs) || 0);
+      const untilMs = NOW + 1;
+      const fetchSince = sinceMs > 0 ? (priorWindow(sinceMs, untilMs)?.since ?? sinceMs) : 0;
+      return {
+        available: true,
+        enabled: state.settings.siteHealthChecks !== false,
+        overview: siteHealthOverview({
+          hostRows: SITE_HEALTH_HOST_ROWS.filter((r) => r.at >= fetchSince),
+          pageRows: SITE_HEALTH_PAGE_ROWS.filter((r) => (r.runAt ?? r.at) >= fetchSince),
+          sinceMs,
+          untilMs,
+        }),
+      };
+    },
+    "siteHealth:host": (p): SiteHealthHostResult => {
+      const sinceMs = shiftToFixtureClock(Number(p?.sinceMs) || 0);
+      const untilMs = NOW + 1;
+      const host = String(p?.host ?? "");
+      const fetchSince = sinceMs > 0 ? (priorWindow(sinceMs, untilMs)?.since ?? sinceMs) : 0;
+      return {
+        available: true,
+        enabled: state.settings.siteHealthChecks !== false,
+        detail: siteHealthHostDetail({
+          host,
+          hostRows: SITE_HEALTH_HOST_ROWS.filter((r) => r.host === host && r.at >= fetchSince),
+          pageRows: SITE_HEALTH_PAGE_ROWS.filter((r) => r.host === host && (r.runAt ?? r.at) >= fetchSince),
+          sinceMs,
+          untilMs,
+        }),
+      };
+    },
+    "siteHealth:forTest": (p): SiteHealthTestResult | null => {
+      const testId = String(p?.testId ?? "");
+      const newest = [...SITE_HEALTH_HOST_ROWS]
+        .filter((r) => r.testId === testId)
+        .sort((a, b) => b.at - a.at)[0];
+      const artifact = newest ? SITE_HEALTH_ARTIFACTS.get(newest.runId) : undefined;
+      if (!newest || !artifact) return null;
+      return {
+        run: { id: newest.runId, startedAt: newest.at, status: "passed", ingested: Boolean(newest.ingested) },
+        summary: { pages: artifact.pages.length, ms: artifact.ms, hosts: SITE_HEALTH_HOST_ROWS.filter((r) => r.runId === newest.runId).map((r) => ({ host: r.host, pages: r.pages, seo: r.seo, perf: r.perf })) },
+        pages: artifact.pages.map(scoreReading),
+      };
+    },
     "a11y:acceptRun": (): RunReplay => {
       for (const step of REPLAY.steps) {
         if (!step.a11y) continue;
@@ -1952,6 +2024,35 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
           notices: [],
         };
       }
+      if (source.kind === "site-health") {
+        const cat = source.category === "seo" ? "SEO" : "Performance";
+        return {
+          source,
+          title: `${cat}: ${source.host} scores 54/100, −4 vs prior`,
+          body: [
+            `**${cat} score 54/100** for \`${source.host}\` · −4 vs prior`,
+            "",
+            "Mean of the latest reading of each page over the last 30 days (12 runs), against the 30 days before.",
+            "",
+            "**Pages · latest reading of each**",
+            "",
+            "- `/` — 41/100",
+            "- `/products/blue-shoe` — 62/100",
+            "- `/cart` — 88/100",
+            "",
+            "---",
+            "",
+            "- **Test:** Checkout — happy path",
+            "- **URL:** `https://shop.example.com`",
+            "",
+            `[Open in Good Looks!](goodlooks://site-health/${source.host}/${source.category})`,
+            "",
+            "_Filed from Good Looks!_",
+          ].join("\n"),
+          attachments: [],
+          notices: [],
+        };
+      }
       const png =
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
       const visual = source.kind === "visual";
@@ -2027,6 +2128,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "issues:linksForTest": (p): IssueLink[] =>
       state.issues.links.filter((l) => l.testId === p?.testId),
     "issues:a11yLinks": (): IssueLink[] => state.issues.links.filter((l) => l.kind === "a11y"),
+    "issues:siteHealthLinks": (): IssueLink[] => state.issues.links.filter((l) => l.kind === "site-health"),
     "issues:commentRecurrence": (p): IssueLink => {
       const source = (p?.source ?? {}) as IssueLink;
       const link = state.issues.links.find(

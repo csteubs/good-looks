@@ -13,13 +13,7 @@
 // as "nothing happened" and invite a second click — and a second copy.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  render,
-  screen,
-  fireEvent,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within, cleanup } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { toastTexts, clearToastCalls } from "../__tests__/sonner-stub";
 
@@ -314,6 +308,21 @@ describe("LibrarySidebar — the rail", () => {
     for (const name of ["Stats", "Visual", "Routines", "Heals"]) {
       expect(nav.textContent).toContain(name);
     }
+  });
+
+  it("offers Site Health only while the check is on", async () => {
+    // Hidden, not disabled: with the check off there is nothing behind the
+    // row. The ROUTE stays registered, so this is the rail's decision alone.
+    settings = { ...settings, siteHealthChecks: false };
+    renderSidebar();
+    await waitFor(() => expect(document.querySelector(".gl-rail-nav")?.textContent).toContain("Heals"));
+    expect(document.querySelector(".gl-rail-nav")?.textContent).not.toContain("Site Health");
+    cleanup();
+    settings = { ...settings, siteHealthChecks: true };
+    renderSidebar();
+    await waitFor(() => expect(document.querySelector(".gl-rail-nav")?.textContent).toContain("Site Health"));
+    fireEvent.click(screen.getByRole("button", { name: /^Site Health/ }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/site-health" }));
   });
 
   it("marks the open test as selected, and nothing else", async () => {

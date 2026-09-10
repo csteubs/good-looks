@@ -113,12 +113,24 @@ import { failureReasonStore } from "../services/failure-reason-store.js";
 import * as overlayRuleStore from "../services/overlay-rule-store.js";
 import { DEFAULT_FAILURE_REASONS, resolveFailureReason } from "../../shared/failure-reasons.mjs";
 import {
+  siteHealthHostRows,
+  siteHealthPageRows,
   stepBrowserMatrix,
   stepDurations,
   testDurationTrend,
   stepHealth,
   suiteCost,
 } from "../../shared/metrics-query.mjs";
+import {
+  priorWindow,
+  scoreReading,
+  siteHealthHostDetail,
+  siteHealthOverview,
+  type SiteHealthHostResult,
+  type SiteHealthOverviewResult,
+  type SiteHealthTestResult,
+} from "../../shared/site-health.mjs";
+import { normalizeSiteHost } from "../../shared/site-host.mjs";
 import { costBreakdown, divergentSteps, slowdowns } from "../../shared/step-insights.mjs";
 import {
   captureWindows,
@@ -2288,6 +2300,7 @@ export function registerHandlers(): void {
     typeof params?.testId === "string" ? issueTrackerService.linksForTest(params.testId) : [],
   );
   ipcMain.handle("issues:a11yLinks", async () => issueTrackerService.a11yLinks());
+  ipcMain.handle("issues:siteHealthLinks", async () => issueTrackerService.siteHealthLinks());
   ipcMain.handle(
     "issues:commentRecurrence",
     async (_e, params: { source?: unknown; attachmentFiles?: unknown }) => {
@@ -2951,6 +2964,87 @@ export function registerHandlers(): void {
     }
     return rollupA11y(runs);
   });
+  // ── Site Health ───────────────────────────────────────────────────────
+  //
+  // Rows out of metrics.db (the ONLY place the per-domain series lives — the
+  // run records carry a summary each, but the windowing, the latest-reading-
+  // per-page rule and the p75 want the flat rows), shaped by the shared
+  // functions the MCP tool and the insights facts builder use too. The window
+  // is fetched from the START OF THE PRIOR WINDOW, because "−4 vs prior" needs
+  // the period before the one on screen; `sinceMs` 0 is all time and has no
+  // prior. `available` and `enabled` are both stated, because an empty board
+  // has two different reasons and the view says which.
+  const siteHealthSince = (params: { sinceMs?: unknown } | undefined): number => {
+    const n = Number(params?.sinceMs);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  };
+  const siteHealthRows = (sinceMs: number, untilMs: number, host?: string) => {
+    const db = metricsStore.handle();
+    const fetchSince = sinceMs > 0 ? (priorWindow(sinceMs, untilMs)?.since ?? sinceMs) : 0;
+    return {
+      available: db !== null,
+      hostRows: siteHealthHostRows(db, { sinceMs: fetchSince, host }),
+      pageRows: siteHealthPageRows(db, { sinceMs: fetchSince, host }),
+    };
+  };
+  ipcMain.handle(
+    "siteHealth:overview",
+    async (_e, params: { sinceMs?: unknown }): Promise<SiteHealthOverviewResult> => {
+      const sinceMs = siteHealthSince(params);
+      const untilMs = Date.now();
+      const { available, hostRows, pageRows } = siteHealthRows(sinceMs, untilMs);
+      return {
+        available,
+        enabled: recorderSettingsStore.get().siteHealthChecks,
+        overview: siteHealthOverview({ hostRows, pageRows, sinceMs, untilMs }),
+      };
+    },
+  );
+  ipcMain.handle(
+    "siteHealth:host",
+    async (_e, params: { host?: unknown; sinceMs?: unknown }): Promise<SiteHealthHostResult> => {
+      // The host is a route segment typed by nothing but the app — and a deep
+      // link, which anyone can mint. Through the same gate the fixture's
+      // readings pass, so an unparseable one is refused rather than queried.
+      const host = normalizeSiteHost(params?.host);
+      if (!host) throw new Error("Not a site host: " + String(params?.host));
+      const sinceMs = siteHealthSince(params);
+      const untilMs = Date.now();
+      const { available, hostRows, pageRows } = siteHealthRows(sinceMs, untilMs, host);
+      return {
+        available,
+        enabled: recorderSettingsStore.get().siteHealthChecks,
+        detail: siteHealthHostDetail({ host, hostRows, pageRows, sinceMs, untilMs }),
+      };
+    },
+  );
+  /** The newest run of a test that measured, with its pages scored. Off the
+   *  run record and the artifact rather than the database, so it works the
+   *  moment a run finishes and needs no metrics at all. */
+  ipcMain.handle(
+    "siteHealth:forTest",
+    async (_e, params: { testId?: unknown }): Promise<SiteHealthTestResult | null> => {
+      const testId = typeof params?.testId === "string" ? params.testId : "";
+      if (!testId) return null;
+      const newest = runHistoryStore
+        .list()
+        .filter((r) => r.testId === testId && r.siteHealth)
+        .sort((a, b) => b.startedAt - a.startedAt)[0];
+      if (!newest || !newest.siteHealth) return null;
+      const artifact = artifactStore.readSiteHealth(newest.testId, newest.id);
+      return {
+        run: {
+          id: newest.id,
+          startedAt: newest.startedAt,
+          status: newest.status,
+          ingested: typeof newest.ingestedAt === "number",
+        },
+        summary: newest.siteHealth,
+        pages: (artifact?.pages ?? []).map(scoreReading),
+      };
+    },
+  );
+
   /** Forget everything accepted for a test — the way back from an over-eager
    *  "accept run", which is otherwise irreversible. */
   ipcMain.handle("a11y:resetBaseline", async (_e, params: { testId: string }) =>

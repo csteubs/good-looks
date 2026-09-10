@@ -24,6 +24,9 @@
 // `.ts` — the shell is compiled, the parse has to be identical, and a
 // transcribed copy is right the day it is written and silently divergent after.
 
+import { isSiteHealthCategory } from "./site-health.mjs";
+import { normalizeSiteHost } from "./site-host.mjs";
+
 /** The scheme this app answers to. */
 export const DEEP_LINK_SCHEME = "goodlooks";
 
@@ -68,9 +71,16 @@ function id(raw) {
  *   goodlooks://test/<testId>
  *   goodlooks://test/<testId>/run/<runId>
  *   goodlooks://test/<testId>/run/<runId>/step/<stepId>
+ *   goodlooks://site-health/<host>
+ *   goodlooks://site-health/<host>/<seo|performance>
+ *
+ * A test link answers `{ kind: "test", testId, runId, stepId }` and a Site
+ * Health link `{ kind: "site-health", host, category }`. The host goes through
+ * the same gate the fixture's readings do (`normalizeSiteHost`), so a link can
+ * only ever name a domain the app could have measured.
  *
  * @param {string | undefined | null} url
- * @returns {{testId: string, runId: string | null, stepId: string | null} | null}
+ * @returns {import("./deep-link.d.mts").DeepLinkTarget | null}
  */
 export function parseDeepLink(url) {
   if (typeof url !== "string" || !url) return null;
@@ -110,6 +120,21 @@ export function parseDeepLink(url) {
   // do nothing.
   const segments = [parsed.host, ...parsed.pathname.split("/")].filter(Boolean);
   if (segments.length < 2) return null;
+  if (segments[0] === "site-health") {
+    // The host is a domain, not an id: bounded and shaped by the host rule
+    // rather than the id rule (an IPv6 literal carries brackets and colons).
+    if (segments.length > 3) return null;
+    const rawHost = id(segments[1]);
+    const host = rawHost ? normalizeSiteHost(rawHost) : null;
+    if (!host) return null;
+    let category = null;
+    if (segments.length === 3) {
+      const raw = id(segments[2]);
+      if (!raw || !isSiteHealthCategory(raw)) return null;
+      category = raw;
+    }
+    return { kind: "site-health", host, category };
+  }
   if (segments[0] !== "test") return null;
 
   const testId = id(segments[1]);
@@ -138,7 +163,19 @@ export function parseDeepLink(url) {
     return null;
   }
 
-  return { testId, runId, stepId };
+  return { kind: "test", testId, runId, stepId };
+}
+
+/**
+ * The link into a domain's Site Health screen, paired with the parser above.
+ *
+ * @param {{host: string, category?: string | null}} target
+ * @returns {string}
+ */
+export function buildSiteHealthDeepLink(target) {
+  const parts = [`${DEEP_LINK_SCHEME}://site-health/${encodeURIComponent(target.host)}`];
+  if (target.category && isSiteHealthCategory(target.category)) parts.push(target.category);
+  return parts.join("/");
 }
 
 /**

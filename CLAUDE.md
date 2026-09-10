@@ -78,7 +78,8 @@ main/services/llm/  local + hosted LLM chat integration (Ollama, LM Studio, Clau
                     `matchesFor`, interpolated from shared/overlay-rules.mjs
 main/recorder/       recording-session logic (script injection, step capture)
 main/windows/        BrowserWindow creation/config
-renderer/main/       primary views (home, recording/trainer, script view, ai-debug-panel, stats)
+renderer/main/       primary views (home, recording/trainer, script view, ai-debug-panel, stats,
+                     site-health-view — SEO and performance per domain, 2026-09-10)
 renderer/settings/   the Settings SCREENS (panes/, one per rail row). Two routes in the MAIN
                      window — `/settings`, the board, and `/settings/$pane` — plus
                      `/settings/$pane/$topic` for the Documentation pane. It was a separate
@@ -357,6 +358,25 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                     browsers.json. Both the app and the MCP decide whether to
                     install before a run; a name-prefix rule in each said yes
                     to the previous Playwright's build after the 1.62 upgrade.
+                    site-health.mjs is the WHOLE Site Health rulebook (2026-09-10):
+                    the SEO audits, the Lighthouse-weighted performance curve,
+                    the capture-boundary rebuilds, and the two shapings
+                    (siteHealthOverview / siteHealthHostDetail) the app's
+                    handlers, the MCP's get_site_health and the insights facts
+                    builder all call. site-host.mjs is the host rule beside it,
+                    interpolated into the fixture as SITE_HOST_HELPERS so the
+                    fixture and the rollup spell a domain one way.
+                    site-health-fixture-source.mjs is the fixture itself
+                    (glaze-site-health.mjs, the SEVENTH capability fixture): a
+                    context init script for the vitals and one evaluate per
+                    action, facts only, in its own module because its
+                    document-response memory is a second context.on("response")
+                    and check:log-capture pins the capture fixture's at one.
+                    The per-host SUMMARY rides RunRecord.siteHealth and is what
+                    host_health rolls up from, so a domain's series outlives
+                    artifact retention; page_health comes from the artifact.
+                    check:site-health executes the worker half against a
+                    stubbed page and pins the app runner's wiring.
                     step-semantics.mjs is the load-bearing one: the single
                      definition of what each assert/wait/condition MEANS (match
                      mode, case rule, whitespace rule), read by the generator,
@@ -429,7 +449,7 @@ mcp/                 standalone MCP server exposing the test library to external
                      import the pure modules, and stayed green throughout
                      (list_tests, get_test, list_runs, get_run_log, run_test, run_batch, run_group,
                       list_routines, run_routine,
-                      get_visual_report, get_a11y_report, get_run_logs, list_heals,
+                      get_visual_report, get_a11y_report, get_site_health, get_run_logs, list_heals,
                       list_propagations,
                       list_batches, compare_runs, triage_run, get_step_health,
                       get_suite_cost, get_browser_matrix, get_flake_report,

@@ -236,7 +236,7 @@ assert(
 {
   const target = parseDeepLink(String(failedRun!.detail.link));
   assert(
-    target !== null && target.testId === "t1" && target.runId === "r1",
+    target !== null && target.kind === "test" && target.testId === "t1" && target.runId === "r1",
     `the emitted link parses back to the run it names (got ${JSON.stringify(target)})`,
   );
 }
@@ -452,6 +452,7 @@ async function checkSendAlertRedaction(): Promise<void> {
         testsCreated: 0,
         unreviewedScriptChanges: 0,
         expiringSignatures: 0,
+        siteHealthDomains: null,
       },
       sending: [],
       promptChars: 1,

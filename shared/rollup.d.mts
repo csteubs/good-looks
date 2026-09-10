@@ -5,7 +5,8 @@
 // nothing that does. Only the fields the rollup reads are declared, which is
 // also the honest description of what it needs.
 
-import type { RunRow, StepRow } from "./metrics-schema.mjs";
+import type { HostHealthDbRow, PageHealthDbRow, RunRow, StepRow } from "./metrics-schema.mjs";
+import type { SiteHealthArtifact } from "./site-health.mjs";
 
 export interface RollupReplayStep {
   index: number;
@@ -51,6 +52,15 @@ export interface RollupInput {
   /** the run's raw log text, for the error signature */
   logText?: string;
   source?: "app" | "mcp";
+  /** the run's site-health.json (already normalised), or null */
+  siteHealth?: SiteHealthArtifact | null;
 }
 
-export declare function rollupRun(input: RollupInput): { run: RunRow; steps: StepRow[] };
+export declare function rollupRun(input: RollupInput): {
+  run: RunRow;
+  steps: StepRow[];
+  /** from the run record's summary — present even after the artifact is pruned */
+  hosts: HostHealthDbRow[];
+  /** from the artifact — empty once retention has taken it */
+  pages: PageHealthDbRow[];
+};

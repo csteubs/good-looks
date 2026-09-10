@@ -18,6 +18,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { normalizeSiteHealthArtifact, SITE_HEALTH_FILE } from "../shared/site-health.mjs";
+
 /** Subdirectories of a test's artifact dir that are NOT runs. Mirrors
  *  RESERVED_DIRS in artifact-store.ts — listing `baseline/` as a run would
  *  offer a pinned-baseline directory as though it were a run to report on. */
@@ -50,6 +52,15 @@ export function readReplay(dataDir, testId, runId) {
  *  ms each screenshot cost. */
 export function readManifest(dataDir, testId, runId) {
   return readJson(path.join(runDir(dataDir, testId, runId), "manifest.json"));
+}
+
+/** The Site Health artifact — every document the run loaded, with its SEO
+ *  facts and timings — rebuilt through the shared normaliser, or null. Same
+ *  reader the app has (artifact-store.readSiteHealth): both roll it up. */
+export function readSiteHealth(dataDir, testId, runId) {
+  return normalizeSiteHealthArtifact(
+    readJson(path.join(runDir(dataDir, testId, runId), SITE_HEALTH_FILE)),
+  );
 }
 
 /**

@@ -94,6 +94,11 @@ import type {
   TestDurationTrend,
 } from "../../shared/metrics-query.mjs";
 import type { A11yRollup } from "../../shared/a11y-rollup.mjs";
+import type {
+  SiteHealthHostResult,
+  SiteHealthOverviewResult,
+  SiteHealthTestResult,
+} from "../../shared/site-health.mjs";
 import type { CostBreakdown, DivergentStep } from "../../shared/step-insights.mjs";
 import type {
   LlmChatParams,
@@ -528,6 +533,23 @@ export const api = {
      *  RUN_DERIVED_KEYS because a run changes it. */
     rollup: () => ipc().invoke<A11yRollup>("a11y:rollup"),
   },
+  siteHealth: {
+    /** Every domain with a reading in the window, its current SEO and
+     *  performance score, the change against the prior window of the same
+     *  length, and a run-by-run series. `sinceMs` 0 is "all time". Cached
+     *  under `["site-health", …]`, in RUN_DERIVED_KEYS because a run changes
+     *  it. */
+    overview: (sinceMs: number) =>
+      ipc().invoke<SiteHealthOverviewResult>("siteHealth:overview", { sinceMs }),
+    /** One domain: page table, findings, vitals, engines, and which tests
+     *  reach it. */
+    host: (host: string, sinceMs: number) =>
+      ipc().invoke<SiteHealthHostResult>("siteHealth:host", { host, sinceMs }),
+    /** The newest run of a test that measured, with its pages scored — the
+     *  per-test tab. Null when no run of the test has. */
+    forTest: (testId: string) =>
+      ipc().invoke<SiteHealthTestResult | null>("siteHealth:forTest", { testId }),
+  },
   heals: {
     list: (testId: string) => ipc().invoke<HealEntry[]>("heals:list", { testId }),
     listAll: () => ipc().invoke<HealListEntry[]>("heals:listAll"),
@@ -762,6 +784,9 @@ export const api = {
     /** Every a11y link across tests and rules — the Accessibility view's rule
      *  board badges every row from one read. */
     a11yLinks: () => ipc().invoke<IssueLink[]>("issues:a11yLinks"),
+    /** Every Site Health link — keyed on host + category, never a run — so the
+     *  view badges "Filed as" from one read. */
+    siteHealthLinks: () => ipc().invoke<IssueLink[]>("issues:siteHealthLinks"),
     /** Report a recurrence onto the existing issue instead of filing a second. */
     commentRecurrence: (source: DefectSource, attachmentFiles: string[]) =>
       ipc().invoke<IssueLink>("issues:commentRecurrence", { source, attachmentFiles }),

@@ -33,6 +33,15 @@ import type {
   TestRecord,
 } from "../lib/recorder-types";
 import type { LlmConfig, LlmProviderStatus } from "../lib/llm-types";
+import {
+  auditsToText,
+  scoreReading,
+  summariseSiteHealth,
+  type HostHealthRow,
+  type PageHealthRow,
+  type SiteHealthArtifact,
+  type SiteHealthReading,
+} from "../../shared/site-health.mjs";
 
 /** Fixed clock. `Date.now()` here would make "2 minutes ago" drift between the
  *  screenshot in a pull request and the page a reviewer opens an hour later,
@@ -1109,6 +1118,8 @@ export const SETTINGS: RecorderSettings = {
   autoHealApply: "suggest",
   propagateFixes: true,
   defaultA11yChecks: false,
+  // On in the preview so the Site Health rail row and view are reachable.
+  siteHealthChecks: true,
   debugScreenshots: false,
   defaultCaptureArtifacts: true,
   defaultRecordLogs: true,
@@ -1496,6 +1507,7 @@ const INSIGHT_STATS_BASE = {
   testsCreated: 1,
   unreviewedScriptChanges: 1,
   expiringSignatures: 1,
+  siteHealthDomains: 2,
 };
 
 const INSIGHT_SENDING = [
@@ -1589,6 +1601,7 @@ export const INSIGHT_REPORTS: InsightReport[] = [
       newClusters: 0,
       unreviewedScriptChanges: 0,
       expiringSignatures: 0,
+      siteHealthDomains: 2,
     },
     sending: INSIGHT_SENDING,
     promptChars: 5220,
@@ -1639,3 +1652,160 @@ export const INSIGHTS_STATE: InsightsState = {
   lastError: null,
   lastSeenAppVersion: "1.0.0",
 };
+
+// ── Site Health ─────────────────────────────────────────────────────────
+//
+// Twelve runs of the checkout test over thirty days on shop.example.com, three
+// pages each, and four runs of the login test on app.example.com — SCORED with
+// the real `scoreReading`, never hand-typed, for the reason the a11y rollup is
+// computed with the real `rollupA11y`: a preview that shows a score the
+// shipped rule could never produce is a preview that teaches the screen to
+// lie. The shape of the series is the one the view exists to make obvious:
+// the shop's performance steps down from the ninth run (a heavier LCP, a
+// layout shift and a long task on the home page), so "−N vs prior" and
+// "change detected" both have something to say. Every fourth shop run is an
+// ingested one.
+
+function siteHealthReading(
+  over: Omit<Partial<SiteHealthReading>, "facts" | "metrics"> & {
+    facts?: Partial<SiteHealthReading["facts"]>;
+    metrics?: Partial<SiteHealthReading["metrics"]>;
+  },
+): SiteHealthReading {
+  const facts: SiteHealthReading["facts"] = {
+    titleLength: 34, descriptionLength: 120, lang: "en", viewport: true, canonical: [], robots: [],
+    h1Count: 1, imagesTotal: 8, imagesMissingAlt: 0, links: { total: 24, generic: 0, uncrawlable: 0 },
+    hreflang: [], jsonLd: { blocks: 1, invalid: 0, types: ["Product"] },
+    og: { title: true, description: true, image: true }, twitterCard: true, protocol: "https:", insecureResources: 0,
+    ...(over.facts ?? {}),
+  };
+  const metrics: SiteHealthReading["metrics"] = {
+    ttfb: 180, fcp: 900, lcp: 1700, cls: 0.02, tbt: 60, inp: 120, dcl: 1100, load: 1900, requests: 42, transferBytes: 780_000,
+    coverage: ["fcp", "lcp", "tbt", "cls"],
+    ...(over.metrics ?? {}),
+  };
+  return {
+    id: "doc",
+    url: "https://shop.example.com/",
+    host: "shop.example.com",
+    path: "/",
+    title: "Example Store",
+    tab: 0,
+    cold: true,
+    navType: "navigate",
+    engine: "chromium",
+    action: 0,
+    at: NOW,
+    status: 200,
+    xRobotsTag: null,
+    source: "lab",
+    ...over,
+    facts,
+    metrics,
+  };
+}
+
+function siteHealthFixture(): {
+  hostRows: HostHealthRow[];
+  pageRows: PageHealthRow[];
+  artifacts: Map<string, SiteHealthArtifact>;
+} {
+  const hostRows: HostHealthRow[] = [];
+  const pageRows: PageHealthRow[] = [];
+  const artifacts = new Map<string, SiteHealthArtifact>();
+  const noise = (i: number, k: number) => ((i * 37 + k * 11) % 7) - 3;
+
+  const add = (run: { id: string; testId: string; testName: string; at: number; browser: string; ingested: boolean }, pages: SiteHealthReading[]) => {
+    const artifact: SiteHealthArtifact = { testId: run.testId, runId: run.id, attempt: 0, ms: 240 + pages.length * 30, pages: pages.map((p, i) => ({ ...p, id: `${run.id}-${i}`, at: run.at + i * 1500, action: i })) };
+    artifacts.set(run.id, artifact);
+    for (const h of summariseSiteHealth(artifact).hosts) {
+      hostRows.push({ runId: run.id, host: h.host, pages: h.pages, seo: h.seo, perf: h.perf, at: run.at, testId: run.testId, testName: run.testName, browser: run.browser, ingested: run.ingested ? 1 : 0 });
+    }
+    artifact.pages.forEach((reading, index) => {
+      const scored = scoreReading(reading);
+      pageRows.push({
+        runId: run.id, pageIndex: index, host: reading.host, path: reading.path, url: reading.url, title: reading.title,
+        tab: reading.tab, cold: reading.cold, navType: reading.navType, engine: reading.engine, status: reading.status,
+        seo: scored.seo, seoAudits: auditsToText(scored.audits), perf: scored.perf, coverage: scored.coverage.join(" "),
+        fcp: reading.metrics.fcp, lcp: reading.metrics.lcp, cls: reading.metrics.cls, tbt: reading.metrics.tbt, inp: reading.metrics.inp,
+        ttfb: reading.metrics.ttfb, dcl: reading.metrics.dcl, load: reading.metrics.load, requests: reading.metrics.requests,
+        transferBytes: reading.metrics.transferBytes, action: reading.action, at: reading.at, runAt: run.at,
+        testId: run.testId, testName: run.testName, browser: run.browser, ingested: run.ingested ? 1 : 0,
+      });
+    });
+  };
+
+  // Sixty days, a run every five: the default 30-day window holds the last
+  // six runs and has a prior period to compare with, and the step down lands
+  // INSIDE the window (run 8) so the "change detected" line has a date.
+  for (let i = 0; i < 12; i++) {
+    const at = NOW - (60 - i * 5) * DAY + i * 7 * MINUTE;
+    const regressed = i >= 8;
+    add(
+      { id: `r-sh-${i}`, testId: "t-checkout", testName: "Checkout — happy path", at, browser: i % 5 === 2 ? "webkit" : "chromium", ingested: i % 4 === 3 },
+      [
+        siteHealthReading({
+          metrics: {
+            lcp: (regressed ? 4400 : 1700) + noise(i, 1) * 60,
+            cls: regressed ? 0.28 + noise(i, 2) * 0.01 : 0.02,
+            tbt: (regressed ? 420 : 60) + noise(i, 3) * 10,
+            transferBytes: (regressed ? 2_140_000 : 780_000) + noise(i, 4) * 20_000,
+          },
+        }),
+        siteHealthReading({
+          url: "https://shop.example.com/products/blue-shoe",
+          path: "/products/blue-shoe",
+          title: "Blue Running Shoe — Example Store",
+          cold: false,
+          action: 1,
+          facts: { h1Count: i >= 9 ? 2 : 1, imagesTotal: 14, imagesMissingAlt: 3 },
+          metrics: { lcp: 2100 + noise(i, 5) * 80, tbt: 140 + noise(i, 6) * 12, transferBytes: 1_120_000 },
+        }),
+        siteHealthReading({
+          url: "https://shop.example.com/cart",
+          path: "/cart",
+          title: "Cart",
+          cold: false,
+          action: 2,
+          facts: { descriptionLength: 0, titleLength: 4, jsonLd: { blocks: 0, invalid: 0, types: [] }, og: { title: false, description: false, image: false }, twitterCard: false },
+          metrics: { lcp: 1200 + noise(i, 7) * 40, tbt: 30, transferBytes: 410_000 },
+        }),
+      ],
+    );
+  }
+  for (let i = 0; i < 4; i++) {
+    const at = NOW - (20 - i * 6) * DAY + i * 3 * MINUTE;
+    add(
+      { id: `r-sh-app-${i}`, testId: "t-login", testName: "Login — wrong password shows an error", at, browser: "chromium", ingested: false },
+      [
+        siteHealthReading({
+          url: "https://app.example.com/login",
+          host: "app.example.com",
+          path: "/login",
+          title: "Sign in — Example App",
+          facts: { lang: "", canonical: [], jsonLd: { blocks: 0, invalid: 0, types: [] } },
+          metrics: { lcp: 1400 + noise(i, 8) * 50, cls: 0, tbt: 20, inp: null, transferBytes: 320_000 },
+        }),
+        siteHealthReading({
+          url: "https://app.example.com/login/error",
+          host: "app.example.com",
+          path: "/login/error",
+          title: "Sign in — Example App",
+          cold: false,
+          action: 1,
+          status: 200,
+          facts: { lang: "", robots: ["noindex"] },
+          metrics: { lcp: 1300, cls: 0, tbt: 25, inp: 90, transferBytes: 330_000 },
+        }),
+      ],
+    );
+  }
+  hostRows.sort((a, b) => a.at - b.at);
+  pageRows.sort((a, b) => (a.runAt ?? 0) - (b.runAt ?? 0) || a.pageIndex - b.pageIndex);
+  return { hostRows, pageRows, artifacts };
+}
+
+const SITE_HEALTH = siteHealthFixture();
+export const SITE_HEALTH_HOST_ROWS: HostHealthRow[] = SITE_HEALTH.hostRows;
+export const SITE_HEALTH_PAGE_ROWS: PageHealthRow[] = SITE_HEALTH.pageRows;
+export const SITE_HEALTH_ARTIFACTS: Map<string, SiteHealthArtifact> = SITE_HEALTH.artifacts;

@@ -39,6 +39,7 @@ import {
   planHealIngest,
 } from "../../shared/heal-ingest.mjs";
 import { RUN_HEALS_FILE } from "../../shared/heal-artifacts.mjs";
+import { SITE_HEALTH_FILE } from "../../shared/site-health.mjs";
 import type { HealEntry } from "./heal-journal-store.js";
 
 const made: string[] = [];
@@ -118,10 +119,10 @@ function journalOf(dataDir: string): Record<string, unknown>[] {
   return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>[]) : [];
 }
 
-function run(source: string, dataDir: string, options: Partial<{ dryRun: boolean; json: boolean }> = {}) {
+async function run(source: string, dataDir: string, options: Partial<{ dryRun: boolean; json: boolean }> = {}) {
   const out: string[] = [];
   const err: string[] = [];
-  const code = ingestCommand(
+  const code = await ingestCommand(
     { dir: source, dryRun: false, json: false, ...options },
     { out: (s: string) => out.push(s), err: (s: string) => err.push(s), dataDir, now: () => 1_700_000_000_000 },
   );
@@ -317,13 +318,13 @@ describe("planIngest", () => {
 });
 
 describe("ingestCommand", () => {
-  it("carries runs in, rewriting the log path into THIS library", () => {
+  it("carries runs in, rewriting the log path into THIS library", async () => {
     const source = libraryWith([validRun(), validRun({ id: "run-2", status: "failed", exitCode: 1 })], {
       "run-1": "log one",
       "run-2": "log two",
     });
     const local = libraryWith([]);
-    const r = run(source, local);
+    const r = await run(source, local);
 
     expect(r.code).toBe(0);
     const stored = r.history();
@@ -334,7 +335,7 @@ describe("ingestCommand", () => {
     expect(readFileSync(join(local, "recorder", "logs", "run-1.log"), "utf8")).toBe("log one");
   });
 
-  it("stores a log path inside this library even when the record names a secret", () => {
+  it("stores a log path inside this library even when the record names a secret", async () => {
     // THE ONE THAT MATTERS. Without it, the app's log search reads this path and
     // returns excerpts of whatever is there.
     const secret = join(tempDir("gl-secret-"), "id_rsa");
@@ -342,7 +343,7 @@ describe("ingestCommand", () => {
 
     const source = libraryWith([validRun({ logFile: secret })]);
     const local = libraryWith([]);
-    const r = run(source, local);
+    const r = await run(source, local);
 
     const [stored] = r.history();
     expect(stored.logFile).toBe(join(local, "recorder", "logs", "run-1.log"));
@@ -355,7 +356,7 @@ describe("ingestCommand", () => {
     expect(readFileSync(secret, "utf8")).toBe("PRIVATE KEY MATERIAL");
   });
 
-  it("writes nothing outside the logs directory for a traversal id", () => {
+  it("writes nothing outside the logs directory for a traversal id", async () => {
     // The escape target is a path this test OWNS and removes first. Asserting a
     // fixed absolute path was the first version, and a leftover from breaking
     // the guard on purpose then failed the next honest run — a test that reports
@@ -368,47 +369,47 @@ describe("ingestCommand", () => {
     const hops = "../".repeat(target.split("/").length + 4);
     const source = libraryWith([validRun({ id: `${hops}${target.replace(/^\//, "")}` })]);
     const local = libraryWith([]);
-    const r = run(source, local);
+    const r = await run(source, local);
 
     expect(r.history()).toHaveLength(0);
     expect(r.out).toContain("could not be read and were refused");
     expect(existsSync(`${target}.log`)).toBe(false);
   });
 
-  it("stamps ingestedAt, so the timing aggregates can tell a container apart", () => {
+  it("stamps ingestedAt, so the timing aggregates can tell a container apart", async () => {
     const source = libraryWith([validRun()], { "run-1": "x" });
     const local = libraryWith([]);
-    const [stored] = run(source, local).history();
+    const [stored] = (await run(source, local)).history();
     expect(stored.ingestedAt).toBe(1_700_000_000_000);
   });
 
-  it("recomputes logBytes from the log it actually copied", () => {
+  it("recomputes logBytes from the log it actually copied", async () => {
     const source = libraryWith([validRun({ logBytes: 999_999 })], { "run-1": "seven!" });
     const local = libraryWith([]);
-    const [stored] = run(source, local).history();
+    const [stored] = (await run(source, local)).history();
     expect(stored.logBytes).toBe(6);
   });
 
-  it("is safe to run twice", () => {
+  it("is safe to run twice", async () => {
     // The natural way to use this is to point it at whatever artifact directory
     // is on hand and let it work out what is new.
     const source = libraryWith([validRun()], { "run-1": "x" });
     const local = libraryWith([]);
-    run(source, local);
-    const second = run(source, local);
+    await run(source, local);
+    const second = await run(source, local);
 
     expect(second.history()).toHaveLength(1);
     expect(second.out).toContain("already in this library");
     expect(second.out).toContain("Nothing new");
   });
 
-  it("keeps a run whose log did not travel", () => {
+  it("keeps a run whose log did not travel", async () => {
     // The outcome, the timing and the commit are what the flake verdict reads;
     // losing the row because a file is missing would throw away the evidence
     // this command exists to carry.
     const source = libraryWith([validRun()]);
     const local = libraryWith([]);
-    const r = run(source, local);
+    const r = await run(source, local);
 
     expect(r.history()).toHaveLength(1);
     expect(r.out).toContain("without a log file beside them");
@@ -417,62 +418,118 @@ describe("ingestCommand", () => {
     );
   });
 
-  it("accepts the artifact unpacked at either level", () => {
+  it("accepts the artifact unpacked at either level", async () => {
     // Half the time a CI zip gives you the library, half the time its recorder/.
     const source = libraryWith([validRun()], { "run-1": "x" });
     const local = libraryWith([]);
-    const r = run(join(source, "recorder"), local);
+    const r = await run(join(source, "recorder"), local);
     expect(r.code).toBe(0);
     expect(r.history()).toHaveLength(1);
   });
 
-  it("--dry-run reports and writes nothing", () => {
+  it("carries a run's site-health.json into THIS library's artifacts, by validated id", async () => {
+    const source = libraryWith([validRun({ siteHealth: { pages: 1, ms: 10, hosts: [{ host: "shop.example.com", pages: 1, seo: 90, perf: 60 }] } })], { "run-1": "x" });
+    const dir = join(source, "recorder", "artifacts", "t-one", "run-1");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, SITE_HEALTH_FILE), JSON.stringify({ testId: "t-one", runId: "run-1", attempt: 0, ms: 10, pages: [] }), "utf8");
+    const local = libraryWith([]);
+    const r = await run(source, local, { json: true });
+    expect(existsSync(join(local, "recorder", "artifacts", "t-one", "run-1", SITE_HEALTH_FILE))).toBe(true);
+    expect(JSON.parse(r.out)).toMatchObject({ siteHealth: 1 });
+    // The summary came through the gate onto the stored record.
+    const [stored] = r.history();
+    expect(stored.siteHealth).toEqual({ pages: 1, ms: 10, hosts: [{ host: "shop.example.com", pages: 1, seo: 90, perf: 60 }] });
+  });
+
+  it("drops a hostile siteHealth summary without losing the run", async () => {
+    const source = libraryWith([validRun({ siteHealth: { pages: "many", hosts: "nope" } })], { "run-1": "x" });
+    const local = libraryWith([]);
+    const [stored] = (await run(source, local)).history();
+    expect(stored.id).toBe("run-1");
+    expect("siteHealth" in stored).toBe(false);
+  });
+
+  it("writes no artifact for a test id that is not a plain token", async () => {
+    // `testId` is a path segment of the artifact directory, like the run id is
+    // of the log path — the same rule has to hold for both halves.
+    const source = libraryWith([validRun({ testId: "../../escape" })], { "run-1": "x" });
+    const dir = join(source, "recorder", "artifacts", "../../escape", "run-1");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, SITE_HEALTH_FILE), "{}", "utf8");
+    const local = libraryWith([]);
+    const r = await run(source, local, { json: true });
+    expect(JSON.parse(r.out)).toMatchObject({ ingested: 1, siteHealth: 0 });
+    expect(existsSync(resolve(local, "escape", "run-1", SITE_HEALTH_FILE))).toBe(false);
+    expect(existsSync(resolve(local, "recorder", "escape", "run-1", SITE_HEALTH_FILE))).toBe(false);
+  });
+
+  it("rolls every ingested run into metrics.db, host rows included", async () => {
+    const source = libraryWith(
+      [validRun({ siteHealth: { pages: 2, ms: 10, hosts: [{ host: "shop.example.com", pages: 2, seo: 90, perf: 60 }] } })],
+      { "run-1": "x" },
+    );
+    const local = libraryWith([]);
+    const r = await run(source, local, { json: true });
+    expect(JSON.parse(r.out)).toMatchObject({ metrics: 1 });
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(join(local, "recorder", "metrics.db"));
+    try {
+      const runs = db.prepare("SELECT id, ingested_at FROM runs").all() as { id: string; ingested_at: number }[];
+      expect(runs).toEqual([{ id: "run-1", ingested_at: 1_700_000_000_000 }]);
+      const hosts = db.prepare("SELECT host, seo, perf FROM host_health").all();
+      expect(hosts).toEqual([{ host: "shop.example.com", seo: 90, perf: 60 }]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("--dry-run reports and writes nothing", async () => {
     const source = libraryWith([validRun()], { "run-1": "x" });
     const local = libraryWith([]);
-    const r = run(source, local, { dryRun: true });
+    const r = await run(source, local, { dryRun: true });
 
     expect(r.out).toContain("Would ingest 1 run");
     expect(r.history()).toHaveLength(0);
     expect(existsSync(join(local, "recorder", "logs", "run-1.log"))).toBe(false);
   });
 
-  it("--json prints the counts a script can read", () => {
+  it("--json prints the counts a script can read", async () => {
     const source = libraryWith([validRun(), { id: "../escape" }], { "run-1": "x" });
     const local = libraryWith([]);
-    const r = run(source, local, { json: true });
+    const r = await run(source, local, { json: true });
     expect(JSON.parse(r.out)).toMatchObject({ ingested: 1, alreadyPresent: 0, unusable: 1 });
   });
 
-  it("refuses this library's own directory by name", () => {
+  it("refuses this library's own directory by name", async () => {
     // Harmless — every record would be a duplicate — which is exactly why it is
     // worth naming. "0 new, 412 already present" is true and leaves you no wiser.
     const local = libraryWith([validRun()]);
-    const r = run(local, local);
+    const r = await run(local, local);
     expect(r.code).toBe(3);
     expect(r.err).toContain("own directory");
   });
 
-  it("refuses a directory that is not a library, rather than reporting nothing to do", () => {
+  it("refuses a directory that is not a library, rather than reporting nothing to do", async () => {
     const empty = tempDir("gl-empty-");
     const local = libraryWith([]);
-    const r = run(empty, local);
+    const r = await run(empty, local);
     expect(r.code).toBe(3);
     expect(r.err).toContain("No run history under");
   });
 
-  it("refuses a directory that does not exist", () => {
+  it("refuses a directory that does not exist", async () => {
     const local = libraryWith([]);
-    const r = run(join(local, "nope"), local);
+    const r = await run(join(local, "nope"), local);
     expect(r.code).toBe(3);
     expect(r.err).toContain("No such directory");
   });
 
-  it("refuses a run history that is not a JSON array", () => {
+  it("refuses a run history that is not a JSON array", async () => {
     const source = tempDir("gl-bad-");
     mkdirSync(join(source, "recorder"), { recursive: true });
     writeFileSync(join(source, "recorder", "run-history.json"), "{ not an array }", "utf8");
     const local = libraryWith([]);
-    const r = run(source, local);
+    const r = await run(source, local);
     expect(r.code).toBe(3);
     expect(r.err).toContain("not a readable run history");
   });
@@ -485,41 +542,41 @@ describe("parseIngestArgs", () => {
     (parseIngestArgs(argv) as { ok: true; options: IngestOptions }).options;
   const why = (argv: string[]) => (parseIngestArgs(argv) as { ok: false; error: string }).error;
 
-  it("takes the directory positionally", () => {
+  it("takes the directory positionally", async () => {
     expect(parseIngestArgs(["./artifact"])).toEqual({
       ok: true,
       options: { dir: "./artifact", dryRun: false, json: false },
     });
   });
 
-  it("reads --dry-run and --json", () => {
+  it("reads --dry-run and --json", async () => {
     expect(opts(["d", "--dry-run", "--json"])).toEqual({ dir: "d", dryRun: true, json: true });
   });
 
-  it("REFUSES an unknown option rather than ingesting with defaults", () => {
+  it("REFUSES an unknown option rather than ingesting with defaults", async () => {
     // A misspelt flag must not quietly become "ingest with whatever you assumed"
     // against the user's real run history.
     expect(parseIngestArgs(["d", "--dryrun"])).toMatchObject({ ok: false });
     expect(why(["d", "--dryrun"])).toContain("--dryrun");
   });
 
-  it("has NO default directory", () => {
+  it("has NO default directory", async () => {
     expect(parseIngestArgs([])).toMatchObject({ ok: false });
     expect(why([])).toContain("Which directory");
   });
 
-  it("refuses two directories rather than silently using one", () => {
+  it("refuses two directories rather than silently using one", async () => {
     expect(why(["a", "b"])).toContain("one directory at a time");
   });
 
-  it("answers --help without needing a directory", () => {
+  it("answers --help without needing a directory", async () => {
     expect(parseIngestArgs(["--help"])).toEqual({ ok: "help" });
     expect(parseIngestArgs(["-h"])).toEqual({ ok: "help" });
   });
 });
 
 describe("the real binary", () => {
-  it("dispatches `ingest` and exits 0", () => {
+  it("dispatches `ingest` and exits 0", async () => {
     // The `check:mcp-boot` lesson in miniature: a subcommand that is not wired
     // into bin/ is unreachable no matter how well its module tests pass.
     const source = libraryWith([validRun()], { "run-1": "x" });
@@ -544,7 +601,7 @@ describe("retries (R24)", () => {
   // OPTIONAL on RunRecord, so `check:run-ingest` stayed green while the gate
   // dropped them — the loss would have been silent, and the flake verdict
   // would have read a green history for a test that went red every run.
-  it("carries a retried pass, so the flake verdict still sees the failure", () => {
+  it("carries a retried pass, so the flake verdict still sees the failure", async () => {
     const out = normalizeIngestedRun({
       ...validRun(),
       attempt: 2,
@@ -555,7 +612,7 @@ describe("retries (R24)", () => {
     expect(out!.passedOnRetry).toBe(true);
   });
 
-  it("refuses an unusable attempt without losing the run", () => {
+  it("refuses an unusable attempt without losing the run", async () => {
     // An optional field judged on its own: a bad value costs itself, never the
     // record. The run's outcome and timing are what the verdict reads.
     const out = normalizeIngestedRun({
@@ -569,7 +626,7 @@ describe("retries (R24)", () => {
     expect(out!.status).toBe(validRun().status);
   });
 
-  it("leaves a run that never retried carrying neither field", () => {
+  it("leaves a run that never retried carrying neither field", async () => {
     const out = normalizeIngestedRun(validRun());
     expect("attempt" in out!).toBe(false);
     expect("passedOnRetry" in out!).toBe(false);
@@ -592,7 +649,7 @@ describe("retries (R24)", () => {
 describe("normalizeIngestedHeal", () => {
   const context = { testId: "t-one", runId: "run-1" };
 
-  it("turns a fixture event into a journal entry this library can store", () => {
+  it("turns a fixture event into a journal entry this library can store", async () => {
     const entry = normalizeIngestedHeal(healEvent(), context);
     expect(entry).toMatchObject({
       testId: "t-one",
@@ -608,7 +665,7 @@ describe("normalizeIngestedHeal", () => {
     });
   });
 
-  it("takes the test and run from the ENVELOPE, never from the event", () => {
+  it("takes the test and run from the ENVELOPE, never from the event", async () => {
     // An event naming its own test would attach a heal to a test it never
     // touched — and the envelope's ids are the ones the caller matched to a
     // run record it decided to store.
@@ -620,14 +677,14 @@ describe("normalizeIngestedHeal", () => {
     expect(entry?.runId).toBe("run-1");
   });
 
-  it("never reports a foreign heal as applied", () => {
+  it("never reports a foreign heal as applied", async () => {
     // Nothing on this machine changed. `applied: true` would offer a revert
     // that writes a locator the user's test never had.
     const entry = normalizeIngestedHeal(healEvent({ applied: true }), context);
     expect(entry?.applied).toBe(false);
   });
 
-  it("drops the candidate menu rather than carrying page-authored alternatives", () => {
+  it("drops the candidate menu rather than carrying page-authored alternatives", async () => {
     const entry = normalizeIngestedHeal(
       healEvent({
         candidates: [
@@ -643,7 +700,7 @@ describe("normalizeIngestedHeal", () => {
     expect(entry?.candidates).toEqual([]);
   });
 
-  it("elides a token in the page URL, by the same rule a local heal obeys", () => {
+  it("elides a token in the page URL, by the same rule a local heal obeys", async () => {
     const entry = normalizeIngestedHeal(
       healEvent({ url: "https://shop.example.com/pay?token=SECRET-VALUE&q=1" }),
       context,
@@ -653,7 +710,7 @@ describe("normalizeIngestedHeal", () => {
     expect(JSON.stringify(entry)).not.toContain("SECRET-VALUE");
   });
 
-  it("refuses a URL or rect it cannot trust, without losing the heal", () => {
+  it("refuses a URL or rect it cannot trust, without losing the heal", async () => {
     // The optional-fields-refuse-only-themselves rule: a heal with a junk box
     // is still a heal that happened.
     const entry = normalizeIngestedHeal(
@@ -665,7 +722,7 @@ describe("normalizeIngestedHeal", () => {
     expect(entry && "rect" in entry).toBe(false);
   });
 
-  it("refuses an event missing either half of its claim", () => {
+  it("refuses an event missing either half of its claim", async () => {
     expect(normalizeIngestedHeal(healEvent({ appliedLocator: undefined }), context)).toBeNull();
     expect(normalizeIngestedHeal(healEvent({ originalLocator: undefined }), context)).toBeNull();
     expect(normalizeIngestedHeal(healEvent({ stepId: "" }), context)).toBeNull();
@@ -675,7 +732,7 @@ describe("normalizeIngestedHeal", () => {
     expect(normalizeIngestedHeal(healEvent(), { testId: "", runId: "r" })).toBeNull();
   });
 
-  it("REBUILDS the entry — an extra field on the event does not ride along", () => {
+  it("REBUILDS the entry — an extra field on the event does not ride along", async () => {
     const entry = normalizeIngestedHeal(
       healEvent({ mischief: "carried?", applied: true }),
       context,
@@ -712,7 +769,7 @@ describe("normalizeIngestedHeal", () => {
  * directions" rule, applied to heals.
  */
 describe("the gate's output is a heal the app can store", () => {
-  it("type-checks as an entry, minus the id this machine mints", () => {
+  it("type-checks as an entry, minus the id this machine mints", async () => {
     const entry = normalizeIngestedHeal(healEvent(), { testId: "t-one", runId: "run-1" });
     expect(entry).not.toBeNull();
     const storable: Omit<HealEntry, "id"> = entry as unknown as Omit<HealEntry, "id">;
@@ -722,7 +779,7 @@ describe("the gate's output is a heal the app can store", () => {
 });
 
 describe("normalizeIngestedLocator", () => {
-  it("keeps an ordinary locator, nesting included", () => {
+  it("keeps an ordinary locator, nesting included", async () => {
     const locator = {
       k: "role",
       role: "button",
@@ -732,21 +789,21 @@ describe("normalizeIngestedLocator", () => {
     expect(normalizeIngestedLocator(locator)).toEqual(locator);
   });
 
-  it("refuses what is not a locator record", () => {
+  it("refuses what is not a locator record", async () => {
     expect(normalizeIngestedLocator("getByRole")).toBeNull();
     expect(normalizeIngestedLocator([{ k: "testid" }])).toBeNull();
     expect(normalizeIngestedLocator(null)).toBeNull();
     expect(normalizeIngestedLocator({})).toBeNull();
   });
 
-  it("refuses a value carrying anything JSON cannot hold, or a prototype key", () => {
+  it("refuses a value carrying anything JSON cannot hold, or a prototype key", async () => {
     // The rebuild is what makes this true rather than a promise: nothing
     // survives that the walk did not copy.
     expect(normalizeIngestedLocator({ k: "css", v: "ok", bad: () => 1 })).toBeNull();
     expect(normalizeIngestedLocator(JSON.parse('{"k":"css","__proto__":{"x":1}}'))).toBeNull();
   });
 
-  it("refuses a structure deeper or wider than a locator ever is", () => {
+  it("refuses a structure deeper or wider than a locator ever is", async () => {
     let deep: Record<string, unknown> = { k: "css" };
     for (let i = 0; i < 12; i++) deep = { k: "css", ctx: deep };
     expect(normalizeIngestedLocator(deep)).toBeNull();
@@ -760,7 +817,7 @@ describe("normalizeIngestedLocator", () => {
 describe("planHealIngest", () => {
   const context = { testId: "t-one", runId: "run-1" };
 
-  it("counts the unreadable apart from the already-present", () => {
+  it("counts the unreadable apart from the already-present", async () => {
     const plan = planHealIngest(
       [],
       [healEvent(), { junk: true }, healEvent({ stepId: "s2" })],
@@ -771,7 +828,7 @@ describe("planHealIngest", () => {
     expect(plan.duplicate).toBe(0);
   });
 
-  it("is idempotent per run and step, so a second ingest adds nothing", () => {
+  it("is idempotent per run and step, so a second ingest adds nothing", async () => {
     const first = planHealIngest([], [healEvent()], context);
     const keys = first.fresh.map(healIngestKey);
     const second = planHealIngest(keys, [healEvent()], context);
@@ -779,7 +836,7 @@ describe("planHealIngest", () => {
     expect(second.duplicate).toBe(1);
   });
 
-  it("keeps the same step healing on a DIFFERENT run — that is the decay signal", () => {
+  it("keeps the same step healing on a DIFFERENT run — that is the decay signal", async () => {
     // Collapsing these would hide exactly what `list_heals` reports as a
     // chronic step, and what makes a locator worth rewriting by hand.
     const first = planHealIngest([], [healEvent()], context);
@@ -790,7 +847,7 @@ describe("planHealIngest", () => {
     expect(second.fresh).toHaveLength(1);
   });
 
-  it("dedupes within one batch, not just against what is stored", () => {
+  it("dedupes within one batch, not just against what is stored", async () => {
     const plan = planHealIngest([], [healEvent(), healEvent()], context);
     expect(plan.fresh).toHaveLength(1);
     expect(plan.duplicate).toBe(1);
@@ -798,12 +855,12 @@ describe("planHealIngest", () => {
 });
 
 describe("ingestCommand — heals", () => {
-  it("carries the heals of the runs it stored, into the journal", () => {
+  it("carries the heals of the runs it stored, into the journal", async () => {
     const source = libraryWith([validRun()], { "run-1": "log" });
     withHealEvidence(source, "t-one", "run-1", [healEvent()]);
     const local = libraryWith([]);
 
-    const r = run(source, local);
+    const r = await run(source, local);
     expect(r.code).toBe(0);
 
     const journal = journalOf(local);
@@ -822,23 +879,23 @@ describe("ingestCommand — heals", () => {
     expect(r.out).toContain("Auto-Heal event(s)");
   });
 
-  it("says nothing and writes nothing when a run brought no heals", () => {
+  it("says nothing and writes nothing when a run brought no heals", async () => {
     const source = libraryWith([validRun()], { "run-1": "log" });
     const local = libraryWith([]);
-    const r = run(source, local);
+    const r = await run(source, local);
     expect(journalOf(local)).toEqual([]);
     expect(r.out).not.toContain("Auto-Heal");
   });
 
-  it("leaves the journal alone on a dry run", () => {
+  it("leaves the journal alone on a dry run", async () => {
     const source = libraryWith([validRun()]);
     withHealEvidence(source, "t-one", "run-1", [healEvent()]);
     const local = libraryWith([]);
-    run(source, local, { dryRun: true });
+    await run(source, local, { dryRun: true });
     expect(journalOf(local)).toEqual([]);
   });
 
-  it("keeps the heals this library already had, and adds beside them", () => {
+  it("keeps the heals this library already had, and adds beside them", async () => {
     const source = libraryWith([validRun()]);
     withHealEvidence(source, "t-one", "run-1", [healEvent()]);
     const local = libraryWith([]);
@@ -849,25 +906,25 @@ describe("ingestCommand — heals", () => {
       "utf8",
     );
 
-    run(source, local);
+    await run(source, local);
     const journal = journalOf(local);
     expect(journal).toHaveLength(2);
     expect(journal.some((e) => e.id === "mine")).toBe(true);
   });
 
-  it("ingests a run's heals once, however often the directory is ingested", () => {
+  it("ingests a run's heals once, however often the directory is ingested", async () => {
     const source = libraryWith([validRun()]);
     withHealEvidence(source, "t-one", "run-1", [healEvent()]);
     const local = libraryWith([]);
 
-    run(source, local);
-    run(source, local);
+    await run(source, local);
+    await run(source, local);
     // The second pass finds the run already present, so it does not reach the
     // heals at all — and even if it did, the per-run-and-step key would hold.
     expect(journalOf(local)).toHaveLength(1);
   });
 
-  it("carries no heal for a run it refused to store", () => {
+  it("carries no heal for a run it refused to store", async () => {
     // An entry naming a run this library does not have points at nothing: the
     // Heals view cannot show the run, and the propagation engine cannot read
     // the outcome that decides whether the heal is trustworthy evidence.
@@ -884,14 +941,14 @@ describe("ingestCommand — heals", () => {
     withHealEvidence(source, "t-one", "run-bad", [healEvent({ stepId: "s-refused" })]);
     const local = libraryWith([]);
 
-    run(source, local);
+    await run(source, local);
     const journal = journalOf(local);
     expect(journal).toHaveLength(1);
     expect(journal[0].runId).toBe("run-1");
     expect(JSON.stringify(journal)).not.toContain("s-refused");
   });
 
-  it("survives heal evidence that is missing, empty or nonsense", () => {
+  it("survives heal evidence that is missing, empty or nonsense", async () => {
     const source = libraryWith([validRun(), validRun({ id: "run-2" })]);
     withHealEvidence(source, "t-one", "run-1", []);
     mkdirSync(join(source, "recorder", "artifacts", "t-one", "run-2"), { recursive: true });
@@ -902,13 +959,13 @@ describe("ingestCommand — heals", () => {
     );
     const local = libraryWith([]);
 
-    const r = run(source, local);
+    const r = await run(source, local);
     expect(r.code).toBe(0);
     expect(r.history()).toHaveLength(2);
     expect(journalOf(local)).toEqual([]);
   });
 
-  it("never truncates a journal it could not parse", () => {
+  it("never truncates a journal it could not parse", async () => {
     // Trading the user's whole heal history for one CI import would be the
     // worst outcome available here.
     const source = libraryWith([validRun()]);
@@ -917,18 +974,18 @@ describe("ingestCommand — heals", () => {
     mkdirSync(join(local, "recorder"), { recursive: true });
     writeFileSync(join(local, "recorder", "heal-journal.json"), "{ half written", "utf8");
 
-    run(source, local);
+    await run(source, local);
     expect(readFileSync(join(local, "recorder", "heal-journal.json"), "utf8")).toBe(
       "{ half written",
     );
   });
 
-  it("reports the count in --json, so a CI wrapper can act on it", () => {
+  it("reports the count in --json, so a CI wrapper can act on it", async () => {
     const source = libraryWith([validRun()]);
     withHealEvidence(source, "t-one", "run-1", [healEvent(), healEvent({ stepId: "s2" })]);
     const local = libraryWith([]);
 
-    const r = run(source, local, { json: true });
+    const r = await run(source, local, { json: true });
     const summary = JSON.parse(r.out) as { heals: number; healsFromRuns: number };
     expect(summary.heals).toBe(2);
     expect(summary.healsFromRuns).toBe(1);
@@ -962,7 +1019,7 @@ describe("ingestCommand — the per-test cap", () => {
     return run(source, local);
   }
 
-  it("drops the oldest SETTLED heals to make room, and keeps the count capped", () => {
+  it("drops the oldest SETTLED heals to make room, and keeps the count capped", async () => {
     const local = libraryWith([]);
     mkdirSync(join(local, "recorder"), { recursive: true });
     writeFileSync(
@@ -971,7 +1028,7 @@ describe("ingestCommand — the per-test cap", () => {
       "utf8",
     );
 
-    ingestOneHeal(local);
+    await ingestOneHeal(local);
     const journal = journalOf(local);
     expect(journal).toHaveLength(200);
     // The oldest settled one made way; the new one is in.
@@ -979,7 +1036,7 @@ describe("ingestCommand — the per-test cap", () => {
     expect(journal.some((e) => e.runId === "run-1")).toBe(true);
   });
 
-  it("never drops a PENDING heal, even to stay under the cap", () => {
+  it("never drops a PENDING heal, even to stay under the cap", async () => {
     // A pending heal is the only stored copy of the locator its step used to
     // have. Dropping one to make room for a CI import would destroy the undo
     // for a change already made to a test — the journal's whole purpose.
@@ -991,7 +1048,7 @@ describe("ingestCommand — the per-test cap", () => {
       "utf8",
     );
 
-    ingestOneHeal(local);
+    await ingestOneHeal(local);
     const journal = journalOf(local);
     // Over the cap rather than one short of an undo: the cap is a backstop,
     // and this is the case where honouring it costs more than breaking it.

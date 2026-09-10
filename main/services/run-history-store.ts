@@ -28,6 +28,7 @@
 // it is zeroed by resetStats/deleteAll, which are the user saying "forget this
 // history" rather than the cap saying "this got old".
 
+import type { SiteHealthSummary } from "../../shared/site-health.mjs";
 import { randomUUID } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
@@ -428,6 +429,8 @@ export const runHistoryStore = {
       a11yMs?: number;
       a11yChecks?: number;
       a11yNewSteps?: number;
+      /** Site Health summary, when the run measured (see RunRecord) */
+      siteHealth?: SiteHealthSummary;
       /** AI visual checks, evaluated post-run by the configured model */
       aiChecksPassed?: number;
       aiChecksFailed?: number;
@@ -514,6 +517,10 @@ export const runHistoryStore = {
       ...(run.a11yMs !== undefined ? { a11yMs: run.a11yMs } : {}),
       ...(run.a11yChecks !== undefined ? { a11yChecks: run.a11yChecks } : {}),
       ...(run.a11yNewSteps ? { a11yNewSteps: run.a11yNewSteps } : {}),
+      // Absent when the run did not measure. A summary with zero pages is
+      // still written: "measured and read nothing" is a finding about the
+      // probe, and the Output line says so.
+      ...(run.siteHealth ? { siteHealth: run.siteHealth } : {}),
       ...(run.aiChecksPassed ? { aiChecksPassed: run.aiChecksPassed } : {}),
       ...(run.aiChecksFailed ? { aiChecksFailed: run.aiChecksFailed } : {}),
       ...(run.aiChecksUnevaluated ? { aiChecksUnevaluated: run.aiChecksUnevaluated } : {}),

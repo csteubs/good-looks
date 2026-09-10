@@ -1,3 +1,4 @@
+import { isSiteHealthCategory } from "../../shared/site-health.mjs";
 import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -105,9 +106,19 @@ export function RootView() {
   // writes to it, and this is one `if` against a class of bug that opens a
   // route with an undefined param.
   React.useEffect(() => {
-    return api.on<{ testId?: unknown; runId?: unknown; stepId?: unknown }>(
+    return api.on<{ kind?: unknown; testId?: unknown; runId?: unknown; stepId?: unknown; host?: unknown; category?: unknown }>(
       "deepLink:open",
-      (target: { testId?: unknown; runId?: unknown; stepId?: unknown }) => {
+      (target: { kind?: unknown; testId?: unknown; runId?: unknown; stepId?: unknown; host?: unknown; category?: unknown }) => {
+        // A Site Health link lands on the domain's screen; the category is
+        // re-checked against the shared vocabulary because it becomes a
+        // route param. The route stays registered whatever the setting.
+        if (target?.kind === "site-health") {
+          const host = typeof target.host === "string" ? target.host : "";
+          if (!host) return;
+          const category = isSiteHealthCategory(target.category) ? target.category : "seo";
+          navigate({ to: "/site-health/$host/$category", params: { host, category } });
+          return;
+        }
         const testId = typeof target?.testId === "string" ? target.testId : "";
         if (!testId) return;
         // Always the test route: a run or step in the link narrows what the

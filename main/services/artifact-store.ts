@@ -19,6 +19,11 @@ import { app, logger } from "@shell/backend";
 
 import type { A11yResult, A11yViolation } from "./a11y-diff.js";
 import { redactWithSnapshot } from "./secret-redaction.js";
+import {
+  normalizeSiteHealthArtifact,
+  SITE_HEALTH_FILE,
+  type SiteHealthArtifact,
+} from "../../shared/site-health.mjs";
 
 /** Default number of runs whose artifacts are retained per test.
  *  Sized against real usage: a captured run dir is ~0.6 MB for a small test
@@ -589,6 +594,22 @@ export const artifactStore = {
     try {
       const raw = fs.readFileSync(path.join(this.runDir(testId, runId), "manifest.json"), "utf-8");
       return JSON.parse(raw) as ArtifactManifest;
+    } catch {
+      return null;
+    }
+  },
+
+  /** Read a run's Site Health artifact — every document the run loaded, with
+   *  its SEO facts and timings — or null when the run did not measure.
+   *
+   *  Rebuilt through the shared normaliser rather than cast: every field was
+   *  written by a fixture reading an untrusted page, and this is the one
+   *  place the app takes it in. Attempt 0's file, like every other reader
+   *  here: a retry's readings live under attempt-<n>/ (R24a). */
+  readSiteHealth(testId: string, runId: string): SiteHealthArtifact | null {
+    try {
+      const raw = fs.readFileSync(path.join(this.runDir(testId, runId), SITE_HEALTH_FILE), "utf-8");
+      return normalizeSiteHealthArtifact(JSON.parse(raw));
     } catch {
       return null;
     }

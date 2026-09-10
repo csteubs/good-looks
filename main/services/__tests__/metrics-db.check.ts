@@ -57,6 +57,9 @@ import {
   isPopulated,
   runEvidence,
   siblingRuns,
+  siteHealthHostRows,
+  siteHealthHosts,
+  siteHealthPageRows,
   stepBrowserMatrix,
   stepDurations,
   testDurationTrend,
@@ -64,6 +67,13 @@ import {
   suiteCost,
   lifetimeRunCounts,
 } from "../../../shared/metrics-query.mjs";
+import {
+  HOST_HEALTH_COLUMNS,
+  INSERT_HOST_HEALTH,
+  INSERT_PAGE_HEALTH,
+  PAGE_HEALTH_COLUMNS,
+} from "../../../shared/metrics-schema.mjs";
+import { auditsFromText, normalizeSiteHealthArtifact, summariseSiteHealth } from "../../../shared/site-health.mjs";
 import { errorSignature, firstErrorLine } from "../../../shared/error-signature.mjs";
 import { stripAnsi } from "../../../shared/strip-ansi.mjs";
 
@@ -755,6 +765,110 @@ try {
       "ordering: metrics open, then preflight registration, then the sweep",
     );
   }
+}
+
+// ── 7. Site Health rows (schema 2) ────────────────────────────────────
+//
+// Two tables with two provenances, and the split is the design: host rows come
+// from the run RECORD's summary (which survives artifact retention) and page
+// rows from the ARTIFACT (which does not). A rollup that derived both from the
+// artifact would give a domain a series exactly as long as its screenshots.
+{
+  const reading = (over: Record<string, unknown>) => ({
+    id: "doc",
+    url: "https://shop.example.com/",
+    host: "shop.example.com",
+    path: "/",
+    title: "Home",
+    tab: 0,
+    cold: true,
+    navType: "navigate",
+    engine: "chromium",
+    action: 0,
+    at: 1500,
+    status: 200,
+    xRobotsTag: null,
+    facts: {
+      titleLength: 4, descriptionLength: 90, lang: "en", viewport: true, canonical: [], robots: [],
+      h1Count: 1, imagesTotal: 1, imagesMissingAlt: 0, links: { total: 3, generic: 0, uncrawlable: 0 },
+      hreflang: [], jsonLd: { blocks: 0, invalid: 0, types: [] },
+      og: { title: true, description: true, image: true }, twitterCard: true, protocol: "https:", insecureResources: 0,
+    },
+    metrics: { ttfb: 150, fcp: 800, lcp: 1600, cls: 0.01, tbt: 30, inp: null, dcl: 1000, load: 1800, requests: 20, transferBytes: 512000 },
+    source: "lab",
+    ...over,
+  });
+  const artifact = normalizeSiteHealthArtifact({
+    testId: "test-1",
+    runId: "run-1",
+    attempt: 0,
+    ms: 90,
+    pages: [
+      reading({}),
+      reading({ id: "doc-2", url: "https://shop.example.com/cart", path: "/cart", title: "Cart", action: 1, facts: { ...reading({}).facts, h1Count: 0, descriptionLength: 0 }, metrics: { ...reading({}).metrics, lcp: 4200, cls: 0.3 } }),
+      reading({ id: "doc-3", url: "https://blog.example.com/post", host: "blog.example.com", path: "/post", title: "Post", action: 1 }),
+    ],
+  });
+  assert(artifact !== null && artifact.pages.length === 3, "site health: the fixture artifact normalises");
+  const summary = summariseSiteHealth(artifact!);
+
+  const rows = rollupFixture({ run: makeRun({ siteHealth: summary, ingestedAt: 7777 }) as never, siteHealth: artifact });
+  assert(rows.hosts.length === 2, "rollup: one host row per host in the run's summary");
+  const shop = rows.hosts.find((h) => h.host === "shop.example.com");
+  assert(shop?.pages === 2 && typeof shop?.seo === "number" && typeof shop?.perf === "number", "rollup: a host row carries the page count and both scores");
+  assert(rows.pages.length === 3, "rollup: one page row per reading in the artifact");
+  const cart = rows.pages.find((p) => p.path === "/cart");
+  assert(
+    typeof cart?.seo === "number" && cart.seo < 100 && auditsFromText(cart.seo_audits).some((a) => a.id === "single-h1" && a.status === "fail"),
+    "rollup: a page row is SCORED here, and its audit list reads back through the shared parser",
+  );
+  assert(cart?.lcp === 4200 && cart?.cls === 0.3 && cart?.coverage === "fcp lcp tbt cls" && cart?.action === 1, "rollup: the vitals, coverage and screenshot join land on the row");
+  assert(rows.run.ingested_at === 7777, "rollup: the run row carries when it was ingested");
+
+  // Retention took the artifact: the host rows are still there.
+  const pruned = rollupFixture({ run: makeRun({ siteHealth: summary }) as never, siteHealth: null });
+  assert(pruned.hosts.length === 2 && pruned.pages.length === 0, "rollup: a pruned run keeps its host rows and loses only its page rows");
+  const unmeasured = rollupFixture({ run: makeRun() as never, siteHealth: null });
+  assert(unmeasured.hosts.length === 0 && unmeasured.pages.length === 0 && unmeasured.run.ingested_at === undefined, "rollup: a run that did not measure writes no Site Health rows");
+  // A hostile summary on an ingested record is rebuilt, not trusted.
+  const hostile = rollupFixture({ run: makeRun({ siteHealth: { pages: 1, ms: 1, hosts: [{ host: "x".repeat(400), pages: 1, seo: 999, perf: -5 }, { host: "ok.example.com", pages: 1, seo: 50, perf: 50 }] } }) as never });
+  assert(hostile.hosts.length === 1 && hostile.hosts[0]?.host === "ok.example.com", "rollup: a summary host that fails the gate is dropped, the rest kept");
+
+  const dir2 = mkdtempSync(join(tmpdir(), "glaze-metrics-sh-"));
+  const db2 = new DatabaseSync(join(dir2, "metrics.db"));
+  try {
+    for (const pragma of PRAGMAS) db2.exec(pragma);
+    for (const sql of CREATE_STATEMENTS) db2.exec(sql);
+    const write = (r: ReturnType<typeof rollupFixture>) => {
+      db2.prepare(INSERT_RUN).run(...bind(RUN_COLUMNS, r.run as never));
+      for (const st of r.steps) db2.prepare(INSERT_STEP).run(...bind(STEP_COLUMNS, st as never));
+      for (const h of r.hosts) db2.prepare(INSERT_HOST_HEALTH).run(...bind(HOST_HEALTH_COLUMNS, h as never));
+      for (const pg of r.pages) db2.prepare(INSERT_PAGE_HEALTH).run(...bind(PAGE_HEALTH_COLUMNS, pg as never));
+    };
+    write(rows);
+    write(rows);
+    const n = (sql: string) => Number((db2.prepare(sql).all()[0] as Record<string, unknown>)?.n ?? -1);
+    assert(n("SELECT COUNT(*) AS n FROM host_health") === 2 && n("SELECT COUNT(*) AS n FROM page_health") === 3, "db: host and page rows insert, and re-ingesting yields ONE row set");
+
+    const hostRows = siteHealthHostRows(db2, { sinceMs: 0 });
+    assert(hostRows.length === 2 && hostRows[0]?.testName === "Checkout" && hostRows[0]?.at === 1000, "query: host rows come back joined to their run, camelCase");
+    assert(Number(hostRows[0]?.ingested) === 1, "query: an ingested run's rows say so");
+    assert(siteHealthHostRows(db2, { host: "blog.example.com" }).length === 1, "query: host rows filter by host");
+    assert(siteHealthHostRows(db2, { sinceMs: 5000 }).length === 0, "query: host rows respect the window");
+    const pageRows = siteHealthPageRows(db2, { host: "shop.example.com" });
+    assert(pageRows.length === 2 && pageRows[1]?.path === "/cart" && pageRows[1]?.load === 1800 && pageRows[1]?.transferBytes === 512000, "query: page rows filter by host and alias every column");
+    assert(typeof pageRows[1]?.seoAudits === "string" && pageRows[1]?.runAt === 1000, "query: a page row carries its audit text and the run's start");
+    const hosts = siteHealthHosts(db2);
+    assert(hosts.length === 2 && hosts.every((h) => h.runs === 1 && h.lastAt === 1000), "query: the host list counts runs per host");
+
+    db2.prepare("DELETE FROM runs WHERE id = ?").run("run-1");
+    assert(n("SELECT COUNT(*) AS n FROM host_health") === 0 && n("SELECT COUNT(*) AS n FROM page_health") === 0, "db: deleting a run cascades to its Site Health rows");
+    assert(siteHealthHostRows(null).length === 0 && siteHealthPageRows(null).length === 0 && siteHealthHosts(null).length === 0, "query: no database is an empty answer, never a throw");
+  } finally {
+    db2.close();
+    rmSync(dir2, { recursive: true, force: true });
+  }
+  assert(SCHEMA_VERSION >= 2, "schema: the version moved with the tables (a database at version 1 is dropped and replayed)");
 }
 
 if (failures > 0) {

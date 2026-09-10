@@ -15,7 +15,7 @@ import {
   Text,
   toast,
 } from "@ui";
-import { Accessibility, Plus, ChevronDown, ChevronRight, Folder, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Settings, Sparkles, Tag, Wand2, Copy, Workflow } from "lucide-react";
+import { Accessibility, Plus, ChevronDown, ChevronRight, Folder, FolderOpen, Gauge, EyeOff, BarChart3, Heart, Images, ListChecks, Settings, Sparkles, Tag, Wand2, Copy, Workflow } from "lucide-react";
 
 import { ChromeButton, Rail, RailEmpty, RailGroup, RailRow, SiteIcon } from "../theme";
 import { RoutinesRail, useCreateRoutine } from "./routines-rail";
@@ -37,6 +37,7 @@ import { importFromFiles as runFolderImport } from "../lib/import-from-files";
 import { nativeShell } from "../lib/native-shell";
 import { SettingsRailRows, SettingsRailSearch } from "../settings/settings-rail";
 import { isSettingsPath } from "../lib/settings-route";
+import { isSiteHealthPath } from "../lib/site-health-route";
 import { BranchesRailRow } from "./branches-rail-row";
 import { InsightsRailRow } from "./insights-rail-row";
 import { useAiDebug } from "./ai-debug-store";
@@ -443,6 +444,11 @@ export function LibrarySidebar() {
     queryFn: () => api.recorder.getSettings(),
   });
   const siteIconsFromWeb = settingsQuery.data?.siteIconsFromWeb === true;
+  // The Site Health row shows only while the check is on: with it off there is
+  // nothing behind the row, and a permanently empty view is a standing
+  // question. The ROUTE stays registered (router.tsx), so a deep link and the
+  // palette still land on a screen that explains the switch.
+  const siteHealthOn = settingsQuery.data?.siteHealthChecks === true;
   const verdictByTest = React.useMemo(
     () => verdictsByTest(runsQuery.data ?? []),
     [runsQuery.data],
@@ -770,6 +776,15 @@ export function LibrarySidebar() {
             selected={pathname === "/heals"}
             onClick={() => navigate({ to: "/heals" })}
           />
+          {siteHealthOn ? (
+            <RailRow
+              icon={<Heart aria-hidden="true" />}
+              title="Site Health"
+              subtitle="SEO & performance by domain"
+              selected={isSiteHealthPath(pathname)}
+              onClick={() => navigate({ to: "/site-health" })}
+            />
+          ) : null}
           <InsightsRailRow
             selected={pathname === "/insights"}
             onOpen={() => navigate({ to: "/insights" })}

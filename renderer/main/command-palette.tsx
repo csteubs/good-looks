@@ -56,6 +56,7 @@ const VIEWS: { path: string; label: string; keywords: string }[] = [
   { path: "/visual", label: "Visual", keywords: "screenshot replay diff baseline" },
   { path: "/batch", label: "Routines", keywords: "batch run many tests suite job" },
   { path: "/heals", label: "Heals", keywords: "auto-heal locators review" },
+  { path: "/site-health", label: "Site Health", keywords: "seo performance web vitals domain score lcp cls" },
   { path: "/insights", label: "Insights", keywords: "ai report digest trends recommendations" },
   { path: "/branches", label: "Branches", keywords: "git worktree build switch" },
   // Settings became a view rather than a window (docs/plans/settings-view.md),

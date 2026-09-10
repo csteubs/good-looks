@@ -28,6 +28,7 @@ import { JobTicker } from "./job-ticker";
 import { api } from "../lib/api";
 import { categoryMeta, facetLabel } from "../lib/stats-categories";
 import { parseSettingsPath } from "../lib/settings-route";
+import { parseSiteHealthPath } from "../lib/site-health-route";
 import { paneById } from "../lib/settings-schema";
 import { topicTitle } from "../lib/docs";
 import { useCommandPalette } from "./command-palette";
@@ -45,6 +46,7 @@ const VIEW_LABEL: Record<string, string> = {
   // an MCP break to buy a word.
   "/batch": "Routines",
   "/heals": "Heals",
+  "/site-health": "Site Health",
   "/branches": "Branches",
   "/settings": "Settings",
 };
@@ -263,6 +265,17 @@ export function AppStrip({ recording = false }: AppStripProps): React.ReactEleme
           onClick: () => navigate({ to: "/settings/$pane", params: { pane: pane.id } }),
         },
         { label: title },
+      ];
+    }
+
+    // Site Health drills: the board, then the domain. The tab is not a crumb —
+    // it is a switch on the domain's screen, not a place under it.
+    const siteHealth = parseSiteHealthPath(pathname);
+    if (siteHealth?.host !== undefined) {
+      return [
+        home,
+        { label: "Site Health", onClick: () => navigate({ to: "/site-health" }) },
+        { label: siteHealth.host },
       ];
     }
 

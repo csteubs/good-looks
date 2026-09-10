@@ -361,6 +361,81 @@ function draftText(input: BuildInput): string {
   );
 }
 
+// ── Site Health: a domain's score, and only what identifies it ───────
+//
+// The subject is a HOST and a CATEGORY. What may travel: the host, the two
+// scores, the window, each page's PATH and score, a finding's catalogue label
+// and counts, a vital's formatted figure. What may not: a page TITLE (page-
+// authored text) — the defect has no field for one, which is the same
+// by-shape guarantee `FailureRequest` gives headers — and nothing about the
+// anchor run beyond the test's own name and start URL.
+{
+  const SITE_SOURCE = {
+    kind: "site-health" as const,
+    host: "shop.example.com",
+    category: "performance" as const,
+    testId: "t1",
+    runId: "r1",
+    sinceMs: 1_700_000_000_000,
+  };
+  const text = draftText({
+    source: SITE_SOURCE,
+    context: { ...CONTEXT, stepLabel: null },
+    defect: {
+      kind: "site-health",
+      host: "shop.example.com",
+      category: "performance",
+      score: 54,
+      prev: 58,
+      runs: 12,
+      since: 1_700_000_000_000,
+      until: 1_700_000_000_000 + 30 * 86_400_000,
+      pages: Array.from({ length: 40 }, (_, i) => ({
+        path: i === 0 ? `/${LEAK.toLowerCase()}-` + "p".repeat(5000) : `/page-${i}`,
+        score: 40 + i,
+      })),
+      findings: [],
+      vitals: [{ label: "LCP", value: "3.4 s", target: "2.5 s", over: true }],
+    },
+  });
+  assert(
+    text.startsWith("Performance: shop.example.com scores 54/100, −4 vs prior"),
+    "a Site Health draft titles itself by the category, the domain, the score and the CHANGE — no status word",
+  );
+  assert(!/needs work|poor|good|bad/i.test(text.split("\n")[0]), "…and the title carries no verdict");
+  assert(!/p{400}/.test(text), "a runaway page path is bounded");
+  assert(!text.includes("/page-39"), "the page list is capped");
+  assert(text.includes("more"), "…and says it was capped rather than pretending completeness");
+  assert(text.includes("LCP: 3.4 s (target 2.5 s) — over the target"), "a vital carries its figure, its target and whether it is over");
+  assert(text.includes("goodlooks://site-health/shop.example.com/performance"), "the way back is the DOMAIN's screen, not the anchor run");
+  assert(!text.includes("goodlooks://test/"), "…and never the anchor run's test link");
+  assert(text.includes("last 30 days"), "the window is stated in days");
+
+  // The SEO shape: findings, and no vitals.
+  const seo = draftText({
+    source: { ...SITE_SOURCE, category: "seo" },
+    context: { ...CONTEXT, stepLabel: null },
+    defect: {
+      kind: "site-health",
+      host: "shop.example.com",
+      category: "seo",
+      score: 78,
+      prev: null,
+      runs: 3,
+      since: 0,
+      until: 1_700_000_000_000,
+      pages: [{ path: "/cart", score: 62 }],
+      findings: Array.from({ length: 40 }, (_, i) => ({ label: i === 0 ? "f".repeat(2000) : `Finding ${i}`, pages: 2, of: 3 })),
+      vitals: [],
+    },
+  });
+  assert(seo.startsWith("SEO: shop.example.com scores 78/100, no prior period"), "an all-time draft says there is no prior period");
+  assert(seo.includes("every run this library has"), "…and says the window is all time");
+  assert(!/f{400}/.test(seo) && !seo.includes("Finding 39") && seo.includes("more"), "findings are bounded and capped");
+  assert(seo.includes("`/cart` — 62/100"), "a page contributes its path and score");
+  assert(!seo.includes("**Step:**"), "a domain draft names no step");
+}
+
 // ── The draft's shape is fixed ───────────────────────────────────────
 
 {

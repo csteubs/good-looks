@@ -51,7 +51,11 @@ function handle(url: string | undefined): void {
     logger.warn("shell", "Ignored a deep link that did not parse");
     return;
   }
-  logger.info("shell", "Opening a deep link", { hasRun: !!target.runId, hasStep: !!target.stepId });
+  logger.info("shell", "Opening a deep link", {
+    kind: target.kind,
+    hasRun: target.kind === "test" && !!target.runId,
+    hasStep: target.kind === "test" && !!target.stepId,
+  });
   deliver(target);
 }
 

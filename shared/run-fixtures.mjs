@@ -37,6 +37,10 @@ import {
 import { stepReporterSource } from "./step-reporter-source.mjs";
 import { TABS_FIXTURE_FILE, tabsFixtureSource } from "./tabs-fixture-source.mjs";
 import {
+  SITE_HEALTH_FIXTURE_FILE,
+  siteHealthFixtureSource,
+} from "./site-health-fixture-source.mjs";
+import {
   USER_PAGE_FIXTURE_FILE,
   userPageFixtureSource,
 } from "./user-page-fixture-source.mjs";
@@ -91,6 +95,9 @@ export const CAPABILITY_FIXTURES = [
   // The SIXTH: tab following. Imported by the capture fixture exactly as
   // unconditionally as the others, so it ships with them for the same reason.
   { file: TABS_FIXTURE_FILE, source: tabsFixtureSource },
+  // The SEVENTH: Site Health. Same shape — imported by the capture fixture
+  // unconditionally, gated by GLAZE_SITE_HEALTH inside.
+  { file: SITE_HEALTH_FIXTURE_FILE, source: siteHealthFixtureSource },
 ];
 
 /**
@@ -128,6 +135,17 @@ export const CI_FIXTURE_POLICY = [
     capability: "accessibility",
     onInCi: "when the test asks",
     why: "Same: a useful CI artifact, already a per-test choice.",
+  },
+  {
+    capability: "site health",
+    onInCi: "when the switch is on",
+    why:
+      "SEO and performance readings of every document the run loads, one artifact per run, " +
+      "carried back by `good-looks ingest`. Gated on the app's global Check Site Health " +
+      "setting, which the unattended runner reads from the same settings file — so a library " +
+      "that measures in the app measures here, and one that does not, does not. Facts only " +
+      "cross the page boundary (counts, lengths, timings, the title); the scoring is " +
+      "shared/site-health.mjs on every side.",
   },
   {
     capability: "console and network",

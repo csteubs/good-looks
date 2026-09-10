@@ -55,6 +55,7 @@ import { sendAlert } from "./alert-service.js";
 import { applyRetentionForTest, sweepRetentionIfDue } from "./retention.js";
 import { buildReplay, enrichWithA11y, enrichWithVisualDiffs } from "./replay-builder.js";
 import { describeA11yOutcome } from "./a11y-diff.js";
+import { describeSiteHealthOutcome, SITE_HEALTH_ENV, summariseSiteHealth } from "../../shared/site-health.mjs";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import { generateSpec, generateSpecDetailed, secretEnvName } from "./script-generator.js";
 import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "../../shared/glaze-runtime-source.mjs";
@@ -68,6 +69,7 @@ import {
 } from "../../shared/dismiss-fixture-source.mjs";
 import { USER_PAGE_FIXTURE_FILE, userPageEnv, userPageFixtureSource } from "../../shared/user-page-fixture-source.mjs";
 import { FOLLOW_TABS_ENV, TABS_FIXTURE_FILE, tabsFixtureSource } from "../../shared/tabs-fixture-source.mjs";
+import { SITE_HEALTH_FIXTURE_FILE, siteHealthFixtureSource } from "../../shared/site-health-fixture-source.mjs";
 import { SETTLE_FIXTURE_FILE, settleFixtureSource } from "../../shared/settle-fixture-source.mjs";
 import { healJournalStore } from "./heal-journal-store.js";
 import { describeStep } from "./script-generator.js";
@@ -463,6 +465,13 @@ function ensureUserPageFixture(scriptsDir: string): void {
  *  the rest: the capture fixture imports it. */
 function ensureTabsFixture(scriptsDir: string): void {
   writeIfChanged(path.join(scriptsDir, TABS_FIXTURE_FILE), tabsFixtureSource);
+}
+
+/** The Site Health fixture (site-health-fixture-source.mjs). Unconditional
+ *  like the rest: the capture fixture imports it, and GLAZE_SITE_HEALTH inside
+ *  it decides whether it does anything. */
+function ensureSiteHealthFixture(scriptsDir: string): void {
+  writeIfChanged(path.join(scriptsDir, SITE_HEALTH_FIXTURE_FILE), siteHealthFixtureSource);
 }
 
 // `dismissEnv` lives in shared/dismiss-fixture-names.mjs (re-exported through
@@ -1340,6 +1349,7 @@ export const playwrightRunner = {
       // Declared out here because the finally block reads them: everything
       // below is set inside the try, which the finally cannot see into.
       let checkedAccessibility = false;
+      let checkedSiteHealth = false;
       // Resolved inside the try (the run's steps), read in the finally (the
       // post-run evaluation) — same seam checkedAccessibility crosses.
       let hasAiChecks = false;
@@ -1394,6 +1404,12 @@ export const playwrightRunner = {
         // reason: an imported spec never gets the fixture that does the
         // recording.
         const recordLogs = (rec.recordLogs ?? healSettings.defaultRecordLogs) && !rec.sourceDir;
+        // Site Health: GLOBAL, no per-test layer — a domain's score is a
+        // rollup across every test that reaches it, so a per-test switch
+        // would make the series depend on which tests had it on. App-generated
+        // tests only, for the reason capture and a11y are.
+        const siteHealth = healSettings.siteHealthChecks && !rec.sourceDir;
+        checkedSiteHealth = siteHealth;
         // Login sessions: where this run SAVES its signed-in state (a passing
         // run of a saveSession test), and which saved state it STARTS from.
         // Stale or missing state is said out loud and the run proceeds fresh —
@@ -1611,7 +1627,7 @@ export const playwrightRunner = {
         // the fixture is where capture, healing AND crawl's page-settling live
         // — so a heal-only or crawl-only run needs it too.
         if (
-          (captureArtifacts || healing || a11y || recordLogs || settling || signing || dismissing || userPageOn || followTabs) &&
+          (captureArtifacts || healing || a11y || recordLogs || siteHealth || settling || signing || dismissing || userPageOn || followTabs) &&
           !rec.sourceDir
         ) {
           ensureCaptureFixture(scriptsDir);
@@ -1621,6 +1637,7 @@ export const playwrightRunner = {
           ensureDismissFixture(scriptsDir);
           ensureUserPageFixture(scriptsDir);
           ensureTabsFixture(scriptsDir);
+          ensureSiteHealthFixture(scriptsDir);
           const prepared = prepareCaptureSpec(scriptsDir, specToRun, recordId);
           if (prepared) {
             tempSpecPath = prepared;
@@ -1640,7 +1657,7 @@ export const playwrightRunner = {
             // it writes nothing to disk. Including it would make a run that
             // only attaches a header prune the artifact history and create an
             // empty run dir — the exact bug settling shipped once.
-            const artifactRun = captureArtifacts || healing || a11y || recordLogs;
+            const artifactRun = captureArtifacts || healing || a11y || recordLogs || siteHealth;
             capturingRun = artifactRun;
             if (artifactRun) {
               // Prune old runs first, then create this run's dir (newest). The
@@ -1667,6 +1684,7 @@ export const playwrightRunner = {
             const skipped = [
               captureArtifacts ? "Screenshot capture" : null,
               a11y ? "Accessibility checks" : null,
+              siteHealth ? "Site Health" : null,
               healing ? "Auto-Heal" : null,
               recordLogs ? "Console and network recording" : null,
               settling ? "Crawl page-settling" : null,
@@ -1758,6 +1776,7 @@ export const playwrightRunner = {
         // was even armed was the run taking longer — and axe is slow enough
         // that "slower than usual" is not evidence of anything.
         if (a11y) emitOutput(runId, "system", "Checking accessibility for this run.\n");
+        if (siteHealth) emitOutput(runId, "system", "Checking Site Health for this run.\n");
         if (settling) {
           emitOutput(
             runId,
@@ -1850,6 +1869,7 @@ export const playwrightRunner = {
             GLAZE_SETTLE: settling ? "1" : "0",
             GLAZE_AI_CHECK_DIR: aiCheckDir,
             GLAZE_A11Y: a11y ? "1" : "0",
+            [SITE_HEALTH_ENV]: siteHealth ? "1" : "0",
             // The path travels whenever the file exists, not only when the CAPTURE
             // toggle is on: an `a11y` GATE step injects axe itself mid-test via
             // glazeA11yGate, and gating the path on the toggle would make the
@@ -2017,6 +2037,19 @@ export const playwrightRunner = {
         // overhead numbers further down need it — and the summary has to be
         // emitted before the log buffer is drained a few lines later.
         const manifest = capturingRun ? artifactStore.readManifest(rec.id, recordId) : null;
+        // Site Health: the artifact the fixture wrote, summarised into the run
+        // record so the per-host series survives artifact retention. Read
+        // whenever the check was armed — an absent file is then a summary
+        // with zero pages, which the Output line reports as the probe's fault
+        // rather than as a clean site.
+        const siteHealthSummary = checkedSiteHealth && capturingRun
+          ? summariseSiteHealth(
+              artifactStore.readSiteHealth(rec.id, recordId) ?? { testId: rec.id, runId: recordId, attempt: 0, ms: 0, pages: [] },
+            )
+          : undefined;
+        if (checkedSiteHealth) {
+          emitOutput(runId, "system", describeSiteHealthOutcome(siteHealthSummary) + "\n");
+        }
         // Filled in from the replay when capturing, so the notification can
         // mention visual changes and name the failing step.
         let changedSteps = 0;
@@ -2167,6 +2200,7 @@ export const playwrightRunner = {
               a11yMs,
               a11yChecks: a11yCheckCount,
               a11yNewSteps,
+              siteHealth: siteHealthSummary,
               aiChecksPassed,
               aiChecksFailed,
               aiChecksUnevaluated,

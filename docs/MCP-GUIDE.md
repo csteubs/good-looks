@@ -182,6 +182,7 @@ or changing one is done in the app's run panel, not from here.
 | "How much of my suite's runtime is screenshots and a11y checks?" | `get_suite_cost` |
 | "Which steps changed visually in the last run, and by how much?" | `get_visual_report` |
 | "What accessibility problems are *new* since the baseline?" | `get_a11y_report` |
+| "Is the store's SEO or performance score moving, and on which pages?" | `get_site_health` |
 | "Show me the last 20 batches." | `list_batches`, `list_runs` |
 
 ### Screenshots of the app itself

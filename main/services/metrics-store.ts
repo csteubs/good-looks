@@ -34,8 +34,12 @@ import {
   bind,
   CREATE_STATEMENTS,
   DROP_STATEMENTS,
+  INSERT_HOST_HEALTH,
+  INSERT_PAGE_HEALTH,
   INSERT_RUN,
   INSERT_STEP,
+  HOST_HEALTH_COLUMNS,
+  PAGE_HEALTH_COLUMNS,
   PRAGMAS,
   RUN_COLUMNS,
   SCHEMA_VERSION,
@@ -170,6 +174,9 @@ function rowsFor(
     heals: heals.get(run.id) ?? [],
     logText,
     source,
+    // The per-page readings. Absent once retention has taken the run's
+    // directory — which is why the host rows come from the record instead.
+    siteHealth: artifactStore.readSiteHealth(run.testId, run.id),
   });
 }
 
@@ -179,6 +186,14 @@ function writeRows(handle: Db, rows: ReturnType<typeof rowsFor>): void {
   const stepStmt = handle.prepare(INSERT_STEP);
   for (const step of rows.steps) {
     stepStmt.run(...bind(STEP_COLUMNS, step as unknown as Record<string, unknown>));
+  }
+  const hostStmt = handle.prepare(INSERT_HOST_HEALTH);
+  for (const host of rows.hosts) {
+    hostStmt.run(...bind(HOST_HEALTH_COLUMNS, host as unknown as Record<string, unknown>));
+  }
+  const pageStmt = handle.prepare(INSERT_PAGE_HEALTH);
+  for (const page of rows.pages) {
+    pageStmt.run(...bind(PAGE_HEALTH_COLUMNS, page as unknown as Record<string, unknown>));
   }
 }
 

@@ -572,3 +572,72 @@ export function siblingRuns(db, testId, { limit = 50, excludeRunId, stepId } = {
     [stepId ?? null, testId, excludeRunId ?? null, limit],
   );
 }
+
+// ── Site Health ───────────────────────────────────────────────────────
+//
+// Two flat row queries, shaped by shared/site-health.mjs on every side
+// (siteHealthOverview / siteHealthHostDetail) rather than aggregated in SQL:
+// the delta-vs-prior-period arithmetic, the latest-reading-per-page rule and
+// the p75 want the rows, and one JavaScript implementation is one the app's
+// handler, the MCP tool and the insights facts builder all share. Aliased to
+// camelCase here so no caller has to know a column name.
+
+/** Every host_health row since `sinceMs`, joined to its run. */
+export function siteHealthHostRows(db, { sinceMs = 0, host } = {}) {
+  const params = [Number(sinceMs) || 0];
+  let where = "r.started_at >= ?";
+  if (host) {
+    where += " AND h.host = ?";
+    params.push(String(host));
+  }
+  return all(
+    db,
+    `SELECT h.run_id AS runId, h.host AS host, h.pages AS pages, h.seo AS seo, h.perf AS perf,
+            r.started_at AS at, r.test_id AS testId, r.test_name AS testName, r.browser AS browser,
+            (r.ingested_at IS NOT NULL) AS ingested
+       FROM host_health h JOIN runs r ON r.id = h.run_id
+      WHERE ${where}
+      ORDER BY r.started_at ASC, h.host ASC`,
+    params,
+  );
+}
+
+/** Every page_health row since `sinceMs` (for one host when given), joined
+ *  to its run. */
+export function siteHealthPageRows(db, { sinceMs = 0, host } = {}) {
+  const params = [Number(sinceMs) || 0];
+  let where = "r.started_at >= ?";
+  if (host) {
+    where += " AND p.host = ?";
+    params.push(String(host));
+  }
+  return all(
+    db,
+    `SELECT p.run_id AS runId, p.page_index AS pageIndex, p.host AS host, p.path AS path, p.url AS url,
+            p.title AS title, p.tab AS tab, p.cold AS cold, p.nav_type AS navType, p.engine AS engine,
+            p.status AS status, p.seo AS seo, p.seo_audits AS seoAudits, p.perf AS perf,
+            p.coverage AS coverage, p.fcp AS fcp, p.lcp AS lcp, p.cls AS cls, p.tbt AS tbt, p.inp AS inp,
+            p.ttfb AS ttfb, p.dcl AS dcl, p.load_ms AS load, p.requests AS requests,
+            p.transfer_bytes AS transferBytes, p.action AS action, p.at AS at,
+            r.started_at AS runAt, r.test_id AS testId, r.test_name AS testName, r.browser AS browser,
+            (r.ingested_at IS NOT NULL) AS ingested
+       FROM page_health p JOIN runs r ON r.id = p.run_id
+      WHERE ${where}
+      ORDER BY r.started_at ASC, p.page_index ASC`,
+    params,
+  );
+}
+
+/** The hosts with any Site Health row, newest first — what the rail and the
+ *  MCP tool list. */
+export function siteHealthHosts(db, { sinceMs = 0 } = {}) {
+  return all(
+    db,
+    `SELECT h.host AS host, COUNT(*) AS runs, MAX(r.started_at) AS lastAt
+       FROM host_health h JOIN runs r ON r.id = h.run_id
+      WHERE r.started_at >= ?
+      GROUP BY h.host
+      ORDER BY lastAt DESC`,
+    [Number(sinceMs) || 0],
+  );
+}

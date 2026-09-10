@@ -6971,3 +6971,458 @@
 .gl-var-table-actions {
   width: 30px;
 }
+
+/* ── Site Health (renderer/main/site-health-view.tsx) ─────────────────────
+ * The Accessibility split again — a fixed-width Domains list, the rest is
+ * one domain's detail — and the same neutral palette. NOTHING HERE COLOURS A
+ * SCORE. A 54 is a number the reader judges; the only hue on the screen is
+ * the amber a vital earns by being over its published target, which is a
+ * threshold and not an opinion. */
+.gl-sh {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  padding: 10px;
+}
+
+.gl-sh-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.gl-sh-bar-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--gl-tx-3);
+}
+
+.gl-sh-bar-note {
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  color: var(--gl-tx-3);
+}
+
+.gl-sh-panes {
+  display: flex;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.gl-sh-hosts {
+  flex: 0 0 360px;
+  min-width: 0;
+}
+
+.gl-sh-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The list's own header, because its label is a CONTROL: clicking it reverses
+   the sort, and a Panel title is a span. */
+.gl-sh-hosts-head {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--gl-line-2);
+}
+
+.gl-sh-sort {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-sh-sort:hover {
+  color: var(--gl-tx-1);
+}
+
+.gl-sh-sort:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 2px;
+}
+
+/* One domain. Name, meta, then the gauge row: a bar that can never run into
+   the score because the score has a fixed, right-aligned box of its own. */
+.gl-sh-host {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--gl-line-2);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+
+.gl-sh-host:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Selection is neutral, like every list in the app. */
+.gl-sh-host[data-selected] {
+  background: var(--gl-sel-bg);
+  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-sh-host:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-sh-host-name {
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-sh-host-meta {
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  color: var(--gl-tx-3);
+}
+
+.gl-sh-gauge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.gl-sh-track {
+  flex: 1 1 auto;
+  min-width: 40px;
+  height: 4px;
+  background: var(--gl-line-2);
+}
+
+.gl-sh-fill {
+  display: block;
+  height: 100%;
+  background: var(--gl-tx-2);
+}
+
+/* Right-aligned and BOUNDED: the bar stops where this box starts, whatever
+   the number is, so there is always a visible gap between the two. */
+.gl-sh-score {
+  flex: 0 0 52px;
+  max-width: 52px;
+  text-align: end;
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "−4 vs prior". A box, not a badge: it carries no colour because it is not
+   a verdict — a drop of four points is a fact whose weight the reader sets. */
+.gl-sh-delta {
+  flex: 0 0 auto;
+  max-width: 120px;
+  padding: 1px 6px;
+  border: 1px solid var(--gl-line-2);
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--gl-tx-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-sh-delta-big {
+  font-size: 10px;
+  padding: 2px 8px;
+}
+
+.gl-sh-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.gl-sh-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.gl-sh-headline {
+  font-family: var(--gl-mono);
+  font-size: 28px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--gl-tx-1);
+}
+
+.gl-sh-headline-of {
+  margin-left: 2px;
+  font-size: 11px;
+  color: var(--gl-tx-3);
+}
+
+.gl-sh-head-meta {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-tx-3);
+}
+
+/* The run-by-run series. Bars are a magnitude, so they stay in the resting
+   ramp; the latest run is brighter so the eye finds "now", and the run a
+   change was detected on carries a hairline so the sentence under the strip
+   points at something. */
+.gl-sh-series {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gl-sh-series-strip {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 36px;
+}
+
+.gl-sh-series-slot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 8px;
+  height: 100%;
+}
+
+.gl-sh-series-bar {
+  width: 100%;
+  min-height: 1px;
+  background: var(--gl-tx-3);
+}
+
+.gl-sh-series-bar[data-latest] {
+  background: var(--gl-tx-1);
+}
+
+.gl-sh-series-bar[data-ingested] {
+  opacity: 0.7;
+}
+
+.gl-sh-series-bar[data-change] {
+  box-shadow: 0 0 0 1px var(--gl-tx-1);
+}
+
+/* A run with no score for this tab — a dash above the floor, the drift
+   strip's own "not measured" mark, never a zero-height bar. */
+.gl-sh-series-gap {
+  width: 100%;
+  height: 1px;
+  margin-bottom: 14px;
+  background: var(--gl-tx-3);
+  opacity: 0.5;
+}
+
+.gl-sh-series-line {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--gl-tx-3);
+}
+
+.gl-sh-change {
+  color: var(--gl-tx-1);
+}
+
+.gl-sh-section {
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-sh-vitals {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+/* One statistic. `cursor: help` because the whole card explains itself on
+   hover through its native title. */
+.gl-sh-vital {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--gl-line-2);
+  cursor: help;
+}
+
+.gl-sh-vital-label {
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-sh-vital-value {
+  font-family: var(--gl-mono);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gl-tx-1);
+}
+
+.gl-sh-vital-note {
+  font-family: var(--gl-sans);
+  font-size: 10.5px;
+  color: var(--gl-tx-3);
+}
+
+/* Over a published target is the one outcome on this screen. */
+.gl-sh-vital-note[data-over] {
+  color: var(--gl-amber);
+}
+
+.gl-sh-table-wrap {
+  overflow-x: auto;
+}
+
+.gl-sh-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-2);
+}
+
+.gl-sh-table th {
+  padding: 4px 6px;
+  font-size: 8.5px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: start;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+.gl-sh-table td {
+  padding: 4px 6px;
+  border-top: 1px solid var(--gl-line-2);
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.gl-sh-num {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.gl-sh-path {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.gl-sh-findings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gl-sh-finding {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto;
+  gap: 2px 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--gl-line-2);
+}
+
+.gl-sh-finding-label {
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-1);
+}
+
+.gl-sh-finding-count {
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  color: var(--gl-tx-3);
+}
+
+.gl-sh-finding-examples {
+  grid-column: 1 / -1;
+  font-family: var(--gl-sans);
+  font-size: 10.5px;
+  color: var(--gl-tx-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-sh-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--gl-line-2);
+}
+
+.gl-sh-tests {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* The per-test tab (renderer/main/site-health-panel.tsx): the Output line's
+   sentence, one row per host, the run's pages. */
+.gl-sh-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+}
+
+.gl-sh-panel-host {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}

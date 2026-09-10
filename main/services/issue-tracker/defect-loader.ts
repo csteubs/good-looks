@@ -32,6 +32,17 @@ import {
 import type { DefectSource, DraftAttachment, IssueDraft } from "../../../renderer/lib/issue-types.js";
 import type { UploadImage } from "./types.js";
 import { buildIssueDraft, type BuildInput, type DraftContext, type FailureConsoleLine, type FailureRequest } from "./payload.js";
+import { metricsStore } from "../metrics-store.js";
+import { siteHealthHostRows, siteHealthPageRows } from "../../../shared/metrics-query.mjs";
+import {
+  formatVital,
+  formatVitalTarget,
+  priorWindow,
+  siteHealthHostDetail,
+  VITAL_IDS,
+  VITAL_META,
+  type SiteHealthHostDetail,
+} from "../../../shared/site-health.mjs";
 
 /** Console types that carry a diagnosis. Everything else is page chatter, and
  *  page chatter is arbitrary page-authored text going to a third party. */
@@ -117,6 +128,7 @@ export const defectLoader = {
       if (source.kind === "a11y") return buildA11y(source);
       if (source.kind === "visual") return buildVisual(source);
       if (source.kind === "insight-report") return buildInsightReport(source);
+      if (source.kind === "site-health") return buildSiteHealth(source);
       return buildFailure(source);
     } catch (err) {
       logger.warn("issues", "Could not assemble an issue draft", {
@@ -173,6 +185,87 @@ export const defectLoader = {
     return out;
   },
 };
+
+/**
+ * A domain's Site Health score, over the window the user was looking at.
+ *
+ * Read from metrics.db through the SAME shaping the view uses, so the draft
+ * says what the screen said — the score, the delta, the pages and the
+ * findings or vitals. What crosses into the body is bounded by shape: a page
+ * contributes its PATH and score (never its title, which is page-authored
+ * text), a finding its catalogue label and counts. The screenshot is the
+ * anchor run's picture of the worst page in the category, when the run
+ * captured one — a filed score with a picture of the page it is about.
+ *
+ * `buildSiteHealthDetail` is separate and pure-ish so a test can hand rows in
+ * without a database.
+ */
+export function siteHealthDefectFrom(
+  source: Extract<DefectSource, { kind: "site-health" }>,
+  detail: SiteHealthHostDetail,
+): BuildInput["defect"] {
+  const category = source.category;
+  const scored = category === "seo" ? detail.seo : detail.perf;
+  return {
+    kind: "site-health",
+    host: detail.host,
+    category,
+    score: scored.score,
+    prev: scored.prev,
+    runs: detail.runs,
+    since: detail.since,
+    until: detail.until,
+    pages: detail.pages.map((p) => ({ path: p.path, score: category === "seo" ? p.seo : p.perf })),
+    findings: category === "seo" ? detail.findings.map((f) => ({ label: f.label, pages: f.pages, of: f.of })) : [],
+    vitals:
+      category === "performance"
+        ? VITAL_IDS.filter((id) => detail.vitals[id].p75 !== null).map((id) => ({
+            label: VITAL_META[id].label,
+            value: formatVital(id, detail.vitals[id].p75),
+            target: formatVitalTarget(id),
+            over: detail.vitals[id].status === "over",
+          }))
+        : [],
+  };
+}
+
+function buildSiteHealth(source: Extract<DefectSource, { kind: "site-health" }>): IssueDraft | null {
+  const db = metricsStore.handle();
+  if (!db) return null;
+  const untilMs = Date.now();
+  const sinceMs = source.sinceMs;
+  const fetchSince = sinceMs > 0 ? (priorWindow(sinceMs, untilMs)?.since ?? sinceMs) : 0;
+  const pageRows = siteHealthPageRows(db, { sinceMs: fetchSince, host: source.host });
+  const detail = siteHealthHostDetail({
+    host: source.host,
+    hostRows: siteHealthHostRows(db, { sinceMs: fetchSince, host: source.host }),
+    pageRows,
+    sinceMs,
+    untilMs,
+  });
+  // Nothing to file: a domain with no reading in the window is the empty
+  // state, not a defect.
+  if (detail.runs === 0 && detail.pages.length === 0) return null;
+
+  const draft = buildIssueDraft({
+    source,
+    context: contextFor(source.testId, source.runId, null),
+    defect: siteHealthDefectFrom(source, detail),
+  });
+  // The anchor run's picture of the worst page in this category: the
+  // reading's action index names the screenshot capture took after that
+  // step, when the run captured any.
+  const anchorPages = pageRows
+    .filter((p) => p.runId === source.runId && typeof p.action === "number")
+    .sort((a, b) => {
+      const sa = source.category === "seo" ? a.seo : a.perf;
+      const sb = source.category === "seo" ? b.seo : b.perf;
+      return (sa ?? 101) - (sb ?? 101);
+    });
+  const worst = anchorPages[0];
+  const shot = worst ? attachmentFor(source.testId, source.runId, `${worst.action}.png`, "Page") : null;
+  return shot ? { ...draft, attachments: [shot] } : draft;
+}
 
 /**
  * An insights report, filed whole. Everything in the body comes from the

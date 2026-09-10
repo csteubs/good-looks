@@ -473,6 +473,13 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "a11y axe wcag violations contrast",
     key: "defaultA11yChecks",
   },
+  {
+    id: "site-health-checks",
+    pane: "test-defaults",
+    label: "Check Site Health",
+    keywords: "seo performance score domain web vitals lcp cls inp lighthouse meta title canonical page speed",
+    key: "siteHealthChecks",
+  },
 
   // Auto-Heal
   {
@@ -1043,6 +1050,7 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   autoHealApply: "suggest",
   propagateFixes: true,
   defaultA11yChecks: false,
+  siteHealthChecks: false,
   debugScreenshots: false,
   disabledAestheticEnhancements: [],
   uiScale: 1,

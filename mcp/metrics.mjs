@@ -25,20 +25,28 @@ import {
   bind,
   CREATE_STATEMENTS,
   DROP_STATEMENTS,
+  INSERT_HOST_HEALTH,
+  INSERT_PAGE_HEALTH,
   INSERT_RUN,
   INSERT_STEP,
+  HOST_HEALTH_COLUMNS,
+  PAGE_HEALTH_COLUMNS,
   PRAGMAS,
   RUN_COLUMNS,
   SCHEMA_VERSION,
   STEP_COLUMNS,
 } from "../shared/metrics-schema.mjs";
 import { rollupRun } from "../shared/rollup.mjs";
-import { readManifest, readReplay, readRunLogs } from "./artifacts.mjs";
+import { readManifest, readReplay, readRunLogs, readSiteHealth } from "./artifacts.mjs";
 
 /** Opened lazily and kept for the process's life — this server is long-lived
- *  and a per-call open would pay the WAL handshake every time. */
+ *  and a per-call open would pay the WAL handshake every time. Keyed by the
+ *  library it was opened for: one process serves one library, but the CLI's
+ *  tests drive `ingest` at several throwaway libraries in one process, and a
+ *  latch that ignored the directory handed the second one the first's file. */
 let db;
 let attempted = false;
+let openedFor = null;
 
 /** Mirrors metrics-store.ts. SQLite is flagged experimental in Node 24 and
  *  warns on first construction; on THIS side the warning would go to stderr,
@@ -68,8 +76,9 @@ async function openDatabase(file) {
  * data is derived either way, and the app's next start refills it.
  */
 async function open(dataDir) {
-  if (attempted) return db;
+  if (attempted && openedFor === dataDir) return db;
   attempted = true;
+  openedFor = dataDir;
   try {
     const file = path.join(dataDir, "recorder", "metrics.db");
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -109,10 +118,15 @@ export async function recordRun(dataDir, run, heals, logText) {
       heals: (heals ?? []).filter((h) => h?.runId === run.id),
       logText,
       source: "mcp",
+      siteHealth: readSiteHealth(dataDir, run.testId, run.id),
     });
     handle.prepare(INSERT_RUN).run(...bind(RUN_COLUMNS, rows.run));
     const stepStmt = handle.prepare(INSERT_STEP);
     for (const step of rows.steps) stepStmt.run(...bind(STEP_COLUMNS, step));
+    const hostStmt = handle.prepare(INSERT_HOST_HEALTH);
+    for (const host of rows.hosts) hostStmt.run(...bind(HOST_HEALTH_COLUMNS, host));
+    const pageStmt = handle.prepare(INSERT_PAGE_HEALTH);
+    for (const page of rows.pages) pageStmt.run(...bind(PAGE_HEALTH_COLUMNS, page));
     return true;
   } catch {
     // Bookkeeping. The run already happened and is already in run-history.json.

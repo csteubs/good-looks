@@ -25,6 +25,7 @@
 
 import { errorSignature, firstErrorLine } from "./error-signature.mjs";
 import { stripAnsi } from "./strip-ansi.mjs";
+import { auditsToText, normalizeSiteHealthSummary, scoreReading } from "./site-health.mjs";
 
 /**
  * The ACTION index for a replay step.
@@ -102,7 +103,8 @@ function byAction(entries) {
  * @param {Array}  input.heals          heal-journal entries for THIS run
  * @param {string} input.logText        the run's raw log, for the error signature
  * @param {"app"|"mcp"} input.source
- * @returns {{ run: object, steps: object[] }}
+ * @param {object|null} [input.siteHealth]  site-health.json, or null
+ * @returns {{ run: object, steps: object[], hosts: object[], pages: object[] }}
  *
  * IDEMPOTENT BY CONSTRUCTION: the output is a pure function of the inputs and
  * every row carries its own primary key, so ingesting the same run twice
@@ -237,7 +239,74 @@ export function rollupRun(input) {
       console_dropped: logs?.consoleDropped ?? 0,
       network_dropped: logs?.networkDropped ?? 0,
       replay_of_run_id: run.replayOfRunId,
+      // Stamped by `good-looks ingest` and by nothing else, so the Site Health
+      // view can mark a point as "from CI" without a source column that the
+      // MCP's own runs would also set.
+      ingested_at: typeof run.ingestedAt === "number" ? run.ingestedAt : undefined,
     },
     steps,
+    hosts: siteHealthHostRows(run),
+    pages: siteHealthPageRows(run, input.siteHealth ?? null),
   };
+}
+
+/**
+ * The per-host rows, from the run record's SUMMARY — never the artifact.
+ *
+ * The summary survives artifact retention; the artifact does not. A rollup
+ * that derived these from the pages would give a domain a series exactly as
+ * long as its screenshots, which is the shortening this table exists to
+ * avoid. Rebuilt through the normaliser: the record is trusted from the app,
+ * but an ingested one crossed a machine boundary.
+ */
+function siteHealthHostRows(run) {
+  const summary = normalizeSiteHealthSummary(run.siteHealth);
+  if (!summary) return [];
+  return summary.hosts.map((h) => ({
+    run_id: run.id,
+    host: h.host,
+    pages: h.pages,
+    seo: h.seo,
+    perf: h.perf,
+  }));
+}
+
+/** The per-page rows, scored here so the app, the MCP and the CLI write the
+ *  same number for the same reading. Empty when the run did not measure or
+ *  its artifact is gone — the host rows above still carry the score. */
+function siteHealthPageRows(run, artifact) {
+  const pages = Array.isArray(artifact?.pages) ? artifact.pages : [];
+  return pages.map((reading, index) => {
+    const scored = scoreReading(reading);
+    const m = reading.metrics ?? {};
+    return {
+      run_id: run.id,
+      page_index: index,
+      host: reading.host,
+      path: reading.path,
+      url: reading.url,
+      title: reading.title,
+      tab: reading.tab ?? 0,
+      cold: Boolean(reading.cold),
+      nav_type: reading.navType,
+      engine: reading.engine,
+      status: reading.status,
+      seo: scored.seo,
+      seo_audits: auditsToText(scored.audits),
+      perf: scored.perf,
+      coverage: scored.coverage.join(" "),
+      fcp: m.fcp,
+      lcp: m.lcp,
+      cls: m.cls,
+      tbt: m.tbt,
+      inp: m.inp,
+      ttfb: m.ttfb,
+      dcl: m.dcl,
+      load_ms: m.load,
+      requests: m.requests,
+      transfer_bytes: m.transferBytes,
+      action: reading.action,
+      at: reading.at,
+    };
+  });
 }

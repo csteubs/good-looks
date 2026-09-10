@@ -28,7 +28,7 @@
 // remote page content, and a step label can carry a value typed during
 // recording. Redaction of declared secrets happens on top of this, at the send.
 
-import { buildDeepLink } from "../../../shared/deep-link.mjs";
+import { buildDeepLink, buildSiteHealthDeepLink } from "../../../shared/deep-link.mjs";
 import { errorSignature } from "../../../shared/error-signature.mjs";
 import type { DefectSource, IssueDraft } from "../../../renderer/lib/issue-types.js";
 
@@ -151,7 +151,33 @@ export interface FailureDefect {
   headersFiltered: boolean;
 }
 
-export type Defect = A11yDefect | VisualDefect | FailureDefect;
+/** One page of a Site Health draft: its path and its score in the category
+ *  being filed. NO TITLE, by shape — a page title is page-authored text and
+ *  the path already identifies the page. */
+export interface SiteHealthPage {
+  path: string;
+  score: number | null;
+}
+
+export interface SiteHealthDefect {
+  kind: "site-health";
+  host: string;
+  category: "seo" | "performance";
+  /** the current score and the prior period's, both already rounded */
+  score: number | null;
+  prev: number | null;
+  runs: number;
+  /** ms, the window the score was read over; 0 since = all time */
+  since: number;
+  until: number;
+  pages: SiteHealthPage[];
+  /** SEO: failing audits with how many pages they cover. */
+  findings: { label: string; pages: number; of: number }[];
+  /** Performance: the vitals, formatted, against their targets. */
+  vitals: { label: string; value: string; target: string; over: boolean }[];
+}
+
+export type Defect = A11yDefect | VisualDefect | FailureDefect | SiteHealthDefect;
 
 export interface BuildInput {
   /** Defect coordinates only — an insight-report source never reaches this
@@ -182,6 +208,14 @@ export function buildTitle(input: BuildInput): string {
   }
   if (defect.kind === "visual") {
     return line(`Visual change (${pct(defect.changedFraction)}) — ${test}${step ? ` · ${step}` : ""}`, 200);
+  }
+  if (defect.kind === "site-health") {
+    // "Performance: store.example.com scores 54/100, −4 vs prior" — the
+    // category, the domain, the number and the change. No status word: a 54
+    // is a 54, and what the title adds is which way it moved.
+    const cat = defect.category === "seo" ? "SEO" : "Performance";
+    const score = defect.score === null ? "has no score" : `scores ${defect.score}/100`;
+    return line(`${cat}: ${line(defect.host, 253)} ${score}, ${siteHealthDelta(defect)}`, 200);
   }
   // A signature is far more useful in a title than "Test failed": it is what
   // makes two issues about the same failure recognisably the same.
@@ -235,6 +269,57 @@ function a11yBody(d: A11yDefect): string[] {
     if (d.occurrences.length > shown.length) {
       out.push(`- …and ${d.occurrences.length - shown.length} more`);
     }
+  }
+  return out;
+}
+
+/** "−4 vs prior" / "+3 vs prior" / "no change vs prior" / "no prior period". */
+function siteHealthDelta(d: SiteHealthDefect): string {
+  if (d.score === null || d.prev === null) return "no prior period";
+  const delta = d.score - d.prev;
+  if (delta === 0) return "no change vs prior";
+  return `${delta > 0 ? "+" : "−"}${Math.abs(delta)} vs prior`;
+}
+
+const MAX_PAGES = 25;
+const MAX_FINDINGS = 25;
+
+function siteHealthBody(d: SiteHealthDefect): string[] {
+  const cat = d.category === "seo" ? "SEO" : "Performance";
+  const days = d.since > 0 ? Math.max(1, Math.round((d.until - d.since) / 86_400_000)) : null;
+  const out = [
+    `**${cat} score ${d.score === null ? "—" : `${d.score}/100`}** for ${code(d.host)} · ${siteHealthDelta(d)}`,
+    "",
+    days === null
+      ? `Mean of the latest reading of each page, over every run this library has (${d.runs} run${d.runs === 1 ? "" : "s"}).`
+      : `Mean of the latest reading of each page over the last ${days} day${days === 1 ? "" : "s"} (${d.runs} run${d.runs === 1 ? "" : "s"}), against the ${days} days before.`,
+  ];
+  if (d.category === "seo") {
+    const findings = d.findings.slice(0, MAX_FINDINGS);
+    if (findings.length) {
+      out.push("", "**Failing audits**", "");
+      for (const f of findings) {
+        out.push(`- ${line(f.label, 80)} — ${Number(f.pages) || 0} of ${Number(f.of) || 0} page${f.of === 1 ? "" : "s"}`);
+      }
+      if (d.findings.length > findings.length) out.push(`- …and ${d.findings.length - findings.length} more`);
+    } else {
+      out.push("", "Every weighted audit passes on every page read in this window.");
+    }
+  } else {
+    if (d.vitals.length) {
+      out.push("", "**Web vitals · 75th percentile**", "");
+      for (const v of d.vitals.slice(0, 10)) {
+        out.push(`- ${line(v.label, 20)}: ${line(v.value, 20)} (target ${line(v.target, 20)})${v.over ? " — over the target" : ""}`);
+      }
+    }
+  }
+  const pages = d.pages.slice(0, MAX_PAGES);
+  if (pages.length) {
+    out.push("", "**Pages · latest reading of each**", "");
+    for (const p of pages) {
+      out.push(`- ${code(p.path)} — ${p.score === null ? "—" : `${p.score}/100`}`);
+    }
+    if (d.pages.length > pages.length) out.push(`- …and ${d.pages.length - pages.length} more`);
   }
   return out;
 }
@@ -320,7 +405,9 @@ export function buildIssueDraft(input: BuildInput): IssueDraft {
       ? a11yBody(defect)
       : defect.kind === "visual"
         ? visualBody(defect)
-        : failureBody(defect)),
+        : defect.kind === "site-health"
+          ? siteHealthBody(defect)
+          : failureBody(defect)),
   );
 
   parts.push("", "---", "", ...contextBlock(context));
@@ -328,11 +415,15 @@ export function buildIssueDraft(input: BuildInput): IssueDraft {
   // The way back. Built by the same module that parses it, so the two cannot
   // drift into producing links that look right and open nothing. Carries only
   // ids — no content — and opening it selects a view and does nothing else.
-  const link = buildDeepLink({
-    testId: source.testId,
-    runId: source.runId,
-    stepId: source.stepId,
-  });
+  // A Site Health link goes to the DOMAIN's screen, not to the anchor run.
+  const link =
+    source.kind === "site-health"
+      ? buildSiteHealthDeepLink({ host: source.host, category: source.category })
+      : buildDeepLink({
+          testId: source.testId,
+          runId: source.runId,
+          stepId: source.stepId,
+        });
   parts.push("", `[Open in Good Looks!](${link})`);
   parts.push("", "_Filed from Good Looks!_");
 

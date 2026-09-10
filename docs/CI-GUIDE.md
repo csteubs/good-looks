@@ -393,6 +393,13 @@ site most often were the ones teaching the app least about it. Their heals also
 feed the fixes the app proposes for **other tests** on the same site, which is
 the feature that saves you fixing eight tests by hand after one release.
 
+Site Health readings travel too. A CI run with the app's Check Site Health
+setting on scores every page it loads, and `ingest` carries the per-domain
+summary and the per-page readings back with the run, then rolls the run into
+the metrics database — so the Site Health view's series includes the runs that
+meet a site most often. A point that came from CI is marked as such in the
+view.
+
 Two things they never do. An ingested heal is never marked as applied: nothing
 on your machine changed, so there is no rewrite to undo — only a suggestion to
 read. And they dedupe per run and step, so ingesting the same artifact twice

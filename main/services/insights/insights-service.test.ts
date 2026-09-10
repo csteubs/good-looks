@@ -29,6 +29,7 @@ function factsFixture(): InsightFacts {
     visualChangedSteps: null,
     heals: { healedSteps: 0, healFailures: 0, topTests: [] },
     a11y: { newViolationSteps: 0 },
+    siteHealth: null,
     library: { totalTests: 1, testsCreated: 0, unreviewedScriptChanges: 0, pendingHeals: 0 },
     routines: [],
     shopify: [],
@@ -119,6 +120,7 @@ function makeHarness(overrides: Partial<InsightsDeps> = {}) {
         testsCreated: 0,
         unreviewedScriptChanges: 0,
         expiringSignatures: 0,
+        siteHealthDomains: null,
       },
       testIndex: new Set(["t1"]),
     }),
@@ -336,6 +338,7 @@ describe("insightsService firing decisions", () => {
             testsCreated: 0,
             unreviewedScriptChanges: 0,
             expiringSignatures: 0,
+            siteHealthDomains: null,
           },
           testIndex: new Set(["t1"]),
         };

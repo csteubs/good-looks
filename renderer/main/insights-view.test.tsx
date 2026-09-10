@@ -100,6 +100,7 @@ function report(over: Partial<InsightReport> = {}): InsightReport {
       testsCreated: 0,
       unreviewedScriptChanges: 0,
       expiringSignatures: 0,
+      siteHealthDomains: null,
     },
     sending: [{ label: "Run counts", chars: 640 }],
     promptChars: 5000,

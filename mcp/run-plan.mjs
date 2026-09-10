@@ -264,6 +264,10 @@ export function describeRun(
     // nothing to heal is not being deprived of anything.
     autoHeal: (settings.autoHealEnabled ?? false) && (test?.steps ?? []).some((s) => s?.locator),
     pageSettling: speed === "crawl",
+    // Global, never per test (see the runner's gate). An older caller passes
+    // no `ran.siteHealth`, and the caveat is only worth printing when the
+    // library has the switch on.
+    siteHealth: settings.siteHealthChecks ?? false,
   };
   const skipped = [];
   if (wants.screenshots && !ran.screenshots) {
@@ -275,6 +279,12 @@ export function describeRun(
   if (wants.accessibility && !ran.accessibility) skipped.push("Accessibility checks — axe was not injected.");
   if (wants.consoleAndNetwork && !ran.consoleAndNetwork) {
     skipped.push("Console and network recording — no console.json or network.json was written.");
+  }
+  if (wants.siteHealth && !ran.siteHealth) {
+    skipped.push(
+      "Site Health — no reading was taken, so this run adds no point to the Site Health view's " +
+        "SEO and performance series for the site.",
+    );
   }
   if (wants.autoHeal && !ran.autoHeal) {
     skipped.push(

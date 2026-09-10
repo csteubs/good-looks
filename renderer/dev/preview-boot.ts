@@ -57,6 +57,7 @@ function mountPreviewBanner(): void {
  *
  *      /?view=stats            /?view=visual      /?view=batch
  *      /?view=a11y             /?view=heals       /?view=insights
+ *      /?view=site-health
  *      /?view=branches         /?view=settings    /?view=settings&pane=cost
  *      /?test=t-checkout
  *
@@ -91,6 +92,7 @@ async function openRequestedView(): Promise<void> {
             | "/stats"
             | "/visual"
             | "/a11y"
+            | "/site-health"
             | "/batch"
             | "/heals"
             | "/insights"
