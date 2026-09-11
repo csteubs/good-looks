@@ -62,6 +62,18 @@ describe("<TopStrip />", () => {
     expect(screen.getAllByText("Stats")).toHaveLength(2);
   });
 
+  it("gives the current crumb its full label as a hint, never as a native title", () => {
+    // The crumb truncates, and the full text was a `title` — which on macOS
+    // under the pinned Electron shows once and then rarely (primitives/hint.tsx).
+    // Hover-only, since the current page is not a control; what jsdom can pin
+    // is the wiring and the absence of the attribute that no longer works.
+    render(<TopStrip crumbs={[{ label: "Stats", onClick: vi.fn() }, { label: "Run history for Checkout" }]} />);
+    const current = screen.getByText("Run history for Checkout");
+    expect(current.getAttribute("aria-current")).toBe("page");
+    expect(current.getAttribute("title")).toBeNull();
+    expect(current.getAttribute("data-state")).toBe("closed");
+  });
+
   it("fills the command and ticker slots only when given something", () => {
     // THE SLOTS ARE EMPTY UNTIL §6.7 AND §6.8, and that is the decision this
     // pins. A ⌘K hint that opens no palette teaches a shortcut that answers

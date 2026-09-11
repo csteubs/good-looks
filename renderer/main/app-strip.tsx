@@ -23,7 +23,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, PanelLeft } from "lucide-react";
 import { useSplitView } from "@ui";
 
-import { ChromeButton, TopStrip, type Crumb } from "../theme";
+import { ChromeButton, Hint, TopStrip, type Crumb } from "../theme";
 import { JobTicker } from "./job-ticker";
 import { api } from "../lib/api";
 import { categoryMeta, facetLabel } from "../lib/stats-categories";
@@ -162,16 +162,19 @@ function CommandKey(): React.ReactElement | null {
   const setOpen = useCommandPalette();
   if (!setOpen) return null;
   return (
-    <button
-      type="button"
-      className="gl-cmd-key"
-      onClick={() => setOpen(true)}
-      // Spelled out for a screen reader, which reads "⌘" as nothing useful.
-      aria-label="Run a command (Command K)"
-      title="Run a command  ⌘K"
-    >
-      ⌘K
-    </button>
+    // The hint says what the cap does; `aria-label` spells it out for a screen
+    // reader, which reads "⌘" as nothing useful. A `Hint`, not a native
+    // `title` — see primitives/hint.tsx for why that stopped being a tooltip.
+    <Hint text="Run a command  ⌘K" side="bottom">
+      <button
+        type="button"
+        className="gl-cmd-key"
+        onClick={() => setOpen(true)}
+        aria-label="Run a command (Command K)"
+      >
+        ⌘K
+      </button>
+    </Hint>
   );
 }
 

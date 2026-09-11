@@ -87,15 +87,19 @@ export function TopStrip({
                   {crumb.label}
                 </button>
               ) : (
-                <span
-                  className="gl-strip-crumb-current"
-                  // Only the trailing segment is the current page. A middle
-                  // segment without an `onClick` is inert, not "here".
-                  aria-current={i === lastIndex ? "page" : undefined}
-                  title={crumb.label}
-                >
-                  {crumb.label}
-                </span>
+                // The full label on hover, for a crumb the strip truncates — a
+                // `Hint`, not a native title (primitives/hint.tsx). Hover-only:
+                // the current page is not a control.
+                <Hint text={crumb.label} side="bottom">
+                  <span
+                    className="gl-strip-crumb-current"
+                    // Only the trailing segment is the current page. A middle
+                    // segment without an `onClick` is inert, not "here".
+                    aria-current={i === lastIndex ? "page" : undefined}
+                  >
+                    {crumb.label}
+                  </span>
+                </Hint>
               )}
             </React.Fragment>
           ))}

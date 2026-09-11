@@ -360,6 +360,18 @@ describe("LibrarySidebar — run verdict dots", () => {
     expect(screen.queryByLabelText("Last run passed")).toBeNull();
   });
 
+  it("names the dot as a hint for the eye, never as a native title", async () => {
+    // The label is what a screen reader gets; a mouse got a native `title`,
+    // which on macOS under the pinned Electron shows once and then rarely
+    // (primitives/hint.tsx). The dot is a hint trigger now — hover-only, since
+    // it sits inside the row's button — and the attribute is pinned ABSENT.
+    runRecords = [run({ id: "r-new", status: "failed", startedAt: 200 })];
+    renderSidebar();
+    const dot = await screen.findByLabelText("Last run failed");
+    expect(dot.getAttribute("title")).toBeNull();
+    expect(dot.getAttribute("data-state")).toBe("closed");
+  });
+
   it("blends the dot across a three-browser batch instead of flattening it", async () => {
     // Two of three browsers passing is a different fact from all three
     // failing, and the dot is the only place the difference is visible from
@@ -652,7 +664,11 @@ describe("LibrarySidebar folders (REDESIGN §7.2)", () => {
     renderSidebar();
     // The label, not the colour: colour alone is not an accessible signal and
     // jsdom would report a class either way.
-    expect(await screen.findByLabelText("1 of 2 tests passed")).toBeTruthy();
+    const dot = await screen.findByLabelText("1 of 2 tests passed");
+    expect(dot).toBeTruthy();
+    // And a hint for the eye, never a native title (primitives/hint.tsx).
+    expect(dot.getAttribute("title")).toBeNull();
+    expect(dot.getAttribute("data-state")).toBe("closed");
   });
 
   it("collapses, and its members LEAVE THE LIST rather than being hidden", async () => {
@@ -852,6 +868,9 @@ describe("LibrarySidebar — the reusable-flow glyph", () => {
     await screen.findByText("Plain checkout");
     const glyphs = await screen.findAllByRole("img", { name: "Reusable flow" });
     expect(glyphs).toHaveLength(1);
+    // Named for the eye by a hint, not a native title (primitives/hint.tsx).
+    expect(glyphs[0].getAttribute("title")).toBeNull();
+    expect(glyphs[0].getAttribute("data-state")).toBe("closed");
   });
 
   it("shows no flow glyph when nothing is a flow", async () => {

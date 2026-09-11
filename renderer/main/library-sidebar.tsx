@@ -17,7 +17,7 @@ import {
 } from "@ui";
 import { Accessibility, Plus, ChevronDown, ChevronRight, Folder, FolderOpen, Gauge, EyeOff, BarChart3, Heart, Images, ListChecks, Settings, Sparkles, Tag, Wand2, Copy, Workflow } from "lucide-react";
 
-import { ChromeButton, Rail, RailEmpty, RailGroup, RailRow, SiteIcon } from "../theme";
+import { ChromeButton, Hint, Rail, RailEmpty, RailGroup, RailRow, SiteIcon } from "../theme";
 import { RoutinesRail, useCreateRoutine } from "./routines-rail";
 import { api } from "../lib/api";
 import { aggregateStatus, type SessionLike } from "../lib/ai-debug-sessions";
@@ -236,8 +236,8 @@ function AiConnectionFooter({ onOpen }: { onOpen: () => void }) {
       icon={<Status variant={variant} aria-label={ariaLabel} />}
       title={state === "connected" ? label : label.split(" — ")[0]}
       onClick={onOpen}
-      // `hint` (the native title): the error detail has to be reachable
-      // without hover-openable chrome (jsdom cannot open a Radix tooltip).
+      // The error detail, as the row's hint — a `Hint` on hover and on
+      // focus (the row is a button), never a native title (hint.tsx).
       hint={state === "disconnected" ? label : undefined}
     />
   );
@@ -270,10 +270,16 @@ function RowIndicators({
   if (!tone && !verdict && !isFlow) return null;
   return (
     <span className="flex shrink-0 items-center gap-1.5">
+      {/* Each glyph names itself twice: `aria-label` for a screen reader, a
+          `Hint` for the eye. Hover-only — these sit inside the row's button
+          and cannot take focus — and never a native `title`, which on macOS
+          under the pinned Electron shows once and then rarely (hint.tsx). */}
       {isFlow ? (
-        <span role="img" aria-label="Reusable flow" title="Reusable flow">
-          <Workflow aria-hidden="true" className="size-3.5 text-tertiary" />
-        </span>
+        <Hint text="Reusable flow" side="right">
+          <span role="img" aria-label="Reusable flow">
+            <Workflow aria-hidden="true" className="size-3.5 text-tertiary" />
+          </span>
+        </Hint>
       ) : null}
       {tone ? (
         <Sparkles
@@ -283,12 +289,9 @@ function RowIndicators({
         />
       ) : null}
       {verdict ? (
-        <span
-          role="img"
-          aria-label={verdict.label}
-          title={verdict.label}
-          className={`size-2 rounded-full ${verdict.className}`}
-        />
+        <Hint text={verdict.label} side="right">
+          <span role="img" aria-label={verdict.label} className={`size-2 rounded-full ${verdict.className}`} />
+        </Hint>
       ) : null}
     </span>
   );
@@ -354,12 +357,13 @@ function GroupRow({
           </span>
           <span className="gl-rail-row-accessory">
             {group.tone ? (
-              <span
-                role="img"
-                aria-label={group.tone.label}
-                title={group.tone.label}
-                className={`size-2 rounded-full ${group.tone.className}`}
-              />
+              <Hint text={group.tone.label} side="right">
+                <span
+                  role="img"
+                  aria-label={group.tone.label}
+                  className={`size-2 rounded-full ${group.tone.className}`}
+                />
+              </Hint>
             ) : null}
           </span>
         </button>

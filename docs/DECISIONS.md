@@ -52,7 +52,12 @@ wiring and the absence. `Hint` with no text renders its child bare, so an
 optional hint passes straight through and a row without one carries no
 tooltip machinery. `title` remains in the theme only where it reveals text the
 element truncates and also shows (`TagStack`, `StepRow`'s description,
-`KeyValue`), and on `ToolTile`'s folded name, which is the same case.
+`KeyValue`), and on `ToolTile`'s folded name, which is the same case; the
+strip's current crumb, which the app strip draws, went the other way and is a
+`Hint` too. The library rail's glyphs — the verdict dot, a folder's tone
+dot, the reusable-flow mark — and the strip's ⌘K cap followed the same day:
+each keeps its `aria-label` and gains a `Hint`, hover-only where it sits inside
+the row's button, on focus too for the cap, which is a button of its own.
 
 ### 2026-09-10 — Site Health: a score per domain, from readings the run already takes
 
