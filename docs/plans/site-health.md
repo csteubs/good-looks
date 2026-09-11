@@ -121,9 +121,13 @@ as a number — "over the 2.5 s target", "within the 0.1 target" — never as a
 grade. Targets: LCP 2.5 s, CLS 0.1, INP 200 ms, FCP 1.8 s, TTFB 0.8 s, TBT
 200 ms. A vital over its target is the one other reading that takes amber; a
 vital within it stays neutral. Each vital card explains its statistic, its
-sample and its target on hover and on keyboard focus (a native `title`, the
-rail's `hint` idiom — Radix tooltips cannot be driven in jsdom and copy must
-be reachable without hover, so the target also stays visible as text).
+sample and its target on hover and on keyboard focus — a DOM-rendered
+Tooltip (`@ui`'s), never a native `title`: on the pinned Electron, macOS
+shows a `title` on the first hover and rarely again (electron/electron#49843).
+The card is in the tab order, focus opens the same words, and the target also
+stays visible as text. The same goes for every other explanation on the
+screen — the change boxes, the series bars, the pages table's column heads;
+a `title` remains only where it reveals text the row truncates.
 
 "Transferred" is the name of the bytes column and the issue-body figure: bytes
 over the network for the page and its resources, compressed. Not "weight",

@@ -7155,9 +7155,17 @@
   white-space: nowrap;
 }
 
+/* The detail's box stands on its own (the row's sits inside a button), so it
+   is in the tab order and explains itself on focus as well as hover. */
 .gl-sh-delta-big {
   font-size: 10px;
   padding: 2px 8px;
+  cursor: help;
+}
+
+.gl-sh-delta-big:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
 }
 
 .gl-sh-detail-body {
@@ -7275,7 +7283,9 @@
 }
 
 /* One statistic. `cursor: help` because the whole card explains itself on
-   hover through its native title. */
+   hover — through a Tooltip, not a native title, which on the pinned
+   Electron macOS shows once and then rarely (see the view). The card is in
+   the tab order, so focus opens the same words. */
 .gl-sh-vital {
   display: flex;
   flex-direction: column;
@@ -7283,6 +7293,11 @@
   padding: 8px 10px;
   border: 1px solid var(--gl-line-2);
   cursor: help;
+}
+
+.gl-sh-vital:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
 }
 
 .gl-sh-vital-label {
@@ -7313,6 +7328,11 @@
 
 .gl-sh-table-wrap {
   overflow-x: auto;
+}
+
+/* A column head that explains itself on hover (its vital's full name). */
+.gl-sh-explained {
+  cursor: help;
 }
 
 .gl-sh-table {

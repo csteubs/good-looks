@@ -68,6 +68,32 @@ lowest first by default, shared by both tabs. The one hue on the screen is
 amber on a vital over its published target, which is a threshold and not an
 opinion.
 
+**Every explanation is a DOM-rendered Tooltip, and it shipped as a native
+`title` first.** The vitals cards carried their explanation as a `title`
+with `cursor: help` over them — the rail's `hint` idiom, chosen because a
+Radix tooltip "cannot be opened under jsdom". Testing the branch in the app
+found a help cursor that explained nothing: on the pinned Electron (43.3.0),
+macOS shows a `title` tooltip on the first hover and very rarely afterwards,
+a confirmed regression since 38.8.2 that is open with no fix attached
+(electron/electron#49843). So a `title` is not a tooltip on this platform,
+and every explanation on the screen — the vitals cards, the two change
+boxes, the series bars, the pages table's column heads — now goes through
+`@ui`'s `Tooltip`, the one the flake panel and the Visual view already draw.
+A `title` remains only where it reveals TRUNCATED text (a host, a path, a
+URL, the failing-audit list) that the row also carries in full. Two things
+the swap settled. Each trigger that stands on its own (a card, the detail's
+change box) is in the tab order, so focus opens the same words: the keyboard
+path the plan promised and the `title` never delivered. And the jsdom claim
+was half right: pointer events cannot open a Radix tooltip there, but
+`fireEvent.focus` on a focusable trigger can — verified before the tests
+were written — so `site-health-view.test.tsx` asserts the rendered
+explanation through focus and pins the `title` ABSENT, rather than asserting
+an exported string the way the flake panel (whose trigger sits inside a
+button and cannot take focus) has to. Still riding a `title`, and exposed
+the same way on macOS: the rail's `hint`, `Segmented`'s option `title`
+(this view's SEO/Performance and range descriptions among them) and
+`Panel`'s id. That is app-wide and a follow-up, not this change.
+
 **Unattended runs measure too, and `ingest` carries it back.** The CI runner
 reads the same settings file, arms the same fixture, and writes the summary
 onto its record; `good-looks ingest` admits the summary through the run gate,

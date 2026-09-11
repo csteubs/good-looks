@@ -19,14 +19,18 @@ import type {
 import type { DefectSource, IssueLink } from "../lib/issue-types";
 import {
   changeDetected,
+  COLUMN_EXPLANATION,
+  deltaExplanation,
   deltaText,
   filedSiteHealthLink,
   RANGES,
+  seriesPointLabel,
   shortDate,
   sinceFor,
   siteHealthAnchor,
   SiteHealthView,
   sortHosts,
+  vitalExplanation,
 } from "./site-health-view";
 
 const h = vi.hoisted(() => ({ navigate: vi.fn(), pathname: "/site-health" }));
@@ -204,6 +208,19 @@ describe("pure rules", () => {
     expect(shortDate(AUG_28)).toBe("28 Aug");
   });
 
+  it("explains a delta against the window in days, and all time as having no prior", () => {
+    expect(deltaExplanation("seo", "7d")).toBe("SEO score over the last 7 days, against the 7 days before");
+    expect(deltaExplanation("performance", "30d")).toBe("Performance score over the last 30 days, against the 30 days before");
+    expect(deltaExplanation("performance", "all")).toMatch(/no prior period/);
+  });
+
+  it("names a series bar by its day, test, score and origin", () => {
+    const series = detailFor("x").series;
+    expect(seriesPointLabel(series[1], "performance")).toBe("18 Aug · Checkout · 76/100 · from CI");
+    expect(seriesPointLabel(series[3], "seo")).toBe("28 Aug · Checkout · 78/100");
+    expect(seriesPointLabel({ ...series[3], perf: null }, "performance")).toBe("28 Aug · Checkout · —");
+  });
+
   it("derives the window from the range, and all time is zero", () => {
     const now = AUG_28;
     expect(sinceFor("7d", now)).toBe(now - 7 * DAY);
@@ -302,18 +319,69 @@ describe("the detail", () => {
     expect(hostCalls[0]?.[0]).toBe("shop.example.com");
   });
 
-  it("explains every vital on hover and names the target it is measured against", async () => {
+  // The explanations are Radix tooltips, and jsdom can drive ONE of their
+  // openers: focus. (Pointer events leave the content unmounted — the
+  // trigger's pointer tracking needs APIs jsdom lacks — which is why the flake
+  // panel asserts its copy off an exported map.) Focus is the keyboard path,
+  // so asserting through it proves the words AND that a keyboard reaches them.
+  it("explains every vital on focus, naming the target and the sample — never through a native title", async () => {
     h.pathname = "/site-health/shop.example.com/performance";
     renderView();
     await screen.findByText("Web vitals · 75th percentile");
     const vitals = within(document.querySelector(".gl-sh-vitals") as HTMLElement);
     const lcp = vitals.getByText("3.4 s").closest(".gl-sh-vital") as HTMLElement;
-    expect(lcp.getAttribute("title")).toContain("Largest Contentful Paint");
-    expect(lcp.getAttribute("title")).toContain("Target 2.5 s");
-    expect(lcp.getAttribute("title")).toContain("75th percentile of the 6 readings");
+    // A `title` is what shipped first, and what the pinned Electron shows on
+    // macOS once and then rarely (electron/electron#49843): a help cursor
+    // over a card that explains nothing. Pinned absent, not merely unread.
+    expect(lcp.getAttribute("title")).toBeNull();
+    expect(lcp.getAttribute("tabindex")).toBe("0");
+    expect(screen.queryByText(/Largest Contentful Paint/)).toBeNull();
+    fireEvent.focus(lcp);
+    const tip = (await screen.findAllByText(vitalExplanation("lcp", 6)))[0];
+    expect(tip.textContent).toContain("Largest Contentful Paint");
+    expect(tip.textContent).toContain("Target 2.5 s");
+    expect(tip.textContent).toContain("75th percentile of the 6 readings");
+    // The target stays visible without hover or focus, as the plan promised.
     expect(within(lcp).getByText("over the 2.5 s target")).toBeTruthy();
     const ttfb = vitals.getByText("180 ms").closest(".gl-sh-vital") as HTMLElement;
     expect(within(ttfb).getByText("within the 800 ms target")).toBeTruthy();
+    expect(ttfb.getAttribute("title")).toBeNull();
+  });
+
+  it("explains the change box against the window in days, on focus in the detail and on hover in the row", async () => {
+    h.pathname = "/site-health/shop.example.com/performance";
+    renderView();
+    const big = await screen.findByText("−4 vs prior", { selector: ".gl-sh-delta-big" });
+    expect(big.getAttribute("title")).toBeNull();
+    expect(big.getAttribute("tabindex")).toBe("0");
+    fireEvent.focus(big);
+    expect((await screen.findAllByText(deltaExplanation("performance", "30d"))).length).toBeGreaterThan(0);
+    // The row's box sits inside the row's button, so it cannot take focus;
+    // it is wired as a hover trigger carrying the same words.
+    const rows = screen.getAllByRole("button", { name: /example\.com, Performance/ });
+    const rowDelta = within(rows[0]).getByText("−4 vs prior");
+    expect(rowDelta.getAttribute("title")).toBeNull();
+    expect(rowDelta.getAttribute("data-state")).toBe("closed");
+  });
+
+  it("wires every series bar and every explained column head as a tooltip trigger, not a title", async () => {
+    h.pathname = "/site-health/shop.example.com/performance";
+    renderView();
+    await screen.findByText(/change detected 23 Aug/);
+    const slots = Array.from(document.querySelectorAll(".gl-sh-series-slot"));
+    expect(slots.length).toBe(4);
+    for (const slot of slots) {
+      expect(slot.getAttribute("title")).toBeNull();
+      expect(slot.getAttribute("data-state")).toBe("closed");
+    }
+    for (const name of ["LCP", "CLS", "TBT", "INP", "Transferred"]) {
+      const head = screen.getByRole("columnheader", { name });
+      expect(head.getAttribute("title"), name).toBeNull();
+      expect(head.getAttribute("data-state"), name).toBe("closed");
+    }
+    expect(screen.getByRole("columnheader", { name: "Requests" }).getAttribute("data-state")).toBeNull();
+    expect(COLUMN_EXPLANATION.lcp).toBe("Largest Contentful Paint");
+    expect(COLUMN_EXPLANATION.transferred).toMatch(/bytes transferred/i);
   });
 
   it("heads the payload column 'Transferred' and formats the bytes", async () => {

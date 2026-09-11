@@ -15,8 +15,17 @@
 //     call. What the view adds is the CHANGE — "−4 vs prior" — and when a
 //     change was detected, which are facts about the series.
 //   • Score text is right-aligned and bounded, so a bar never runs into it.
-//   • Every vital card explains itself on hover (native `title`, the way the
-//     rail's hints do — a Radix tooltip cannot be opened under jsdom).
+//   • Every explanation on the screen is a DOM-rendered Tooltip (`@ui`'s,
+//     the flake panel's and the Visual view's), NEVER a native `title`. It
+//     shipped as a `title` first, and the cards' help cursor promised an
+//     explanation that did not come: on the pinned Electron, macOS shows a
+//     `title` tooltip on the first hover and rarely again — an open
+//     regression since 38.8.2 (electron/electron#49843). A `title` remains
+//     only where it reveals TRUNCATED text (a host, a path, a URL), which the
+//     row also carries in full. Every trigger that stands on its own is in
+//     the tab order, so focus opens the same words — the keyboard path, and
+//     the one jsdom can drive (pointer events cannot open a Radix tooltip
+//     there; `fireEvent.focus` on a focusable trigger can).
 //
 // Data: `["site-health", …]` queries (in RUN_DERIVED_KEYS, so a finished run
 // refreshes them). The window is chosen here and the shaping is shared with
@@ -25,7 +34,7 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { ScrollArea, toast } from "@ui";
+import { ScrollArea, toast, Tooltip, TooltipContent, TooltipTrigger } from "@ui";
 import { ExternalLink, Heart, Send } from "lucide-react";
 
 import { Btn, Panel, Segmented } from "../theme";
@@ -156,7 +165,71 @@ export function deltaText(current: number | null, prev: number | null, range: Ra
   return scoreDelta(current, prev) ?? (range === "all" ? "all time" : "no prior");
 }
 
+/** What a delta box is comparing — the tooltip on it, spelled once for the
+ *  row's box and the detail's. Names the window in days rather than "the
+ *  prior period", because the prior period IS the same number of days
+ *  again and a reader should not have to know that. */
+export function deltaExplanation(category: SiteHealthCategory, range: RangeId): string {
+  const r = RANGES.find((x) => x.id === range);
+  if (!r || r.ms === 0) {
+    return `${CATEGORY_LABEL[category]} score over every reading this library has — there is no prior period to compare with`;
+  }
+  const days = r.ms / DAY;
+  return `${CATEGORY_LABEL[category]} score over the last ${days} days, against the ${days} days before`;
+}
+
+/** A vital card's explanation: what the statistic is, its target, and that
+ *  the figure is the 75th percentile across the pages read — the same
+ *  percentile Google's field data reports. */
+export function vitalExplanation(id: VitalId, readings: number): string {
+  const meta = VITAL_META[id];
+  return `${meta.name}: ${meta.definition}. Target ${formatVitalTarget(id)}. Shown as the 75th percentile of the ${plural(readings, "reading")} in this window.`;
+}
+
+/** One bar of the series, named: the day, the test that read it, the score,
+ *  and whether the run was carried in from CI. */
+export function seriesPointLabel(
+  p: SiteHealthHostDetail["series"][number],
+  category: SiteHealthCategory,
+): string {
+  const score = category === "seo" ? p.seo : p.perf;
+  return `${shortDate(p.at)} · ${p.testName} · ${scoreText(score)}${p.ingested ? " · from CI" : ""}`;
+}
+
+/** The pages table's explained column heads. */
+export const COLUMN_EXPLANATION = {
+  lcp: VITAL_META.lcp.name,
+  cls: VITAL_META.cls.name,
+  tbt: VITAL_META.tbt.name,
+  inp: VITAL_META.inp.name,
+  transferred: "Bytes transferred to load the page, as the browser reported them",
+} as const;
+
 // ── Pieces ──────────────────────────────────────────────────────────────
+
+/** An explanation on hover and, when the child is focusable, on focus. The
+ *  child is the trigger itself (`asChild`), so the explained thing keeps its
+ *  own element, class and role. The side is typed off the content rather
+ *  than imported: check:sdk-retired keeps the Tooltip FAMILY on its list by
+ *  name, and a type alias is not one of the four members. */
+function Explain({
+  text,
+  side,
+  children,
+}: {
+  text: string;
+  side?: React.ComponentProps<typeof TooltipContent>["side"];
+  children: React.ReactElement;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side={side} className="max-w-[260px] leading-snug">
+        {text}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 function HostRow({
   host,
@@ -192,9 +265,12 @@ function HostRow({
           <span className="gl-sh-fill" style={{ width: `${score ?? 0}%` }} />
         </span>
         <span className="gl-sh-score">{scoreText(score)}</span>
-        <span className="gl-sh-delta" title={`${CATEGORY_LABEL[category]} score against the prior period of the same length`}>
-          {deltaText(score, prev, range)}
-        </span>
+        {/* Hover only: the row is a button, and a focusable child inside one
+            is a nested control. The detail's box carries the same words on
+            focus. */}
+        <Explain text={deltaExplanation(category, range)} side="left">
+          <span className="gl-sh-delta">{deltaText(score, prev, range)}</span>
+        </Explain>
       </span>
     </button>
   );
@@ -219,23 +295,21 @@ function SeriesStrip({
         {series.map((p) => {
           const score = category === "seo" ? p.seo : p.perf;
           return (
-            <span
-              key={p.runId}
-              className="gl-sh-series-slot"
-              title={`${shortDate(p.at)} · ${p.testName} · ${scoreText(score)}${p.ingested ? " · from CI" : ""}`}
-            >
-              {score === null ? (
-                <span className="gl-sh-series-gap" />
-              ) : (
-                <span
-                  className="gl-sh-series-bar"
-                  data-latest={p.runId === latest.runId ? "" : undefined}
-                  data-ingested={p.ingested ? "" : undefined}
-                  data-change={change && change.runId === p.runId ? "" : undefined}
-                  style={{ height: `${Math.max(4, score)}%` }}
-                />
-              )}
-            </span>
+            <Explain key={p.runId} text={seriesPointLabel(p, category)} side="top">
+              <span className="gl-sh-series-slot">
+                {score === null ? (
+                  <span className="gl-sh-series-gap" />
+                ) : (
+                  <span
+                    className="gl-sh-series-bar"
+                    data-latest={p.runId === latest.runId ? "" : undefined}
+                    data-ingested={p.ingested ? "" : undefined}
+                    data-change={change && change.runId === p.runId ? "" : undefined}
+                    style={{ height: `${Math.max(4, score)}%` }}
+                  />
+                )}
+              </span>
+            </Explain>
           );
         })}
       </div>
@@ -258,19 +332,17 @@ function VitalCard({ id, vital }: { id: VitalId; vital: SiteHealthHostDetail["vi
   const meta = VITAL_META[id];
   const status = vitalStatus(id, vital.p75);
   return (
-    <div
-      className="gl-sh-vital"
-      // The explanation the review asked for, on hover: what the statistic
-      // is, its target, and that the figure is the 75th percentile across the
-      // pages read — the same percentile Google's field data reports.
-      title={`${meta.name}: ${meta.definition}. Target ${formatVitalTarget(id)}. Shown as the 75th percentile of the ${plural(vital.n, "reading")} in this window.`}
-    >
-      <span className="gl-sh-vital-label">{meta.label}</span>
-      <span className="gl-sh-vital-value">{formatVital(id, vital.p75)}</span>
-      <span className="gl-sh-vital-note" data-over={status === "over" ? "" : undefined}>
-        {vital.p75 === null ? "not measured on this engine" : describeVital(id, vital.p75)}
-      </span>
-    </div>
+    // The explanation the review asked for, on hover — and on focus, which
+    // is why the card is in the tab order.
+    <Explain text={vitalExplanation(id, vital.n)} side="bottom">
+      <div className="gl-sh-vital" tabIndex={0}>
+        <span className="gl-sh-vital-label">{meta.label}</span>
+        <span className="gl-sh-vital-value">{formatVital(id, vital.p75)}</span>
+        <span className="gl-sh-vital-note" data-over={status === "over" ? "" : undefined}>
+          {vital.p75 === null ? "not measured on this engine" : describeVital(id, vital.p75)}
+        </span>
+      </div>
+    </Explain>
   );
 }
 
@@ -344,9 +416,11 @@ function Detail({
           {score === null ? "—" : score}
           <span className="gl-sh-headline-of">/100</span>
         </span>
-        <span className="gl-sh-delta gl-sh-delta-big" title="Against the prior period of the same length">
-          {deltaText(score, prev, range)}
-        </span>
+        <Explain text={deltaExplanation(category, range)} side="bottom">
+          <span className="gl-sh-delta gl-sh-delta-big" tabIndex={0}>
+            {deltaText(score, prev, range)}
+          </span>
+        </Explain>
         <span className="gl-sh-head-meta">
           {plural(detail.pageCount, "page")} · {plural(detail.runs, "run")}
           {lastAt !== null ? ` · last read ${shortDate(lastAt)}` : ""}
@@ -386,14 +460,22 @@ function Detail({
                 <tr>
                   <th>Path</th>
                   <th className="gl-sh-num">Score</th>
-                  <th className="gl-sh-num" title={VITAL_META.lcp.name}>LCP</th>
-                  <th className="gl-sh-num" title={VITAL_META.cls.name}>CLS</th>
-                  <th className="gl-sh-num" title={VITAL_META.tbt.name}>TBT</th>
-                  <th className="gl-sh-num" title={VITAL_META.inp.name}>INP</th>
+                  <Explain text={COLUMN_EXPLANATION.lcp} side="top">
+                    <th className="gl-sh-num gl-sh-explained">LCP</th>
+                  </Explain>
+                  <Explain text={COLUMN_EXPLANATION.cls} side="top">
+                    <th className="gl-sh-num gl-sh-explained">CLS</th>
+                  </Explain>
+                  <Explain text={COLUMN_EXPLANATION.tbt} side="top">
+                    <th className="gl-sh-num gl-sh-explained">TBT</th>
+                  </Explain>
+                  <Explain text={COLUMN_EXPLANATION.inp} side="top">
+                    <th className="gl-sh-num gl-sh-explained">INP</th>
+                  </Explain>
                   <th className="gl-sh-num">Requests</th>
-                  <th className="gl-sh-num" title="Bytes transferred to load the page, as the browser reported them">
-                    Transferred
-                  </th>
+                  <Explain text={COLUMN_EXPLANATION.transferred} side="top">
+                    <th className="gl-sh-num gl-sh-explained">Transferred</th>
+                  </Explain>
                   <th>Engine</th>
                 </tr>
               </thead>
