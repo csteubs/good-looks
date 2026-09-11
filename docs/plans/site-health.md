@@ -122,7 +122,7 @@ grade. Targets: LCP 2.5 s, CLS 0.1, INP 200 ms, FCP 1.8 s, TTFB 0.8 s, TBT
 200 ms. A vital over its target is the one other reading that takes amber; a
 vital within it stays neutral. Each vital card explains its statistic, its
 sample and its target on hover and on keyboard focus — a DOM-rendered
-Tooltip (`@ui`'s), never a native `title`: on the pinned Electron, macOS
+tooltip (the theme's `Hint`), never a native `title`: on the pinned Electron, macOS
 shows a `title` on the first hover and rarely again (electron/electron#49843).
 The card is in the tab order, focus opens the same words, and the target also
 stays visible as text. The same goes for every other explanation on the

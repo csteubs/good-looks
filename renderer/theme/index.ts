@@ -69,6 +69,8 @@ export { ToolTile } from "./primitives/tool-tile";
 export type { ToolTileProps } from "./primitives/tool-tile";
 export { Segmented } from "./primitives/segmented";
 export type { SegmentedProps, SegmentedOption } from "./primitives/segmented";
+export { Hint } from "./primitives/hint";
+export type { HintProps, HintSide } from "./primitives/hint";
 export { Temp, tempColor, formatDuration, formatDev, RAMP } from "./primitives/temp";
 export type { TempProps, TempMode } from "./primitives/temp";
 export { TypeChip } from "./primitives/type-chip";

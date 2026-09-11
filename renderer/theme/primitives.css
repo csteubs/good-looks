@@ -746,6 +746,25 @@
    confirm button behind a screenshot. Nothing catches that: the dialog mounts,
    the a11y tree reports its buttons, and every test passes while the user
    cannot read or press them. */
+/* ── Hint ──────────────────────────────────────────────────────────────
+   The tooltip a control shows on hover and on focus (primitives/hint.tsx).
+   Square, a hairline, the panel near-black and the menu's shadow — the same
+   surface `.gl-menu` is, one size down. Sans, because this is a sentence to be
+   read. It is Radix-positioned and portaled to <body>; the stacking token is
+   what puts it above a dialog. */
+.gl-hint {
+  z-index: var(--gl-z-hint);
+  max-width: 260px;
+  padding: 5px 8px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--gl-tx-1);
+}
+
 .gl-z-modal {
   z-index: var(--gl-z-modal);
 }

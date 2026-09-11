@@ -28,6 +28,8 @@
 
 import * as React from "react";
 
+import { Hint } from "../primitives/hint";
+
 export interface RailProps {
   /** The rail header, aligned with the top strip. */
   title?: string;
@@ -113,9 +115,11 @@ export interface RailRowProps
   /** Trailing indicators — a verdict dot, an AI sparkle. */
   accessory?: React.ReactNode;
   selected?: boolean;
-  /** The native `title` attribute, renamed because `title` is the row's label
-   *  here. A `title` rather than a Tooltip on purpose: Radix tooltips cannot be
-   *  opened under jsdom, so a hint carried by one is untestable. */
+  /** Shown as a `Hint` (the theme's tooltip) on hover and on focus. Named
+   *  `hint` because `title` is the row's label here. It WAS the native `title`
+   *  attribute until 2026-09-11, when it turned out the pinned Electron shows
+   *  one on macOS once and then rarely (electron/electron#49843) — see
+   *  primitives/hint.tsx. */
   hint?: string;
   className?: string;
   /** React 19 passes `ref` as an ordinary prop, but `ButtonHTMLAttributes` does
@@ -136,11 +140,10 @@ export function RailRow({
   ref,
   ...props
 }: RailRowProps): React.ReactElement {
-  return (
+  const row = (
     <button
       ref={ref}
       type="button"
-      title={hint}
       // `data-selected` rather than a class, because that is the attribute
       // `check:selection-neutral` looks for when it proves no selection in this
       // app is drawn in a status colour. Absent, not `false`: `[data-selected]`
@@ -160,6 +163,13 @@ export function RailRow({
         <span className="gl-rail-row-accessory">{accessory}</span>
       ) : null}
     </button>
+  );
+  // Opens into the pane: the rail is on the left edge, so "right" is the one
+  // side with room. A row without a hint is the bare button.
+  return (
+    <Hint text={hint} side="right">
+      {row}
+    </Hint>
   );
 }
 

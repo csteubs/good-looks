@@ -87,12 +87,19 @@ describe("<TopStrip />", () => {
 });
 
 describe("<ChromeButton />", () => {
-  it("carries its label as BOTH an accessible name and a native title", () => {
-    // Two readers, one string. A Radix tooltip cannot be opened under jsdom, so
-    // a hint carried by one would be both untestable and keyboard-unreachable.
+  it("carries its label as the accessible name and shows it as a hint on focus, never as a native title", async () => {
+    // Two readers, one string: `aria-label` for assistive tech, a `Hint` for
+    // the eye. The `title` this used to carry as well is pinned ABSENT — on
+    // macOS under the pinned Electron it showed once and then rarely
+    // (primitives/hint.tsx), and an icon-only control with no working hint is
+    // an unlabelled button to a mouse.
     render(<ChromeButton label="Settings">x</ChromeButton>);
     const btn = screen.getByRole("button", { name: "Settings" });
-    expect(btn.getAttribute("title")).toBe("Settings");
+    expect(btn.getAttribute("title")).toBeNull();
+    expect(btn.getAttribute("data-state")).toBe("closed");
+    fireEvent.focus(btn);
+    expect((await screen.findAllByText("Settings")).some((el) => el.closest(".gl-hint"))).toBe(true);
+    expect(screen.getByRole("button", { name: "Settings" })).toBe(btn);
   });
 
   it("is a plain button, so a plain click activates it", () => {

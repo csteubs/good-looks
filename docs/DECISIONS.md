@@ -10,6 +10,50 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+
+### 2026-09-11 — The theme's hints are a `Hint` primitive, not native titles
+
+**The redesign's hint idiom was a native `title` attribute, and on the platform
+the app ships on that is not a tooltip.** Since Electron 38.8.2 — still open at
+the pinned 43.3.0, electron/electron#49843 — macOS shows a `title` on the first
+hover and very rarely afterwards. The Site Health vitals cards found it first
+(2026-09-10 below: a help cursor over a card that explained nothing), and the
+fix there was `@ui`'s Radix `Tooltip`. The same day's follow-up asked for the
+rail's `hint`, `Segmented`'s option `title` and `Panel`'s id to be fixed the
+same way; `ChromeButton`'s label rode the same attribute in the same layer and
+came with them.
+
+**A theme primitive, `Hint`, rather than `@ui`'s `Tooltip` imported four
+times.** `renderer/theme/primitives/hint.tsx` is the first Radix import in the
+theme layer, and the reason is what a tooltip has to do that `Menu` does not:
+leave its trigger's scroll container (the rail rows sit in a scrollport that
+clips anything positioned inside it) and flip away from a viewport edge (the
+range switch sits at the top-right of the pane). That is a portal and collision
+handling — the two things worth a library, and the same reason
+`check:sdk-retired` keeps the Tooltip family on its list ("positioning and
+dismissal are not worth rewriting; we restyle the surface"). `Menu` drew its
+own because its ITEMS had to be real DOM for tests; a tooltip's text is real
+DOM with Radix too. A CSS-only `:hover`/`:focus-visible` reveal was the
+alternative, and the rail's scrollport is what rules it out. The surface is the
+theme's (`.gl-hint`: hairline, square, the panel near-black, the menu's shadow
+one size down), stacked at a new `--gl-z-hint` ABOVE a modal, because a control
+inside a dialog explains itself the same way one in a pane does. The Site
+Health view's local `Explain` became a call to it, so the redesigned screens
+draw one tooltip; the pre-redesign views (the flake panel, Visual) keep `@ui`'s.
+
+**Focus opens it, and that is what the tests drive.** The reason every one of
+these was a `title` was the belief that a Radix tooltip cannot be opened under
+jsdom. Half true: a POINTER cannot open one there, but `fireEvent.focus` on a
+focusable trigger can — Radix opens on focus — which is also the keyboard path
+the `title` never had. So `hint.test.tsx`, the rail, Segmented and ChromeButton
+tests assert the rendered words through focus and pin the `title` attribute
+ABSENT; the Panel's id, which is not a control and takes no focus, pins the
+wiring and the absence. `Hint` with no text renders its child bare, so an
+optional hint passes straight through and a row without one carries no
+tooltip machinery. `title` remains in the theme only where it reveals text the
+element truncates and also shows (`TagStack`, `StepRow`'s description,
+`KeyValue`), and on `ToolTile`'s folded name, which is the same case.
+
 ### 2026-09-10 — Site Health: a score per domain, from readings the run already takes
 
 The ask was an SEO score per domain and site performance statistics, as a rail
@@ -77,8 +121,9 @@ macOS shows a `title` tooltip on the first hover and very rarely afterwards,
 a confirmed regression since 38.8.2 that is open with no fix attached
 (electron/electron#49843). So a `title` is not a tooltip on this platform,
 and every explanation on the screen — the vitals cards, the two change
-boxes, the series bars, the pages table's column heads — now goes through
-`@ui`'s `Tooltip`, the one the flake panel and the Visual view already draw.
+boxes, the series bars, the pages table's column heads — now goes through a
+DOM-rendered tooltip: `@ui`'s `Tooltip` first, the theme's own `Hint` since
+the entry above.
 A `title` remains only where it reveals TRUNCATED text (a host, a path, a
 URL, the failing-audit list) that the row also carries in full. Two things
 the swap settled. Each trigger that stands on its own (a card, the detail's
@@ -89,10 +134,10 @@ was half right: pointer events cannot open a Radix tooltip there, but
 were written — so `site-health-view.test.tsx` asserts the rendered
 explanation through focus and pins the `title` ABSENT, rather than asserting
 an exported string the way the flake panel (whose trigger sits inside a
-button and cannot take focus) has to. Still riding a `title`, and exposed
-the same way on macOS: the rail's `hint`, `Segmented`'s option `title`
-(this view's SEO/Performance and range descriptions among them) and
-`Panel`'s id. That is app-wide and a follow-up, not this change.
+button and cannot take focus) has to. The rail's `hint`, `Segmented`'s
+option `title` (this view's SEO/Performance and range descriptions among
+them) and `Panel`'s id rode a `title` too, and moved the next day — the
+entry above.
 
 **Unattended runs measure too, and `ingest` carries it back.** The CI runner
 reads the same settings file, arms the same fixture, and writes the summary

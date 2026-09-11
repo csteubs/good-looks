@@ -40,13 +40,18 @@ describe("<Segmented />", () => {
     expect(screen.getByRole("group", { name: "Compare mode" })).toBeTruthy();
   });
 
-  it("carries an option's hint as a native title", () => {
-    // Native `title`, not a Tooltip — Radix tooltips cannot be opened under
-    // jsdom, so copy only reachable by hover cannot be asserted at all.
+  it("shows an option's hint as a tooltip on focus, never as a native title", async () => {
+    // It was a native `title` — chosen as the assertable, hover-only idiom —
+    // until the pinned Electron stopped showing those on macOS
+    // (primitives/hint.tsx). The option is a real button, so focus reaches it
+    // and opens the words; an option without a hint is the bare button.
     render(<Segmented options={MODES} value="current" onChange={vi.fn()} label="Compare mode" />);
-    expect(screen.getByRole("button", { name: "Diff" }).getAttribute("title")).toBe(
-      "Only the pixels that changed",
-    );
+    const diff = screen.getByRole("button", { name: "Diff" });
+    expect(diff.getAttribute("title")).toBeNull();
+    expect(diff.getAttribute("data-state")).toBe("closed");
+    expect(screen.getByRole("button", { name: "Current" }).getAttribute("data-state")).toBeNull();
+    fireEvent.focus(diff);
+    expect((await screen.findAllByText("Only the pixels that changed")).length).toBeGreaterThan(0);
   });
 
   it("does not fire for a disabled option", () => {

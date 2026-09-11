@@ -499,9 +499,17 @@ The nine screens inside the shell are still the old chrome until Phase B.
   `check:theme-tokens` pins every value against its `tokens.css` declaration in
   both directions, and separately pins that **no status hex is ever written into
   a stylesheet**, which is what keeps that single route honest.
-- `renderer/theme/primitives/` + `primitives.css` — the seventeen presentational
-  components (`Atmosphere` is the eighteenth, from A2), each with its own test
-  file. **`ShotHighlight`** is the newest (2026-09-01, propagation's evidence
+- `renderer/theme/primitives/` + `primitives.css` — the presentational
+  components (`Atmosphere` beside them, from A2), each with its own test
+  file. **`Hint`** is the newest (2026-09-11): the theme's one tooltip, and its
+  first Radix import — what a control says on hover AND on keyboard focus,
+  portaled past the rail's scrollport, restyled square on the panel near-black,
+  stacked at `--gl-z-hint` above a modal. It replaced the native `title` the
+  rail's `hint`, `Segmented`'s option `title`, `Panel`'s id and
+  `ChromeButton`'s label rode, because on macOS under the pinned Electron a
+  `title` shows once and then rarely (electron/electron#49843). With no text it
+  renders its child bare. Focus opens it under jsdom; a pointer cannot
+  (DECISIONS 2026-09-11). **`ShotHighlight`** came before it (2026-09-01, propagation's evidence
   figure: a step screenshot with the healed element boxed in the trainer's
   refine-box idiom — border, spotlight, a label pill riding the top edge —
   redrawn in `--gl-*` vocabulary. The rect is NORMALIZED 0-1 of the image, the

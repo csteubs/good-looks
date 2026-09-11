@@ -26,6 +26,8 @@
 
 import * as React from "react";
 
+import { Hint } from "../primitives/hint";
+
 export interface Crumb {
   label: string;
   /** Omit to make this segment inert. The trailing segment always is. */
@@ -117,9 +119,11 @@ export interface ChromeButtonProps
 
 /** An icon control sized for the strip and the rail header.
  *
- *  `title` as well as `aria-label`, deliberately: Radix-backed tooltips cannot
- *  be opened under jsdom, so a hint carried by one would be untestable AND
- *  unreachable by keyboard. A `title` attribute is both. */
+ *  `aria-label` names it for assistive tech; a `Hint` says the same words on
+ *  hover and on focus. It carried the label as a native `title` as well until
+ *  2026-09-11, on the theory that a `title` was both testable and keyboard-
+ *  reachable — it is neither on macOS under the pinned Electron, which shows
+ *  one once and then rarely (electron/electron#49843, primitives/hint.tsx). */
 export function ChromeButton({
   label,
   className,
@@ -127,14 +131,15 @@ export function ChromeButton({
   ...props
 }: ChromeButtonProps): React.ReactElement {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      className={["gl-chrome-btn", className].filter(Boolean).join(" ")}
-      {...props}
-    >
-      {children}
-    </button>
+    <Hint text={label} side="bottom">
+      <button
+        type="button"
+        aria-label={label}
+        className={["gl-chrome-btn", className].filter(Boolean).join(" ")}
+        {...props}
+      >
+        {children}
+      </button>
+    </Hint>
   );
 }

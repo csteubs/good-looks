@@ -17,6 +17,8 @@
 
 import * as React from "react";
 
+import { Hint } from "./hint";
+
 export interface PanelProps {
   /** Uppercase heading. Omit it and the panel has no header at all. */
   title?: string;
@@ -61,12 +63,14 @@ export function Panel({
         <header className="gl-panel-head">
           {title !== undefined ? <span className="gl-panel-title">{title}</span> : null}
           {id !== undefined ? (
-            // `title` attribute rather than a Tooltip: Radix tooltips cannot be
-            // opened under jsdom, and a truncated id is exactly the thing
-            // someone needs the full text of.
-            <span className="gl-panel-id" title={id}>
-              {id}
-            </span>
+            // A truncated id is exactly the thing someone needs the full text
+            // of, and a `Hint` is how it is shown: this was a native `title`
+            // until 2026-09-11, which on macOS under the pinned Electron shows
+            // once and then rarely (hint.tsx). Hover-only — the id is not a
+            // control — and the text is on screen anyway, clipped.
+            <Hint text={id} side="bottom">
+              <span className="gl-panel-id">{id}</span>
+            </Hint>
           ) : null}
           {right !== undefined ? <div className="gl-panel-right">{right}</div> : null}
         </header>

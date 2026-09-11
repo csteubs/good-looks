@@ -15,8 +15,8 @@
 //     call. What the view adds is the CHANGE — "−4 vs prior" — and when a
 //     change was detected, which are facts about the series.
 //   • Score text is right-aligned and bounded, so a bar never runs into it.
-//   • Every explanation on the screen is a DOM-rendered Tooltip (`@ui`'s,
-//     the flake panel's and the Visual view's), NEVER a native `title`. It
+//   • Every explanation on the screen is a DOM-rendered tooltip — the theme's
+//     `Hint`, since 2026-09-11 — and NEVER a native `title`. It
 //     shipped as a `title` first, and the cards' help cursor promised an
 //     explanation that did not come: on the pinned Electron, macOS shows a
 //     `title` tooltip on the first hover and rarely again — an open
@@ -34,10 +34,10 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { ScrollArea, toast, Tooltip, TooltipContent, TooltipTrigger } from "@ui";
+import { ScrollArea, toast } from "@ui";
 import { ExternalLink, Heart, Send } from "lucide-react";
 
-import { Btn, Panel, Segmented } from "../theme";
+import { Btn, Hint, Panel, Segmented } from "../theme";
 import { api } from "../lib/api";
 import { parseSiteHealthPath } from "../lib/site-health-route";
 import { IssueComposeDialog } from "../components/issue-compose-dialog";
@@ -207,30 +207,6 @@ export const COLUMN_EXPLANATION = {
 
 // ── Pieces ──────────────────────────────────────────────────────────────
 
-/** An explanation on hover and, when the child is focusable, on focus. The
- *  child is the trigger itself (`asChild`), so the explained thing keeps its
- *  own element, class and role. The side is typed off the content rather
- *  than imported: check:sdk-retired keeps the Tooltip FAMILY on its list by
- *  name, and a type alias is not one of the four members. */
-function Explain({
-  text,
-  side,
-  children,
-}: {
-  text: string;
-  side?: React.ComponentProps<typeof TooltipContent>["side"];
-  children: React.ReactElement;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent side={side} className="max-w-[260px] leading-snug">
-        {text}
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
 function HostRow({
   host,
   category,
@@ -268,9 +244,9 @@ function HostRow({
         {/* Hover only: the row is a button, and a focusable child inside one
             is a nested control. The detail's box carries the same words on
             focus. */}
-        <Explain text={deltaExplanation(category, range)} side="left">
+        <Hint text={deltaExplanation(category, range)} side="left">
           <span className="gl-sh-delta">{deltaText(score, prev, range)}</span>
-        </Explain>
+        </Hint>
       </span>
     </button>
   );
@@ -295,7 +271,7 @@ function SeriesStrip({
         {series.map((p) => {
           const score = category === "seo" ? p.seo : p.perf;
           return (
-            <Explain key={p.runId} text={seriesPointLabel(p, category)} side="top">
+            <Hint key={p.runId} text={seriesPointLabel(p, category)} side="top">
               <span className="gl-sh-series-slot">
                 {score === null ? (
                   <span className="gl-sh-series-gap" />
@@ -309,7 +285,7 @@ function SeriesStrip({
                   />
                 )}
               </span>
-            </Explain>
+            </Hint>
           );
         })}
       </div>
@@ -334,7 +310,7 @@ function VitalCard({ id, vital }: { id: VitalId; vital: SiteHealthHostDetail["vi
   return (
     // The explanation the review asked for, on hover — and on focus, which
     // is why the card is in the tab order.
-    <Explain text={vitalExplanation(id, vital.n)} side="bottom">
+    <Hint text={vitalExplanation(id, vital.n)} side="bottom">
       <div className="gl-sh-vital" tabIndex={0}>
         <span className="gl-sh-vital-label">{meta.label}</span>
         <span className="gl-sh-vital-value">{formatVital(id, vital.p75)}</span>
@@ -342,7 +318,7 @@ function VitalCard({ id, vital }: { id: VitalId; vital: SiteHealthHostDetail["vi
           {vital.p75 === null ? "not measured on this engine" : describeVital(id, vital.p75)}
         </span>
       </div>
-    </Explain>
+    </Hint>
   );
 }
 
@@ -416,11 +392,11 @@ function Detail({
           {score === null ? "—" : score}
           <span className="gl-sh-headline-of">/100</span>
         </span>
-        <Explain text={deltaExplanation(category, range)} side="bottom">
+        <Hint text={deltaExplanation(category, range)} side="bottom">
           <span className="gl-sh-delta gl-sh-delta-big" tabIndex={0}>
             {deltaText(score, prev, range)}
           </span>
-        </Explain>
+        </Hint>
         <span className="gl-sh-head-meta">
           {plural(detail.pageCount, "page")} · {plural(detail.runs, "run")}
           {lastAt !== null ? ` · last read ${shortDate(lastAt)}` : ""}
@@ -460,22 +436,22 @@ function Detail({
                 <tr>
                   <th>Path</th>
                   <th className="gl-sh-num">Score</th>
-                  <Explain text={COLUMN_EXPLANATION.lcp} side="top">
+                  <Hint text={COLUMN_EXPLANATION.lcp} side="top">
                     <th className="gl-sh-num gl-sh-explained">LCP</th>
-                  </Explain>
-                  <Explain text={COLUMN_EXPLANATION.cls} side="top">
+                  </Hint>
+                  <Hint text={COLUMN_EXPLANATION.cls} side="top">
                     <th className="gl-sh-num gl-sh-explained">CLS</th>
-                  </Explain>
-                  <Explain text={COLUMN_EXPLANATION.tbt} side="top">
+                  </Hint>
+                  <Hint text={COLUMN_EXPLANATION.tbt} side="top">
                     <th className="gl-sh-num gl-sh-explained">TBT</th>
-                  </Explain>
-                  <Explain text={COLUMN_EXPLANATION.inp} side="top">
+                  </Hint>
+                  <Hint text={COLUMN_EXPLANATION.inp} side="top">
                     <th className="gl-sh-num gl-sh-explained">INP</th>
-                  </Explain>
+                  </Hint>
                   <th className="gl-sh-num">Requests</th>
-                  <Explain text={COLUMN_EXPLANATION.transferred} side="top">
+                  <Hint text={COLUMN_EXPLANATION.transferred} side="top">
                     <th className="gl-sh-num gl-sh-explained">Transferred</th>
-                  </Explain>
+                  </Hint>
                   <th>Engine</th>
                 </tr>
               </thead>
