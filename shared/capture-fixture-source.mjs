@@ -40,6 +40,8 @@ import { SIGNATURE_COUNT_ENV, SIGNATURE_FIXTURE_FILE } from "./signature-fixture
 import { STEP_MARKER } from "./step-marker.mjs";
 import { ATTEMPT_HELPERS } from "./attempt-artifacts.mjs";
 import { FOLLOW_TABS_ENV, TABS_FIXTURE_FILE } from "./tabs-fixture-source.mjs";
+import { SITE_HEALTH_FIXTURE_FILE } from "./site-health-fixture-source.mjs";
+import { SITE_HEALTH_ENV } from "./site-health.mjs";
 
 export const captureFixtureSource = `import { test as base, expect as baseExpect } from "@playwright/test";
 import * as fs from "fs";
@@ -50,6 +52,7 @@ import { installSignatureHeaders, reportSignedRequests } from "./${SIGNATURE_FIX
 import { dismissalsSoFar, installOverlayDismissal } from "./${DISMISS_FIXTURE_FILE}";
 import { installUserPage, installUserPageOn } from "./${USER_PAGE_FIXTURE_FILE}";
 import { followingExpect, installTabFollowing } from "./${TABS_FIXTURE_FILE}";
+import { finishSiteHealth, installSiteHealth, installSiteHealthOn, readSiteHealth, writeSiteHealth } from "./${SITE_HEALTH_FIXTURE_FILE}";
 
 // Tab following (tabs-fixture-source.mjs). On for every app-generated spec:
 // the trainer records a linear journey, and a run that did not follow the
@@ -86,6 +89,12 @@ const SETTLE_ON = process.env.GLAZE_SETTLE === "1";
 // than either screenshots or axe, but it writes page-controlled text and
 // request URLs to disk, so nobody should get it by asking for something else.
 const LOGS_ON = process.env.GLAZE_RECORD_LOGS === "1";
+// Site Health (SEO + performance readings of every document a run loads),
+// gated independently again and installed from here for the reason healing
+// is. The probe lives in its own module — the document-response memory it
+// needs is a second \`context.on("response")\`, and this file's own is pinned
+// at exactly one by check:log-capture.
+const SITE_HEALTH_ON = process.env.${SITE_HEALTH_ENV} === "1";
 // Shopify crawler signatures, gated independently again. Unlike every other
 // flag here this one is a COUNT rather than a "1": the runner passes one env
 // var per value, so the count is what says whether there is anything to send.
@@ -493,6 +502,15 @@ async function capture(page, method, target, args, stepMs) {
     if (violations) ctx.a11yChecks++;
   }
 
+  // Site Health reads the document the action left the page on, keyed to this
+  // step's index so a reading can be joined to the screenshot above. The
+  // fixture times itself; a slow page cannot stall the step past its own cap.
+  if (SITE_HEALTH_ON) {
+    try {
+      await readSiteHealth(page, index);
+    } catch (e) { /* best effort, never the test's failure */ }
+  }
+
   // \`ms\` is the SCREENSHOT's cost (and is summed into captureMs); \`stepMs\` is
   // how long the action itself took. Two different questions — what capture
   // costs, and why the suite is slow — and a single field cannot answer both.
@@ -523,6 +541,15 @@ function wrap(obj, method, getPage) {
     // screenshot and the axe run. On a crawl run it DOES include the settling
     // waits, which is correct: those are time the step really took, and a
     // number that hid them would make crawl runs look as fast as fast ones.
+    // Site Health reads the CURRENT document before an action that may leave
+    // it: the last reading of a document should be taken as late as the
+    // document lived, and a click that navigates is the one moment nothing
+    // else reads it — the post-action read lands on the new document and the
+    // settle timer fires after it is gone. Cheap (one evaluate), bounded by
+    // the fixture's own cap, and never the test's failure.
+    if (SITE_HEALTH_ON) {
+      try { await readSiteHealth(getPage(this), ctx ? ctx.index : null); } catch (e) { /* best effort */ }
+    }
     const tStep = Date.now();
     let result;
     try {
@@ -601,7 +628,7 @@ function reportDismissals() {
   } catch (e) { /* reporting is best-effort */ }
 }
 
-export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON || SIG_ON || DISMISS_ON || USER_PAGE_ON || SAVE_STATE || TABS_ON) ? base.extend({
+export const test = (((ON || A11Y_ON || LOGS_ON || SITE_HEALTH_ON) && DIR) || HEAL_ON || SETTLE_ON || SIG_ON || DISMISS_ON || USER_PAGE_ON || SAVE_STATE || TABS_ON) ? base.extend({
   page: async ({ page }, use, testInfo) => {
     // Per-test state, read together: the spec Playwright resolved, and which
     // attempt at it this is. Playwright numbers a retry from 1 and re-enters a
@@ -634,6 +661,9 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
       }
       if (SETTLE_ON) {
         try { installSettleOnPage(p); } catch (e) { /* best effort */ }
+      }
+      if (SITE_HEALTH_ON) {
+        try { installSiteHealthOn(p); } catch (e) { /* best effort */ }
       }
       patchPageActions(p);
     };
@@ -738,9 +768,20 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
         process.stderr.write("[glaze-a11y] could not inject axe: " + String(e) + "\\n");
       }
     }
+    // Site Health: the init script on the CONTEXT (every document of every tab
+    // gets the observers before its own code runs), the document-response
+    // memory, and the load listener on this page. It reports the LAST action's
+    // index so a settle-time read joins the screenshot that action took.
+    if (SITE_HEALTH_ON && DIR) {
+      try {
+        await installSiteHealth(page, { currentAction: () => (ctx && ctx.index > 0 ? ctx.index - 1 : null) });
+      } catch (e) {
+        process.stderr.write("[glaze-site-health] could not install: " + String(e) + "\\n");
+      }
+    }
     // The manifest is what carries BOTH screenshots and violations, so it is
     // written whenever either is on — an a11y-only run still needs one.
-    if ((!ON && !A11Y_ON && !LOGS_ON) || !DIR) {
+    if ((!ON && !A11Y_ON && !LOGS_ON && !SITE_HEALTH_ON) || !DIR) {
       // A signing-only run lands here — no artifact dir, no manifest — so the
       // signed-request count has to be reported from this path too, or the one
       // run that is ONLY about signatures is the one that says nothing.
@@ -765,6 +806,17 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
       await saveSessionState(page, testInfo);
       reportSignedRequests();
       reportDismissals();
+      // Site Health: one last read of every open page, then the artifact.
+      // Before the manifest so a read that stalls to its cap cannot cost the
+      // manifest its write.
+      if (SITE_HEALTH_ON) {
+        try {
+          await finishSiteHealth(page);
+          writeSiteHealth(ctx.dir, TEST_ID, RUN_ID, attemptNo);
+        } catch (err) {
+          process.stderr.write("[glaze-site-health] write failed: " + String(err) + "\\n");
+        }
+      }
       // Persist the manifest: the per-step artifact + outcome model for this run.
       try {
         const manifest = {

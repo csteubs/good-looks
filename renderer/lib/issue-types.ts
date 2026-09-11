@@ -14,6 +14,8 @@
 // reasoning for each is in the backend types file, next to the interface that
 // forced it.
 
+import type { SiteHealthCategory } from "../../shared/site-health.mjs";
+
 /**
  * The implemented providers.
  *
@@ -157,7 +159,22 @@ export type DefectSource =
    *  pipeline for the same reason the pipeline exists: the renderer names a
    *  coordinate and the BACKEND assembles what is sent — here from the stored
    *  report, which was already summary-shaped and redacted at generation. */
-  | { kind: "insight-report"; reportId: string };
+  | { kind: "insight-report"; reportId: string }
+  /** A domain's Site Health score — SEO or performance — filed as an issue.
+   *  The subject is the HOST and the CATEGORY; `testId`/`runId` name the
+   *  ANCHOR run (the newest reading on the host in the window), which is
+   *  where the screenshot comes from. The link is keyed on host + category,
+   *  never the run, so a score filed once is found again on every later
+   *  run. `sinceMs` is the window the user was looking at (0 = all time), so
+   *  the draft's "−4 vs prior" is the one on their screen. */
+  | {
+      kind: "site-health";
+      host: string;
+      category: SiteHealthCategory;
+      testId: string;
+      runId: string;
+      sinceMs: number;
+    };
 
 /** An image that will be attached, described for the confirmation strip. The
  *  renderer renders these BEFORE the send, because a screenshot cannot be

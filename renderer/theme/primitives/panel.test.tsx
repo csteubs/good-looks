@@ -21,13 +21,17 @@ describe("<Panel />", () => {
     }
   });
 
-  it("gives the truncating id its full text as a title attribute", () => {
+  it("gives the truncating id its full text as a hint, never as a title attribute", () => {
     // The id truncates by design, and it is the one thing in the header someone
-    // needs the whole of. `title` rather than a Tooltip: Radix tooltips cannot
-    // be opened under jsdom, so hover-only copy is untestable.
+    // needs the whole of. It was a `title` attribute until the pinned Electron
+    // stopped showing those on macOS (primitives/hint.tsx); now the span is a
+    // hint trigger. Hover-only — an id is not a control — so what jsdom can
+    // pin is the wiring and the absence of the attribute that no longer works.
     render(<Panel title="Run" id="run-2026-08-08-a-very-long-identifier" />);
     const id = screen.getByText("run-2026-08-08-a-very-long-identifier");
-    expect(id.getAttribute("title")).toBe("run-2026-08-08-a-very-long-identifier");
+    expect(id.className).toBe("gl-panel-id");
+    expect(id.getAttribute("title")).toBeNull();
+    expect(id.getAttribute("data-state")).toBe("closed");
   });
 
   it("caps the BODY's height, not the panel's", () => {

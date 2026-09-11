@@ -78,7 +78,8 @@ main/services/llm/  local + hosted LLM chat integration (Ollama, LM Studio, Clau
                     `matchesFor`, interpolated from shared/overlay-rules.mjs
 main/recorder/       recording-session logic (script injection, step capture)
 main/windows/        BrowserWindow creation/config
-renderer/main/       primary views (home, recording/trainer, script view, ai-debug-panel, stats)
+renderer/main/       primary views (home, recording/trainer, script view, ai-debug-panel, stats,
+                     site-health-view — SEO and performance per domain, 2026-09-10)
 renderer/settings/   the Settings SCREENS (panes/, one per rail row). Two routes in the MAIN
                      window — `/settings`, the board, and `/settings/$pane` — plus
                      `/settings/$pane/$topic` for the Documentation pane. It was a separate
@@ -357,6 +358,25 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                     browsers.json. Both the app and the MCP decide whether to
                     install before a run; a name-prefix rule in each said yes
                     to the previous Playwright's build after the 1.62 upgrade.
+                    site-health.mjs is the WHOLE Site Health rulebook (2026-09-10):
+                    the SEO audits, the Lighthouse-weighted performance curve,
+                    the capture-boundary rebuilds, and the two shapings
+                    (siteHealthOverview / siteHealthHostDetail) the app's
+                    handlers, the MCP's get_site_health and the insights facts
+                    builder all call. site-host.mjs is the host rule beside it,
+                    interpolated into the fixture as SITE_HOST_HELPERS so the
+                    fixture and the rollup spell a domain one way.
+                    site-health-fixture-source.mjs is the fixture itself
+                    (glaze-site-health.mjs, the SEVENTH capability fixture): a
+                    context init script for the vitals and one evaluate per
+                    action, facts only, in its own module because its
+                    document-response memory is a second context.on("response")
+                    and check:log-capture pins the capture fixture's at one.
+                    The per-host SUMMARY rides RunRecord.siteHealth and is what
+                    host_health rolls up from, so a domain's series outlives
+                    artifact retention; page_health comes from the artifact.
+                    check:site-health executes the worker half against a
+                    stubbed page and pins the app runner's wiring.
                     step-semantics.mjs is the load-bearing one: the single
                      definition of what each assert/wait/condition MEANS (match
                      mode, case rule, whitespace rule), read by the generator,
@@ -429,7 +449,7 @@ mcp/                 standalone MCP server exposing the test library to external
                      import the pure modules, and stayed green throughout
                      (list_tests, get_test, list_runs, get_run_log, run_test, run_batch, run_group,
                       list_routines, run_routine,
-                      get_visual_report, get_a11y_report, get_run_logs, list_heals,
+                      get_visual_report, get_a11y_report, get_site_health, get_run_logs, list_heals,
                       list_propagations,
                       list_batches, compare_runs, triage_run, get_step_health,
                       get_suite_cost, get_browser_matrix, get_flake_report,
@@ -613,7 +633,8 @@ the parser's `frameLocator` reader? Add a row.**
 - **`check:repo-hygiene` scans `git ls-files` — the TRACKED set — so running it on a new file before `git add` proves nothing.** It passes, because the file is not in the set yet, and then fails in CI on the commit that adds it. Cost a CI round trip on #284, where a comment quoting a `/Users/…` path as an example of what NOT to store tripped the hardcoded-home-directory rule. `git add -A` first, or run it after committing.
 - **A fresh worktree needs `npm run bootstrap` before anything else.** Without it there is no `node_modules`, and the first `vitest` run CREATES an empty one for its own cache (`node_modules/.vite`) — which then makes `bootstrap` report "already present — nothing to do" and leaves you permanently broken. `vitest.config.ts` then points every React alias into a tree with no React, and every component test fails at import reading like a missing dependency; `type-check` degrades separately, reporting `Property 'children' does not exist` on SDK components across files you never touched. Fix: `rm -rf node_modules && npm run bootstrap`.
 - **`npm run package` needs a REAL install in the worktree — a bootstrapped symlink is not enough, and this is true even when the dependencies are identical.** Everything that resolves modules the way Node does is happy with the link (lint, type-check, `test:all`, `build`, `dev`); electron-builder is the one thing that reads `node_modules` itself, and through a symlink it finds the direct dependencies and nothing below them. It prints `cannot find path for dependency` for ~80 transitive packages and **exits 0**. The bundle then carries `@playwright/test` without `playwright`/`playwright-core`, so the app launches perfectly and **every test run fails** — the runner spawns the Playwright CLI out of the bundled tree. Fix: `rm node_modules && npm install --include=dev` (that removes the link, not the tree it points at). `npm run package` now refuses up front and re-checks the finished bundle; see `scripts/verify-package.mjs` and `check:package-integrity`.
-- **Radix-backed `Tooltip` cannot be opened in jsdom.** Its trigger tracks pointers with APIs jsdom doesn't implement, so `pointerEnter`/`pointerMove`/`focus` all leave the content unmounted and the assertion reports as "unable to find the text" — which reads as wrong copy rather than an undrivable control. Same shape as the `Select` below: export the copy and assert it directly, and make sure the same string is reachable without hover (Stability puts it in the expanded row).
+- **Radix-backed `Tooltip` cannot be opened by a POINTER in jsdom.** Its trigger tracks pointers with APIs jsdom doesn't implement, so `pointerEnter`/`pointerMove` leave the content unmounted and the assertion reports as "unable to find the text" — which reads as wrong copy rather than an undrivable control. `fireEvent.focus` on a FOCUSABLE trigger (`tabIndex={0}`) does open it — Radix opens on focus — and that is the keyboard path, so assert through it where the trigger stands on its own (`hint.test.tsx`, `site-health-view.test.tsx`). A trigger nested inside a button cannot take focus; there, the `Select` shape: export the copy and assert it directly, and make sure the same string is reachable without hover (Stability puts it in the expanded row).
+- **A native `title` is not a tooltip on macOS under the pinned Electron.** Since 38.8.2 (still open at 43.3.0, electron/electron#49843) a `title` shows on the first hover and rarely again, so a `cursor: help` over one promises an explanation that does not come — the Site Health vitals cards shipped exactly that. A hover explanation goes through the theme's `Hint` (`renderer/theme/primitives/hint.tsx` — Radix, portaled, restyled square, stacked above a modal; the pre-redesign views keep `@ui`'s `Tooltip`) or the stat-card in-place swap (DECISIONS 2026-08-18); keep `title` for revealing truncated text only. The rail's `hint`, `Segmented`'s option `title`, `Panel`'s id, `ChromeButton`'s label, the library's verdict and tone dots and flow glyph, and the strip's ⌘K cap all go through `Hint` (DECISIONS 2026-09-11).
 - **The SDK's `Select` is native-menu-backed**: its options never enter the DOM, so no Testing Library query reaches them. The default move is to assert the displayed value and cover persistence at the IPC layer. It IS drivable when a handler does something the store cannot do for it: the menu is opened through `glazeAPI.Menu.popup`, so stubbing that to resolve with the `commandId` of the wanted label runs the same handler a real click would (`appearance-pane.test.tsx`). Scaffolding, so reach for it only when there is behaviour on the near side of the store to cover — as the typeface row has, since it applies the change to its own document.
 - An ambiguous `findBy*` (matching 2+ elements) retries until timeout, which reports as "never rendered" rather than "your query was ambiguous".
 - **`type-check` does not check SDK component props.** `<Text color="totally-not-a-color">` compiles clean on this tree — verified by compiling exactly that. `cva` falls through to the variant default when handed an unknown key, so a misspelt colour or variant renders as ordinary text and nothing throws. `add-step-dialog.tsx` shipped `color="danger"` this way and the invalid-property warning rendered in default foreground for its whole life. `check:text-color` guards `Text`'s colour; every other component prop is still unchecked here. This is the reason the redesign's theme layer declares its own `--gl-*` tokens rather than borrowing names: a custom property we declare is one `check:theme-tokens` can prove resolves, and an SDK class or prop is not.

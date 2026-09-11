@@ -16,6 +16,7 @@ import type { ProxySource, ProxyTraffic } from "../../shared/proxy-config.mjs";
 // `shared/testid-attr.mjs`.
 import { testIdOverride, type TestIdAttributeOverride } from "../../shared/testid-attr.mjs";
 import { isFrameRefKind, type FrameRef } from "../../shared/frame-ref.mjs";
+import type { SiteHealthSummary } from "../../shared/site-health.mjs";
 export type { FrameRef };
 // How a variable's value is compared. In shared/ because the generator, the
 // injected replayer and the renderer's step list all have to mean the same
@@ -2630,6 +2631,14 @@ export interface RunRecord {
    *  test's accepted baseline. Reported, never fatal — the run's pass/fail is
    *  decided purely by its assertions. */
   a11yNewSteps?: number;
+  /** Site Health (SEO + performance) for this run, when the global Check Site
+   *  Health setting was on: pages scored, ms spent, and a mean score per host
+   *  (at most MAX_SUMMARY_HOSTS). The per-page readings live in the run's
+   *  site-health.json artifact; this summary is what metrics.db rolls up from,
+   *  so the series outlives artifact retention. Absent means the run did not
+   *  measure — never "measured and found nothing". Reported only; a low score
+   *  never touches the run's status. */
+  siteHealth?: SiteHealthSummary;
   /** AI visual checks, evaluated post-run (see ai-check pipeline) */
   aiChecksPassed?: number;
   aiChecksFailed?: number;
@@ -3040,6 +3049,14 @@ export interface RecorderSettings {
    *  false). Off by default because axe typically costs more per step than
    *  everything else the step does. */
   defaultA11yChecks: boolean;
+  /** Check Site Health (default false): every document a run loads gets an
+   *  SEO and performance reading, kept per domain in the Site Health view.
+   *  GLOBAL rather than per test on purpose — a domain's score is a rollup
+   *  across every test that touches it, and a per-test switch would make the
+   *  series a function of which tests happened to have it on. Off by default
+   *  because it is another read per action and another artifact per run.
+   *  Never an imported spec. The unattended runner reads this same key. */
+  siteHealthChecks: boolean;
   /** default value of the per-test "Run headless" toggle for tests that
    *  haven't set their own preference (default false → runs are headed). Only
    *  affects test runs, not the trainer. */
@@ -4245,6 +4262,8 @@ export interface InsightStats {
   visualChanges: number | null;
   newClusters: number | null;
   a11yNewSteps: number;
+  /** domains with a Site Health reading this period; null = metrics DB unavailable */
+  siteHealthDomains: number | null;
   testsCreated: number;
   unreviewedScriptChanges: number;
   expiringSignatures: number;
@@ -4383,6 +4402,7 @@ function normalizeInsightStats(input: unknown): InsightStats {
     visualChanges: countOrNull(raw.visualChanges),
     newClusters: countOrNull(raw.newClusters),
     a11yNewSteps: count(raw.a11yNewSteps),
+    siteHealthDomains: countOrNull(raw.siteHealthDomains),
     testsCreated: count(raw.testsCreated),
     unreviewedScriptChanges: count(raw.unreviewedScriptChanges),
     expiringSignatures: count(raw.expiringSignatures),

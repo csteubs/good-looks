@@ -7,6 +7,7 @@
 // used is also the honest description of the dependency.
 
 import type { RunRow, StepRow } from "./metrics-schema.mjs";
+import type { HostHealthRow, PageHealthRow } from "./site-health.mjs";
 
 export interface MetricsDb {
   prepare(sql: string): { all(...params: unknown[]): unknown[] };
@@ -196,3 +197,16 @@ export declare function siblingRuns(
   testId: string,
   opts?: { limit?: number; excludeRunId?: string; stepId?: string },
 ): SiblingRunRow[];
+
+export declare function siteHealthHostRows(
+  db: Db,
+  opts?: { sinceMs?: number; host?: string },
+): HostHealthRow[];
+export declare function siteHealthPageRows(
+  db: Db,
+  opts?: { sinceMs?: number; host?: string },
+): PageHealthRow[];
+export declare function siteHealthHosts(
+  db: Db,
+  opts?: { sinceMs?: number },
+): { host: string; runs: number; lastAt: number }[];

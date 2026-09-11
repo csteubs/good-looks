@@ -19,11 +19,15 @@
 
 import * as React from "react";
 
+import { Hint } from "./hint";
+
 export interface SegmentedOption<T extends string> {
   value: T;
   label: string;
-  /** Native `title`, not a Tooltip — Radix tooltips cannot be opened under
-   *  jsdom, so anything only reachable by hover is untestable copy. */
+  /** Shown as a `Hint` on hover and on focus — the option is a real button,
+   *  so a keyboard reaches it. Keeps its historical name; it was the native
+   *  `title` attribute until 2026-09-11 (see hint.tsx for why that stopped
+   *  being a tooltip on macOS). */
   title?: string;
   disabled?: boolean;
 }
@@ -53,17 +57,17 @@ export function Segmented<T extends string>({
       data-gl="segmented"
     >
       {options.map((opt) => (
-        <button
-          key={opt.value}
-          type="button"
-          className="gl-segmented-item"
-          aria-pressed={opt.value === value}
-          disabled={opt.disabled}
-          title={opt.title}
-          onClick={() => onChange(opt.value)}
-        >
-          {opt.label}
-        </button>
+        <Hint key={opt.value} text={opt.title} side="bottom">
+          <button
+            type="button"
+            className="gl-segmented-item"
+            aria-pressed={opt.value === value}
+            disabled={opt.disabled}
+            onClick={() => onChange(opt.value)}
+          >
+            {opt.label}
+          </button>
+        </Hint>
       ))}
     </div>
   );

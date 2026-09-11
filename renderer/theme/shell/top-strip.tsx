@@ -26,6 +26,8 @@
 
 import * as React from "react";
 
+import { Hint } from "../primitives/hint";
+
 export interface Crumb {
   label: string;
   /** Omit to make this segment inert. The trailing segment always is. */
@@ -85,15 +87,19 @@ export function TopStrip({
                   {crumb.label}
                 </button>
               ) : (
-                <span
-                  className="gl-strip-crumb-current"
-                  // Only the trailing segment is the current page. A middle
-                  // segment without an `onClick` is inert, not "here".
-                  aria-current={i === lastIndex ? "page" : undefined}
-                  title={crumb.label}
-                >
-                  {crumb.label}
-                </span>
+                // The full label on hover, for a crumb the strip truncates — a
+                // `Hint`, not a native title (primitives/hint.tsx). Hover-only:
+                // the current page is not a control.
+                <Hint text={crumb.label} side="bottom">
+                  <span
+                    className="gl-strip-crumb-current"
+                    // Only the trailing segment is the current page. A middle
+                    // segment without an `onClick` is inert, not "here".
+                    aria-current={i === lastIndex ? "page" : undefined}
+                  >
+                    {crumb.label}
+                  </span>
+                </Hint>
               )}
             </React.Fragment>
           ))}
@@ -117,9 +123,11 @@ export interface ChromeButtonProps
 
 /** An icon control sized for the strip and the rail header.
  *
- *  `title` as well as `aria-label`, deliberately: Radix-backed tooltips cannot
- *  be opened under jsdom, so a hint carried by one would be untestable AND
- *  unreachable by keyboard. A `title` attribute is both. */
+ *  `aria-label` names it for assistive tech; a `Hint` says the same words on
+ *  hover and on focus. It carried the label as a native `title` as well until
+ *  2026-09-11, on the theory that a `title` was both testable and keyboard-
+ *  reachable — it is neither on macOS under the pinned Electron, which shows
+ *  one once and then rarely (electron/electron#49843, primitives/hint.tsx). */
 export function ChromeButton({
   label,
   className,
@@ -127,14 +135,15 @@ export function ChromeButton({
   ...props
 }: ChromeButtonProps): React.ReactElement {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      className={["gl-chrome-btn", className].filter(Boolean).join(" ")}
-      {...props}
-    >
-      {children}
-    </button>
+    <Hint text={label} side="bottom">
+      <button
+        type="button"
+        aria-label={label}
+        className={["gl-chrome-btn", className].filter(Boolean).join(" ")}
+        {...props}
+      >
+        {children}
+      </button>
+    </Hint>
   );
 }

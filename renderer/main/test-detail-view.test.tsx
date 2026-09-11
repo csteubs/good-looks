@@ -167,6 +167,7 @@ vi.mock("../lib/api", () => ({
       updateSteps: (...a: Parameters<typeof updateSteps>) => updateSteps(...a),
       dismissDiverged: (...a: Parameters<typeof dismissDiverged>) => dismissDiverged(...a),
     },
+    siteHealth: { forTest: async () => null },
     recorder: {
       getSettings: async () => settings as RecorderSettings,
       setCursor: (...a: Parameters<typeof setCursor>) => setCursor(...a),
@@ -324,6 +325,36 @@ describe("the Accessibility tab", () => {
     renderView();
     await screen.findByText("Checkout");
     expect(screen.queryByRole("tab", { name: /Accessibility/ })).toBeNull();
+  });
+});
+
+describe("the Site Health tab", () => {
+  it("is offered only while the global check is on, after Accessibility", async () => {
+    renderView();
+    await screen.findByRole("tab", { name: /Accessibility/ });
+    expect(screen.queryByRole("tab", { name: "Site Health" })).toBeNull();
+  });
+
+  it("appears with the switch on and opens the panel", async () => {
+    settings = { ...settings, siteHealthChecks: true };
+    renderView();
+    const tab = await screen.findByRole("tab", { name: "Site Health" });
+    const strip = document.querySelector(".gl-detail-tabs") as HTMLElement;
+    const names = within(strip).getAllByRole("tab").map((t) => t.textContent);
+    expect(names[names.length - 1]).toBe("Site Health");
+    expect(names[names.length - 2]).toMatch(/Accessibility/);
+    // Radix tabs activate on pointer-down, not a bare click.
+    fireEvent.mouseDown(tab);
+    fireEvent.focus(tab);
+    expect(await screen.findByText(/No Site Health reading yet/)).toBeTruthy();
+  });
+
+  it("is not offered for an imported test, switch or no switch", async () => {
+    settings = { ...settings, siteHealthChecks: true };
+    test_ = record({ sourceDir: "/imported/project" });
+    renderView();
+    await screen.findByText("Checkout");
+    expect(screen.queryByRole("tab", { name: "Site Health" })).toBeNull();
   });
 });
 

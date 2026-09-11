@@ -163,6 +163,7 @@ try {
     "run_routine",
     "list_routines",
     "list_propagations",
+    "get_site_health",
   ]) {
     assert(names.has(name), `…including ${name}`);
   }

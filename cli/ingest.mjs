@@ -23,9 +23,11 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { listRuns, saveRunRecords } from "../mcp/run-history.mjs";
-import { planIngest } from "../shared/run-ingest.mjs";
+import { recordRun } from "../mcp/metrics.mjs";
+import { isIngestableRunId, planIngest } from "../shared/run-ingest.mjs";
 import { RUN_HEALS_FILE } from "../shared/heal-artifacts.mjs";
 import { healIngestKey, planHealIngest } from "../shared/heal-ingest.mjs";
+import { SITE_HEALTH_FILE } from "../shared/site-health.mjs";
 import { EXIT } from "./exit.mjs";
 
 /** Where the app keeps its heal journal, relative to `recorder/`. Named here
@@ -188,13 +190,57 @@ function ingestHeals({ recorderDir, localRecorder, records }) {
 }
 
 /**
+ * Carry each ingested run's Site Health artifact (`site-health.json`) into
+ * this library's artifact directory for that run.
+ *
+ * The per-host SUMMARY already travelled on the record, through the gate; this
+ * is the per-page evidence the detail view's page table and the filed issue's
+ * screenshot join read. Copied — never referenced — into a directory named
+ * from ids the gate accepted, the `logFile` rule again: BOTH segments are
+ * checked with the same token rule, because the test id is a path segment
+ * here too and a `..` in it would write outside the artifacts tree.
+ *
+ * Only this one file. A run directory from another machine can hold
+ * screenshots, console and network logs; those stay where they are, and the
+ * app's readers already render a run without them.
+ *
+ * @returns {number} how many were carried
+ */
+function ingestSiteHealth({ recorderDir, localRecorder, records }) {
+  let carried = 0;
+  for (const record of records) {
+    const testId = String(record.testId ?? "");
+    const runId = String(record.id ?? "");
+    if (!isIngestableRunId(testId) || !isIngestableRunId(runId)) continue;
+    const from = path.join(recorderDir, "artifacts", testId, runId, SITE_HEALTH_FILE);
+    if (!fs.existsSync(from)) continue;
+    try {
+      const dest = path.join(localRecorder, "artifacts", testId, runId);
+      fs.mkdirSync(dest, { recursive: true });
+      fs.copyFileSync(from, path.join(dest, SITE_HEALTH_FILE));
+      carried++;
+    } catch {
+      // The record is in and its summary with it; only the page table is
+      // poorer for this run.
+    }
+  }
+  return carried;
+}
+
+/**
  * Carry the runs in `dir` into the library at `dataDir`.
+ *
+ * Async since Site Health: every ingested run is also rolled into metrics.db
+ * here, through the same `recordRun` the MCP's own runs go through. Before
+ * that, an ingested run reached the database only if the APP happened to
+ * rebuild it — so the CI runs that measure a site most often were the ones
+ * the Site Health series never saw.
  *
  * @param {{dir: string, dryRun: boolean, json: boolean}} options
  * @param {{out: (s: string) => void, err: (s: string) => void, dataDir: string, now?: () => number}} deps
- * @returns {number} an exit code
+ * @returns {Promise<number>} an exit code
  */
-export function ingestCommand({ dir, dryRun, json }, { out, err, dataDir, now = Date.now }) {
+export async function ingestCommand({ dir, dryRun, json }, { out, err, dataDir, now = Date.now }) {
   const source = path.resolve(dir);
 
   if (!fs.existsSync(source)) {
@@ -278,6 +324,29 @@ export function ingestCommand({ dir, dryRun, json }, { out, err, dataDir, now = 
         })
       : { ingested: 0, duplicate: 0, unusable: 0, runs: 0 };
 
+  // The per-page Site Health evidence, and then the metrics rows for every
+  // run just stored — after the heals, so the rollup sees the journal entries
+  // the ingest just added. Best-effort by contract: the runs are already in.
+  let siteHealth = 0;
+  let metrics = 0;
+  if (!dryRun && entries.length > 0) {
+    siteHealth = ingestSiteHealth({
+      recorderDir: found.recorderDir,
+      localRecorder,
+      records: entries.map((e) => e.record),
+    });
+    let journal = [];
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(localRecorder, HEAL_JOURNAL_FILE), "utf-8"));
+      if (Array.isArray(parsed)) journal = parsed;
+    } catch {
+      journal = [];
+    }
+    for (const entry of entries) {
+      if (await recordRun(dataDir, entry.record, journal, entry.logText)) metrics++;
+    }
+  }
+
   const summary = {
     ingested: entries.length,
     alreadyPresent: duplicate,
@@ -285,6 +354,8 @@ export function ingestCommand({ dir, dryRun, json }, { out, err, dataDir, now = 
     withLogs,
     heals: heals.ingested,
     healsFromRuns: heals.runs,
+    siteHealth,
+    metrics,
     from: found.recorderDir,
     into: dataDir,
     dryRun,
@@ -310,6 +381,9 @@ export function ingestCommand({ dir, dryRun, json }, { out, err, dataDir, now = 
       out(
         `  ${heals.ingested} Auto-Heal event(s) from ${heals.runs} run(s) — in the Heals view now`,
       );
+    }
+    if (siteHealth > 0) {
+      out(`  ${siteHealth} Site Health reading set(s) — in the Site Health view now`);
     }
     if (entries.length === 0 && duplicate > 0) {
       out("Nothing new — this directory has been ingested already.");

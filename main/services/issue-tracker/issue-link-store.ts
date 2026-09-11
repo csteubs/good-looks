@@ -78,6 +78,19 @@ function keyFor(parts: {
  *  `keyOf` below reproduces it from a stored link with no second spelling —
  *  which is the whole lesson this file's separator carries. */
 export function linkKey(provider: ProviderId, source: DefectSource): string {
+  // A Site Health link is keyed on the DOMAIN and the CATEGORY — the host in
+  // the step slot, the category in the rule slot, no test and no run — so a
+  // score filed from any run of any test that reaches the host finds it.
+  if (source.kind === "site-health") {
+    return keyFor({
+      provider,
+      testId: "",
+      kind: source.kind,
+      stepId: source.host,
+      runId: "",
+      ruleId: source.category,
+    });
+  }
   if (source.kind === "insight-report") {
     return keyFor({
       provider,
@@ -157,6 +170,12 @@ export const issueLinkStore = {
     return readAll().filter((l) => l.kind === "a11y");
   },
 
+  /** Every Site Health link, in one read — the Site Health view badges its
+   *  detail head from this, whichever run is on screen. */
+  allSiteHealth(): IssueLink[] {
+    return readAll().filter((l) => l.kind === "site-health");
+  },
+
   /** Record a filed issue. Replaces any existing link for the same defect —
    *  filing again after the first issue was deleted in the tracker should leave
    *  one link, not two. */
@@ -167,19 +186,21 @@ export const issueLinkStore = {
   ): IssueLink {
     const want = linkKey(provider, source);
     const report = source.kind === "insight-report";
+    const site = source.kind === "site-health";
     const link: IssueLink = {
       provider,
-      // The report source stores the same slots `linkKey` mapped it onto —
-      // empty test/run, the report id where a step id goes — so `keyOf`
-      // rebuilds the identical key through the one derivation.
-      testId: report ? "" : source.testId,
-      stepId: report ? source.reportId : (source.stepId ?? ""),
+      // The report and site-health sources store the same slots `linkKey`
+      // mapped them onto — empty test/run, the report id or the host where a
+      // step id goes — so `keyOf` rebuilds the identical key through the one
+      // derivation.
+      testId: report || site ? "" : source.testId,
+      stepId: report ? source.reportId : site ? source.host : (source.stepId ?? ""),
       // Recorded so the read side can rebuild the same key. Only load-bearing
       // for a step-less failure, but stored always — a field present only
       // sometimes is one every reader has to remember to guard.
-      runId: report ? "" : source.runId,
+      runId: report || site ? "" : source.runId,
       kind: source.kind,
-      ruleId: source.kind === "a11y" ? source.ruleId : "",
+      ruleId: source.kind === "a11y" ? source.ruleId : site ? source.category : "",
       issueId: issue.id,
       identifier: issue.identifier,
       url: issue.url,

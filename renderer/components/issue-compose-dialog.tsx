@@ -49,10 +49,12 @@ function matchingLink(links: IssueLink[], source: DefectSource): IssueLink | nul
   const stepId =
     source.kind === "insight-report"
       ? source.reportId
-      : source.kind === "failure"
-        ? (source.stepId ?? "")
-        : source.stepId;
-  const ruleId = source.kind === "a11y" ? source.ruleId : "";
+      : source.kind === "site-health"
+        ? source.host
+        : source.kind === "failure"
+          ? (source.stepId ?? "")
+          : source.stepId;
+  const ruleId = source.kind === "a11y" ? source.ruleId : source.kind === "site-health" ? source.category : "";
   return (
     links.find(
       (l) => l.kind === source.kind && l.stepId === stepId && l.ruleId === ruleId,
@@ -109,6 +111,10 @@ export function defectSourceKey(source: DefectSource): string {
       return ["failure", source.testId, source.runId, source.stepId ?? ""].join("|");
     case "insight-report":
       return ["insight-report", source.reportId].join("|");
+    case "site-health":
+      // The window is part of the identity: the same host and category over a
+      // different period is a different draft ("−4 vs prior" changes).
+      return ["site-health", source.host, source.category, source.testId, source.runId, String(source.sinceMs)].join("|");
     default: {
       const unreached: never = source;
       return String(unreached);
@@ -198,7 +204,7 @@ export function IssueComposeDialog({
           api.issues
             // Report links store an empty testId — the query still returns
             // them, and matchingLink narrows to the one report.
-            .linksForTest(source.kind === "insight-report" ? "" : source.testId)
+            .linksForTest(source.kind === "insight-report" || source.kind === "site-health" ? "" : source.testId)
             .catch(() => [] as IssueLink[]),
         ]);
         if (cancelled) return;

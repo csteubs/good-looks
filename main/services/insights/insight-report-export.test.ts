@@ -43,6 +43,7 @@ function report(over: Partial<InsightReport> = {}): InsightReport {
       testsCreated: 0,
       unreviewedScriptChanges: 0,
       expiringSignatures: 0,
+      siteHealthDomains: null,
     },
     sending: [],
     promptChars: 100,

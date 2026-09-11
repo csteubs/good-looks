@@ -98,13 +98,26 @@ describe("<RailRow />", () => {
     expect(screen.getByRole("button", { name: /Chosen/ }).getAttribute("aria-current")).toBe("true");
   });
 
-  it("takes its hint as a native title without shadowing the row's own label", () => {
-    // `title` is the row's LABEL prop here, so the native attribute needs its
-    // own name. Getting this wrong would silently drop the tooltip.
+  it("shows its hint as a tooltip on focus, never as a native title, without shadowing the row's own label", async () => {
+    // `title` is the row's LABEL prop here, so the hint needs its own name —
+    // and its own mechanism: a native `title` is what shipped first, and on
+    // macOS under the pinned Electron it shows once and then rarely
+    // (primitives/hint.tsx). Pinned ABSENT, and the words asserted through
+    // focus, which is what a keyboard user gets.
     render(<RailRow title="Ollama" hint="Ollama — connection refused" />);
-    const row = screen.getByRole("button", { name: /Ollama/ });
-    expect(row.getAttribute("title")).toBe("Ollama — connection refused");
-    expect(row.textContent).toContain("Ollama");
+    const row = screen.getByRole("button", { name: "Ollama" });
+    expect(row.getAttribute("title")).toBeNull();
+    expect(row.getAttribute("data-state")).toBe("closed");
+    fireEvent.focus(row);
+    expect((await screen.findAllByText("Ollama — connection refused")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Ollama" })).toBe(row);
+  });
+
+  it("is the bare button when it has no hint", () => {
+    render(<RailRow title="Bare" />);
+    const row = screen.getByRole("button", { name: "Bare" });
+    expect(row.getAttribute("data-state")).toBeNull();
+    expect(row.getAttribute("title")).toBeNull();
   });
 
   it("renders icon, subtitle and accessory when given them, and nothing when not", () => {

@@ -91,6 +91,38 @@ describe("buildInsightFacts", () => {
     expect(stats.visualChanges).toBeNull();
   });
 
+  it("Site Health domains come from the metrics rows, aggregates only, and null without a DB", async () => {
+    const none = await buildInsightFacts("weekly", WINDOW, makeDeps());
+    expect(none.facts.siteHealth).toBeNull();
+    expect(none.stats.siteHealthDomains).toBeNull();
+
+    const hostRow = (runId: string, at: number, perf: number) => ({
+      runId, host: "shop.example.com", pages: 3, seo: 80, perf, at, testId: "t1", testName: "Login", browser: "chromium", ingested: 0,
+    });
+    const db = {
+      prepare(sql: string) {
+        return {
+          all: () => {
+            if (sql.includes("FROM host_health")) {
+              return [hostRow("r-prev", WINDOW.since - DAY, 70), hostRow("r-now", WINDOW.since + DAY, 60)];
+            }
+            if (sql.includes("FROM page_health")) {
+              // A page row carries a TITLE and a PATH — neither may reach the facts.
+              return [{ runId: "r-now", pageIndex: 0, host: "shop.example.com", path: "/secret-path", url: "https://shop.example.com/secret-path", title: "Secret Title", tab: 0, cold: 1, navType: "navigate", engine: "chromium", status: 200, seo: 80, seoAudits: "", perf: 60, coverage: "fcp lcp tbt cls", fcp: 1, lcp: 1, cls: 0, tbt: 0, inp: null, ttfb: 1, dcl: 1, load: 1, requests: 1, transferBytes: 1, action: 0, at: WINDOW.since + DAY, runAt: WINDOW.since + DAY, testId: "t1", testName: "Login" }];
+            }
+            return [];
+          },
+        };
+      },
+    };
+    const { facts, stats } = await buildInsightFacts("weekly", WINDOW, makeDeps({ metricsDb: () => db as never }));
+    expect(facts.siteHealth?.domains).toEqual([
+      { host: "shop.example.com", runs: 1, pages: 1, seo: 80, perf: 60, seoPrev: 80, perfPrev: 70 },
+    ]);
+    expect(stats.siteHealthDomains).toBe(1);
+    expect(JSON.stringify(facts.siteHealth)).not.toMatch(/secret-path|Secret Title/);
+  });
+
   it("clusters are queried all-time so 'new' means new, and inactive ones drop", async () => {
     const old = { signature: "old-e", runs: 40, tests: 2, firstSeenAt: NOW - 90 * DAY, lastSeenAt: NOW - DAY };
     const fresh = { signature: "new-e", runs: 3, tests: 1, firstSeenAt: NOW - 2 * DAY, lastSeenAt: NOW - DAY };

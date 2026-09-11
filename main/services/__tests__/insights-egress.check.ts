@@ -113,6 +113,7 @@ const facts: InsightFacts = {
   visualChangedSteps: null,
   heals: { healedSteps: 0, healFailures: 0, topTests: [{ testName: SECRET, healedSteps: 1 }] },
   a11y: { newViolationSteps: 0 },
+  siteHealth: null,
   library: { totalTests: 1, testsCreated: 0, unreviewedScriptChanges: 0, pendingHeals: 0 },
   routines: [{ name: `Nightly ${SECRET}`, overdue: false, lastScheduledRunAt: null }],
   shopify: [],

@@ -220,6 +220,23 @@ describe("capture and accessibility", () => {
     expect(savedPatch(controller)).toEqual({ defaultA11yChecks: true });
   });
 
+  it("saves the Site Health switch", () => {
+    const { controller } = renderPane(<TestDefaultsPane />);
+    fireEvent.click(screen.getByRole("switch", { name: /check site health/i }));
+    expect(savedPatch(controller)).toEqual({ siteHealthChecks: true });
+  });
+
+  it("reads the Site Health switch as on when the setting is", () => {
+    const controller = makeController({ settings: { siteHealthChecks: true } });
+    renderPane(<TestDefaultsPane />, { controller });
+    expect(screen.getByRole("switch", { name: /check site health/i }).getAttribute("data-state")).toBe("checked");
+  });
+
+  it("says a low Site Health score cannot fail a run, in the always-visible summary", () => {
+    renderPane(<TestDefaultsPane />);
+    expect(screen.getByText(/scores every page a run loads.*cannot fail a run/i)).toBeTruthy();
+  });
+
   it("says the accessibility check never fails a run without needing a click", () => {
     // The reassurance that stops someone leaving it off — it belongs in the
     // always-visible summary, not behind the disclosure.

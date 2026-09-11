@@ -89,6 +89,7 @@ const appRunner = code("main/services/playwright-runner.ts");
     "signature-fixture-source",
     "user-page-fixture-source",
     "tabs-fixture-source",
+    "site-health-fixture-source",
   ]) {
     assert(
       new RegExp(`shared/${mod}\\.mjs`).test(appRunner),
@@ -163,6 +164,7 @@ const appRunner = code("main/services/playwright-runner.ts");
     ["wantsHeal", /const wantsHeal =\s*\n?\s*!imported/],
     ["wantsUserPage", /const wantsUserPage =\s*!imported/],
     ["wantsFollowTabs", /const wantsFollowTabs =\s*!imported/],
+    ["wantsSiteHealth", /const wantsSiteHealth =\s*!imported/],
     [
       "wantsDismiss",
       /const handlePopups =\s*\n?\s*!imported[\s\S]{0,300}?const armedRules = imported\s*\?\s*\[\]\s*:[\s\S]{0,400}?const wantsDismiss =/,

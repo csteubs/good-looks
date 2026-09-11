@@ -12,6 +12,8 @@
 // about right now, and a claim about right now read off disk at launch is how
 // a revoked key keeps saying Connected.
 
+import { isSiteHealthCategory } from "../../../shared/site-health.mjs";
+import { normalizeSiteHost } from "../../../shared/site-host.mjs";
 import { logger } from "@shell/backend";
 
 import { allRedactableValues, redact } from "../secret-redaction.js";
@@ -282,6 +284,17 @@ export const issueTrackerService = {
     const runId = id(r.runId);
     if (!testId || !runId) return null;
 
+    // The host goes through the same gate the fixture's readings do, and the
+    // category through the shared vocabulary — both become part of a stored
+    // link key and of a deep link written into someone else's tracker.
+    if (r.kind === "site-health") {
+      const host = normalizeSiteHost(r.host);
+      if (!host || !isSiteHealthCategory(r.category)) return null;
+      const since = Number(r.sinceMs);
+      const sinceMs = Number.isFinite(since) && since > 0 ? Math.floor(since) : 0;
+      return { kind: "site-health", host, category: r.category, testId, runId, sinceMs };
+    }
+
     if (r.kind === "a11y") {
       const stepId = id(r.stepId);
       const ruleId = id(r.ruleId);
@@ -363,6 +376,10 @@ export const issueTrackerService = {
 
   /** Every a11y link, so the Accessibility view's rule board badges every
    *  row in one read — regardless of which occurrence anchored each issue. */
+  siteHealthLinks(): IssueLink[] {
+    return issueLinkStore.allSiteHealth();
+  },
+
   a11yLinks(): IssueLink[] {
     return issueLinkStore.allA11y();
   },

@@ -62,6 +62,7 @@ export function insightReportHtml(report: InsightReport): string {
   stat("Healed steps", report.stats.healedSteps);
   stat("Heal failures", report.stats.healFailures);
   stat("Visual changes", report.stats.visualChanges);
+  stat("Site Health domains", report.stats.siteHealthDomains ?? null);
   stat("New failure signatures", report.stats.newClusters);
   stat("New a11y violations", report.stats.a11yNewSteps);
   stat("Tests created", report.stats.testsCreated);

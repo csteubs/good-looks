@@ -50,6 +50,8 @@ import {
   stepDurations,
   stepHealth,
   suiteCost,
+  siteHealthHostRows,
+  siteHealthPageRows,
 } from "../shared/metrics-query.mjs";
 import { analyseFlake } from "../shared/flake-analysis.mjs";
 import { firstErrorLine } from "../shared/error-signature.mjs";
@@ -63,6 +65,8 @@ import { compareReplays } from "../shared/run-comparison.mjs";
 import { TRIAGE_COHORT, triageRun } from "../shared/triage.mjs";
 import { resolveFailureReason, suggestFailureReason } from "../shared/failure-reasons.mjs";
 import { stripAnsi } from "../shared/strip-ansi.mjs";
+import { priorWindow, siteHealthHostDetail, siteHealthOverview } from "../shared/site-health.mjs";
+import { normalizeSiteHost } from "../shared/site-host.mjs";
 
 const MCP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(MCP_DIR, "..");
@@ -1061,6 +1065,60 @@ server.registerTool(
       comparedSteps: steps.length,
       steps,
     });
+  },
+);
+
+server.registerTool(
+  "get_site_health",
+  {
+    title: "Site Health by domain",
+    description:
+      "SEO and performance scores for every domain the suite's runs load, with the change against " +
+      "the prior period of the same length, or one domain in full: its run-by-run series, the " +
+      "latest reading of each page, failing SEO audits, Core Web Vitals at the 75th percentile, " +
+      "which engines read it and which tests reach it. Readings are taken in the page by the " +
+      "run itself when the app's Check Site Health setting is on (lab data, Lighthouse-weighted); " +
+      "`good-looks ingest` carries a CI job's readings in. Scores are numbers, never verdicts. " +
+      "Omit `days` for all time, which has no prior period and so no deltas.",
+    inputSchema: {
+      host: z.string().optional(),
+      days: z.number().int().min(1).max(365).optional(),
+    },
+  },
+  async ({ host, days }) => {
+    const db = await readHandle(dataDir);
+    if (!db) {
+      return errorResult(
+        "The metrics database is not available, so there are no Site Health readings to report. " +
+          "It is built by the app — open Good Looks! once — or by `good-looks ingest`.",
+      );
+    }
+    const untilMs = Date.now();
+    const sinceMs = days ? untilMs - days * 86_400_000 : 0;
+    // From the start of the PRIOR window, because the delta needs it — the
+    // same fetch the app's handler makes, shaped by the same function.
+    const fetchSince = sinceMs > 0 ? (priorWindow(sinceMs, untilMs)?.since ?? sinceMs) : 0;
+    if (host !== undefined) {
+      const wanted = normalizeSiteHost(host);
+      if (!wanted) return errorResult(`Not a site host: ${host}`);
+      return jsonResult(
+        siteHealthHostDetail({
+          host: wanted,
+          hostRows: siteHealthHostRows(db, { sinceMs: fetchSince, host: wanted }),
+          pageRows: siteHealthPageRows(db, { sinceMs: fetchSince, host: wanted }),
+          sinceMs,
+          untilMs,
+        }),
+      );
+    }
+    return jsonResult(
+      siteHealthOverview({
+        hostRows: siteHealthHostRows(db, { sinceMs: fetchSince }),
+        pageRows: siteHealthPageRows(db, { sinceMs: fetchSince }),
+        sinceMs,
+        untilMs,
+      }),
+    );
   },
 );
 

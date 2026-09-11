@@ -41,6 +41,8 @@ import {
   ToolTile,
   TypeChip,
   Verdict,
+  Hint,
+  ChromeButton,
 } from "../theme";
 import type { TempMode } from "../theme";
 import type { StepType } from "../lib/recorder-types";
@@ -421,6 +423,29 @@ export function Specimen(): React.ReactElement {
           </div>
         </Panel>
 
+        <Panel title="Hint" id="hover and focus, never a native title" pad={12}>
+          {/* The theme's tooltip. Tab to the control as well as hovering it:
+              focus opens the same words, which is the half a native `title`
+              never had — and the half macOS under the pinned Electron shows
+              once and then rarely (electron/electron#49843). */}
+          <Row label="on a control">
+            <ChromeButton label="Open Settings">
+              <span aria-hidden="true">⚙</span>
+            </ChromeButton>
+            <Hint text="Only the pixels that changed" side="right">
+              <button type="button" className="gl-segmented-item" aria-pressed="false">
+                Diff
+              </button>
+            </Hint>
+          </Row>
+          <Row label="on text">
+            <Hint text="run-2026-08-08-a-very-long-identifier-that-truncates" side="bottom">
+              <span className="gl-panel-id" style={{ maxWidth: 160 }}>
+                run-2026-08-08-a-very-long-identifier-that-truncates
+              </span>
+            </Hint>
+          </Row>
+        </Panel>
         <Panel title="Segmented" id="selection is neutral" pad={12}>
           <div style={{ display: "grid", gap: 10 }}>
             <Row label="compare">

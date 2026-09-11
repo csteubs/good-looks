@@ -57,6 +57,7 @@ import {
   tabsFixtureSource,
   TABS_FIXTURE_FILE,
 } from "../shared/tabs-fixture-source.mjs";
+import { siteHealthFixtureSource, SITE_HEALTH_FIXTURE_FILE } from "../shared/site-health-fixture-source.mjs";
 import { settleFixtureSource, SETTLE_FIXTURE_FILE } from "../shared/settle-fixture-source.mjs";
 import {
   signatureFixtureSource,
@@ -173,6 +174,7 @@ test.beforeAll(async () => {
   fs.writeFileSync(path.join(dir, DISMISS_FIXTURE_FILE), dismissFixtureSource);
   fs.writeFileSync(path.join(dir, USER_PAGE_FIXTURE_FILE), userPageFixtureSource);
   fs.writeFileSync(path.join(dir, TABS_FIXTURE_FILE), tabsFixtureSource);
+  fs.writeFileSync(path.join(dir, SITE_HEALTH_FIXTURE_FILE), siteHealthFixtureSource);
   fs.writeFileSync(path.join(dir, GLAZE_RUNTIME_FILE), glazeRuntimeSource);
   fs.symlinkSync(path.join(process.cwd(), "node_modules"), path.join(dir, "node_modules"));
 });

@@ -20,6 +20,8 @@ import type {
   RunRecord,
 } from "../../recorder/types.js";
 import { periodDigest, type PeriodDigest } from "../../../shared/period-digest.mjs";
+import { siteHealthHostRows, siteHealthPageRows, type Db as MetricsDb } from "../../../shared/metrics-query.mjs";
+import { priorWindow, siteHealthOverview } from "../../../shared/site-health.mjs";
 import {
   changedStepCount,
   failureClusters,
@@ -46,6 +48,16 @@ export interface InsightFactCluster {
   isNew: boolean;
 }
 
+export interface InsightFactDomain {
+  host: string;
+  runs: number;
+  pages: number;
+  seo: number | null;
+  perf: number | null;
+  seoPrev: number | null;
+  perfPrev: number | null;
+}
+
 export interface InsightFacts {
   cadence: InsightsCadence;
   periodLabel: string;
@@ -62,6 +74,10 @@ export interface InsightFacts {
     topTests: { testName: string; healedSteps: number }[];
   };
   a11y: { newViolationSteps: number };
+  /** Site Health per domain this window against the window before: a host
+   *  name and four scores, nothing else — never a page title, path or URL.
+   *  null = metrics DB unavailable. */
+  siteHealth: { domains: InsightFactDomain[] } | null;
   library: {
     totalTests: number;
     testsCreated: number;
@@ -156,6 +172,12 @@ export async function buildInsightFacts(
 
   const a11yNewSteps = sum(inWindow, (r) => r.a11yNewSteps ?? 0);
 
+  // Site Health, shaped by the same function the view and the MCP tool use,
+  // so the report and the screen cannot disagree about a domain's delta. The
+  // rows are fetched from the start of the PRIOR window because the delta
+  // needs it; null when there is no database, never an empty list.
+  const siteHealth = db ? { domains: siteHealthDomains(db, window) } : null;
+
   const tests = deps.tests();
   const testsCreated = tests.filter((t) => t.createdAt >= window.since).length;
   const unreviewedScriptChanges = deps.unreviewedScriptChanges();
@@ -194,6 +216,7 @@ export async function buildInsightFacts(
     visualChangedSteps,
     heals: { healedSteps, healFailures, topTests: topHealTests },
     a11y: { newViolationSteps: a11yNewSteps },
+    siteHealth,
     library: {
       totalTests: tests.length,
       testsCreated,
@@ -216,6 +239,7 @@ export async function buildInsightFacts(
     visualChanges: visualChangedSteps,
     newClusters: clusters === null ? null : clusters.filter((c) => c.isNew).length,
     a11yNewSteps,
+    siteHealthDomains: siteHealth ? siteHealth.domains.length : null,
     testsCreated,
     unreviewedScriptChanges,
     expiringSignatures: shopify.length,
@@ -226,4 +250,25 @@ export async function buildInsightFacts(
 
 function sum<T>(items: readonly T[], pick: (item: T) => number): number {
   return items.reduce((n, item) => n + pick(item), 0);
+}
+
+/** The per-domain rows for the report: aggregates only. */
+function siteHealthDomains(db: MetricsDb, window: { since: number; until: number }): InsightFactDomain[] {
+  const prior = priorWindow(window.since, window.until);
+  const fetchSince = prior ? prior.since : window.since;
+  const overview = siteHealthOverview({
+    hostRows: siteHealthHostRows(db, { sinceMs: fetchSince }),
+    pageRows: siteHealthPageRows(db, { sinceMs: fetchSince }),
+    sinceMs: window.since,
+    untilMs: window.until,
+  });
+  return overview.hosts.slice(0, LIST_CAP).map((h) => ({
+    host: h.host,
+    runs: h.runs,
+    pages: h.pages,
+    seo: h.seo,
+    perf: h.perf,
+    seoPrev: h.seoPrev,
+    perfPrev: h.perfPrev,
+  }));
 }

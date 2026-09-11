@@ -13,6 +13,15 @@ import { SplitView } from "@ui";
 import type { TestRecord } from "../lib/recorder-types";
 import { AppStrip } from "./app-strip";
 
+// The palette's open/close handle, as `useCommandPalette` returns it: null
+// (no palette above, as in every strip test until now) or a function, which is
+// the only thing that makes the ⌘K cap render.
+const h = vi.hoisted(() => ({ palette: null as ((open: boolean) => void) | null }));
+vi.mock("./command-palette", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("./command-palette")>();
+  return { ...mod, useCommandPalette: () => h.palette };
+});
+
 let pathname = "/";
 let params: { id?: string } = {};
 let tests: TestRecord[] = [];
@@ -82,6 +91,7 @@ function renderStrip(props: { recording?: boolean } = {}) {
 }
 
 beforeEach(() => {
+  h.palette = null;
   pathname = "/";
   params = {};
   tests = [];
@@ -208,6 +218,25 @@ describe("the strip's own controls", () => {
     // controls over the router's own history, not slots for a future feature,
     // and both are disabled here because there is nowhere to go.
     expect(buttons).toEqual(["Hide library", "Back", "Forward"]);
+  });
+
+  it("offers the ⌘K cap, with its hint on focus and never a native title, once a palette is above", async () => {
+    // The cap is a button (a key cap nobody can press is a label pretending to
+    // be a control) whose hint says what it does. That hint was a native
+    // `title`, which on macOS under the pinned Electron shows once and then
+    // rarely (primitives/hint.tsx); it is a `Hint` now, and the cap is
+    // focusable, so the keyboard gets the same words.
+    h.palette = vi.fn();
+    renderStrip();
+    const cap = screen.getByRole("button", { name: "Run a command (Command K)" });
+    expect(cap.textContent).toBe("⌘K");
+    expect(cap.getAttribute("title")).toBeNull();
+    expect(cap.getAttribute("data-state")).toBe("closed");
+    fireEvent.focus(cap);
+    const words = await screen.findAllByText(/Run a command\s+⌘K/);
+    expect(words.some((el) => el.closest(".gl-hint"))).toBe(true);
+    fireEvent.click(cap);
+    expect(h.palette).toHaveBeenCalledWith(true);
   });
 });
 

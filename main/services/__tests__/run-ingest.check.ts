@@ -168,6 +168,35 @@ const types = read("main/recorder/types.ts");
   );
 }
 
+// ── 2b. Site Health travels with the run ──────────────────────────────────
+//
+// Two halves, two rules. The per-host SUMMARY is a field on the record and
+// goes through the gate like every other optional field (through the shared
+// normaliser, not a copy of it). The per-page ARTIFACT is a file beside the
+// log, copied into a directory named from the ids the gate accepted — with
+// the test id checked by the same token rule as the run id, because here it
+// is a path segment too. And every ingested run is rolled into metrics.db
+// through the same `recordRun` the MCP's own runs use; before that, a CI
+// run reached the database only when the app happened to rebuild it.
+{
+  assert(
+    /opt\("siteHealth", normalizeSiteHealthSummary\(raw\.siteHealth\)\)/.test(gate),
+    "gate: admits the Site Health summary through the shared normaliser",
+  );
+  assert(
+    /isIngestableRunId\(testId\) \|\| !isIngestableRunId\(runId\)/.test(command) && /SITE_HEALTH_FILE/.test(command),
+    "ingest: copies site-health.json only under ids that pass the token rule, both segments",
+  );
+  assert(
+    /fs\.copyFileSync\(from, path\.join\(dest, SITE_HEALTH_FILE\)\)/.test(command),
+    "ingest: …and COPIES it (a stored foreign path would be the logFile bug again)",
+  );
+  assert(
+    /await recordRun\(dataDir, entry\.record, journal, entry\.logText\)/.test(command),
+    "ingest: rolls every ingested run into metrics.db through the MCP's recordRun",
+  );
+}
+
 // ── 3. It is reachable ─────────────────────────────────────────────────────
 {
   // The check:mcp-boot lesson: a subcommand not wired into the entry point is

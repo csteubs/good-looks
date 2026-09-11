@@ -60,6 +60,9 @@ function payloadFor(facts: InsightFacts): Record<string, unknown> {
     visualChangedSteps: facts.visualChangedSteps,
     heals: facts.heals,
     accessibility: facts.a11y,
+    // Always present (null without a DB), so the disclosure and the payload
+    // count the same categories whichever runtime built the report.
+    siteHealth: facts.siteHealth ?? null,
     library: facts.library,
     scheduledRoutines: facts.routines,
     crawlerSignatures: facts.shopify,
@@ -85,6 +88,7 @@ const SENDING_LABELS: Record<string, string> = {
   visualChangedSteps: "Visual change count",
   heals: "Auto-Heal activity, test names",
   accessibility: "New accessibility violation count",
+  siteHealth: "Site Health: domain names with SEO and performance scores, this period and the one before",
   library: "Library counts",
   scheduledRoutines: "Routine names and schedules",
   crawlerSignatures: "Crawler signature hosts and expiry",

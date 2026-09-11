@@ -23,11 +23,12 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, PanelLeft } from "lucide-react";
 import { useSplitView } from "@ui";
 
-import { ChromeButton, TopStrip, type Crumb } from "../theme";
+import { ChromeButton, Hint, TopStrip, type Crumb } from "../theme";
 import { JobTicker } from "./job-ticker";
 import { api } from "../lib/api";
 import { categoryMeta, facetLabel } from "../lib/stats-categories";
 import { parseSettingsPath } from "../lib/settings-route";
+import { parseSiteHealthPath } from "../lib/site-health-route";
 import { paneById } from "../lib/settings-schema";
 import { topicTitle } from "../lib/docs";
 import { useCommandPalette } from "./command-palette";
@@ -45,6 +46,7 @@ const VIEW_LABEL: Record<string, string> = {
   // an MCP break to buy a word.
   "/batch": "Routines",
   "/heals": "Heals",
+  "/site-health": "Site Health",
   "/branches": "Branches",
   "/settings": "Settings",
 };
@@ -160,16 +162,19 @@ function CommandKey(): React.ReactElement | null {
   const setOpen = useCommandPalette();
   if (!setOpen) return null;
   return (
-    <button
-      type="button"
-      className="gl-cmd-key"
-      onClick={() => setOpen(true)}
-      // Spelled out for a screen reader, which reads "⌘" as nothing useful.
-      aria-label="Run a command (Command K)"
-      title="Run a command  ⌘K"
-    >
-      ⌘K
-    </button>
+    // The hint says what the cap does; `aria-label` spells it out for a screen
+    // reader, which reads "⌘" as nothing useful. A `Hint`, not a native
+    // `title` — see primitives/hint.tsx for why that stopped being a tooltip.
+    <Hint text="Run a command  ⌘K" side="bottom">
+      <button
+        type="button"
+        className="gl-cmd-key"
+        onClick={() => setOpen(true)}
+        aria-label="Run a command (Command K)"
+      >
+        ⌘K
+      </button>
+    </Hint>
   );
 }
 
@@ -263,6 +268,17 @@ export function AppStrip({ recording = false }: AppStripProps): React.ReactEleme
           onClick: () => navigate({ to: "/settings/$pane", params: { pane: pane.id } }),
         },
         { label: title },
+      ];
+    }
+
+    // Site Health drills: the board, then the domain. The tab is not a crumb —
+    // it is a switch on the domain's screen, not a place under it.
+    const siteHealth = parseSiteHealthPath(pathname);
+    if (siteHealth?.host !== undefined) {
+      return [
+        home,
+        { label: "Site Health", onClick: () => navigate({ to: "/site-health" }) },
+        { label: siteHealth.host },
       ];
     }
 

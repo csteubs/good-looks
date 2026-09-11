@@ -13,13 +13,7 @@
 // as "nothing happened" and invite a second click — and a second copy.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  render,
-  screen,
-  fireEvent,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within, cleanup } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { toastTexts, clearToastCalls } from "../__tests__/sonner-stub";
 
@@ -316,6 +310,21 @@ describe("LibrarySidebar — the rail", () => {
     }
   });
 
+  it("offers Site Health only while the check is on", async () => {
+    // Hidden, not disabled: with the check off there is nothing behind the
+    // row. The ROUTE stays registered, so this is the rail's decision alone.
+    settings = { ...settings, siteHealthChecks: false };
+    renderSidebar();
+    await waitFor(() => expect(document.querySelector(".gl-rail-nav")?.textContent).toContain("Heals"));
+    expect(document.querySelector(".gl-rail-nav")?.textContent).not.toContain("Site Health");
+    cleanup();
+    settings = { ...settings, siteHealthChecks: true };
+    renderSidebar();
+    await waitFor(() => expect(document.querySelector(".gl-rail-nav")?.textContent).toContain("Site Health"));
+    fireEvent.click(screen.getByRole("button", { name: /^Site Health/ }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/site-health" }));
+  });
+
   it("marks the open test as selected, and nothing else", async () => {
     // Neutral selection is invisible to jsdom (no cascade, `css: false`), so
     // the attribute the stylesheet selects on IS the assertion — and it is the
@@ -349,6 +358,18 @@ describe("LibrarySidebar — run verdict dots", () => {
     await screen.findByText("Login");
     expect(await screen.findByLabelText("Last run failed")).toBeTruthy();
     expect(screen.queryByLabelText("Last run passed")).toBeNull();
+  });
+
+  it("names the dot as a hint for the eye, never as a native title", async () => {
+    // The label is what a screen reader gets; a mouse got a native `title`,
+    // which on macOS under the pinned Electron shows once and then rarely
+    // (primitives/hint.tsx). The dot is a hint trigger now — hover-only, since
+    // it sits inside the row's button — and the attribute is pinned ABSENT.
+    runRecords = [run({ id: "r-new", status: "failed", startedAt: 200 })];
+    renderSidebar();
+    const dot = await screen.findByLabelText("Last run failed");
+    expect(dot.getAttribute("title")).toBeNull();
+    expect(dot.getAttribute("data-state")).toBe("closed");
   });
 
   it("blends the dot across a three-browser batch instead of flattening it", async () => {
@@ -643,7 +664,11 @@ describe("LibrarySidebar folders (REDESIGN §7.2)", () => {
     renderSidebar();
     // The label, not the colour: colour alone is not an accessible signal and
     // jsdom would report a class either way.
-    expect(await screen.findByLabelText("1 of 2 tests passed")).toBeTruthy();
+    const dot = await screen.findByLabelText("1 of 2 tests passed");
+    expect(dot).toBeTruthy();
+    // And a hint for the eye, never a native title (primitives/hint.tsx).
+    expect(dot.getAttribute("title")).toBeNull();
+    expect(dot.getAttribute("data-state")).toBe("closed");
   });
 
   it("collapses, and its members LEAVE THE LIST rather than being hidden", async () => {
@@ -843,6 +868,9 @@ describe("LibrarySidebar — the reusable-flow glyph", () => {
     await screen.findByText("Plain checkout");
     const glyphs = await screen.findAllByRole("img", { name: "Reusable flow" });
     expect(glyphs).toHaveLength(1);
+    // Named for the eye by a hint, not a native title (primitives/hint.tsx).
+    expect(glyphs[0].getAttribute("title")).toBeNull();
+    expect(glyphs[0].getAttribute("data-state")).toBe("closed");
   });
 
   it("shows no flow glyph when nothing is a flow", async () => {

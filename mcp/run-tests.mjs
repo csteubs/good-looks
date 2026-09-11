@@ -80,6 +80,8 @@ import { dismissEnv } from "../shared/dismiss-fixture-names.mjs";
 import { armedPopupRulesFor, resolveHandlePopups } from "../shared/popup-presets.mjs";
 import { userPageEnv } from "../shared/user-page-fixture-source.mjs";
 import { FOLLOW_TABS_ENV } from "../shared/tabs-fixture-source.mjs";
+import { SITE_HEALTH_ENV, summariseSiteHealth } from "../shared/site-health.mjs";
+import { readSiteHealth } from "./artifacts.mjs";
 // The CI secret contract — where a secret comes from without the app, and
 // the refusal when it comes from nowhere.
 import { describeMissingSecrets, resolveCiSecrets } from "../shared/ci-secrets.mjs";
@@ -620,6 +622,12 @@ export function createRunner({
       !imported && Boolean(test.captureArtifacts ?? settings.defaultCaptureArtifacts);
     const wantsA11y = !imported && Boolean(test.a11yChecks ?? settings.defaultA11yChecks);
     const wantsLogs = !imported && Boolean(test.recordLogs ?? settings.defaultRecordLogs);
+    // Site Health: the ONE global setting, no per-test layer — a domain's score
+    // is a rollup across every test that reaches it, and a per-test switch
+    // would make the series depend on which tests had it on. Read from the
+    // same settings file the app writes, so a library that measures in the
+    // app measures here.
+    const wantsSiteHealth = !imported && Boolean(settings.siteHealthChecks);
     const wantsSettle = !imported && speed === "crawl";
     // ── Run-time healing (R49) ──────────────────────────────────────────
     //
@@ -687,7 +695,8 @@ export function createRunner({
       wantsHeal ||
       wantsUserPage ||
       wantsDismiss ||
-      wantsFollowTabs;
+      wantsFollowTabs ||
+      wantsSiteHealth;
 
     // ── The fixture gates (R8) ─────────────────────────────────────────────
     //
@@ -710,7 +719,8 @@ export function createRunner({
       // fixture installed itself, patched every locator factory and healed
       // nothing, on every unattended run, with no error anywhere.
       env.GLAZE_HEAL = wantsHeal ? "1" : "0";
-      if (wantsScreenshots || wantsA11y || wantsLogs || wantsHeal) {
+      env[SITE_HEALTH_ENV] = wantsSiteHealth ? "1" : "0";
+      if (wantsScreenshots || wantsA11y || wantsLogs || wantsHeal || wantsSiteHealth) {
         fs.mkdirSync(artifactDir, { recursive: true });
         env.GLAZE_ARTIFACT_DIR = artifactDir;
       }
@@ -1003,6 +1013,18 @@ export function createRunner({
       ...(failedStepIndex !== null
         ? { failedStepIndex, stepCount: failedStepCount }
         : {}),
+      // Site Health: the artifact the fixture wrote, summarised into the record
+      // the same way the app's runner does it — this is what `good-looks
+      // ingest` carries back and what metrics.db rolls the per-host series up
+      // from. A run that was armed and wrote nothing is a summary with zero
+      // pages, which is a finding about the probe and not a clean site.
+      ...(wantsSiteHealth
+        ? {
+            siteHealth: summariseSiteHealth(
+              readSiteHealth(dataDir, test.id, runId) ?? { testId: test.id, runId, attempt: 0, ms: 0, pages: [] },
+            ),
+          }
+        : {}),
       // These runs are always headless — there's no user at a screen watching
       // an MCP-driven run.
       runHeadless: true,
@@ -1129,6 +1151,9 @@ export function createRunner({
         // the count comes off the fixture's own markers.
         followTabs: wantsFollowTabs,
         tabsOpened,
+        // Whether the Site Health probe was armed. The record above says what
+        // it read; this says whether it was asked to.
+        siteHealth: wantsSiteHealth,
       },
       // CARRIED OUT of the run, not left only on the record. `--junit` builds
       // its report from THIS INVOCATION'S results and never reads run history:

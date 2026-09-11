@@ -6,6 +6,7 @@ import type { FlakeReport as SharedFlakeReport } from "../../shared/flake-analys
 import type { CostCurrency } from "../../shared/cost-units.mjs";
 import type { ProxySource, ProxyTraffic } from "../../shared/proxy-config.mjs";
 import type { TestIdAttributeOverride } from "../../shared/testid-attr.mjs";
+import type { SiteHealthSummary } from "../../shared/site-health.mjs";
 import type { FrameRef } from "../../shared/frame-ref.mjs";
 export type { FrameRef };
 import type { RunTrigger } from "../../shared/run-trigger.mjs";
@@ -642,6 +643,8 @@ export interface InsightStats {
   visualChanges: number | null;
   newClusters: number | null;
   a11yNewSteps: number;
+  /** domains with a Site Health reading this period; null = metrics DB unavailable */
+  siteHealthDomains: number | null;
   testsCreated: number;
   unreviewedScriptChanges: number;
   expiringSignatures: number;
@@ -1140,6 +1143,8 @@ export interface RunRecord {
   a11yMs?: number;
   a11yChecks?: number;
   a11yNewSteps?: number;
+  /** Site Health summary, when the run measured (mirror of main types). */
+  siteHealth?: SiteHealthSummary;
   aiChecksPassed?: number;
   aiChecksFailed?: number;
   aiChecksUnevaluated?: number;
@@ -1519,6 +1524,10 @@ export interface RecorderSettings {
   propagateFixes: boolean;
   /** default value of the per-test "Check accessibility" toggle. */
   defaultA11yChecks: boolean;
+  /** Check Site Health: SEO + performance readings of every document a run
+   *  loads, per domain (default false; global, never per test — mirror of
+   *  main types). The Site Health rail row shows only while this is on. */
+  siteHealthChecks: boolean;
   /** listen for screenshot requests from an MCP client (default false). */
   debugScreenshots: boolean;
   /** default value of the per-test "Capture screenshots" toggle (default false). */

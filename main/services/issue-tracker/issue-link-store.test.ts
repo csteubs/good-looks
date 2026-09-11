@@ -170,6 +170,43 @@ describe("an insight report's link", () => {
   });
 });
 
+describe("a Site Health link", () => {
+  const perf = (runId: string): Extract<DefectSource, { kind: "site-health" }> => ({
+    kind: "site-health",
+    host: "shop.example.com",
+    category: "performance",
+    testId: "t1",
+    runId,
+    sinceMs: 0,
+  });
+
+  it("is keyed on the host and the category, never the run or the test", () => {
+    store.save("linear", perf("run-1"), ISSUE);
+    expect(store.find("linear", perf("run-9"))?.identifier).toBe("ENG-42");
+    expect(store.find("linear", { ...perf("run-9"), testId: "t-other" })?.identifier).toBe("ENG-42");
+    expect(store.find("linear", { ...perf("run-1"), category: "seo" })).toBeNull();
+    expect(store.find("linear", { ...perf("run-1"), host: "app.example.com" })).toBeNull();
+  });
+
+  it("round-trips through the one key derivation and claims no test", () => {
+    store.save("linear", perf("run-1"), ISSUE);
+    const stored = store.allSiteHealth();
+    expect(stored).toHaveLength(1);
+    expect(stored[0].stepId).toBe("shop.example.com");
+    expect(stored[0].ruleId).toBe("performance");
+    expect(stored[0].testId).toBe("");
+    expect(store.forTest("t1")).toEqual([]);
+  });
+
+  it("never collides with a defect link on the same test", () => {
+    store.save("linear", visualOn("run-1"), ISSUE);
+    store.save("linear", perf("run-1"), { id: "iss-2", identifier: "ENG-43", url: "https://x/43" });
+    expect(store.find("linear", visualOn("run-2"))?.identifier).toBe("ENG-42");
+    expect(store.find("linear", perf("run-2"))?.identifier).toBe("ENG-43");
+    expect(store.allA11y()).toEqual([]);
+  });
+});
+
 describe("allA11y", () => {
   // The Accessibility view's rule board badges every row from one read, and a
   // rule filed from ANY occurrence must be found — the filter is by kind, with

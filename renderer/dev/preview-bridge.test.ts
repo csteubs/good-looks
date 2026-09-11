@@ -98,6 +98,11 @@ describe("preview bridge channel coverage", () => {
       "insights:list",
       "insights:get",
       "insights:status",
+      // The Site Health view destructures `{ available, enabled, overview }`
+      // and maps the host list; the per-test tab reads `pages` off the third.
+      "siteHealth:overview",
+      "siteHealth:host",
+      "siteHealth:forTest",
     ];
 
     const handled = new Set(handledChannels());

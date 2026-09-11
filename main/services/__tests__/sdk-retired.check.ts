@@ -84,6 +84,9 @@ const RETIRED = [
   // a retired surface is one whose SDK imports are invisible from that
   // surface's own line in this list.
   "renderer/main/a11y-violations.tsx",
+  // Site Health (2026-09-10): built on the theme layer from the first commit,
+  // and listed from it so it stays there.
+  "renderer/main/site-health-view.tsx",
   // B10 — the four creation flows. They were absent from the redesign plan
   // entirely (no B-number, no pending entry), which is how the first surface a
   // new user meets stayed the least finished one. Listed as each converts.

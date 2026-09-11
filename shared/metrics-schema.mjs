@@ -29,7 +29,7 @@
  *  This is why there are no migration scripts: the DB is a cache of files that
  *  still exist, so "migrate" and "rebuild" produce identical results and only
  *  one of them can be got wrong. */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /**
  * One row per run.
@@ -90,7 +90,8 @@ CREATE TABLE IF NOT EXISTS runs (
   has_artifacts     INTEGER NOT NULL DEFAULT 0,
   console_dropped   INTEGER NOT NULL DEFAULT 0,
   network_dropped   INTEGER NOT NULL DEFAULT 0,
-  replay_of_run_id  TEXT
+  replay_of_run_id  TEXT,
+  ingested_at       INTEGER
 )`;
 
 /**
@@ -144,6 +145,79 @@ CREATE TABLE IF NOT EXISTS step_metrics (
 )`;
 
 /**
+ * Site Health, per run and per HOST (schema 2).
+ *
+ * Built from the run record's `siteHealth` SUMMARY rather than from the
+ * artifact, and that is the point: the summary lives in run-history.json and
+ * survives artifact retention, so a domain's score series does not shorten to
+ * ten runs per test the way the pictures do. `seo` and `perf` are the mean of
+ * the latest reading of each page the run loaded on that host; null when no
+ * page on the host could be scored (a run of only 404s has an SEO score and no
+ * performance score, for instance).
+ *
+ * The run's `ingested_at` is what lets the view mark a point as "from CI":
+ * `good-looks ingest` stamps it and an app run never carries it.
+ */
+export const HOST_HEALTH_DDL = `
+CREATE TABLE IF NOT EXISTS host_health (
+  run_id   TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  host     TEXT NOT NULL,
+  pages    INTEGER NOT NULL DEFAULT 0,
+  seo      INTEGER,
+  perf     INTEGER,
+  PRIMARY KEY (run_id, host)
+)`;
+
+/**
+ * Site Health, per run and per PAGE — the row the detail view's page table,
+ * findings and vitals are built from.
+ *
+ * From the artifact, so it is subject to retention like every other per-step
+ * row here — and rolled up before the prune for the same reason they are.
+ * `seo_audits` is the audit list as "id:status …" text (shared/site-health.mjs
+ * `auditsToText`), one column rather than sixteen, because the catalogue
+ * changes and a schema change here is a drop-and-replay. `coverage` is which
+ * of fcp/lcp/tbt/cls the engine delivered, so a partial score is never read
+ * as a full one. `action` is the capture action index the reading was last
+ * taken at — the join to that step's screenshot, which is what a filed issue
+ * attaches.
+ *
+ * `url` is origin + path and never a query string: the fixture strips it in
+ * the page, and this is the second place the rule holds.
+ */
+export const PAGE_HEALTH_DDL = `
+CREATE TABLE IF NOT EXISTS page_health (
+  run_id         TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  page_index     INTEGER NOT NULL,
+  host           TEXT NOT NULL,
+  path           TEXT NOT NULL,
+  url            TEXT NOT NULL,
+  title          TEXT,
+  tab            INTEGER NOT NULL DEFAULT 0,
+  cold           INTEGER NOT NULL DEFAULT 0,
+  nav_type       TEXT,
+  engine         TEXT,
+  status         INTEGER,
+  seo            INTEGER,
+  seo_audits     TEXT,
+  perf           INTEGER,
+  coverage       TEXT,
+  fcp            REAL,
+  lcp            REAL,
+  cls            REAL,
+  tbt            REAL,
+  inp            REAL,
+  ttfb           REAL,
+  dcl            REAL,
+  load_ms        REAL,
+  requests       INTEGER,
+  transfer_bytes INTEGER,
+  action         INTEGER,
+  at             INTEGER,
+  PRIMARY KEY (run_id, page_index)
+)`;
+
+/**
  * Applied on every open, by every process.
  *
  * TWO processes write this file: the app's backend and the standalone MCP
@@ -173,13 +247,20 @@ export const INDEX_DDL = [
   "CREATE INDEX IF NOT EXISTS idx_step_by_step ON step_metrics(step_id, run_id)",
   "CREATE INDEX IF NOT EXISTS idx_runs_by_test ON runs(test_id, started_at)",
   "CREATE INDEX IF NOT EXISTS idx_runs_by_batch ON runs(batch_id)",
+  "CREATE INDEX IF NOT EXISTS idx_host_health_by_host ON host_health(host, run_id)",
+  "CREATE INDEX IF NOT EXISTS idx_page_health_by_host ON page_health(host, run_id)",
 ];
 
 /** Every statement needed to create an empty database, in order. */
-export const CREATE_STATEMENTS = [RUNS_DDL, STEP_METRICS_DDL, ...INDEX_DDL];
+export const CREATE_STATEMENTS = [RUNS_DDL, STEP_METRICS_DDL, HOST_HEALTH_DDL, PAGE_HEALTH_DDL, ...INDEX_DDL];
 
-/** Dropped in dependency order — step_metrics references runs. */
-export const DROP_STATEMENTS = ["DROP TABLE IF EXISTS step_metrics", "DROP TABLE IF EXISTS runs"];
+/** Dropped in dependency order — every other table references runs. */
+export const DROP_STATEMENTS = [
+  "DROP TABLE IF EXISTS page_health",
+  "DROP TABLE IF EXISTS host_health",
+  "DROP TABLE IF EXISTS step_metrics",
+  "DROP TABLE IF EXISTS runs",
+];
 
 /** Column order for the runs insert. Named once so the statement, the row
  *  builder and the rebuild cannot disagree about it — a positional insert with
@@ -214,6 +295,7 @@ export const RUN_COLUMNS = [
   "console_dropped",
   "network_dropped",
   "replay_of_run_id",
+  "ingested_at",
 ];
 
 export const STEP_COLUMNS = [
@@ -250,8 +332,42 @@ function upsert(table, columns) {
   );
 }
 
+export const HOST_HEALTH_COLUMNS = ["run_id", "host", "pages", "seo", "perf"];
+
+export const PAGE_HEALTH_COLUMNS = [
+  "run_id",
+  "page_index",
+  "host",
+  "path",
+  "url",
+  "title",
+  "tab",
+  "cold",
+  "nav_type",
+  "engine",
+  "status",
+  "seo",
+  "seo_audits",
+  "perf",
+  "coverage",
+  "fcp",
+  "lcp",
+  "cls",
+  "tbt",
+  "inp",
+  "ttfb",
+  "dcl",
+  "load_ms",
+  "requests",
+  "transfer_bytes",
+  "action",
+  "at",
+];
+
 export const INSERT_RUN = upsert("runs", RUN_COLUMNS);
 export const INSERT_STEP = upsert("step_metrics", STEP_COLUMNS);
+export const INSERT_HOST_HEALTH = upsert("host_health", HOST_HEALTH_COLUMNS);
+export const INSERT_PAGE_HEALTH = upsert("page_health", PAGE_HEALTH_COLUMNS);
 
 /** Turn a row object into the positional array its insert expects. Booleans
  *  become 0/1 and `undefined` becomes null, because SQLite binds neither. */

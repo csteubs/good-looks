@@ -21,7 +21,7 @@
 // No test runner here (see package.json) — plain assertions + a non-zero exit.
 //   npm run check:deep-link
 
-import { buildDeepLink, parseDeepLink } from "../../../shared/deep-link.mjs";
+import { buildDeepLink, buildSiteHealthDeepLink, parseDeepLink } from "../../../shared/deep-link.mjs";
 
 let failures = 0;
 
@@ -37,25 +37,29 @@ function assert(condition: boolean, label: string): void {
 // ── What a valid link resolves to ────────────────────────────────────
 
 {
-  const test = parseDeepLink("goodlooks://test/t-checkout");
+  const asTest = (url: string) => {
+    const t = parseDeepLink(url);
+    return t?.kind === "test" ? t : null;
+  };
+  const test = asTest("goodlooks://test/t-checkout");
   assert(test?.testId === "t-checkout", "a test link resolves to its test");
   assert(test?.runId === null && test?.stepId === null, "…with no run or step");
 
-  const run = parseDeepLink("goodlooks://test/t-checkout/run/r-42");
+  const run = asTest("goodlooks://test/t-checkout/run/r-42");
   assert(run?.runId === "r-42", "a run link resolves to its run");
 
-  const step = parseDeepLink("goodlooks://test/t-checkout/run/r-42/step/s5");
+  const step = asTest("goodlooks://test/t-checkout/run/r-42/step/s5");
   assert(step?.stepId === "s5", "a step link resolves to its step");
 
   // Both shapes a person can end up pasting. Handling only one makes half the
   // links silently do nothing, which reads as a broken feature.
   assert(
-    parseDeepLink("goodlooks:test/t-checkout")?.testId === "t-checkout",
+    asTest("goodlooks:test/t-checkout")?.testId === "t-checkout",
     "the host-less form parses too",
   );
 
   assert(
-    parseDeepLink("goodlooks://test/a%20b")?.testId === "a b",
+    asTest("goodlooks://test/a%20b")?.testId === "a b",
     "a percent-escaped id is decoded",
   );
 }
@@ -120,6 +124,44 @@ function assert(condition: boolean, label: string): void {
   assert(parseDeepLink(null) === null, "null resolves to nothing");
 }
 
+// ── A Site Health link selects a domain's screen ─────────────────────
+//
+// The host goes through the same gate the fixture's readings do, so a link
+// can only name a domain the app could have measured; the category through
+// the shared vocabulary, because it becomes a route param. Anything else is
+// refused, never guessed — a link to `/site-health/x/speed` opens nothing
+// rather than the SEO tab.
+{
+  const board = parseDeepLink("goodlooks://site-health/shop.example.com");
+  assert(board?.kind === "site-health" && board.host === "shop.example.com", "a host link resolves to its domain");
+  assert(board?.kind === "site-health" && board.category === null, "…with no tab when none was named");
+  const tab = parseDeepLink("goodlooks://site-health/WWW.Shop.Example.com/performance");
+  assert(tab?.kind === "site-health" && tab.host === "shop.example.com", "the host folds case and www. like every other host in the app");
+  assert(tab?.kind === "site-health" && tab.category === "performance", "…and carries the tab");
+  for (const url of [
+    "goodlooks://site-health",
+    "goodlooks://site-health/not a host",
+    "goodlooks://site-health/shop.example.com/speed",
+    "goodlooks://site-health/shop.example.com/seo/extra",
+    "goodlooks://site-health/../shop.example.com",
+    "goodlooks://site-health/shop.example.com%2f..",
+  ]) {
+    assert(parseDeepLink(url) === null, `refused: ${url}`);
+  }
+  for (const target of [
+    { host: "shop.example.com", category: null },
+    { host: "shop.example.com", category: "seo" as const },
+    { host: "[::1]", category: "performance" as const },
+  ]) {
+    const round = parseDeepLink(buildSiteHealthDeepLink(target));
+    assert(
+      round?.kind === "site-health" && round.host === target.host && round.category === target.category,
+      `site-health round-trips: ${JSON.stringify(target)}`,
+    );
+  }
+  assert(parseDeepLink("goodlooks://test/t-checkout")?.kind === "test", "a test link says it is one");
+}
+
 // ── Build and parse agree ────────────────────────────────────────────
 
 {
@@ -133,17 +175,18 @@ function assert(condition: boolean, label: string): void {
   for (const target of cases) {
     const round = parseDeepLink(buildDeepLink(target));
     assert(
-      round?.testId === target.testId &&
-        round?.runId === target.runId &&
-        round?.stepId === target.stepId,
+      round?.kind === "test" &&
+        round.testId === target.testId &&
+        round.runId === target.runId &&
+        round.stepId === target.stepId,
       `round-trips: ${JSON.stringify(target)}`,
     );
   }
 
   // A step without a run is not expressible, and the builder must not emit a
   // link its own parser rejects.
-  const orphan = buildDeepLink({ testId: "t-1", stepId: "s-1" });
-  assert(parseDeepLink(orphan)?.stepId === null, "a step with no run is dropped rather than emitted");
+  const orphan = parseDeepLink(buildDeepLink({ testId: "t-1", stepId: "s-1" }));
+  assert(orphan?.kind === "test" && orphan.stepId === null, "a step with no run is dropped rather than emitted");
 }
 
 if (failures > 0) {

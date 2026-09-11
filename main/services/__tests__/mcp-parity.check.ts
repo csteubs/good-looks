@@ -489,7 +489,7 @@ function codeOnly(source: string): string {
     recordLogs: true,
     speed: "crawl",
   });
-  const report = describeRun(wantsEverything, { autoHealEnabled: true }, {
+  const report = describeRun(wantsEverything, { autoHealEnabled: true, siteHealthChecks: true }, {
     speed: "crawl",
     timeoutMs: CRAWL_MIN_TEST_TIMEOUT_MS,
     timeoutRaised: true,
@@ -501,6 +501,7 @@ function codeOnly(source: string): string {
     ["console and network", "Console and network"],
     ["auto-heal", "Auto-Heal"],
     ["crawl settling", "Crawl page-settling"],
+    ["site health", "Site Health"],
   ] as const) {
     assert(skipped.includes(needle), `report: names ${feature} as skipped`);
   }

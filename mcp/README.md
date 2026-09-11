@@ -555,6 +555,27 @@ The rows worth looking for are the ones no single view can show: a step that
 whose duration range is widening while it still passes. `minMs`/`maxMs` are null
 for steps whose runs predate per-step timing — that is a gap, not a zero.
 
+### `get_site_health`
+
+SEO and performance, **per domain**, across every run that measured. Without a
+`host` it is the board: each domain's current score, the change against the
+prior period of the same length, and a run-by-run series. With one it is the
+domain in full: the latest reading of each page, the failing SEO audits, the
+Core Web Vitals at the 75th percentile, which engines read it and which tests
+reach it.
+
+| Arg | Type | Required |
+|---|---|---|
+| `host` | string | no — the board by default |
+| `days` | number (1–365) | no — all time by default, which has no prior period and so no deltas |
+
+The readings are lab data the run took in the page while the app's **Check
+Site Health** setting was on (Settings → Test defaults), scored the way
+Lighthouse scores them; `good-looks ingest` carries a CI job's readings in.
+Scores are numbers, never verdicts — whether a 54 is acceptable is the reader's
+call, and what this reports is the change. `seoPrev` / `perfPrev` are null when
+the prior period had no reading.
+
 ### `get_suite_cost`
 
 Two answers about time.
@@ -736,7 +757,7 @@ past runs and their logs — stays readable from here.
 
 - Read-only tools (`list_tests`, `get_test`, `list_runs`, `get_run_log`,
   `list_routines`,
-  `get_visual_report`, `get_a11y_report`, `get_run_logs`, `list_heals`,
+  `get_visual_report`, `get_a11y_report`, `get_site_health`, `get_run_logs`, `list_heals`,
   `list_propagations`,
   `list_batches`, `compare_runs`, `triage_run`, `get_step_health`,
   `get_suite_cost`, `get_browser_matrix`, `get_flake_report`, `get_step_matches`,

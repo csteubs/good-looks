@@ -232,6 +232,7 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   propagateFixes: true,
   defaultCaptureArtifacts: false,
   defaultA11yChecks: false,
+  siteHealthChecks: false,
   defaultRecordLogs: false,
   // On, from the shared constant: taught overlay rules were always armed
   // before this switch existed, and a default of off would silently turn
@@ -391,6 +392,10 @@ function read(): RecorderSettings {
         typeof parsed.defaultA11yChecks === "boolean"
           ? parsed.defaultA11yChecks
           : DEFAULT_SETTINGS.defaultA11yChecks,
+      siteHealthChecks:
+        typeof parsed.siteHealthChecks === "boolean"
+          ? parsed.siteHealthChecks
+          : DEFAULT_SETTINGS.siteHealthChecks,
       extraTestIdAttributes: normalizeTestIdAttributes(parsed.extraTestIdAttributes),
       defaultRecordLogs:
         typeof parsed.defaultRecordLogs === "boolean"
@@ -634,6 +639,8 @@ export const recorderSettingsStore = {
         update.defaultA11yChecks !== undefined
           ? update.defaultA11yChecks
           : current.defaultA11yChecks,
+      siteHealthChecks:
+        typeof update.siteHealthChecks === "boolean" ? update.siteHealthChecks : current.siteHealthChecks,
       defaultRecordLogs:
         update.defaultRecordLogs !== undefined
           ? update.defaultRecordLogs
@@ -854,6 +861,7 @@ export const recorderSettingsStore = {
       autoHealAttemptTimeoutMs: next.autoHealAttemptTimeoutMs,
       autoHealApply: next.autoHealApply,
       defaultA11yChecks: next.defaultA11yChecks,
+      siteHealthChecks: next.siteHealthChecks,
       defaultRecordLogs: next.defaultRecordLogs,
       defaultHandlePopups: next.defaultHandlePopups,
       disabledPopupPresetsCount: next.disabledPopupPresets.length,

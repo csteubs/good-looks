@@ -59,6 +59,7 @@ import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
 import { HealsPanel } from "./heals-panel";
 import { A11yPanel } from "./a11y-panel";
+import { SiteHealthPanel } from "./site-health-panel";
 import { computeStepDepths, describeStep, locatorExpr } from "../lib/describe-step";
 import { gradeCounts } from "../lib/locator-grade";
 import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
@@ -311,6 +312,7 @@ export function TestDetailView() {
     queryKey: ["recorder-settings"],
     queryFn: () => api.recorder.getSettings(),
   });
+  const siteHealthOn = settingsQuery.data?.siteHealthChecks === true;
   // Ghost text is on while editing and an autocomplete slot is assigned
   // (Settings → AI → Autocomplete). Settings is another window, so this
   // cache cannot be invalidated from there; a short staleTime and the
@@ -1653,6 +1655,13 @@ export function TestDetailView() {
                     {a11yNewSteps > 0 ? ` (${a11yNewSteps})` : ""}
                   </TabsTrigger>
                 )}
+                {/* Gated on the GLOBAL switch, like the rail row: the check has
+                    no per-test layer, so a tab on a test while the check is off
+                    could only ever explain the switch. Imported tests are
+                    excluded for the reason the three above are. */}
+                {imported || !siteHealthOn ? null : (
+                  <TabsTrigger value="site-health">Site Health</TabsTrigger>
+                )}
               </Tabs>
             </div>
             <TabsContent value="steps" className="min-h-0 flex-1">
@@ -1988,6 +1997,11 @@ export function TestDetailView() {
             {imported ? null : (
               <TabsContent value="a11y" className="min-h-0 flex-1">
                 <A11yPanel test={test} />
+              </TabsContent>
+            )}
+            {imported || !siteHealthOn ? null : (
+              <TabsContent value="site-health" className="min-h-0 flex-1">
+                <SiteHealthPanel test={test} />
               </TabsContent>
             )}
           </TabsRoot>

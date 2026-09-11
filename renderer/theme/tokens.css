@@ -151,6 +151,12 @@
      so the theme has to say where a modal belongs. */
   --gl-z-modal: 700;
 
+  /* A hint (the theme's tooltip) goes above a modal, because a control INSIDE
+     a dialog explains itself the same way one in a pane does, and a tooltip a
+     dialog's overlay covers is one nobody sees. Portaled to <body>, so this is
+     the only thing deciding where it lands. */
+  --gl-z-hint: 750;
+
   /* The texture's warmth, and DELIBERATELY NOT `--gl-amber`.
      The design fixes `texture: ember` — "warm orange suspended in black" — and
      a wash of the amber token behind a screen would be the largest coloured

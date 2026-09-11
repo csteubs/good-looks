@@ -10,6 +10,165 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+
+### 2026-09-11 — The theme's hints are a `Hint` primitive, not native titles
+
+**The redesign's hint idiom was a native `title` attribute, and on the platform
+the app ships on that is not a tooltip.** Since Electron 38.8.2 — still open at
+the pinned 43.3.0, electron/electron#49843 — macOS shows a `title` on the first
+hover and very rarely afterwards. The Site Health vitals cards found it first
+(2026-09-10 below: a help cursor over a card that explained nothing), and the
+fix there was `@ui`'s Radix `Tooltip`. The same day's follow-up asked for the
+rail's `hint`, `Segmented`'s option `title` and `Panel`'s id to be fixed the
+same way; `ChromeButton`'s label rode the same attribute in the same layer and
+came with them.
+
+**A theme primitive, `Hint`, rather than `@ui`'s `Tooltip` imported four
+times.** `renderer/theme/primitives/hint.tsx` is the first Radix import in the
+theme layer, and the reason is what a tooltip has to do that `Menu` does not:
+leave its trigger's scroll container (the rail rows sit in a scrollport that
+clips anything positioned inside it) and flip away from a viewport edge (the
+range switch sits at the top-right of the pane). That is a portal and collision
+handling — the two things worth a library, and the same reason
+`check:sdk-retired` keeps the Tooltip family on its list ("positioning and
+dismissal are not worth rewriting; we restyle the surface"). `Menu` drew its
+own because its ITEMS had to be real DOM for tests; a tooltip's text is real
+DOM with Radix too. A CSS-only `:hover`/`:focus-visible` reveal was the
+alternative, and the rail's scrollport is what rules it out. The surface is the
+theme's (`.gl-hint`: hairline, square, the panel near-black, the menu's shadow
+one size down), stacked at a new `--gl-z-hint` ABOVE a modal, because a control
+inside a dialog explains itself the same way one in a pane does. The Site
+Health view's local `Explain` became a call to it, so the redesigned screens
+draw one tooltip; the pre-redesign views (the flake panel, Visual) keep `@ui`'s.
+
+**Focus opens it, and that is what the tests drive.** The reason every one of
+these was a `title` was the belief that a Radix tooltip cannot be opened under
+jsdom. Half true: a POINTER cannot open one there, but `fireEvent.focus` on a
+focusable trigger can — Radix opens on focus — which is also the keyboard path
+the `title` never had. So `hint.test.tsx`, the rail, Segmented and ChromeButton
+tests assert the rendered words through focus and pin the `title` attribute
+ABSENT; the Panel's id, which is not a control and takes no focus, pins the
+wiring and the absence. `Hint` with no text renders its child bare, so an
+optional hint passes straight through and a row without one carries no
+tooltip machinery. `title` remains in the theme only where it reveals text the
+element truncates and also shows (`TagStack`, `StepRow`'s description,
+`KeyValue`), and on `ToolTile`'s folded name, which is the same case; the
+strip's current crumb, which the app strip draws, went the other way and is a
+`Hint` too. The library rail's glyphs — the verdict dot, a folder's tone
+dot, the reusable-flow mark — and the strip's ⌘K cap followed the same day:
+each keeps its `aria-label` and gains a `Hint`, hover-only where it sits inside
+the row's button, on focus too for the cap, which is a button of its own.
+
+### 2026-09-10 — Site Health: a score per domain, from readings the run already takes
+
+The ask was an SEO score per domain and site performance statistics, as a rail
+view between Heals and Insights, grouped by domain with the change over time
+made obvious. What landed is one view, **Site Health**, with an SEO /
+Performance switch, and the shape of it was settled by four constraints rather
+than by taste.
+
+**The reading is taken IN THE RUN, not by a separate audit.** A Lighthouse run
+per page would have meant a second browser, a second navigation and a second
+minute per page, on a machine that has just loaded the page once already. The
+capture fixture already hooks every action; a context init script
+(`glazeSiteHealthInit`, buffered `PerformanceObserver`s for paint, LCP,
+layout-shift, longtask and event) plus one `page.evaluate` per action gives
+the same vitals Lighthouse's lab run reads, from the page the test actually
+exercised, on every engine the run uses. It is a separate fixture module
+(`glaze-site-health.mjs`) for a mechanical reason: the document-response
+memory it needs is a second `context.on("response")`, and `check:log-capture`
+pins the capture fixture's own at exactly one. The scoring — Lighthouse's SEO
+audit list at Lighthouse's weights, the log-normal performance curve at
+Lighthouse's control points — lives in `shared/site-health.mjs`, because the
+app, the CLI and the MCP all read it, and three spellings of "what is a 54"
+would drift the day the second was written.
+
+**Facts cross the page boundary; verdicts never do.** The reader returns
+counts, lengths, attribute values and timings, every string capped and every
+list bounded in the page, and the app rebuilds the reading on the way in
+(`normalizeSiteHealthReading`). No page text beyond the title travels, and a
+URL is origin + path — a query string is where a session token sits. This is
+the capture boundary rule (CLAUDE.md) applied to a new channel.
+
+**Two homes for the numbers, because retention prunes.** The per-page artifact
+(`site-health.json`) is subject to the ten-runs-per-test rule like every
+other artifact. The per-host SUMMARY is on the `RunRecord`, which is not — and
+`host_health` in metrics.db is rolled up from the summary, never from the
+artifact, so a domain's series is as long as its run history rather than as
+long as its screenshots. `page_health` comes from the artifact and is rolled up
+before the prune, like every other per-step row. Schema 2, drop-and-replay.
+
+**Global, never per test.** Screenshots, a11y and logs are per-test choices
+with a global default; this one is a single switch (`siteHealthChecks`, off).
+A domain's score is a rollup across every test that reaches it, and a per-test
+switch would make the series a function of which tests happened to have it on
+— a drop that was really three tests being switched off. The rail row is
+hidden while the switch is off; the ROUTE stays registered (a deep link and the
+palette land on a screen that explains the switch).
+
+**The copy carries no status words.** The mockup review was explicit: a 54 may
+be fine, and "Needs work" is the app's opinion where the user's is the one that
+counts. What the view adds is the CHANGE — "−4 vs prior", against the prior
+period of the same length — and "change detected 28 Aug (−22)" off the series,
+which are facts. Score text is right-aligned in a bounded box so a bar can
+never run into it; the payload column is "Transferred", not "Weight"; every
+vital card explains itself on hover; the Domains label is the sort control,
+lowest first by default, shared by both tabs. The one hue on the screen is
+amber on a vital over its published target, which is a threshold and not an
+opinion.
+
+**Every explanation is a DOM-rendered Tooltip, and it shipped as a native
+`title` first.** The vitals cards carried their explanation as a `title`
+with `cursor: help` over them — the rail's `hint` idiom, chosen because a
+Radix tooltip "cannot be opened under jsdom". Testing the branch in the app
+found a help cursor that explained nothing: on the pinned Electron (43.3.0),
+macOS shows a `title` tooltip on the first hover and very rarely afterwards,
+a confirmed regression since 38.8.2 that is open with no fix attached
+(electron/electron#49843). So a `title` is not a tooltip on this platform,
+and every explanation on the screen — the vitals cards, the two change
+boxes, the series bars, the pages table's column heads — now goes through a
+DOM-rendered tooltip: `@ui`'s `Tooltip` first, the theme's own `Hint` since
+the entry above.
+A `title` remains only where it reveals TRUNCATED text (a host, a path, a
+URL, the failing-audit list) that the row also carries in full. Two things
+the swap settled. Each trigger that stands on its own (a card, the detail's
+change box) is in the tab order, so focus opens the same words: the keyboard
+path the plan promised and the `title` never delivered. And the jsdom claim
+was half right: pointer events cannot open a Radix tooltip there, but
+`fireEvent.focus` on a focusable trigger can — verified before the tests
+were written — so `site-health-view.test.tsx` asserts the rendered
+explanation through focus and pins the `title` ABSENT, rather than asserting
+an exported string the way the flake panel (whose trigger sits inside a
+button and cannot take focus) has to. The rail's `hint`, `Segmented`'s
+option `title` (this view's SEO/Performance and range descriptions among
+them) and `Panel`'s id rode a `title` too, and moved the next day — the
+entry above.
+
+**Unattended runs measure too, and `ingest` carries it back.** The CI runner
+reads the same settings file, arms the same fixture, and writes the summary
+onto its record; `good-looks ingest` admits the summary through the run gate,
+copies `site-health.json` by validated id (BOTH segments, since the test id is
+a path segment there), and — new with this — rolls every ingested run into
+metrics.db through the MCP's own `recordRun`. Before that an ingested run
+reached the database only if the app happened to rebuild it, so the CI runs
+that measure a site most often were the ones the series never saw.
+
+**Filing a score is the a11y send with a different anchor.** The defect source
+is `{ kind: "site-health", host, category, testId, runId, sinceMs }`: the
+subject is the host and the category, the run is where the screenshot comes
+from, the window is what the user was looking at (so the draft's delta is the
+one on their screen). The link is keyed on host + category, never the run, so a
+score filed once is found again on every later run. The deep link is a new
+form — `goodlooks://site-health/<host>/<category>` — parsed by the same module
+as the test links, with the host through `normalizeSiteHost`, so a link can
+only ever name a domain the app could have measured.
+
+Rejected: a PageSpeed Insights integration for v1 (the storage is shaped for
+field data later — `source: "lab"` on every reading); a Speed Index (needs a
+filmstrip); a per-test switch (above); colouring scores by band (above). The
+plan, with the mockup and the settled decisions table, is
+`docs/plans/site-health.md`.
+
 ### 2026-09-05 — The script bar is five clusters, and the gap says which
 
 The Script tab's utility bar sat directly under the test view's tab strip with

@@ -11,6 +11,7 @@ import { HomeView } from "./home-view";
 import { RootView } from "./root-view";
 import { HealsView } from "./heals-view";
 import { InsightsView } from "./insights-view";
+import { SiteHealthView } from "./site-health-view";
 import { StatsView } from "./stats-view";
 import { StatsCategoryView } from "./stats/stats-category-view";
 import { SettingsPaneView, SettingsView } from "../settings/settings-view";
@@ -140,6 +141,37 @@ const insightsRoute = createRoute({
   },
 });
 
+/** Site Health: the board, one domain, one domain's tab. Three routes on one
+ *  view (it reads the path), registered UNCONDITIONALLY like Branches — the
+ *  rail row is what the setting hides, so a deep link or a palette entry
+ *  never lands on nothing; the view explains itself when the check is off. */
+const siteHealthRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/site-health",
+  component: SiteHealthView,
+  staticData: {
+    title: "Site Health",
+  },
+});
+
+const siteHealthHostRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/site-health/$host",
+  component: SiteHealthView,
+  staticData: {
+    title: "Site Health",
+  },
+});
+
+const siteHealthCategoryRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/site-health/$host/$category",
+  component: SiteHealthView,
+  staticData: {
+    title: "Site Health",
+  },
+});
+
 /** The branch switcher. Registered unconditionally — the route is cheap and the
  *  view explains itself when the feature is unavailable — while the SIDEBAR
  *  entry is what's conditional, so there is no dead end to navigate into. */
@@ -202,6 +234,9 @@ const routeTree = rootRoute.addChildren([
   batchRoute,
   healsRoute,
   insightsRoute,
+  siteHealthRoute,
+  siteHealthHostRoute,
+  siteHealthCategoryRoute,
   branchesRoute,
   settingsRoute,
   settingsPaneRoute,

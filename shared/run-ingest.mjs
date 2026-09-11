@@ -51,6 +51,7 @@
 // or `startedAt` cannot be half-ingested — it is skipped, counted, and
 // reported, rather than stored with a value nobody supplied.
 
+import { normalizeSiteHealthSummary } from "./site-health.mjs";
 import { normalizeRunProvenance } from "./run-provenance.mjs";
 import { normalizeRunTrigger } from "./run-trigger.mjs";
 
@@ -263,6 +264,11 @@ export function normalizeIngestedRun(value) {
   opt("aiChecksUnevaluated", num(raw.aiChecksUnevaluated));
   opt("captureOverheadMs", num(raw.captureOverheadMs));
   opt("shotCount", num(raw.shotCount));
+  // The per-host Site Health summary, rebuilt through its own gate: a CI run
+  // is where most readings will come from, and the series in the Site Health
+  // view is built from THIS field (the per-page artifact travels beside the
+  // log, keyed by the same validated ids, and is admitted by the app's reader).
+  opt("siteHealth", normalizeSiteHealthSummary(raw.siteHealth));
   // Only when it names a run we would also accept, because it is an id that
   // joins back to one — a value that could never match anything is noise that
   // renders as a broken link.

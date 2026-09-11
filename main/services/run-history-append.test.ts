@@ -131,3 +131,30 @@ describe("append: tabsOpened", () => {
     expect("tabsOpened" in (runHistoryStore.list().find((r) => r.id === "t4") ?? {})).toBe(false);
   });
 });
+
+describe("append: siteHealth", () => {
+  const summary = {
+    pages: 3,
+    ms: 420,
+    hosts: [{ host: "shop.example.com", pages: 3, seo: 88, perf: 61 }],
+  };
+
+  it("persists the summary the runner passes, through the file", () => {
+    runHistoryStore.append({ ...base("r-sh"), siteHealth: summary }, "log");
+    const stored = runHistoryStore.list().find((r) => r.id === "r-sh");
+    expect(stored?.siteHealth).toEqual(summary);
+  });
+
+  it("keeps a measured-nothing summary, because it is a finding about the probe", () => {
+    runHistoryStore.append({ ...base("r-sh0"), siteHealth: { pages: 0, ms: 12, hosts: [] } }, "log");
+    const stored = runHistoryStore.list().find((r) => r.id === "r-sh0");
+    expect(stored?.siteHealth).toEqual({ pages: 0, ms: 12, hosts: [] });
+  });
+
+  it("absent stays absent for a run that did not measure", () => {
+    runHistoryStore.append(base("r-sh-none"), "log");
+    const stored = runHistoryStore.list().find((r) => r.id === "r-sh-none");
+    expect(stored).toBeDefined();
+    expect("siteHealth" in (stored ?? {})).toBe(false);
+  });
+});

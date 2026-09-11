@@ -1486,10 +1486,13 @@ Known from this repo's own recorded gotchas:
   persistence at the IPC layer" approach. Where the redesign draws its own menu
   (concurrency, stats scope, appearance choice), the options *are* in the DOM and
   can finally be driven directly — new coverage, cheaply.
-- **Radix `Tooltip` cannot be opened in jsdom.** The redesign uses `title` for
-  most hints; those are assertable as attributes. Where a tooltip carries copy
-  nothing else states, keep the existing pattern: export the string and assert it,
-  and make sure it is reachable without hover.
+- **Radix `Tooltip` cannot be opened by a POINTER in jsdom.** The redesign used
+  `title` for most hints on that basis — assertable as attributes — until the
+  pinned Electron stopped showing them on macOS (DECISIONS 2026-09-11); hints
+  are the `Hint` primitive now, which opens on FOCUS, so assert through
+  `fireEvent.focus` on a focusable trigger. Where a tooltip carries copy nothing
+  else states and its trigger cannot take focus, keep the older pattern: export
+  the string and assert it, and make sure it is reachable without hover.
 - **jsdom has no layout engine.** `getBoundingClientRect()` returns zeros. The
   redesign's `DiffLayer` measures real nodes, so its test needs the nominal-box
   install that `step-replayer.dom.test.ts` already does. Without it the measured

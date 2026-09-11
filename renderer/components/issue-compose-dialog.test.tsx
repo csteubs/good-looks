@@ -255,4 +255,19 @@ describe("a background run does not wipe what was typed", () => {
     expect(defectSourceKey(one)).not.toBe(defectSourceKey({ ...one, scope: "rule" }));
     expect(defectSourceKey(one)).toBe(defectSourceKey({ ...one }));
   });
+
+  it("keys a Site Health send by host, category and the window on screen", () => {
+    const perf: DefectSource = {
+      kind: "site-health",
+      host: "shop.example.com",
+      category: "performance",
+      testId: "t-checkout",
+      runId: "r-1",
+      sinceMs: 1000,
+    };
+    expect(defectSourceKey(perf)).toBe(defectSourceKey({ ...perf }));
+    expect(defectSourceKey(perf)).not.toBe(defectSourceKey({ ...perf, category: "seo" }));
+    expect(defectSourceKey(perf)).not.toBe(defectSourceKey({ ...perf, sinceMs: 0 }));
+    expect(defectSourceKey(perf)).not.toBe(defectSourceKey({ ...perf, host: "app.example.com" }));
+  });
 });
