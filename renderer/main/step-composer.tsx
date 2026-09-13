@@ -186,6 +186,24 @@ export const CAPTURE_OPTIONS: { value: CaptureSource; label: string; page?: bool
   { value: "title", label: "Page title", page: true },
 ];
 
+/** Whether a capture source reads the PAGE, and so needs no element.
+ *
+ *  ONE spelling, because both halves of the kind ask it and they disagreed.
+ *  The builder asked in its own words (`from === "url" || from === "title"`)
+ *  and refused an element-scoped capture with no target — right, and it made
+ *  the form's silence fatal: the form never asked at all, rendering no target
+ *  picker for ANY source. So the four element sources (text, value, attribute,
+ *  count) could never build, and the Add button sat permanently disabled with
+ *  nothing left on screen to fill in. The `page` flag the list already carried
+ *  was read by neither half.
+ *
+ *  An unrecognised source counts as element-scoped: that direction offers a
+ *  picker and refuses the submit, where the other would emit a capture that
+ *  reads nothing. */
+export function isPageLevelCapture(from: CaptureSource): boolean {
+  return CAPTURE_OPTIONS.find((o) => o.value === from)?.page === true;
+}
+
 // Condition predicates for an `if` block. Element conditions resolve a picked
 // locator; page conditions match a substring of the current URL / title.
 export const CONDITION_OPTIONS: { value: ConditionKind; label: string; page?: boolean }[] = [
@@ -657,6 +675,23 @@ function CheckOption({
   );
 }
 
+/** Steps whose SUBJECT is how many elements the locator matches.
+ *
+ *  The match-count gate below refuses a locator that matches several elements,
+ *  because Playwright's strict mode refuses it at run time. These three ask the
+ *  opposite question: `count()` and `toHaveCount` never strict-resolve, and
+ *  counting an ambiguous locator is the whole point of them — "capture a list's
+ *  size, act, assert the size moved" (main/services/count-capture.test.ts).
+ *  Gating them would disable Add on exactly the locator the step was written
+ *  for, which is how a `Match count` capture would arrive broken the day the
+ *  target picker was offered for it. */
+function countsMatches(s: RawStep): boolean {
+  if (s.type === "capture") return s.captureFrom === "count";
+  if (s.type === "assert") return s.assert === "count";
+  if (s.type === "wait") return s.waitUntil === "count";
+  return false;
+}
+
 export function StepComposer({
   kind,
   onCancel,
@@ -1026,7 +1061,7 @@ export function StepComposer({
       case "capture": {
         const name = captureVar.trim();
         if (!name) return null;
-        const pageLevel = captureFrom === "url" || captureFrom === "title";
+        const pageLevel = isPageLevelCapture(captureFrom);
         // An element-scoped capture with no target would silently capture
         // nothing, so refuse it here rather than emit a broken step.
         if (!pageLevel && !locator) return null;
@@ -1250,12 +1285,13 @@ export function StepComposer({
   // custom field exists for exactly those), and -1 is the page failing to
   // answer, which must never read as a verdict. And only when a built step
   // actually carries the locator — a page-level step beside a stale pick is
-  // not a step about that element.
+  // not a step about that element — and only when the step would strict-
+  // resolve it, which a step that COUNTS the matches does not (countsMatches).
   const ambiguousTarget =
     matchCount !== null &&
     matchCount > 1 &&
     steps !== null &&
-    steps.some((s) => s.locator !== undefined && s.locator === locator)
+    steps.some((s) => s.locator !== undefined && s.locator === locator && !countsMatches(s))
       ? matchCount
       : null;
   // The panel is inline, so it can say what it would add BEFORE you press
@@ -1719,6 +1755,7 @@ export function StepComposer({
                 value={captureVar}
                 placeholder="orderId"
                 className="font-mono"
+                aria-label="Store as variable"
                 onChange={(e) => setCaptureVar(e.target.value)}
               />
             </Field>
@@ -1731,7 +1768,7 @@ export function StepComposer({
                 value={captureFrom}
                 onValueChange={(v) => setCaptureFrom(v as CaptureSource)}
               >
-                <SelectTrigger size="small">
+                <SelectTrigger size="small" aria-label="Capture from">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1743,12 +1780,35 @@ export function StepComposer({
                 </SelectContent>
               </Select>
             </Field>
+            {/* The element the value is read from — offered for every source
+                except the two that read the page itself, the same rule and the
+                same placement the assertion kind uses (source first, then what
+                it acts on, then its operands). Without it the four element
+                sources were dead: `build()` refuses a capture with no target,
+                so the panel asked for a variable name and then declined to add
+                the step, with nothing on screen to complete. */}
+            {!isPageLevelCapture(captureFrom) ? (
+              <>
+                <Text size="small" className="text-secondary">
+                  {captureFrom === "count"
+                    ? "Stores how many elements this locator matches. Several matches is the answer here, not a problem — a locator pinned to one element always captures 1."
+                    : "The element this value is read from. Pick it in the training browser, or write a locator by hand."}
+                </Text>
+                <TargetElementPicker
+                  picked={picked}
+                  onChange={setLocator}
+                  onStartPick={onStartPick}
+                  onClearPick={onClearPick}
+                />
+              </>
+            ) : null}
             {captureFrom === "attribute" ? (
               <Field label="Attribute" orientation="vertical">
                 <Input
                   size="small"
                   value={captureAttr}
                   placeholder="href"
+                  aria-label="Attribute"
                   onChange={(e) => setCaptureAttr(e.target.value)}
                 />
               </Field>
@@ -1912,7 +1972,7 @@ export function StepComposer({
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label="Assertion" orientation="vertical">
                 <Select value={assert} onValueChange={(v) => setAssert(v as AssertKind)}>
-                  <SelectTrigger size="small">
+                  <SelectTrigger size="small" aria-label="Assertion">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
