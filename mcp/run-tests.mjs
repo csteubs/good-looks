@@ -38,6 +38,7 @@ import { readRunProvenance } from "../shared/run-provenance.mjs";
 import { normalizeRunTrigger } from "../shared/run-trigger.mjs";
 import { splitStepMarkers, tabsOpenedFrom } from "../shared/step-marker.mjs";
 import { retryFields } from "../shared/run-attempts.mjs";
+import { digestSchemeFor, digestSource, digestSteps } from "../shared/steps-digest.mjs";
 import { buildStepLineMapFromSource } from "../shared/step-line-map.mjs";
 import { recordRun } from "./metrics.mjs";
 import { clampParallel, runPool } from "./run-pool.mjs";
@@ -102,6 +103,23 @@ const PROCESS_TIMEOUT_BUFFER_MS = 60_000;
 
 /** The engines a run may name. */
 export const RUN_BROWSERS = ["chromium", "firefox", "webkit"];
+
+/** A spec's source for `digestSource`, or null when it cannot be read.
+ *
+ *  NULL RATHER THAN A THROW, and the same helper the app's runner keeps for the
+ *  same reason: Playwright is about to open this file itself, so a library that
+ *  did not fully arrive should report "no tests found" rather than fail inside
+ *  a bookkeeping read. An absent digest is unknown, which every reader handles.
+ *
+ *  @param {string} specPath
+ *  @returns {string | null} */
+function readSpecSource(specPath) {
+  try {
+    return fs.readFileSync(specPath, "utf-8");
+  } catch {
+    return null;
+  }
+}
 
 /**
  * The runner, bound to one data directory and one store.
@@ -821,6 +839,18 @@ export function createRunner({
         speed,
       };
     }
+    // WHAT THIS RUN EXECUTES, digested — read here, off the spec this process
+    // resolved, before the redirect below points the run at a temp copy of it.
+    //
+    // The scheme question is `digestSchemeFor`'s and not this file's: the app's
+    // runner asks it too, and two answers would leave every test run by both
+    // comparing as unknown — which on screen reads as the run panel having
+    // learnt nothing. This path never replays, so it never passes `replaying`.
+    const stepsDigest =
+      digestSchemeFor(test) === "steps"
+        ? digestSteps(test.steps)
+        : digestSource(readSpecSource(specPath));
+
     // Relative to the scripts root, so a sandboxed spec resolves as
     // `imported/<id>/tests/foo.spec.ts` rather than a bare basename that only
     // matches when the spec sits flat.
@@ -1069,6 +1099,11 @@ export function createRunner({
       // rule as the app's runner and the same module, so a run that recovered
       // reads identically wherever it happened — see shared/run-attempts.mjs.
       ...retryFields({ status, maxAttempt }),
+      // What this run EXECUTED. Same module and same scheme rule as the app's
+      // runner, which is the whole point: a CI run and a desktop run of one
+      // test have to be comparable, or the run panel learns nothing from the
+      // runs that happen most often. Absent when the spec could not be read.
+      ...(stepsDigest ? { stepsDigest } : {}),
       // Tabs the browser opened, off the fixture's markers — the same field
       // the app's runner writes, so a CI run's history reads the same.
       ...(tabsOpened > 0 ? { tabsOpened } : {}),

@@ -158,3 +158,54 @@ describe("append: siteHealth", () => {
     expect("siteHealth" in (stored ?? {})).toBe(false);
   });
 });
+
+describe("append: stepsDigest", () => {
+  // Same failure shape as `tabsOpened` above, and the same reason it is worth a
+  // block here: the runner spreads the digest in, and if this type does not
+  // name it the field is dropped with no compile error at all. What the drop
+  // would cost is the run panel's strongest sentence — with no digest on the
+  // record, every recovery reads as "we cannot tell", forever, silently.
+  const DIGEST = "s1:0123456789abcdef";
+
+  it("persists the digest the runner passes, through the file", () => {
+    const rec = runHistoryStore.append({ ...base("r-sd"), stepsDigest: DIGEST }, "log");
+    expect(rec.stepsDigest).toBe(DIGEST);
+    const stored = runHistoryStore.list().find((r) => r.id === "r-sd");
+    expect(stored?.stepsDigest).toBe(DIGEST);
+  });
+
+  it("persists it on a FAILED run too", () => {
+    // The comparison the panel makes is against the failing run, so a digest
+    // written only on passes would answer nothing.
+    runHistoryStore.append(
+      { ...base("r-sd-fail", "failed"), stepsDigest: DIGEST },
+      "log",
+    );
+    const stored = runHistoryStore.list().find((r) => r.id === "r-sd-fail");
+    expect(stored?.stepsDigest).toBe(DIGEST);
+  });
+
+  it("refuses a mis-shaped digest rather than storing it", () => {
+    // Two other processes write this file. A bad token stored here would be
+    // compared against a good one for the rest of that run's life, and the
+    // comparison would be wrong in the confident direction.
+    for (const [id, bad] of [
+      ["r-sd-b1", "0123456789abcdef"],
+      ["r-sd-b2", "s1:nothexatall!!!"],
+      ["r-sd-b3", "s1:0123456789abcdef0"],
+      ["r-sd-b4", ""],
+    ] as const) {
+      runHistoryStore.append({ ...base(id), stepsDigest: bad }, "log");
+      const stored = runHistoryStore.list().find((r) => r.id === id);
+      expect(stored).toBeDefined();
+      expect("stepsDigest" in (stored ?? {})).toBe(false);
+    }
+  });
+
+  it("absent stays absent, and absent is UNKNOWN to every reader", () => {
+    runHistoryStore.append(base("r-sd-none"), "log");
+    const stored = runHistoryStore.list().find((r) => r.id === "r-sd-none");
+    expect(stored).toBeDefined();
+    expect("stepsDigest" in (stored ?? {})).toBe(false);
+  });
+});

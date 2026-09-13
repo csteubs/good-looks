@@ -1162,6 +1162,12 @@ export interface RunRecord {
   /** "auto" = the deterministic triage mapping at run end; "user" = the run
    *  panel's picker. A user assignment is never overwritten by an auto one. */
   failureReasonBy?: "user" | "auto";
+  /** WHAT THIS RUN EXECUTED, as `<scheme>:<hex>` (mirrors main types). Compared
+   *  ONLY through `comparableDigests` in shared/steps-digest.mjs — two schemes
+   *  share the field and `===` would read one against the other. Absent means
+   *  UNKNOWN and never "unchanged"; it is what keeps the run summary panel from
+   *  reporting flake across a test somebody edited. */
+  stepsDigest?: string;
   /** the triage signal an automatic assignment argued from. */
   failureReasonSignal?: string;
   /** WHO started this run — a person, a Routine's schedule, or an MCP client.

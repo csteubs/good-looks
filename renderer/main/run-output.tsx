@@ -91,7 +91,7 @@ import type { AiDebugStatus, RunRecord, Step } from "../lib/recorder-types";
 import type { RunInfo, RunStepStatus } from "./recorder-store";
 import { RunFailureReason } from "./run-failure-reason";
 import { RunHistoryPanel } from "./run-history-panel";
-import { RunSummaryPanel } from "./run-summary-panel";
+import { RunSummaryPanel, retryReading } from "./run-summary-panel";
 import { RunTriage } from "./run-triage";
 
 /** The chip for each of the six states.
@@ -100,9 +100,11 @@ import { RunTriage } from "./run-triage";
  *  table rather than `code === 0 ? "Passed" : "Failed"`. A healed run passed
  *  because Auto-Heal substituted a locator, and a mis-heal usually SUCCEEDS —
  *  clicking the wrong button rarely throws. A retry that recovered with nothing
- *  different about it is flake, not a fix. Both are amber: the run reported a
- *  pass and the pass is worth less than it looks, which is exactly what amber
- *  means everywhere else in this app.
+ *  different about it is flake, not a fix — as is one where the app cannot tell
+ *  whether the test changed in between. Both are amber: the run reported a pass
+ *  and the pass is worth less than it looks, which is exactly what amber means
+ *  everywhere else in this app. A recovery with a NAMED cause is not in that
+ *  set, and a changed test is a named cause.
  *
  *  `never` has no tone at all, for the same reason `Verdict` leaves "not enough
  *  evidence" colourless — it is a real state and it is not a result. */
@@ -117,10 +119,14 @@ export function chipFor(summary: RunSummary): { label: string; tone?: ToneName }
     case "healed":
       return { label: "Healed", tone: "amber" };
     case "retry":
-      return {
-        label: "Recovered",
-        tone: summary.differences.length === 0 ? "amber" : "phos",
-      };
+      // THROUGH THE PANEL'S OWN READING, not a second rule. The chip and the
+      // verdict dot are one judgement about one run; when this keyed off
+      // `differences.length` alone it agreed with the sentence by coincidence,
+      // and the coincidence ended the moment the panel learned to tell a
+      // changed test from a flaky one. Amber where the reading is amber —
+      // flake, or flake it cannot rule out — and phos where the pass has a
+      // named cause, the test having changed included.
+      return { label: "Recovered", tone: retryReading(summary).tone ?? "phos" };
     case "failed":
       return { label: "Failed", tone: "red" };
   }

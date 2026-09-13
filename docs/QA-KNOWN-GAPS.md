@@ -83,8 +83,19 @@ the app has no business guessing.
 **"Failures caught", not "regressions caught."** Whether a failure was a
 regression, a broken test or flake is what triage answers. The wording is exact.
 
-**Every run is one attempt.** The runner configures no Playwright retries, so a
-"retry" in the run-state summaries means two separate runs, not two attempts.
+**A "retry" in the run-state summaries usually means two separate runs.** Retries
+are opt-in (R24) and off unless asked for, so most recoveries are a failed run
+followed by a passing one rather than two attempts inside one. Both are real and
+the panel tells them apart: a within-run retry says so and claims flake outright
+(one process, one browser, one commit — nothing could have differed), while a
+cross-run one compares the two records. **What the cross-run reading can say
+depends on evidence recorded at run time.** Runs carry a digest of what they
+executed as of 2026-09-13, so the app can distinguish "nothing was different" from
+"the test changed" — but only where both runs have one. Two runs recorded before
+that date compare as unknown, and the panel says so ("Whether the test itself
+changed is not recorded for these two runs"). That string is correct behaviour,
+not a missing feature; a test needs two fresh runs before the stronger readings
+are reachable.
 
 **The boot plate is skippable but does not say so.** Any key or click dismisses
 it. The absence of a visible "Skip" is deliberate. It also covers a fully

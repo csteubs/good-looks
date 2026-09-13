@@ -74,6 +74,105 @@ The test that matters here is the control: with nothing requested, the view must
 still jump to the failure. Without it, the "opens on the frame it was handed"
 test passes against a view that opens on that frame for its own reasons.
 
+### 2026-09-13 — A run records what it executed, so "Recovered" stops guessing
+
+**The panel asserted flake over a variable it could not see.** A run that
+followed a failure renders the `retry` state, and when `runDifferences` found
+nothing it said: *"Passed, and nothing was different — same engine, same pacing,
+same budget, opposite outcome, so this is flake rather than a fix."* That
+comparison reads six fields off the two `RunRecord`s: browser, headless, pacing,
+capture, accessibility, dataset row. All six are properties of the RUNNER. The
+record stored nothing whatever about the test — no step list, no count, no
+digest — so a test substantially rewritten in the trainer between the failure
+and the pass matched on all six, and the app told a user who had just fixed
+their test that the fix was imaginary.
+
+**The claim was already documented as bounded, and the copy exceeded the
+bound.** Both `REDESIGN.md` §6.1 and `run-summary.ts`'s own header say the
+answer is "drawn only from what the record actually stores". The rendered
+sentence dropped that qualifier and spoke about the test. Nothing here was
+abandoned or half-shipped: §6.1 landed 2026-08-12, the within-run branch with
+R24, and the gap was a design bound nobody had revisited since the evidence
+changed shape.
+
+**`RunRecord.stepsDigest` and `shared/steps-digest.mjs`.** The digest rides the
+record rather than being derived on demand because the evidence does not
+survive: the failing run's steps are gone the moment somebody saves new ones,
+and `artifactStore.readSteps` — the snapshot that would still hold them — is
+written only on artifact runs and pruned by retention.
+
+**Two schemes in one field, tagged.** `s1:` digests the step list; `x1:` digests
+the spec file's bytes. Which one a run uses is `digestSchemeFor`'s answer, from
+what the executed spec was generated from: steps for a replay (the spec is
+written from the recorded steps immediately before it runs) and for an ordinary
+app-generated test, the FILE for a hand-edited (`scriptEdited`), imported
+(`sourceDir`) or diverged (`stepsDiverged`) one, where the step list may be a
+stale parse of a script somebody rewrote.
+
+Digesting the GENERATED SOURCE for every test was the obvious single-scheme
+alternative and is wrong in a way that would have been loud: generator output is
+not stable across releases, so the first run after any version that touched
+emission would report every test in the library as changed. Digesting the STEPS
+for every test is wrong in the quiet direction, which is worse — a hand-edited
+script would read as "the same steps" and the panel would print the original bug
+again, about a file the user had rewritten by hand.
+
+**The tag is what makes two schemes safe in one field**, and `comparableDigests`
+is the only thing allowed to compare two of them. A comparison across schemes
+answers `"unknown"`, never `"different"`: a test that became hand-edited between
+two runs has not been *shown* to differ, and a future `s2:` (should the canonical
+form ever change) must not turn every library's history into a wall of edits on
+upgrade day.
+
+**Absent is UNKNOWN and never "unchanged".** Every run recorded before this
+field is absent, as is any ingested run that arrived without one. Reading
+absence as "the same" would be the original bug with a longer paper trail, so
+`stepsChanged` is `boolean | null` and the panel has a fifth reading whose whole
+job is to name its own blind spot: *"Same engine, same pacing, same budget.
+Whether the test itself changed is not recorded for these two runs, so flake is
+a reading rather than a finding."*
+
+**Five readings, and a changed test is tested before a changed setting.** If the
+steps are not the steps that failed, the pacing is a footnote. The new reading
+takes NO amber: a pass after the test was edited is an ordinary pass, not one
+worth less than it looks — there is simply nothing to conclude about the old
+failure from it. That forced `chipFor` to stop deriving its own tone from
+`differences.length` and read `retryReading(summary).tone` instead; the chip and
+the verdict dot are one judgement about one run, and they had been agreeing by
+coincidence.
+
+**Sixteen hex characters, not sixty-four.** The only comparison anyone makes is
+between two runs of ONE test, so the bound is 2^-64 per comparison rather than a
+birthday bound over a corpus. `run-history.json` is capped at 50,000 records and
+is read whole on every write; a full SHA-256 would have added ~3.9MB to that file
+for a field two rows at a time are ever read from.
+
+**Three fields are dropped before hashing**, each because it moves without the
+test's meaning moving: `fingerprint` (Auto-Heal and propagation rewrite the
+element memory in place — and a healed run is reported by the `healed` panel
+anyway), `timestamp` (when a step was recorded, not what it does) and `varRefs`
+(derived on write by `collectVarRefs`, so it can only move when a field it comes
+from already has). Everything else counts, `id` and `disabled` included: a step
+deleted and re-recorded is an edit, and a disabled step is a step that did not
+run.
+
+**Both runners write it, which is the whole reason the module is in `shared/`.**
+If only the app's runner had, every test that ever touched CI would compare as
+"we cannot tell" — on screen indistinguishable from the feature not existing,
+and nothing anywhere would go red. `check:mcp-parity` §19 pins that both import
+the shared module, both ask `digestSchemeFor`, and both can write either scheme.
+`run-history-store.append` had to DECLARE the field as well as copy it: the
+runner spreads its record in, and an object spread defeats excess-property
+checking, which is exactly how `hasTrace`, `tabsOpened` and `attempt` were
+passed and silently dropped before.
+
+**No backfill.** Digests only start accumulating now, so a test needs two new
+runs before the panel can make the strong claim. Backfilling from surviving
+replay artifacts was considered: only artifact runs have a step snapshot, so
+history would have been populated in a pattern invisible to the reader — some
+recoveries answering and some not, for reasons nothing on screen explains.
+Forward-only is slower and legible.
+
 ### 2026-09-11 — The theme's hints are a `Hint` primitive, not native titles
 
 **The redesign's hint idiom was a native `title` attribute, and on the platform

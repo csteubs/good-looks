@@ -45,7 +45,7 @@ import {
   ChromeButton,
 } from "../theme";
 import type { TempMode } from "../theme";
-import type { StepType } from "../lib/recorder-types";
+import type { RunRecord, StepType } from "../lib/recorder-types";
 import { CheckSquare, GitBranch, Plus, RotateCcw, Wand2 } from "lucide-react";
 import { buildBranchMenu, type BranchMenuInput } from "../lib/branch-menu";
 import { BranchMenu } from "../main/branch-menu";
@@ -60,6 +60,23 @@ import type { RunSummary } from "../lib/run-summary";
 // binary, no egress) — and the frame draws a button whose position the
 // specimen's rect can point at.
 import { visualFrame } from "./preview-fixtures";
+
+/** The failed run every "Recovered" specimen below recovered FROM. One const
+ *  rather than four copies: what varies between those readings is the evidence
+ *  about them, and four inlined records make that hard to see. */
+const PREVIOUS_FAILURE: RunRecord = {
+  id: "r-0",
+  testId: "t-login",
+  testName: "Login",
+  url: "https://app.example.com/login",
+  status: "failed",
+  exitCode: 1,
+  startedAt: 0,
+  finishedAt: 8_100,
+  durationMs: 8_100,
+  logFile: "/preview/runs/r-0.log",
+  logBytes: 0,
+};
 
 /** The six run states, in the order a test tends to meet them. `failed` is
  *  absent because its panel is `RunTriage`, which needs a backend query. */
@@ -102,25 +119,28 @@ const RUN_SUMMARIES: RunSummary[] = [
       },
     ],
   },
+  // FOUR RECOVERED READINGS, because the differences between them are the whole
+  // feature and none of them is visible from the state name. Ordered as
+  // `retryReading` tests them: a changed test first, then a changed setting,
+  // then the two that have nothing to name — the earned flake call and the one
+  // that cannot make it.
+  {
+    state: "retry",
+    attempt: 0,
+    durationMs: 9_100,
+    stepCount: 6,
+    differences: [],
+    stepsChanged: true,
+    previous: PREVIOUS_FAILURE,
+  },
   {
     state: "retry",
     attempt: 0,
     durationMs: 9_100,
     stepCount: 6,
     differences: [{ label: "Browser", before: "WebKit", after: "Chromium" }],
-    previous: {
-      id: "r-0",
-      testId: "t-login",
-      testName: "Login",
-      url: "https://app.example.com/login",
-      status: "failed",
-      exitCode: 1,
-      startedAt: 0,
-      finishedAt: 8_100,
-      durationMs: 8_100,
-      logFile: "/preview/runs/r-0.log",
-      logBytes: 0,
-    },
+    stepsChanged: false,
+    previous: PREVIOUS_FAILURE,
   },
   // The reading that decides whether somebody goes looking for a fix that does
   // not exist, so it gets its own specimen rather than sharing `retry`'s.
@@ -130,19 +150,19 @@ const RUN_SUMMARIES: RunSummary[] = [
     durationMs: 9_100,
     stepCount: 6,
     differences: [],
-    previous: {
-      id: "r-0",
-      testId: "t-login",
-      testName: "Login",
-      url: "https://app.example.com/login",
-      status: "failed",
-      exitCode: 1,
-      startedAt: 0,
-      finishedAt: 8_100,
-      durationMs: 8_100,
-      logFile: "/preview/runs/r-0.log",
-      logBytes: 0,
-    },
+    stepsChanged: false,
+    previous: PREVIOUS_FAILURE,
+  },
+  // What every run recorded before `stepsDigest` reads as, and what the panel
+  // must never dress up as the one above.
+  {
+    state: "retry",
+    attempt: 0,
+    durationMs: 9_100,
+    stepCount: 6,
+    differences: [],
+    stepsChanged: null,
+    previous: PREVIOUS_FAILURE,
   },
 ];
 

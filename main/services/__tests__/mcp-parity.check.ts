@@ -1569,6 +1569,78 @@ function codeOnly(source: string): string {
   );
 }
 
+// ── 19. Both runners record WHAT THEY EXECUTED, under one scheme rule ──
+//
+// `RunRecord.stepsDigest` is what lets the run panel tell a flaky recovery from
+// a test somebody edited between the two runs. It only works if BOTH runners
+// write it and both pick the scheme the same way — and this is exactly the
+// blind spot this file exists for. If only the app wrote one, every run that
+// ever touched CI would compare as "we cannot tell", which on screen is
+// indistinguishable from the feature not being built. Nothing would go red.
+//
+// The scheme rule itself (steps for a generated test, the file's bytes for a
+// hand-edited, imported or diverged one, steps for a replay) is unit-tested in
+// `steps-digest.test.ts`. What is asserted here is the structural half a unit
+// test cannot see: that neither runner reimplements it.
+{
+  const mcpSrc = codeOnly(mcpRunSource());
+  const appSrc = codeOnly(
+    readFileSync(resolve(process.cwd(), "main/services/playwright-runner.ts"), "utf8"),
+  );
+  const shared = readFileSync(resolve(process.cwd(), "shared/steps-digest.mjs"), "utf8");
+
+  assert(
+    /export function digestSchemeFor/.test(shared) &&
+      /export function digestSteps/.test(shared) &&
+      /export function digestSource/.test(shared),
+    "shared: the digest and its scheme rule live in shared/steps-digest.mjs",
+  );
+
+  for (const [name, src] of [
+    ["app", appSrc],
+    ["runner", mcpSrc],
+  ] as const) {
+    assert(
+      /from "(?:\.\.\/)+shared\/steps-digest\.mjs"/.test(src),
+      `${name}: imports the digest from shared/ rather than spelling one of its own`,
+    );
+    // The SCHEME through the shared rule, never a local `scriptEdited ||
+    // sourceDir` — two answers to that question would leave every test run by
+    // both processes comparing as unknown forever.
+    assert(
+      /digestSchemeFor\(/.test(src),
+      `${name}: …and asks digestSchemeFor which scheme this run is under`,
+    );
+    assert(
+      /digestSteps\(/.test(src) && /digestSource\(/.test(src),
+      `${name}: …and can write either scheme, not just the convenient one`,
+    );
+    assert(
+      /stepsDigest/.test(src),
+      `${name}: …and puts the result on the run record`,
+    );
+  }
+
+  // The app's store must DECLARE the field, not merely receive it. The runner
+  // spreads its record in, and an object spread defeats excess-property
+  // checking — which is how `hasTrace`, `tabsOpened` and `attempt` were all
+  // passed and silently dropped. See run-history-append.test.ts.
+  const storeSrc = codeOnly(
+    readFileSync(resolve(process.cwd(), "main/services/run-history-store.ts"), "utf8"),
+  );
+  assert(
+    /stepsDigest\?: string;/.test(storeSrc),
+    "app: run-history-store's append() DECLARES stepsDigest, so it is not dropped in silence",
+  );
+  // Guarded on write, like the trigger and the provenance beside it: three
+  // processes write this file, and a mis-shaped token stored once is compared
+  // against a good one for the rest of that run's life.
+  assert(
+    /isRunDigest\(run\.stepsDigest\)/.test(storeSrc),
+    "app: …and narrows it on write rather than trusting the caller",
+  );
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);

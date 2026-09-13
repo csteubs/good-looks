@@ -15,14 +15,17 @@
 // OUTCOME. `passed` is the only one of the five that earns phos. `healed` is
 // AMBER even though the run passed, because a healed pass is the run most worth
 // distrusting and the one that looks most trustworthy — a mis-heal usually
-// succeeds, since clicking the wrong button rarely throws. `retry` is amber for
-// the same reason when nothing differed, and neutral when something did.
+// succeeds, since clicking the wrong button rarely throws. `retry` is amber
+// when it can say the run is flaky or cannot rule it out, and neutral when
+// something it can name explains the pass — including the test having changed,
+// which makes the pass ordinary rather than suspect.
 // `running` takes the holo treatment rather than a hue (running is the ABSENCE
 // of an outcome), and `never` is neutral because it is not a result at all.
 
 import { AlertTriangle, ArrowRight, Wrench } from "lucide-react";
 
 import { KeyValue, StatusChip, Temp, Verdict, formatDuration } from "../theme";
+import type { ToneName } from "../theme";
 import type { HealEntry } from "../lib/recorder-types";
 import type {
   HealedSummary,
@@ -216,33 +219,102 @@ function HealedPanel({ summary, onReview }: { summary: HealedSummary; onReview?:
   );
 }
 
+/** What the Recovered panel says, and how sure it is allowed to sound. */
+export interface RetryReading {
+  /** The claim, as the verdict's sentence. */
+  headline: string;
+  /** The evidence behind it. */
+  detail: string;
+  /** Amber when the pass is worth less than it looks; absent otherwise. */
+  tone?: ToneName;
+  /** Whether the before → after table of run settings belongs under it. */
+  showDifferences: boolean;
+}
+
+/**
+ * The five readings of a recovered run, as data.
+ *
+ * A FUNCTION RATHER THAN NESTED TERNARIES IN THE JSX, for two reasons. Five
+ * readings crossed with a headline, a detail, a tone and a table is a truth
+ * table, and a truth table written as markup is one nobody can check. And
+ * `chipFor` in run-output.tsx needs the TONE: the chip and the verdict dot are
+ * one judgement about one run, and two spellings of it would eventually
+ * disagree on screen — an amber chip over a neutral sentence, or the reverse.
+ *
+ * ORDER IS THE DESIGN. A changed test dominates a changed setting: if the
+ * steps are not the steps that failed, the pacing is a footnote. And every
+ * reading below is scoped to evidence this app actually holds — the one that
+ * says "flake" is the only one allowed to, and only when `stepsChanged` is
+ * literally `false`.
+ */
+export function retryReading(summary: RetrySummary): RetryReading {
+  // R24's: this run failed and passed again without ever ending, so the claim
+  // is stronger than any cross-run one — there was no second run to differ in
+  // anything, and no comparison was made or needed.
+  if (summary.attempt > 0) {
+    const attempts =
+      summary.attempt === 1 ? "on one retry" : `over ${summary.attempt} retries`;
+    return {
+      headline: "Passed, on a retry",
+      detail: `It failed and passed again inside this run, ${attempts}. Nothing changed in between — same process, same browser, same commit — so the test is flaky.`,
+      tone: "amber",
+      showDifferences: false,
+    };
+  }
+  // The reading this panel was missing. A pass after the test was edited is an
+  // ORDINARY pass, so it takes no amber: nothing here is worth less than it
+  // looks, there is simply nothing to conclude about the old failure from it.
+  if (summary.stepsChanged === true) {
+    return {
+      headline: "Passed, after the test changed",
+      detail:
+        "What this run executed is not what the failing run executed, so the pass is not evidence about that failure. Run it again to see whether it holds.",
+      tone: undefined,
+      showDifferences: summary.differences.length > 0,
+    };
+  }
+  if (summary.differences.length > 0) {
+    return {
+      headline: "Passed, after failing last time",
+      detail:
+        "One of these could be the whole reason it passed. Re-run it under the old settings to find out.",
+      tone: undefined,
+      showDifferences: true,
+    };
+  }
+  // EARNED, and only here: the run settings matched AND the digests say the
+  // test itself did. This sentence used to be printed whenever the settings
+  // matched, over tests that had been rewritten in between.
+  if (summary.stepsChanged === false) {
+    return {
+      headline: "Passed, and nothing was different",
+      detail:
+        "Same engine, same pacing, same budget, and the same steps — so this is flake rather than a fix.",
+      tone: "amber",
+      showDifferences: false,
+    };
+  }
+  // `null`: one of the two runs predates `stepsDigest`, arrived without it, or
+  // the two are under different schemes. The settings claim is still true and
+  // is all that may be said — the panel names its own blind spot rather than
+  // filling it in, because filling it in is what shipped the wrong sentence.
+  return {
+    headline: "Passed, and nothing about the run was different",
+    detail:
+      "Same engine, same pacing, same budget. Whether the test itself changed is not recorded for these two runs, so flake is a reading rather than a finding.",
+    tone: "amber",
+    showDifferences: false,
+  };
+}
+
 function RetryPanel({ summary }: { summary: RetrySummary }) {
-  // Three readings, not two. `withinRun` is R24's: this run failed and passed
-  // again without ever ending, so the claim is stronger than the cross-run
-  // one — there was no second run to differ in anything. The old copy said
-  // "same engine, same pacing, same budget", which is a comparison this case
-  // never made.
-  const withinRun = summary.attempt > 0;
-  const flaky = summary.differences.length === 0;
+  const reading = retryReading(summary);
   return (
     <div className="gl-run-summary" data-gl="run-summary" data-state="retry">
-      <Verdict
-        tone={withinRun || flaky ? "amber" : undefined}
-        detail={
-          withinRun
-            ? `It failed and passed again inside this run, ${summary.attempt === 1 ? "on one retry" : `over ${summary.attempt} retries`}. Nothing changed in between — same process, same browser, same commit — so the test is flaky.`
-            : flaky
-              ? "Same engine, same pacing, same budget, opposite outcome — so this is flake rather than a fix."
-              : "One of these could be the whole reason it passed. Re-run it under the old settings to find out."
-        }
-      >
-        {withinRun
-          ? "Passed, on a retry"
-          : flaky
-            ? "Passed, and nothing was different"
-            : "Passed, after failing last time"}
+      <Verdict tone={reading.tone} detail={reading.detail}>
+        {reading.headline}
       </Verdict>
-      {withinRun || flaky ? null : (
+      {reading.showDifferences ? (
         <KeyValue
           rows={summary.differences.map((d) => ({
             label: d.label,
@@ -256,7 +328,7 @@ function RetryPanel({ summary }: { summary: RetrySummary }) {
           }))}
           labelWidth={86}
         />
-      )}
+      ) : null}
     </div>
   );
 }

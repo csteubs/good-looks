@@ -54,6 +54,7 @@
 import { normalizeSiteHealthSummary } from "./site-health.mjs";
 import { normalizeRunProvenance } from "./run-provenance.mjs";
 import { normalizeRunTrigger } from "./run-trigger.mjs";
+import { isRunDigest } from "./steps-digest.mjs";
 
 /**
  * The most a free-text field on an ingested record may be.
@@ -282,6 +283,16 @@ export function normalizeIngestedRun(value) {
   // absent is honestly unknown.
   opt("trigger", normalizeRunTrigger(raw.trigger));
   opt("provenance", normalizeRunProvenance(raw.provenance));
+  // WHAT THE RUN EXECUTED, and one of the few foreign fields that is fully
+  // meaningful here: a digest is derived from content, not from the machine, so
+  // a container's `s1:…` compares against a laptop's on equal terms. CI is also
+  // where a test is most likely to have been edited between two runs somebody
+  // is looking at, which is the reading this field exists to protect.
+  //
+  // Through its own grammar rather than `text()`: it is a bounded token, and an
+  // over-long or mis-shaped one stored here would be compared against a good
+  // digest for the rest of that run's life.
+  opt("stepsDigest", isRunDigest(raw.stepsDigest) ? raw.stepsDigest : undefined);
   opt("failedStepLabel", text(raw.failedStepLabel));
   opt("kind", oneOf(raw.kind, KINDS));
   opt("note", text(raw.note));

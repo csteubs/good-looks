@@ -13,6 +13,12 @@ import type { LiveRun } from "./run-summary";
 
 const T = "t-login";
 
+// Two step digests and one source digest, written out rather than computed, so
+// a change to the hash cannot quietly make these three the same value.
+const A = "s1:0123456789abcdef";
+const B = "s1:fedcba9876543210";
+const SOURCE = "x1:0123456789abcdef";
+
 function run(over: Partial<RunRecord> & { id: string; startedAt: number }): RunRecord {
   return {
     testId: T,
@@ -155,6 +161,103 @@ describe("summariseRun — which state", () => {
     expect(s.state === "retry" && s.differences).toEqual([
       { label: "Browser", before: "WebKit", after: "Chromium" },
     ]);
+  });
+
+  // ── What the test itself was, between the two runs ───────────────────────
+  //
+  // The panel's strongest sentence ("nothing was different, so this is flake")
+  // used to rest on six run SETTINGS matching. A test rewritten in the trainer
+  // between the failure and the pass matched all six. These four cases are the
+  // whole difference between a claim and a guess.
+
+  it("says the test changed when the two runs digest differently", () => {
+    const runs = [
+      run({ id: "r1", startedAt: 1, status: "failed", exitCode: 1, stepsDigest: A }),
+      run({ id: "r2", startedAt: 2, stepsDigest: B }),
+    ];
+    const s = summariseRun({
+      testId: T,
+      runs,
+      heals: NO_HEALS,
+      stepCount: 3,
+      live: live({ recordId: "r2" }),
+      now: 0,
+    });
+    expect(s).toMatchObject({ state: "retry", stepsChanged: true });
+  });
+
+  it("says it did not when they digest the same", () => {
+    const runs = [
+      run({ id: "r1", startedAt: 1, status: "failed", exitCode: 1, stepsDigest: A }),
+      run({ id: "r2", startedAt: 2, stepsDigest: A }),
+    ];
+    const s = summariseRun({
+      testId: T,
+      runs,
+      heals: NO_HEALS,
+      stepCount: 3,
+      live: live({ recordId: "r2" }),
+      now: 0,
+    });
+    expect(s).toMatchObject({ state: "retry", stepsChanged: false });
+  });
+
+  it("says NULL, never false, when either run did not record one", () => {
+    // Every run predating the field is this case. Reading absence as "the same"
+    // is the original bug, restored.
+    for (const [before, after] of [
+      [A, undefined],
+      [undefined, A],
+      [undefined, undefined],
+    ] as const) {
+      const runs = [
+        run({ id: "r1", startedAt: 1, status: "failed", exitCode: 1, stepsDigest: before }),
+        run({ id: "r2", startedAt: 2, stepsDigest: after }),
+      ];
+      const s = summariseRun({
+        testId: T,
+        runs,
+        heals: NO_HEALS,
+        stepCount: 3,
+        live: live({ recordId: "r2" }),
+        now: 0,
+      });
+      expect(s).toMatchObject({ state: "retry", stepsChanged: null });
+    }
+  });
+
+  it("says null across schemes rather than claiming an edit", () => {
+    // A test that became hand-edited between the two runs digests its steps
+    // once and its file once. Those are not comparable, and `===` would call
+    // the difference an edit somebody made.
+    const runs = [
+      run({ id: "r1", startedAt: 1, status: "failed", exitCode: 1, stepsDigest: A }),
+      run({ id: "r2", startedAt: 2, stepsDigest: SOURCE }),
+    ];
+    const s = summariseRun({
+      testId: T,
+      runs,
+      heals: NO_HEALS,
+      stepCount: 3,
+      live: live({ recordId: "r2" }),
+      now: 0,
+    });
+    expect(s).toMatchObject({ state: "retry", stepsChanged: null });
+  });
+
+  it("reports no comparison on a within-run retry", () => {
+    // Null and not false: nothing COULD have changed inside one process, so
+    // there is no comparison here whose result to report.
+    const runs = [run({ id: "r1", startedAt: 1, attempt: 1, passedOnRetry: true })];
+    const s = summariseRun({
+      testId: T,
+      runs,
+      heals: NO_HEALS,
+      stepCount: 3,
+      live: live({ recordId: "r1" }),
+      now: 0,
+    });
+    expect(s).toMatchObject({ state: "retry", attempt: 1, stepsChanged: null });
   });
 
   it("prefers `healed` over `retry` when a run did both", () => {

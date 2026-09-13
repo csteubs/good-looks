@@ -29,6 +29,7 @@
 // history" rather than the cap saying "this got old".
 
 import type { SiteHealthSummary } from "../../shared/site-health.mjs";
+import { isRunDigest } from "../../shared/steps-digest.mjs";
 import { randomUUID } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
@@ -442,6 +443,10 @@ export const runHistoryStore = {
       replayOfRunId?: string;
       /** label of the step the run failed at, when a replay was written */
       failedStepLabel?: string;
+      /** what the run EXECUTED, as `<scheme>:<hex>` — see shared/steps-digest.mjs.
+       *  Declared here for the reason `tabsOpened` above is: the runner spreads
+       *  it in, and a field this type does not name is dropped silently. */
+      stepsDigest?: string;
       /** how the run ended, when it did not end on its own */
       endedBy?: "user" | "process-timeout";
       /** who started the run — narrowed here, not trusted */
@@ -531,6 +536,12 @@ export const runHistoryStore = {
       // at a step with no name — which reads as a bug in the label rather than
       // as the absence of one.
       ...(run.failedStepLabel ? { failedStepLabel: run.failedStepLabel } : {}),
+      // What the run executed. GUARDED rather than copied, the same way
+      // `trigger` below is: the value is a token two other processes also
+      // write, and a malformed one stored here would be compared against a
+      // good one forever. Absent stays absent — a digest of nothing would
+      // claim every pre-field run executed the same thing.
+      ...(isRunDigest(run.stepsDigest) ? { stepsDigest: run.stepsDigest } : {}),
       // Absent is the ordinary case — a run that ended by itself. Writing a
       // value there would claim every historical run had been examined.
       ...(run.endedBy ? { endedBy: run.endedBy } : {}),
