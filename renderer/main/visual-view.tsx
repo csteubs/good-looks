@@ -50,6 +50,7 @@ import {
   driftPointsFor,
 } from "../lib/baseline-drift";
 import { IssueComposeDialog } from "../components/issue-compose-dialog";
+import { consumeVisualFrame, type VisualFrameRequest } from "./visual-intents";
 import type {
   Annotation,
   ReplayStep,
@@ -1417,7 +1418,16 @@ function RunComparisonDialog({
 }
 
 // ── Right pane: the scrubber/timeline for one run ───────────────────────
-function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
+function ReplayViewer({
+  summary,
+  initialStepId,
+}: {
+  summary: RunReplaySummary;
+  /** The frame to open on, when this run was opened by clicking one — see
+   *  `visual-intents`. Unknown ids fall through to the usual jump, so a step
+   *  that no longer exists in a re-read replay costs the user nothing. */
+  initialStepId?: string;
+}) {
   const qc = useQueryClient();
   const replayQuery = useQuery<RunReplay | null>({
     queryKey: ["replay", summary.testId, summary.runId],
@@ -1541,17 +1551,21 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   // one defect on one step, and a bulk send would file issues nobody looked at.
   const [sendingStepId, setSendingStepId] = React.useState<string | null>(null);
   const onSendToTracker = (stepId: string) => setSendingStepId(stepId);
-  // When a run first loads, jump straight to the failure — the main debugging
-  // value — or to the first step for a passing run. Guard on runId so later
-  // replay mutations (e.g. accepting a baseline) don't yank the user away from
-  // the step they're on.
+  // When a run first loads, jump to the frame it was OPENED ON if the click
+  // that got here named one, and otherwise straight to the failure — the main
+  // debugging value — or to the first step for a passing run. Guard on runId so
+  // later replay mutations (e.g. accepting a baseline) don't yank the user away
+  // from the step they're on.
   const jumpedRunId = React.useRef<string | null>(null);
   React.useEffect(() => {
     if (!replay || jumpedRunId.current === replay.runId) return;
     jumpedRunId.current = replay.runId;
     setAcceptedSteps(new Set());
-    setCurrent(replay.failedIndex ?? 0);
-  }, [replay]);
+    const asked = initialStepId
+      ? replay.steps.findIndex((s) => s.stepId === initialStepId)
+      : -1;
+    setCurrent(asked >= 0 ? asked : (replay.failedIndex ?? 0));
+  }, [replay, initialStepId]);
 
   const steps = replay?.steps ?? [];
 
@@ -2269,7 +2283,21 @@ function RunList({
 export function VisualView() {
   const runsQuery = useQuery({ queryKey: ["replays"], queryFn: api.artifacts.list });
   const runs = React.useMemo(() => runsQuery.data ?? [], [runsQuery.data]);
-  const [selectedRunId, setSelectedRunId] = React.useState<string | null>(null);
+
+  // A run and a frame asked for by the History tab's picture, claimed ON THE
+  // FIRST RENDER rather than in an effect. An effect runs after the first
+  // paint, so the newest captured run would mount, fetch its replay and flash
+  // on screen before the requested one replaced it — the user would see another
+  // test's run answer their click. The ref is what makes a consuming read
+  // happen once per mount, including under StrictMode's double-invoked render,
+  // where the second pass must not find the request already gone and fall back
+  // to the default.
+  const claimed = React.useRef<VisualFrameRequest | null | undefined>(undefined);
+  if (claimed.current === undefined) claimed.current = consumeVisualFrame();
+  const [target, setTarget] = React.useState<VisualFrameRequest | null>(claimed.current);
+  const [selectedRunId, setSelectedRunId] = React.useState<string | null>(
+    claimed.current?.runId ?? null,
+  );
 
   // NO `runs:changed` SUBSCRIPTION HERE, deliberately — see `run-derived-cache`.
   // Invalidating ["replays"] from this route component meant the Stats board's
@@ -2310,7 +2338,13 @@ export function VisualView() {
           <RunList
             runs={runs}
             selectedRunId={selected?.runId ?? null}
-            onSelect={(r) => setSelectedRunId(r.runId)}
+            onSelect={(r) => {
+              setSelectedRunId(r.runId);
+              // Picking a run by hand retires the handoff: coming back to the
+              // run it named should land on its failure like any other, not on
+              // a frame clicked two screens ago.
+              setTarget(null);
+            }}
           />
         )}
       </Panel>
@@ -2326,7 +2360,11 @@ export function VisualView() {
           </div>
         </Panel>
       ) : selected ? (
-        <ReplayViewer key={selected.runId} summary={selected} />
+        <ReplayViewer
+          key={selected.runId}
+          summary={selected}
+          initialStepId={target?.runId === selected.runId ? target.stepId : undefined}
+        />
       ) : (
         <Panel title="Replay" className="gl-visual-viewer">
           <p className="gl-panel-note">Select a run to replay it.</p>
