@@ -11,6 +11,69 @@ Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
 
+### 2026-09-13 — The History tab shows a run's LAST frame, and opens the Visual view on it
+
+**The panel's picture was the one frame in a run that is guaranteed to show
+nothing.** The console's History tab carried a strip of the newest captured
+run's first eight frames at thumbnail size. Frame 1 is captured at the top of
+the run, before the page under test has painted — so the picture leading the
+strip was a blank white rectangle, identically, for every test in the library.
+The panel looked broken, and the natural reading ("screenshots are not
+working") was wrong, which is the worst kind of wrong a screen can be.
+
+**One frame, and it is the last one.** The last captured frame is where the run
+GOT TO: the page after the final step, or the state it failed in. It is also
+the only frame in the set whose value does not depend on comparing it with
+another, which is the line between this panel and the Visual view. Ordering the
+strip newest-first was the smaller change and was rejected on legibility: a
+1440×900 screenshot rendered 120px wide is a smudge, and eight of them are eight
+smudges — the panel could say a run had pictures but never what was in them. At
+one frame per panel it is large enough to recognize a page in. The earlier
+frames are counted in the caption and deferred to the Visual view, which is the
+screen that exists to compare them.
+
+**`max-h-full max-w-full`, not `h-full w-auto`.** The old thumbnails were fitted
+by height, which is correct in a horizontal strip and wrong for a frame filling
+a panel: a run's screenshot is the recorded VIEWPORT, and taller still when the
+page scrolls, so a height-driven fit overflows a wide short panel sideways and
+crops the right of every frame. Contained on both axes, the whole frame is in
+view at whatever size the console currently is.
+
+**A link to a screen is not a link to a frame.** "Visual view →" navigated and
+nothing more, and that view has defaults of its own: it selects the NEWEST
+captured run across the whole library and, inside it, jumps to the failure. So
+clicking this test's last frame could land the user on another test's run,
+looking at another step — the click was answered, just not asked. The frame and
+the link now record `{ testId, runId, stepId }` in `renderer/main/visual-intents.ts`
+before navigating; `VisualView` selects that run and `ReplayViewer` opens on
+that frame.
+
+Three details in that handoff carry the whole behaviour, and none of them are
+optional:
+
+- **Consumed on read.** The dangerous failure is a stale request, not a dropped
+  one: a value left in place drags the user back to a frame they clicked ten
+  minutes ago on every mount of the Visual view, and that view's own run
+  selection never sticks. Same rule, and the same module shape, as
+  `insight-intents.ts` and `pending-branch-switch.ts`. A router search param was
+  rejected for the reason it always is here — the router runs on memory
+  history, so the URL is not a link anybody can hold.
+- **Claimed in the first render, not in an effect.** An effect runs after the
+  first paint, so the newest captured run would mount, fetch its replay and
+  flash on screen before the requested one replaced it — the user watching the
+  wrong test answer their click. A ref guard makes the consuming read happen
+  once per mount, including under StrictMode's double-invoked render, where an
+  unguarded second pass would find the request already gone and fall back to
+  the default.
+- **An unknown step id falls through, and a manual pick retires the request.**
+  Retention prunes artifacts; a step id that no longer resolves costs the user
+  the jump, never the screen. And selecting a run by hand clears the pending
+  frame, so coming back to it lands on its failure like any other run.
+
+The test that matters here is the control: with nothing requested, the view must
+still jump to the failure. Without it, the "opens on the frame it was handed"
+test passes against a view that opens on that frame for its own reasons.
+
 ### 2026-09-11 — The theme's hints are a `Hint` primitive, not native titles
 
 **The redesign's hint idiom was a native `title` attribute, and on the platform

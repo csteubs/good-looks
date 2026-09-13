@@ -3,10 +3,20 @@
 // TWO HALVES, ONE QUESTION. "What has this test been doing?" is answered by the
 // run list (outcome, when, how long, on what engine, and the amber facts — a
 // heal, a retry, an a11y finding — that make a green row worth a second look)
-// and by the most recent captured run's screenshots, which are the only part of
-// a run's evidence that can be read at a glance. Deeper answers stay where they
+// and by the most recent captured run's LAST frame, which is the only part of a
+// run's evidence that can be read at a glance. Deeper answers stay where they
 // live: the Stats view for the full history, the Visual view for comparing
 // frames — this tab links there rather than growing its own viewer.
+//
+// ONE FRAME, AND IT IS THE LAST ONE. This was a strip of the run's first eight
+// frames at thumbnail size, which put the least informative picture a run
+// produces at the front of it: frame 1 is captured at the top of the run,
+// before the page under test has painted anything, so every test in the library
+// showed the same blank white rectangle here and the panel read as broken. The
+// last frame is where the run GOT TO — the page after the final step, or the
+// state it failed in — and at one-per-panel it is large enough to recognize,
+// which eight of them at 1440×900 scaled into a 300px strip never were. The
+// rest are a click away and say so; comparing them is the Visual view's job.
 //
 // THE LIST COMES IN AS A PROP, THE PICTURES ARE QUERIED HERE. The detail view
 // already holds `["runs"]` for its a11y badge and run summary, so handing the
@@ -27,11 +37,10 @@ import { api } from "../lib/api";
 import { formatDuration } from "../theme";
 import { runsForTest } from "../lib/run-summary";
 import { RUN_BROWSER_LABELS, type RunRecord } from "../lib/recorder-types";
+import { requestVisualFrame } from "./visual-intents";
 
 /** Rows shown before deferring to Stats — the tab is a strip, not an archive. */
 const ROW_CAP = 30;
-/** Thumbnails shown before deferring to the Visual view. */
-const SHOT_CAP = 8;
 
 /** "just now" / "12m ago" / "3h ago" / "2d ago", then the date. Relative up
  *  close because "which run was that" is asked about recent ones; absolute past
@@ -95,9 +104,16 @@ function RunRow({ run, now }: { run: RunRecord; now: number }) {
   );
 }
 
-/** One frame, read on demand. Its own component because each file is its own
- *  query, and a hook cannot sit inside the strip's map. */
-function ShotThumb({
+/** The frame, read on demand and scaled to whatever room the panel has. Its own
+ *  component because the file is its own query, and a hook cannot sit inside the
+ *  conditional that decides whether there is a frame at all.
+ *
+ *  `max-h-full max-w-full` rather than `h-full w-auto`: a run's screenshot is
+ *  the recorded VIEWPORT (1440×900 by default, and taller still when the page
+ *  scrolls), so a height-driven fit overflows this panel sideways and crops the
+ *  right of every frame. Contained on both axes, the whole frame is in view at
+ *  whatever size the panel currently is. */
+function LatestShot({
   testId,
   runId,
   file,
@@ -116,30 +132,27 @@ function ShotThumb({
     staleTime: 5 * 60 * 1000,
   });
   const frame = shotQuery.data ? (
-    <img src={shotQuery.data} alt={label} className="h-full w-auto object-contain" />
+    <img src={shotQuery.data} alt={label} className="max-h-full max-w-full object-contain" />
   ) : (
-    <span className="block h-full w-28" aria-hidden="true" />
+    <span className="block size-full" aria-hidden="true" />
   );
-  return (
-    <figure className="flex h-full min-h-0 shrink-0 flex-col gap-1">
-      {onOpen ? (
-        <button
-          type="button"
-          className="min-h-0 flex-1 cursor-pointer overflow-hidden rounded border border-separator bg-black"
-          onClick={onOpen}
-          title="Open the Visual view"
-        >
-          {frame}
-        </button>
-      ) : (
-        <span className="min-h-0 flex-1 overflow-hidden rounded border border-separator bg-black">
-          {frame}
-        </span>
-      )}
-      <figcaption className="max-w-40 truncate text-[10px] text-tertiary" title={label}>
-        {label}
-      </figcaption>
-    </figure>
+  const box =
+    "flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded border border-separator bg-black";
+  // `aria-label`, not `title`: a native tooltip does not reliably appear under
+  // the pinned Electron (see CLAUDE.md), and what this needs is a NAME — until
+  // the file loads there is no image, so the button would otherwise be a
+  // control with nothing to call it.
+  return onOpen ? (
+    <button
+      type="button"
+      className={`${box} cursor-pointer`}
+      onClick={onOpen}
+      aria-label="Open this frame in the Visual view"
+    >
+      {frame}
+    </button>
+  ) : (
+    <span className={box}>{frame}</span>
   );
 }
 
@@ -184,7 +197,23 @@ export function RunHistoryPanel({
     () => (replayQuery.data?.steps ?? []).filter((s) => s.screenshot),
     [replayQuery.data],
   );
-  const shown = shots.slice(0, SHOT_CAP);
+  const latestShot = shots.length > 0 ? shots[shots.length - 1] : null;
+
+  // The Visual view opens on the run and the frame that was clicked, rather
+  // than on its own defaults (the newest captured run, at its failure). Landing
+  // on another test's run after clicking THIS test's picture is the whole
+  // reason the handoff exists — see `visual-intents`.
+  const openVisual = React.useCallback(() => {
+    if (!onOpenVisual) return;
+    if (latestReplay && latestShot) {
+      requestVisualFrame({
+        testId: latestReplay.testId,
+        runId: latestReplay.runId,
+        stepId: latestShot.stepId,
+      });
+    }
+    onOpenVisual();
+  }, [onOpenVisual, latestReplay, latestShot]);
 
   if (history.length === 0) {
     return (
@@ -215,20 +244,20 @@ export function RunHistoryPanel({
         <div className="gl-run-console-bar">
           <span className="min-w-0 truncate text-[11px] text-secondary">
             {latestReplay
-              ? `Recent screenshots · ${whenLabel(latestReplay.startedAt, now)}`
-              : "Recent screenshots"}
+              ? `Latest screenshot · ${whenLabel(latestReplay.startedAt, now)}`
+              : "Latest screenshot"}
           </span>
-          {onOpenVisual && shots.length > 0 ? (
+          {onOpenVisual && latestShot ? (
             <button
               type="button"
               className="ml-auto shrink-0 cursor-pointer text-[11px] text-accent hover:underline"
-              onClick={onOpenVisual}
+              onClick={openVisual}
             >
               Visual view →
             </button>
           ) : null}
         </div>
-        {shown.length === 0 ? (
+        {!latestShot ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-1 px-4 text-center">
             <ImageOff className="size-4 text-tertiary" aria-hidden="true" />
             <span className="text-[11px] text-tertiary">
@@ -236,25 +265,28 @@ export function RunHistoryPanel({
             </span>
           </div>
         ) : (
-          <ScrollArea className="min-h-0 flex-1" scrollbars="horizontal">
-            <div className="flex h-full items-center gap-2 px-3 py-2">
-              {shown.map((s) => (
-                <ShotThumb
-                  key={s.stepId}
-                  testId={latestReplay!.testId}
-                  runId={latestReplay!.runId}
-                  file={s.screenshot!}
-                  label={`Step ${s.index + 1} · ${s.label}`}
-                  onOpen={onOpenVisual}
-                />
-              ))}
-              {shots.length > shown.length ? (
-                <span className="shrink-0 text-[11px] text-tertiary">
-                  +{shots.length - shown.length} more in the Visual view
+          <figure className="flex min-h-0 flex-1 flex-col gap-1 px-3 py-2">
+            <LatestShot
+              testId={latestReplay!.testId}
+              runId={latestReplay!.runId}
+              file={latestShot.screenshot!}
+              label={`Step ${latestShot.index + 1} · ${latestShot.label}`}
+              onOpen={onOpenVisual ? openVisual : undefined}
+            />
+            {/* WHICH frame this is, and how many it is the end of — a picture of
+                the last step is only readable as the last step if the panel says
+                so. The count is the strip's old "+N more" in one line. */}
+            <figcaption className="flex shrink-0 items-baseline gap-2 text-[10px] text-tertiary">
+              <span className="min-w-0 truncate" title={latestShot.label}>
+                Step {latestShot.index + 1} · {latestShot.label}
+              </span>
+              {shots.length > 1 ? (
+                <span className="ml-auto shrink-0">
+                  +{shots.length - 1} earlier in the Visual view
                 </span>
               ) : null}
-            </div>
-          </ScrollArea>
+            </figcaption>
+          </figure>
         )}
       </div>
     </div>
