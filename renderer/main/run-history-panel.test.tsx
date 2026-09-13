@@ -3,9 +3,15 @@
 //
 // The failure modes here are the quiet kind this repo keeps meeting: a list
 // that renders oldest-first reads as "it never runs any more"; a bookkeeping
-// row counted as a run makes the retry story wrong; and a thumbnail read from
-// the WRONG run's directory looks exactly like a thumbnail read from the right
-// one — which is why the readShot spy asserts the run id it was handed.
+// row counted as a run makes the retry story wrong; and a frame read from the
+// WRONG run's directory looks exactly like a frame read from the right one —
+// which is why the readShot spy asserts the run id it was handed.
+//
+// WHICH FRAME is the same shape of failure and the reason this panel changed:
+// every frame renders as the same `src` in jsdom, so a panel showing the run's
+// FIRST frame — captured before the page has painted, i.e. blank white for
+// every test in the library — is indistinguishable from one showing its last
+// unless the test asserts the file name and the caption.
 
 import * as React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -13,6 +19,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 
 import { RunHistoryPanel, whenLabel } from "./run-history-panel";
+import { clearVisualFrame, consumeVisualFrame } from "./visual-intents";
 import type {
   ReplayStep,
   RunRecord,
@@ -108,6 +115,9 @@ beforeEach(() => {
   h.replays = [];
   h.replay = null;
   h.readShot.mockClear();
+  // Module state outlives a test: a request left behind by one moves the next
+  // test's Visual view to a run it never asked for.
+  clearVisualFrame();
 });
 
 describe("the run list", () => {
@@ -152,8 +162,8 @@ describe("the run list", () => {
   });
 });
 
-describe("the recent screenshots strip", () => {
-  it("shows the latest captured run's frames, read from THAT run's directory", async () => {
+describe("the latest screenshot", () => {
+  it("shows the latest captured run's LAST frame, read from THAT run's directory", async () => {
     h.replays = [
       summary({ runId: "r-old", startedAt: 1_000 }),
       summary({ runId: "r9", startedAt: 9_000 }),
@@ -161,30 +171,65 @@ describe("the recent screenshots strip", () => {
     ];
     h.replay = replay([shotStep(0), shotStep(1, null), shotStep(2)]);
     renderPanel({ runs: [run()] });
-    await waitFor(() => expect(screen.getAllByRole("img")).toHaveLength(2));
-    expect(screen.getByAltText("Step 1 · click thing 0")).toBeTruthy();
+    // One frame, and it is the run's last CAPTURED step — step 2 captured
+    // nothing, so the answer is step 3 rather than "the last step".
+    await waitFor(() => expect(screen.getAllByRole("img")).toHaveLength(1));
     expect(screen.getByAltText("Step 3 · click thing 2")).toBeTruthy();
     // The wrong run's picture looks identical to the right one — the argument
     // is the only place the difference exists.
-    expect(h.readShot).toHaveBeenCalledWith("t1", "r9", "0.png");
+    expect(h.readShot).toHaveBeenCalledWith("t1", "r9", "2.png");
+    // THE BUG THIS PANEL CHANGED FOR: frame 1 is captured before the page under
+    // test has painted, so showing it meant showing a blank rectangle.
+    expect(h.readShot).not.toHaveBeenCalledWith("t1", "r9", "0.png");
   });
 
-  it("caps the strip and points at the Visual view for the rest", async () => {
+  it("names the step the frame is of, and how many came before it", async () => {
     h.replays = [summary({ runId: "r9", startedAt: 9_000 })];
     h.replay = replay(Array.from({ length: 10 }, (_, i) => shotStep(i)));
     renderPanel({ runs: [run()] });
-    await waitFor(() => expect(screen.getAllByRole("img")).toHaveLength(8));
-    expect(screen.getByText("+2 more in the Visual view")).toBeTruthy();
+    await waitFor(() => expect(screen.getAllByRole("img")).toHaveLength(1));
+    expect(screen.getByText("+9 earlier in the Visual view")).toBeTruthy();
+    // A picture of the last step only reads as the last step if the panel says
+    // which step it is.
+    expect(document.body.textContent).toContain("Step 10 · click thing 9");
   });
 
-  it("opens the Visual view from the strip's link", async () => {
-    const onOpenVisual = vi.fn();
+  it("counts nothing earlier when the run captured one frame", async () => {
     h.replays = [summary({ runId: "r9", startedAt: 9_000 })];
     h.replay = replay([shotStep(0)]);
+    renderPanel({ runs: [run()] });
+    await waitFor(() => expect(screen.getAllByRole("img")).toHaveLength(1));
+    expect(screen.queryByText(/earlier in the Visual view/)).toBeNull();
+  });
+
+  it("opens the Visual view from the link, on the run and frame it was showing", async () => {
+    const onOpenVisual = vi.fn();
+    h.replays = [
+      summary({ runId: "r-old", startedAt: 1_000 }),
+      summary({ runId: "r9", startedAt: 9_000 }),
+    ];
+    h.replay = replay([shotStep(0), shotStep(1)]);
     renderPanel({ runs: [run()], onOpenVisual });
     const link = await screen.findByRole("button", { name: "Visual view →" });
     link.click();
     expect(onOpenVisual).toHaveBeenCalledTimes(1);
+    // Navigating alone is not enough: the Visual view opens on the NEWEST
+    // captured run at its failure, so a click on this test's last frame would
+    // otherwise land on some other test's run.
+    expect(consumeVisualFrame()).toEqual({ testId: "t1", runId: "r9", stepId: "s1" });
+  });
+
+  it("opens the same place when the frame itself is clicked", async () => {
+    const onOpenVisual = vi.fn();
+    h.replays = [summary({ runId: "r9", startedAt: 9_000 })];
+    h.replay = replay([shotStep(0), shotStep(1)]);
+    renderPanel({ runs: [run()], onOpenVisual });
+    const frame = await screen.findByRole("button", {
+      name: "Open this frame in the Visual view",
+    });
+    frame.click();
+    expect(onOpenVisual).toHaveBeenCalledTimes(1);
+    expect(consumeVisualFrame()).toEqual({ testId: "t1", runId: "r9", stepId: "s1" });
   });
 
   it("says how to get screenshots when no run has captured any", () => {

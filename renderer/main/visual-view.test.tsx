@@ -18,6 +18,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { RunReplaySummary, VisualDiff } from "../lib/recorder-types";
 import { DiffBadge, VisualView, framesOverThreshold, tabChipLabel } from "./visual-view";
+import { clearVisualFrame, requestVisualFrame } from "./visual-intents";
 
 let replays: RunReplaySummary[] = [];
 /** Mutable so the bezel tests can seed a run with a real frame; every other
@@ -110,6 +111,10 @@ beforeEach(() => {
   replays = [];
   shotRequests = [];
   masks = [];
+  // Module state outlives a test. A request left behind by one sends the next
+  // test's view to a run it never asked for, which reads as run selection being
+  // broken rather than as leakage.
+  clearVisualFrame();
 });
 
 describe("DiffBadge wording", () => {
@@ -227,6 +232,89 @@ describe("VisualView run selection", () => {
     renderVisual();
     await screen.findByText("Checkout");
     expect(screen.queryByLabelText("visual change")).toBeNull();
+  });
+});
+
+describe("arriving from the History tab's picture", () => {
+  /** Two captured runs, each answering with its OWN replay: a view that opened
+   *  the wrong run is only visible if the runs differ. The asked-for one is the
+   *  OLDER of the two and has a failure, so both defaults this handoff
+   *  overrides — newest run, jump to the failure — are in play. */
+  function seedTwoRuns() {
+    replays = [
+      summary({ runId: "r-new", testName: "Newest", startedAt: 9_000 }),
+      summary({ runId: "r9", testName: "Asked For", startedAt: 1_000, stepCount: 3 }),
+    ];
+    const steps = (prefix: string) => [
+      { index: 0, stepId: `${prefix}1`, label: "goto", type: "goto", status: "failed", screenshot: "0.png" },
+      { index: 1, stepId: `${prefix}2`, label: "click", type: "click", status: "passed", screenshot: "1.png" },
+      { index: 2, stepId: `${prefix}3`, label: "assert", type: "assert", status: "passed", screenshot: "2.png" },
+    ];
+    replayById = {
+      "r-new": {
+        testId: "t1", runId: "r-new", testName: "Newest", status: "passed",
+        startedAt: 9_000, finishedAt: 9_500, failedIndex: null, steps: steps("n"),
+      },
+      r9: {
+        testId: "t1", runId: "r9", testName: "Asked For", status: "failed",
+        startedAt: 1_000, finishedAt: 1_500, failedIndex: 0, steps: steps("s"),
+      },
+    };
+    shot = "data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E";
+  }
+
+  beforeEach(seedTwoRuns);
+  afterEach(() => {
+    replayById = null;
+    shot = null;
+  });
+
+  /** The frame the viewer is actually on, named the way the rail names it. */
+  const activeFrame = () =>
+    document.querySelector('.gl-frame-btn[aria-current="true"]')?.getAttribute("aria-label") ?? "";
+
+  it("opens the run the frame came from, not the newest captured run", async () => {
+    requestVisualFrame({ testId: "t1", runId: "r9", stepId: "s3" });
+    renderVisual();
+    await waitFor(() => expect(document.querySelectorAll(".gl-frame-btn").length).toBe(3));
+    const selected = document.querySelector('.gl-visual-run[aria-current="true"]');
+    expect(selected?.textContent).toContain("Asked For");
+  });
+
+  it("opens ON the frame it was handed, over its own jump to the failure", async () => {
+    requestVisualFrame({ testId: "t1", runId: "r9", stepId: "s3" });
+    renderVisual();
+    await waitFor(() => expect(activeFrame()).toMatch(/^Step 3:/));
+  });
+
+  it("still jumps to the failure when nothing asked for a frame", async () => {
+    // The control. Without it the test above passes against a view that opens
+    // on step 3 for its own reasons — this run's failure is step 1.
+    renderVisual();
+    await waitFor(() => expect(document.querySelectorAll(".gl-frame-btn").length).toBe(3));
+    expect(activeFrame()).toMatch(/^Step 1:/);
+  });
+
+  it("falls back to its own defaults for a frame the replay no longer has", async () => {
+    // Retention prunes artifacts; a step id that no longer resolves must cost
+    // the user the jump, not the screen.
+    requestVisualFrame({ testId: "t1", runId: "r9", stepId: "gone" });
+    renderVisual();
+    await waitFor(() => expect(activeFrame()).toMatch(/^Step 1:/));
+  });
+
+  it("honours the request once, then goes back to the newest run", async () => {
+    // Consumed on read: a request left in place would drag the user back to a
+    // frame they clicked ten minutes ago every time this view mounts.
+    requestVisualFrame({ testId: "t1", runId: "r9", stepId: "s3" });
+    const first = renderVisual();
+    await waitFor(() => expect(activeFrame()).toMatch(/^Step 3:/));
+    first.unmount();
+    renderVisual();
+    await waitFor(() => expect(document.querySelectorAll(".gl-frame-btn").length).toBe(3));
+    expect(
+      document.querySelector('.gl-visual-run[aria-current="true"]')?.textContent,
+    ).toContain("Newest");
   });
 });
 
