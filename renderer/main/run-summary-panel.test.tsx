@@ -13,7 +13,7 @@ import type { HealEntry, RunRecord } from "../lib/recorder-types";
 import { summariseRun } from "../lib/run-summary";
 import type { RunSummary } from "../lib/run-summary";
 import { chipFor } from "./run-output";
-import { RunSummaryPanel } from "./run-summary-panel";
+import { RunSummaryPanel, retryReading } from "./run-summary-panel";
 
 const T = "t1";
 
@@ -257,33 +257,112 @@ describe("healed", () => {
   });
 });
 
-describe("retry", () => {
-  const base = [run({ id: "r1", startedAt: 1, status: "failed", exitCode: 1 })];
+describe("retry — the five readings of a recovered run", () => {
+  // Written out rather than computed, so a change to the hash cannot quietly
+  // make these two the same value.
+  const A = "s1:0123456789abcdef";
+  const B = "s1:fedcba9876543210";
 
-  it("names what was different, and does not call it flake", () => {
-    const s = summarise({
-      runs: [...base, run({ id: "r2", startedAt: 2, runBrowser: "firefox" })],
+  /** The pass that followed the failure, with whatever evidence it carries. */
+  function recovered(prev: Partial<RunRecord>, next: Partial<RunRecord>) {
+    return summarise({
+      runs: [
+        run({ id: "r1", startedAt: 1, status: "failed", exitCode: 1, ...prev }),
+        run({ id: "r2", startedAt: 2, ...next }),
+      ],
       live: { running: false, code: 0, startedAt: 0, stepStatus: {}, recordId: "r2" },
     });
+  }
+
+  it("names what was different, and does not call it flake", () => {
+    const s = recovered({ runBrowser: "webkit" }, { runBrowser: "firefox" });
     render(<RunSummaryPanel summary={s} />);
     expect(panel()?.dataset.state).toBe("retry");
     expect(screen.getByText(/after failing last time/i)).toBeTruthy();
-    expect(screen.getByText("Chromium")).toBeTruthy();
+    expect(screen.getByText("WebKit")).toBeTruthy();
     expect(screen.getByText("Firefox")).toBeTruthy();
     expect(chipFor(s)).toEqual({ label: "Recovered", tone: "phos" });
   });
 
-  it("calls it flake, in amber, when nothing this app records changed", () => {
+  it("calls it flake, in amber, when the settings AND the test were the same", () => {
     // The reading a user is least likely to reach on their own, and the one
-    // that decides whether they go looking for a fix that does not exist.
-    const s = summarise({
-      runs: [...base, run({ id: "r2", startedAt: 2 })],
-      live: { running: false, code: 0, startedAt: 0, stepStatus: {}, recordId: "r2" },
-    });
+    // that decides whether they go looking for a fix that does not exist. It is
+    // allowed only when both runs digested the same thing — which is what the
+    // second half of this sentence now claims out loud.
+    const s = recovered({ stepsDigest: A }, { stepsDigest: A });
     render(<RunSummaryPanel summary={s} />);
     expect(screen.getByText(/nothing was different/i)).toBeTruthy();
+    expect(screen.getByText(/and the same steps/i)).toBeTruthy();
     expect(screen.getByText(/flake rather than a fix/i)).toBeTruthy();
     expect(chipFor(s)).toEqual({ label: "Recovered", tone: "amber" });
+  });
+
+  it("says the test changed rather than claiming flake, and takes no amber", () => {
+    // THE BUG THIS WHOLE FIELD EXISTS FOR. Every run setting matches and the
+    // test was rewritten in between; the old panel printed "nothing was
+    // different" over it. A pass after an edit is an ordinary pass, so the
+    // chip is phos — there is simply nothing to conclude about the failure.
+    const s = recovered({ stepsDigest: A }, { stepsDigest: B });
+    render(<RunSummaryPanel summary={s} />);
+    expect(screen.getByText(/after the test changed/i)).toBeTruthy();
+    expect(screen.getByText(/not evidence about that failure/i)).toBeTruthy();
+    expect(screen.queryByText(/flake/i)).toBeNull();
+    expect(chipFor(s)).toEqual({ label: "Recovered", tone: "phos" });
+  });
+
+  it("leads with the changed test even when a setting moved too", () => {
+    // If the steps are not the steps that failed, the pacing is a footnote —
+    // but the settings table still renders, because both are true.
+    const s = recovered(
+      { stepsDigest: A, runBrowser: "webkit" },
+      { stepsDigest: B, runBrowser: "firefox" },
+    );
+    render(<RunSummaryPanel summary={s} />);
+    expect(screen.getByText(/after the test changed/i)).toBeTruthy();
+    expect(screen.getByText("WebKit")).toBeTruthy();
+    expect(screen.getByText("Firefox")).toBeTruthy();
+  });
+
+  it("scopes the claim to the run when it cannot say what the test was", () => {
+    // Every run recorded before `stepsDigest` lands here. The sentence must
+    // stay true — the settings really did match — and must not borrow the
+    // flake reading it has not earned.
+    const s = recovered({}, {});
+    render(<RunSummaryPanel summary={s} />);
+    expect(screen.getByText(/nothing about the run was different/i)).toBeTruthy();
+    expect(screen.getByText(/not recorded for these two runs/i)).toBeTruthy();
+    expect(screen.getByText(/a reading rather than a finding/i)).toBeTruthy();
+    expect(chipFor(s)).toEqual({ label: "Recovered", tone: "amber" });
+  });
+
+  it("keeps the within-run retry's stronger claim", () => {
+    // R24's: one process, one browser, one commit. Nothing could have differed,
+    // so this says so in its own words rather than borrowing the cross-run
+    // sentence, which describes a comparison this case never made.
+    const s = summarise({
+      runs: [run({ id: "r1", startedAt: 1, attempt: 1, passedOnRetry: true })],
+      live: { running: false, code: 0, startedAt: 0, stepStatus: {}, recordId: "r1" },
+    });
+    render(<RunSummaryPanel summary={s} />);
+    expect(screen.getByText(/passed, on a retry/i)).toBeTruthy();
+    expect(screen.getByText(/same process, same browser, same commit/i)).toBeTruthy();
+    expect(chipFor(s)).toEqual({ label: "Recovered", tone: "amber" });
+  });
+
+  it("gives the five readings five different sentences", () => {
+    // Two readings that render the same words are one reading with a bug in
+    // it, and the difference between them is the entire feature.
+    const headlines = [
+      recovered({ stepsDigest: A }, { stepsDigest: B }),
+      recovered({ runBrowser: "webkit" }, { runBrowser: "firefox" }),
+      recovered({ stepsDigest: A }, { stepsDigest: A }),
+      recovered({}, {}),
+      summarise({
+        runs: [run({ id: "r1", startedAt: 1, attempt: 1, passedOnRetry: true })],
+        live: { running: false, code: 0, startedAt: 0, stepStatus: {}, recordId: "r1" },
+      }),
+    ].map((s) => (s.state === "retry" ? retryReading(s).headline : s.state));
+    expect(new Set(headlines).size).toBe(5);
   });
 });
 
@@ -328,6 +407,7 @@ describe("the chip's six states are six distinct readings", () => {
         attempt: 0,
         previous: run({ id: "r1", startedAt: 1, status: "failed", exitCode: 1 }),
         differences: [{ label: "Browser", before: "a", after: "b" }],
+        stepsChanged: null,
         durationMs: 1,
         stepCount: 1,
       }),

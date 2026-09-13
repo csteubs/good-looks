@@ -27,10 +27,23 @@
 //
 // ACROSS RUNS, which is how this started and still the common case: the
 // previous run of this test failed, this one passed, what was different? The
-// answer is drawn only from what the record actually stores. When the answer is
-// NOTHING, that is the most useful reading the panel can give, and the one the
-// user is least likely to reach on their own: same browser, same pacing, same
-// budget, opposite outcome, so the test is flaky rather than fixed.
+// answer is drawn only from what the record actually stores.
+//
+// WHAT THE RECORD STORES USED TO BE SIX SETTINGS, AND THAT WAS THE BUG. Engine,
+// headless, pacing, capture, a11y and dataset row all matching was read as
+// "nothing was different, so this is flake" — over a test somebody had rewritten
+// in the trainer between the two runs, which matched all six and was not the
+// same test. The claim was about the TEST and the evidence was only about the
+// RUNNER, and a user who had just edited the steps was told their fix was
+// imaginary.
+//
+// `RunRecord.stepsDigest` is the missing variable (shared/steps-digest.mjs), and
+// `stepsChanged` below is what this module makes of it. THREE VALUES, because
+// "we cannot tell" is a real answer and is the answer for every run recorded
+// before the field existed: false earns the flake reading, true replaces it with
+// what actually happened, and null falls back to a claim scoped to the settings.
+// Absent must never read as unchanged — that is the original bug with a longer
+// paper trail.
 //
 // WITHIN ONE RUN, since R24: `passedOnRetry` says this run failed and passed
 // again without ever ending. It is the same question with a stronger answer —
@@ -43,6 +56,8 @@
 // The within-run case is checked FIRST. A run that passed on retry and also
 // followed a failed run is both, and the within-run reading is the one with no
 // confounder in it.
+
+import { comparableDigests } from "../../shared/steps-digest.mjs";
 
 import type { HealEntry, RunRecord } from "./recorder-types";
 
@@ -121,6 +136,21 @@ export interface RetrySummary extends Base {
   /** Empty on a within-run retry, and meaningfully so: two attempts inside one
    *  process cannot differ in anything this app records. */
   differences: RunDifference[];
+  /**
+   * Did the TEST change between the failure and this pass?
+   *
+   * `true` and `false` both come from two `stepsDigest` values that could be
+   * compared; `null` is every other case — one run predates the field, one was
+   * ingested without it, or the two digests are under different schemes (a test
+   * that became hand-edited in between). NULL IS UNKNOWN AND MUST NOT RENDER AS
+   * "unchanged": reporting flake off an absent field is the bug this whole
+   * field exists to close.
+   *
+   * Deliberately NOT a row in `differences`: that list is rendered as before →
+   * after pairs a user reads, and two hex digests are not something to show
+   * anybody.
+   */
+  stepsChanged: boolean | null;
   /** How many attempts this run took. 0 when the retry is across runs. */
   attempt: number;
   durationMs: number;
@@ -287,6 +317,10 @@ function summariseRecord(
       state: "retry",
       previous: null,
       differences: [],
+      // Null rather than false, and the distinction matters: nothing COULD have
+      // changed inside one process, so there is no comparison here to report
+      // the result of. The within-run panel says that in its own words.
+      stepsChanged: null,
       attempt: record.attempt ?? 1,
       durationMs: record.durationMs,
       stepCount,
@@ -295,10 +329,15 @@ function summariseRecord(
 
   const previous = earlier.length > 0 ? earlier[earlier.length - 1] : null;
   if (previous && previous.status === "failed") {
+    const digests = comparableDigests(previous.stepsDigest, record.stepsDigest);
     return {
       state: "retry",
       previous,
       differences: runDifferences(previous, record),
+      // Through `comparableDigests` and never `===`: one field carries two
+      // schemes, and comparing a step digest against a source digest would
+      // report an edit nobody made (shared/steps-digest.mjs).
+      stepsChanged: digests === "unknown" ? null : digests === "different",
       attempt: 0,
       durationMs: record.durationMs,
       stepCount,

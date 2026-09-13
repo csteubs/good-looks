@@ -275,6 +275,26 @@ describe("normalizeIngestedRun", () => {
     expect(out?.provenance).toEqual({ revision: "c0ffee1" });
   });
 
+  it("carries a well-formed stepsDigest, and refuses one alone", () => {
+    // One of the few foreign fields that is fully meaningful here: a digest is
+    // derived from content, not from the machine that produced it. CI is also
+    // where a test is most likely to have been edited between two runs somebody
+    // is looking at, which is the reading the field exists to protect.
+    expect(normalizeIngestedRun(validRun({ stepsDigest: "s1:0123456789abcdef" }))?.stepsDigest).toBe(
+      "s1:0123456789abcdef",
+    );
+    expect(normalizeIngestedRun(validRun({ stepsDigest: "x1:fedcba9876543210" }))?.stepsDigest).toBe(
+      "x1:fedcba9876543210",
+    );
+    for (const bad of ["", "0123456789abcdef", "s1:../../etc", "s1:" + "a".repeat(200), 7, null]) {
+      // Refused ALONE — a mis-shaped digest is not a reason to lose the run,
+      // and a stored one would be compared against a good digest forever.
+      const out = normalizeIngestedRun(validRun({ stepsDigest: bad }));
+      expect(out).not.toBeNull();
+      expect(out).not.toHaveProperty("stepsDigest");
+    }
+  });
+
   it("rejects a control character in free text", () => {
     const nl = String.fromCharCode(10);
     expect(normalizeIngestedRun(validRun({ testName: `One${nl}Two` }))).toBeNull();

@@ -214,6 +214,30 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      retryFields returns FIELDS to spread and is EMPTY when
                      nothing retried — `attempt: 0` on every row is
                      indistinguishable from a row predating the field
+                     steps-digest.mjs is WHAT A RUN EXECUTED, and the field
+                     the record was missing: it held everything ABOUT a run
+                     and nothing about the thing it ran, so the run panel
+                     answered "it failed, then it passed, what was
+                     different?" by comparing six run SETTINGS — and a test
+                     rewritten in the trainer between the two runs matched
+                     all six and was told it was flake. TWO SCHEMES IN ONE
+                     FIELD, tagged: `s1:` the step list (a replay, or an
+                     app-generated test — the spec is generated from those
+                     steps immediately before it runs), `x1:` the spec
+                     file's BYTES (hand-edited, imported, or steps and
+                     script diverged — the file is the record and the step
+                     list may be a stale parse of it). digestSchemeFor is
+                     the one place that choice is made, because BOTH
+                     RUNNERS ask and two answers would leave every test run
+                     by both comparing as unknown forever; comparableDigests
+                     is the only thing that may compare two digests, and it
+                     answers "unknown" across schemes rather than calling
+                     the difference an edit. Absent is UNKNOWN and never
+                     "unchanged" — the speed/healFailedSteps rule, and here
+                     the wrong reading is the app asserting flake it cannot
+                     support. Sixteen hex characters because the only
+                     comparison is between two runs of ONE test.
+                     check:mcp-parity §19 pins both writers
                      attempt-artifacts.mjs is WHERE ONE ATTEMPT'S EVIDENCE
                      GOES (R24a). Playwright re-runs a failed test from the
                      top and the capture fixture is a `page` fixture, so every

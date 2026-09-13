@@ -843,6 +843,15 @@ Four things the plan did not anticipate, all of which changed the shipped shape:
   NOTHING differed, that is the most useful reading available and the one a user
   is least likely to reach alone: same engine, same pacing, same budget, opposite
   outcome, so the test is flaky rather than fixed.
+  **Superseded 2026-09-13, and the reason is in that sentence.** What
+  `RunRecord` stored was six run SETTINGS, so "nothing differed" was a claim
+  about the runner printed as a claim about the test — and a test rewritten
+  between the two runs matched all six. `RunRecord.stepsDigest` records what a
+  run executed; the flake call now needs two digests that compare as the same,
+  a changed test gets its own reading (and no amber, because a pass after an
+  edit is an ordinary pass), and a pair of runs with no digest gets a fifth
+  reading that names the blind spot rather than filling it in. See
+  DECISIONS 2026-09-13.
 - **Two of the six passed and are not phos.** `healed` is amber because a
   mis-heal usually succeeds (clicking the wrong button rarely throws), and a
   flaky `retry` is amber for the same reason. Reporting either as a plain pass

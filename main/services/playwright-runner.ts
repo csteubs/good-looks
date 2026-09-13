@@ -26,6 +26,7 @@ import { retryFields } from "../../shared/run-attempts.mjs";
 import { buildHealMap } from "../../shared/heal-map.mjs";
 import { resolveScriptPath } from "../../shared/script-path.mjs";
 import { buildStepLineMapFromSource } from "../../shared/step-line-map.mjs";
+import { digestSchemeFor, digestSource, digestSteps } from "../../shared/steps-digest.mjs";
 
 import { sendToMain } from "./app-window.js";
 import { getScriptsDir, testStore } from "./test-store.js";
@@ -634,6 +635,21 @@ function buildStepLineMap(scriptPath: string): Map<number, number> | null {
     return null;
   }
   return buildStepLineMapFromSource(src);
+}
+
+/** A spec's source for `digestSource`, or null when it cannot be read.
+ *
+ *  NULL RATHER THAN A THROW. This runs on the way into a run whose spec
+ *  Playwright is about to open itself: a library restored from a backup names
+ *  specs that are not there, and the honest report of that is Playwright's
+ *  "no tests found", not a digest failing the run before it starts. A null
+ *  digest is absent, which every reader treats as unknown. */
+function readSpecSource(scriptPath: string): string | null {
+  try {
+    return fs.readFileSync(scriptPath, "utf-8");
+  } catch {
+    return null;
+  }
 }
 
 
@@ -1362,6 +1378,10 @@ export const playwrightRunner = {
       // and a timeout raised since would make every older run's "how close was
       // this step to its budget?" read wrong while still looking plausible.
       let runTestTimeoutMs: number | undefined;
+      // What this run EXECUTED, digested. Resolved inside the try (it needs the
+      // spec path the run actually resolved), read in the finally where the
+      // RunRecord is written — the same seam as the four above.
+      let stepsDigest: string | undefined;
       try {
         const { cliPath, nodeModules } = resolvePlaywright();
         const scriptsDir = getScriptsDir();
@@ -1387,6 +1407,17 @@ export const playwrightRunner = {
         // stored path keeps the failure identical to what it was for a record
         // the resolver refuses — Playwright reports the missing file (R10).
         let specToRun = resolveScriptPath(getScriptsDir(), rec) ?? rec.scriptPath;
+        // WHAT THIS RUN EXECUTES, recorded now — before the redirect below
+        // rewrites `specToRun` to a prepared temp copy, which is this run's
+        // plumbing rather than the test.
+        //
+        // WHICH scheme is `digestSchemeFor`'s call, not this file's: the MCP
+        // runner asks the same question, and two answers would make every test
+        // run by both compare as unknown forever.
+        stepsDigest =
+          digestSchemeFor(rec, Boolean(replaySteps)) === "steps"
+            ? digestSteps(runSteps)
+            : digestSource(readSpecSource(specToRun));
         let capturing = false;
         let artifactDir = "";
 
@@ -2194,6 +2225,11 @@ export const playwrightRunner = {
               // be indistinguishable from a run that predates the field, and
               // the whole point of these two is that a reader can tell.
               ...retryFields({ status: runStatus, maxAttempt }),
+              // What this run executed. Written on a FAILED run too, and that
+              // is the whole point: the comparison the run panel makes is
+              // against the failing run, so a digest only on passes would
+              // answer nothing.
+              stepsDigest,
               testTimeoutMs: runTestTimeoutMs,
               captureOverheadMs,
               shotCount,

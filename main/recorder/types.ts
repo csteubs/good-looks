@@ -2766,6 +2766,34 @@ export interface RunRecord {
    * guessed at — and absent means unknown, never "the first step".
    */
   failedStepLabel?: string;
+  /**
+   * WHAT THIS RUN EXECUTED, as `<scheme>:<hex>` — see shared/steps-digest.mjs.
+   *
+   * The record carried everything ABOUT a run and nothing about the thing it
+   * ran, so "it failed, then it passed, what was different?" was answered by
+   * comparing six settings. A test rewritten between the two runs matched all
+   * six, and the run summary panel reported flake over the one variable it
+   * could not see. This is that variable.
+   *
+   * STORED RATHER THAN DERIVED because the evidence does not survive: the
+   * failing run's steps are gone the moment somebody saves new ones, and the
+   * artifact snapshot that holds them is written only on artifact runs and
+   * pruned by retention.
+   *
+   * TWO SCHEMES IN ONE FIELD, tagged so they cannot be confused. `s1:` digests
+   * the step list, for a replay or an ordinary app-generated test, where the
+   * spec is generated from those steps immediately before it runs. `x1:`
+   * digests the spec file's bytes, for a hand-edited (`scriptEdited`) or
+   * imported (`sourceDir`) test, where the file is the source of truth and the
+   * step list may be a stale parse of it. A comparison across schemes is
+   * UNKNOWN rather than a difference — `comparableDigests` is the only thing
+   * that may compare two of these.
+   *
+   * Absent on every run recorded before the field, which means UNKNOWN and
+   * never "unchanged": the same rule `speed` and `healFailedSteps` stand on,
+   * and here the wrong reading is the app asserting flake it cannot support.
+   */
+  stepsDigest?: string;
   /** Distinguishes a real test "run" (default) from a "baseline-update" event
    *  logged when the user accepts screenshots as new baselines. Baseline-update
    *  records are excluded from the pass/fail charts but shown in the history
