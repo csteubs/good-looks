@@ -11,6 +11,42 @@ Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
 
+### 2026-09-13 — "Capture a value" asks which element to read
+
+**Four of the kind's six sources could not be added at all.** A `capture` step
+stores a page value in a variable, and four of its sources are about an ELEMENT:
+element text, input value, an attribute, a match count. The composer never asked
+which one. It rendered the variable name, the source dropdown and — for
+`attribute` — the attribute name, and stopped. `TargetElementPicker` was never
+mounted for the kind, so `locator` stayed null, `build()` refused (correctly: an
+element capture with no target reads nothing), and **Add step sat permanently
+disabled with nothing left on screen to fill in**. Only Page URL and Page title
+could ever be added. There is no other route in: the training browser's
+right-click menu offers no capture action, so neither trainer could supply the
+target the builder was holding out for.
+
+**One rule, two copies, and a flag nobody read.** `CAPTURE_OPTIONS` has carried
+a `page` flag since the kind was written, with a comment saying it is "why the
+target picker is hidden for them". The builder never read it — it asked in its
+own words, `from === "url" || from === "title"` — and the form never asked at
+all. `isPageLevelCapture` is now the one spelling both halves call, and an
+unrecognised source counts as element-scoped, because that direction offers a
+picker and refuses the submit where the other emits a capture that reads
+nothing. The picker sits where the assertion kind puts it: source first, then
+what it acts on, then its operands.
+
+**And the gate would have made `Match count` unusable the same day.** The
+composer refuses a locator matching several elements, because Playwright's
+strict mode refuses it at run time. A count step asks the opposite question:
+`locator.count()` and `toHaveCount` never strict-resolve, and counting an
+ambiguous locator is the whole point — "capture a list's size, act, assert the
+size moved" is what the source was added for. Offering the picker without
+`countsMatches` would have priced a nine-match locator at nine and then disabled
+Add on exactly the locator the step was written for. The predicate covers the
+assert and wait spellings of the same question too, because it is the same rule
+and they were already refusing it; what makes them safe is that `count` is a
+kind the user chose, not a state the panel inferred.
+
 ### 2026-09-13 — The History tab shows a run's LAST frame, and opens the Visual view on it
 
 **The panel's picture was the one frame in a run that is guaranteed to show

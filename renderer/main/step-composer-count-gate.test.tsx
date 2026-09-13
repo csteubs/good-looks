@@ -11,11 +11,12 @@
 //
 // The count is asked of the page for the locator the step will actually hold
 // (whichever candidate is selected, context applied), not read off the
-// picker's readout, which prices the semantic base. Three rules are pinned:
+// picker's readout, which prices the semantic base. Four rules are pinned:
 // more than one blocks, with the count; zero and "could not count" never do
 // (the custom field exists for elements the page shows later, and a failure
 // to ask is not a verdict); an indexed locator is not counted at all, because
-// the index is the answer.
+// the index is the answer; and a step that COUNTS the matches is never
+// blocked, because several matches is what it was written to read.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
@@ -68,6 +69,23 @@ function renderComposer() {
 
 function addButton(): HTMLButtonElement {
   return screen.getByRole("button", { name: /add step/i }) as HTMLButtonElement;
+}
+
+/** Choose an assertion kind from the native-menu-backed Select — its options
+ *  never enter the DOM, but the menu is opened through `glazeAPI.Menu.popup`,
+ *  which is an ordinary promise a test can answer (see appearance-pane). */
+function chooseAssertion(label: string): void {
+  interface Item {
+    label?: string;
+    commandId?: number;
+  }
+  const popup = vi.fn(async ({ items }: { items: Item[] }) => {
+    const hit = items.find((i) => i.label === label && i.commandId !== undefined);
+    if (!hit) throw new Error(`no menu item labelled "${label}"`);
+    return { commandId: hit.commandId };
+  });
+  (window as unknown as { glazeAPI: { Menu: unknown } }).glazeAPI = { Menu: { popup } };
+  fireEvent.click(screen.getByRole("combobox", { name: "Assertion" }));
 }
 
 beforeEach(() => {
@@ -139,6 +157,30 @@ describe("the composer's match-count gate", () => {
     fireEvent.click(screen.getByText(/main > h1/));
     await waitFor(() => expect(addButton().disabled).toBe(false));
     expect(countMatches()).toHaveBeenCalledWith({ k: "css", v: "main > h1" });
+  });
+});
+
+// ── The steps the gate must NOT refuse ────────────────────────────────────
+//
+// `toHaveCount` and `locator.count()` do not strict-resolve, and a locator
+// matching nine elements is the ANSWER for a step that counts them, not the
+// strict-mode failure above. Gating those disables Add on exactly the locator
+// the step was written for — which is what a `Match count` capture would have
+// hit the day the composer started offering it a target picker.
+
+describe("a step whose subject is the match count", () => {
+  it("is added against a locator matching several elements", async () => {
+    countMatches().mockResolvedValue(3);
+    const { onAdd } = renderComposer();
+    await screen.findByText(ambiguousTargetHint(3));
+    expect(addButton().disabled).toBe(true);
+    chooseAssertion("Has count");
+    await waitFor(() => expect(addButton().disabled).toBe(false));
+    expect(screen.queryByText(ambiguousTargetHint(3))).toBeNull();
+    fireEvent.click(addButton());
+    expect(onAdd.mock.calls[0][0]).toEqual([
+      { type: "assert", assert: "count", locator: { k: "text", v: "Mountain" }, count: 1 },
+    ]);
   });
 });
 
