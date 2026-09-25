@@ -390,7 +390,15 @@ export function TestDetailView() {
   // this chip sits on the toolbar the live page is opened from. The imported
   // case does NOT: the live page is a browser the editor drives, not a spec the
   // app rewrote, so the fixture's reach is not its limit.
-  const signatureWarning = ((): { text: string; title: string } | null => {
+  // `credential` is the two cases a replaced signature fixes (expired,
+  // unreadable): the test's URL itself turns red and links to Settings →
+  // Integrations. `notSent` is a limit of imported tests, not a bad credential,
+  // so it stays a chip among the run controls and links nowhere.
+  const signatureWarning = ((): {
+    kind: "credential" | "notSent";
+    text: string;
+    title: string;
+  } | null => {
     if (!test) return null;
     const host = normalizeSignatureHost(test.sourceDir ? (test.baseUrl ?? "") : (test.url ?? ""));
     if (!host) return null;
@@ -398,12 +406,14 @@ export function TestDetailView() {
     if (!entry) return null;
     if (entry.state === "expired") {
       return {
+        kind: "credential",
         text: "Signature expired",
         title: `The Shopify crawler signature for ${host} has expired, so runs of this test — and its live page — go out unsigned. An expired signature fails verification, which is worse than sending none — create a new one in your Shopify admin.`,
       };
     }
     if (entry.state === "unreadable") {
       return {
+        kind: "credential",
         text: "Signature unreadable",
         title: `A Shopify crawler signature is registered for ${host} but can't be decrypted on this Mac, so runs of this test — and its live page — go out unsigned.`,
       };
@@ -412,6 +422,7 @@ export function TestDetailView() {
       // The gap the fixture cannot close, said on the screen where the run is
       // started rather than discovered in the output afterwards.
       return {
+        kind: "notSent",
         text: "Signature not sent",
         title: `The Shopify crawler signature for ${host} is not sent for imported tests — it travels on the same fixture as screenshots and Auto-Heal, which needs the spec to import @playwright/test directly.`,
       };
@@ -1198,25 +1209,31 @@ export function TestDetailView() {
                 flow
               </span>
             ) : null}
-            <ToolbarDescription>{test.url}</ToolbarDescription>
-            {/* Under the URL rather than among the run controls: it is a fact
-                about the SITE this test points at (its store's credential), and
-                it reads as the address's own caption. A button, because the fix
-                is never on this screen — the signature is replaced in Settings →
-                Integrations, so the warning is also the way there. */}
-            {signatureWarning ? (
+            {/* An expired or unreadable crawler signature is shown ON the URL
+                rather than beside it: it is a fact about the site the URL names,
+                and marking the address itself adds no line to the head. Red is
+                the failure red (`--gl-red`, the FAILED badge's), the alert icon
+                says it is a warning rather than a styled link, and the whole
+                thing is a button because the fix is never on this screen — the
+                signature is replaced in Settings → Integrations. The accessible
+                name carries the state, which the colour alone cannot. */}
+            {signatureWarning?.kind === "credential" ? (
               <Hint text={`${signatureWarning.title} Click to open Settings → Integrations.`}>
                 <button
                   type="button"
-                  className="gl-detail-signature no-drag"
+                  className="gl-detail-url-alert no-drag"
+                  aria-label={`${test.url || test.baseUrl || ""} — ${signatureWarning.text}. Open Settings, Integrations`}
                   onClick={() =>
                     void navigate({ to: "/settings/$pane", params: { pane: "integrations" } })
                   }
                 >
-                  <Status variant="error">{signatureWarning.text}</Status>
+                  <TriangleAlert className="gl-detail-url-alert-icon" aria-hidden="true" />
+                  <span className="truncate">{test.url || test.baseUrl}</span>
                 </button>
               </Hint>
-            ) : null}
+            ) : (
+              <ToolbarDescription>{test.url}</ToolbarDescription>
+            )}
           </ToolbarContent>
           <ToolbarActions className="gl-detail-tools">
             {/* WHAT THE TEST IS — the two ways to change it. The delete lives here
@@ -1426,6 +1443,13 @@ export function TestDetailView() {
                     }}
                   />
                 </label>
+              ) : null}
+              {signatureWarning?.kind === "notSent" ? (
+                <Hint text={signatureWarning.title}>
+                  <span tabIndex={0}>
+                    <Status variant="error">{signatureWarning.text}</Status>
+                  </span>
+                </Hint>
               ) : null}
             </div>
             <span className="gl-detail-tool-rule" aria-hidden="true" />

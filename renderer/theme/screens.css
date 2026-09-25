@@ -3714,29 +3714,42 @@
 }
 
 /*
- * The crawler-signature warning, under the test's URL. A bare button around
- * the status chip: no button chrome (it is a caption, not a control cluster),
- * shrink-wrapped to the chip so the clickable area is the words and not the
- * identity column's whole width, and the text underlines on hover and focus to
- * say it goes somewhere — the Integrations pane, where the signature lives.
+ * The test's URL when its store's crawler signature is expired or unreadable:
+ * the address itself, in the failure red, behind an alert icon, as a button to
+ * Settings → Integrations. Sized and spaced as the plain URL line
+ * (`ToolbarDescription`, 12px) so the head does not change height when a
+ * signature expires; shrink-wrapped so the hit target is the words, and
+ * underlined on hover and focus to say it goes somewhere.
  */
-.gl-detail-signature {
+.gl-detail-url-alert {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   align-self: flex-start;
-  margin-top: 4px;
+  max-width: 100%;
+  min-width: 0;
   padding: 0;
   border: 0;
   background: none;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--gl-red);
   cursor: pointer;
   text-align: left;
 }
-.gl-detail-signature:hover,
-.gl-detail-signature:focus-visible {
+.gl-detail-url-alert:hover,
+.gl-detail-url-alert:focus-visible {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.gl-detail-signature:focus-visible {
+.gl-detail-url-alert:focus-visible {
   outline: 1px solid var(--gl-cyan);
   outline-offset: 2px;
+}
+.gl-detail-url-alert-icon {
+  flex: none;
+  width: 12px;
+  height: 12px;
 }
 
 /*

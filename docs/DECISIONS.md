@@ -16,9 +16,10 @@ map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 A new built-in failure reason, **"Credentials Expired/Invalid"** (`credentials`),
 assigned automatically when a failed run went out unsigned because the Shopify
 crawler signature registered for the test's host was expired or could not be
-decrypted. And the "Signature expired" chip on the test detail view moved from
-the run controls to under the test's URL, as a button that opens Settings →
-Integrations.
+decrypted. And on the test detail view an expired or unreadable signature is
+shown ON the test's URL — the failure red, an alert icon, and a button that
+opens Settings → Integrations — instead of as a "Signature expired" chip among
+the run controls.
 
 **Why the signature state is context, not evidence.** A store turning away an
 unsigned crawler does not fail the run with anything that names the signature:
@@ -48,11 +49,19 @@ is automatic only into a blank, a person's pick always wins, and the auto tag
 says the label is unreviewed. A store that is going to refuse the crawler
 makes every other explanation moot until the credential is replaced.
 
-**The chip moved because of what it describes.** Among Pace, Timeout and the run
-toggles it read as a run setting; it is a fact about the site the URL names.
-It is a button because the fix is never on this screen, and its explanation is
-on the theme's `Hint` rather than a native `title`, which macOS under the
-pinned Electron rarely shows.
+**The warning is the URL, not a chip beside it.** Among Pace, Timeout and the run
+toggles the chip read as a run setting; it is a fact about the site the URL
+names. A first attempt put the chip on a line of its own under the URL, which
+made the head a line taller for exactly the tests with a warning and let the
+narrowed toolbar drift right; a fixed-height two-line head was built to contain
+that and then reverted in favour of this, which adds no line at all. Red is the
+FAILED badge's `--gl-red`, the alert icon (lucide `TriangleAlert`) keeps it from
+reading as an ordinary styled link, and the accessible name carries the state
+("… — Signature expired"), which colour alone cannot. The explanation is on the
+theme's `Hint` rather than a native `title`, which macOS under the pinned
+Electron rarely shows. "Signature not sent" — an imported test, which cannot
+carry the signature whatever its state — is not a bad credential and is not
+fixed in Integrations, so it stays the chip among the run controls it was.
 
 ### 2026-09-25 — The renderer compares run digests without `node:crypto`
 
