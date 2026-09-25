@@ -85,9 +85,10 @@ export const MAX_ACTIVE_CUSTOM_REASONS = 50;
  * The definition a stored reason id refers to, or null.
  *
  * Built-ins win over custom entries with a colliding id (the store never mints
- * one, but this file cannot know that). A DISABLED custom reason still
- * resolves: disabling hides a reason from the picker and stops new
- * assignments, and the runs already labelled with it must keep their name.
+ * one, but this file cannot know that). A DISABLED or DELETED custom reason
+ * still resolves: both hide a reason from the picker and stop new
+ * assignments, and the runs already labelled with it must keep their name —
+ * which is why the store deletes to a tombstone rather than erasing.
  */
 export function resolveFailureReason(id, custom = []) {
   if (!id) return null;

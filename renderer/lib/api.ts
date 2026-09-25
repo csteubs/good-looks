@@ -860,7 +860,8 @@ export const api = {
   },
   failureReasons: {
     /** The whole vocabulary — built-ins plus every custom reason, disabled
-     *  ones included (display resolution needs them; the picker filters). */
+     *  and deleted ones included (display resolution needs them; the picker
+     *  and the Settings list filter). */
     list: () => ipc().invoke<FailureReasonCatalog>("failureReasons:list"),
     create: (name: string, description?: string) =>
       ipc().invoke<CustomFailureReason>("failureReasons:create", { name, description }),
@@ -868,6 +869,10 @@ export const api = {
       id: string,
       patch: { name?: string; description?: string; disabled?: boolean },
     ) => ipc().invoke<CustomFailureReason>("failureReasons:update", { id, ...patch }),
+    /** Delete to a tombstone: gone from Settings and the picker, still
+     *  resolving on the runs it already labels. */
+    remove: (id: string) =>
+      ipc().invoke<CustomFailureReason>("failureReasons:remove", { id }),
   },
   /** The metrics views. Every response carries `available`, because "metrics
    *  are off on this runtime" and "you have no history" must not render alike. */

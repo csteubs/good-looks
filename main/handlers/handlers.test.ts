@@ -2410,6 +2410,37 @@ describe("failure reasons — the vocabulary and the per-run label", () => {
     ).rejects.toThrow(/disabled/);
   });
 
+  it("deletes to a tombstone: refused for new runs, still named on the run it labels", async () => {
+    const runId = seedFailedRun("t-reason-deleted");
+    const otherRunId = seedFailedRun("t-reason-deleted-2");
+    const created = await invokeHandler<{ id: string }>("failureReasons:create", {
+      name: "Deleted reason (handlers)",
+    });
+    await invokeHandler("runs:setFailureReason", { id: runId, reasonId: created.id });
+    const removed = await invokeHandler<{ deleted?: boolean }>("failureReasons:remove", {
+      id: created.id,
+    });
+    expect(removed.deleted).toBe(true);
+
+    await expect(
+      invokeHandler("runs:setFailureReason", { id: otherRunId, reasonId: created.id }),
+    ).rejects.toThrow(/was deleted/);
+    // The labelled run keeps its id, and the catalog still resolves it.
+    expect(runHistoryStore.list().find((r) => r.id === runId)?.failureReasonId).toBe(created.id);
+    const catalog = await invokeHandler<{ custom: { id: string; name: string }[] }>(
+      "failureReasons:list",
+    );
+    expect(catalog.custom.find((r) => r.id === created.id)?.name).toBe(
+      "Deleted reason (handlers)",
+    );
+  });
+
+  it("refuses to delete a built-in reason", async () => {
+    await expect(invokeHandler("failureReasons:remove", { id: "regression" })).rejects.toThrow(
+      /No such custom reason/,
+    );
+  });
+
   it("refuses to label anything that is not a recorded failure", async () => {
     seedTest("t-reason-pass");
     const run = runHistoryStore.append(

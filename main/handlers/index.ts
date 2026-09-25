@@ -2694,8 +2694,8 @@ export function registerHandlers(): void {
   // Label WHY a failed run failed. The reason id is validated HERE, against
   // the whole vocabulary — the run store deliberately doesn't know the
   // definitions, and the renderer's picker is not a trust boundary. A disabled
-  // custom reason is refused for NEW assignments (that is what disabling
-  // means) while runs already carrying it keep resolving.
+  // or deleted custom reason is refused for NEW assignments (that is what
+  // both mean) while runs already carrying it keep resolving.
   ipcMain.handle(
     "runs:setFailureReason",
     async (_e, params: { id: string; reasonId: string | null }) => {
@@ -2704,7 +2704,11 @@ export function registerHandlers(): void {
         const custom = failureReasonStore.list();
         const def = resolveFailureReason(reasonId, custom);
         if (!def) throw new Error("No such failure reason: " + reasonId);
-        if (custom.find((r) => r.id === reasonId)?.disabled) {
+        const own = custom.find((r) => r.id === reasonId);
+        if (own?.deleted) {
+          throw new Error(`"${def.name}" was deleted and can't be assigned to new runs.`);
+        }
+        if (own?.disabled) {
           throw new Error(`"${def.name}" is disabled and can't be assigned to new runs.`);
         }
       }
@@ -3101,13 +3105,14 @@ export function registerHandlers(): void {
 
   // ── Failure-reason handlers ──────────────────────────────────────────
   // The whole vocabulary in one answer, because every consumer needs both
-  // halves: the picker offers built-ins plus ENABLED customs, and display
-  // resolution needs disabled ones too.
+  // halves: the picker offers built-ins plus ENABLED customs, the Settings
+  // list every custom that is not deleted, and display resolution needs
+  // disabled and deleted ones too.
   ipcMain.handle("failureReasons:list", async () => ({
     builtin: DEFAULT_FAILURE_REASONS,
     custom: failureReasonStore.list(),
   }));
-  // Both mutations push `failureReasons:changed`: the editor lives in the
+  // Every mutation pushes `failureReasons:changed`: the editor lives in the
   // Settings window, and the labels it renames are on screen in the MAIN
   // window — without the push a rename would show only where it was typed.
   ipcMain.handle(
@@ -3130,6 +3135,13 @@ export function registerHandlers(): void {
       return rec;
     },
   );
+  // Delete to a tombstone: the record stays so every run already labelled
+  // with it keeps its name (see failure-reason-store.ts).
+  ipcMain.handle("failureReasons:remove", async (_e, params: { id: string }) => {
+    const rec = failureReasonStore.remove(params?.id ?? "");
+    sendToMain("failureReasons:changed", {});
+    return rec;
+  });
 
   // ── Standing overlay rules ────────────────────────────────────────────
   //

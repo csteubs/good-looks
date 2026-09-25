@@ -1397,6 +1397,10 @@ export interface CustomFailureReason {
   /** hidden from the picker and refused for NEW assignments; runs already
    *  labelled with it keep resolving. */
   disabled?: boolean;
+  /** deleted from Settings: hidden from the Settings list too, and kept only
+   *  so runs already labelled with it keep resolving. Always paired with
+   *  `disabled: true`. */
+  deleted?: boolean;
   createdAt: number;
   updatedAt: number;
 }

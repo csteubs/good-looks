@@ -1,7 +1,8 @@
 // Tests for the custom failure-reason store. The properties here protect
 // history: a rename that minted a new id would orphan every labelled run, a
-// delete would strand a bare uuid where a label was, and a duplicate name
-// would put two identical rows in the picker with different meanings.
+// delete that erased the record would strand a bare uuid where a label was,
+// and a duplicate name would put two identical rows in the picker (or, for a
+// deleted reason, in the Stats breakdown) with different meanings.
 //
 // Driven against the real store writing into a throwaway userData dir.
 
@@ -98,6 +99,83 @@ describe("update", () => {
 
   it("throws for unknown ids — which is what makes built-ins immutable", () => {
     expect(() => failureReasonStore.update("regression", { name: "x" })).toThrow(/No such/);
+  });
+});
+
+describe("remove", () => {
+  it("tombstones the record — it stays in the file, deleted AND disabled", () => {
+    const rec = failureReasonStore.create("Cloudflare", "Behind a firewall.");
+    const removed = failureReasonStore.remove(rec.id);
+    expect(removed.id).toBe(rec.id);
+    expect(removed.deleted).toBe(true);
+    expect(removed.disabled).toBe(true);
+    const raw = JSON.parse(fs.readFileSync(indexFile, "utf-8")) as Record<string, unknown>[];
+    expect(raw).toHaveLength(1);
+    expect(raw[0]).toMatchObject({ id: rec.id, name: "Cloudflare", deleted: true, disabled: true });
+  });
+
+  it("keeps resolving for the runs that already carry it", async () => {
+    const { resolveFailureReason } = await import("../../shared/failure-reasons.mjs");
+    const rec = failureReasonStore.create("Cloudflare", "Behind a firewall.");
+    failureReasonStore.remove(rec.id);
+    expect(resolveFailureReason(rec.id, failureReasonStore.list())).toEqual({
+      id: rec.id,
+      name: "Cloudflare",
+      description: "Behind a firewall.",
+    });
+  });
+
+  it("frees an active slot, like disabling does", () => {
+    for (let i = 0; i < MAX_ACTIVE_CUSTOM_REASONS; i++) failureReasonStore.create(`Reason ${i}`);
+    expect(() => failureReasonStore.create("One more")).toThrow(/limited/);
+    failureReasonStore.remove(failureReasonStore.list()[0].id);
+    expect(failureReasonStore.create("One more").name).toBe("One more");
+  });
+
+  it("is a no-op on an already-deleted reason, and throws for unknown or built-in ids", () => {
+    const rec = failureReasonStore.create("Cloudflare");
+    const first = failureReasonStore.remove(rec.id);
+    expect(failureReasonStore.remove(rec.id).updatedAt).toBe(first.updatedAt);
+    expect(() => failureReasonStore.remove("regression")).toThrow(/No such/);
+    expect(() => failureReasonStore.remove("nope")).toThrow(/No such/);
+  });
+
+  it("refuses edits to a deleted reason — re-adding its name is the way back", () => {
+    const rec = failureReasonStore.create("Cloudflare");
+    failureReasonStore.remove(rec.id);
+    expect(() => failureReasonStore.update(rec.id, { disabled: false })).toThrow(/was deleted/);
+    expect(() => failureReasonStore.update(rec.id, { name: "Other" })).toThrow(/was deleted/);
+  });
+
+  it("restores the SAME record when its name is added again, with what was typed now", () => {
+    const rec = failureReasonStore.create("Cloudflare", "Old description.");
+    failureReasonStore.remove(rec.id);
+    const again = failureReasonStore.create("cloudflare", "New description.");
+    expect(again.id).toBe(rec.id);
+    expect(again.name).toBe("cloudflare");
+    expect(again.description).toBe("New description.");
+    expect(again.deleted).toBeUndefined();
+    expect(again.disabled).toBeUndefined();
+    expect(failureReasonStore.list()).toHaveLength(1);
+    const raw = JSON.parse(fs.readFileSync(indexFile, "utf-8")) as Record<string, unknown>[];
+    expect("deleted" in raw[0]).toBe(false);
+    expect("disabled" in raw[0]).toBe(false);
+  });
+
+  it("restoring respects the active cap", () => {
+    const rec = failureReasonStore.create("Cloudflare");
+    failureReasonStore.remove(rec.id);
+    for (let i = 0; i < MAX_ACTIVE_CUSTOM_REASONS; i++) failureReasonStore.create(`Reason ${i}`);
+    expect(() => failureReasonStore.create("Cloudflare")).toThrow(/limited/);
+  });
+
+  it("refuses renaming another reason onto a deleted reason's name", () => {
+    const gone = failureReasonStore.create("Cloudflare");
+    failureReasonStore.remove(gone.id);
+    const other = failureReasonStore.create("Firewall");
+    expect(() => failureReasonStore.update(other.id, { name: "CLOUDFLARE" })).toThrow(
+      /deleted reason named/,
+    );
   });
 });
 

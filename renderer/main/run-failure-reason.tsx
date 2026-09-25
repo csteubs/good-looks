@@ -65,13 +65,13 @@ export function RunFailureReason({ runId }: { runId?: string }) {
   if (!record || record.status !== "failed" || !catalog) return null;
 
   const current = record.failureReasonId;
-  // The picker offers built-ins plus ENABLED customs. A disabled custom that
-  // is the CURRENT value still gets its item — the trigger renders the item
+  // The picker offers built-ins plus ENABLED customs. A disabled or deleted
+  // custom that is the CURRENT value still gets its item — the trigger renders the item
   // list's label for the value, and dropping it would show a blank where the
   // stored label is.
   const options = [
     ...catalog.builtin,
-    ...catalog.custom.filter((c) => !c.disabled || c.id === current),
+    ...catalog.custom.filter((c) => !(c.disabled || c.deleted) || c.id === current),
   ];
   // An id the catalog no longer knows (a store edited by hand, an import from
   // another machine): show the raw id rather than a blank — same honesty rule

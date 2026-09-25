@@ -11,6 +11,44 @@ Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
 
+### 2026-09-25 — A custom failure reason can be deleted, to a tombstone
+
+`failureReasonStore.remove`, the `failureReasons:remove` handler, and a Delete
+button (behind a confirm) on each custom reason in Settings → Failure reasons.
+Disable stays; delete is the second, stronger verb — it also takes the reason
+off the Settings list, which disable deliberately does not.
+
+**The 2026-08-19 entry refused delete for one reason, and that reason still
+holds: runs store the reason's ID and resolve its name at display time, so
+erasing the definition strands every labelled run with a bare uuid.** So a
+delete does not erase. It marks the record `deleted` (always paired with
+`disabled: true`, so every reader that only knows `disabled` — the picker, the
+assignment guard, the active cap — already treats it as gone) and leaves it in
+`failure-reasons.json`. `list()` still returns it, so the run panel, the Stats
+breakdown, the report emitter and the MCP's `list_runs` keep resolving the
+name with no change of their own; only the Settings pane filters it out.
+
+**Snapshotting the name onto each labelled run, then erasing the definition,
+was rejected.** It is a new `RunRecord` field, which reaches the ingest gate,
+the export allowlists and the MCP — and it rewrites run-history.json, which
+the id-not-name design exists to avoid.
+
+**Re-adding a deleted reason's name RESTORES it — same id — rather than
+minting a new one.** Names are unique across the whole file for the reason
+they are unique across disabled reasons: a deleted reason still has a row in
+the Stats breakdown, so a fresh reason with the same name would put two
+identical rows there, splitting one failure mode across two ids. Restoring
+takes the name and description as typed now, like a rename. Renaming another
+reason ONTO a deleted one's name is refused instead (merging two ids' history
+would mean rewriting runs); the message names the way back. A deleted reason
+cannot be edited through `update` for the same reason — re-enabling it there
+would leave a live reason that is missing from Settings.
+
+**The confirm is there because delete has no undo button**, and because the
+dialog is where the one fact a user needs is stated: runs already labelled
+keep the label. It is the app's standard destructive `AlertDialog` (the heals
+and tag deletes use the same one), not a bespoke modal.
+
 ### 2026-09-13 — "Capture a value" asks which element to read
 
 **Four of the kind's six sources could not be added at all.** A `capture` step
