@@ -5,14 +5,15 @@
 // `npm run type-check` a real gate over the TypeScript callers in `main/` and
 // `renderer/`.
 
-/** Hex characters kept from the SHA-256. */
-export declare const DIGEST_HEX_LENGTH: number;
-
-/** The step-list scheme tag. */
-export declare const STEPS_SCHEME: string;
-
-/** The spec-source scheme tag. */
-export declare const SOURCE_SCHEME: string;
+// The reading half lives in run-digest.mjs (no Node builtins, so the renderer
+// can import it); re-exported here so a writer needs one import.
+export {
+  DIGEST_HEX_LENGTH,
+  SOURCE_SCHEME,
+  STEPS_SCHEME,
+  comparableDigests,
+  isRunDigest,
+} from "./run-digest.mjs";
 
 /** Step fields dropped before hashing — element fingerprint, record timestamp
  *  and the derived variable references. See the module header for each. */
@@ -39,13 +40,3 @@ export declare function digestSteps(steps: unknown): string | undefined;
 /** `"x1:<hex>"` for a spec file's source, for tests whose file is the source of
  *  truth. The caller reads the file; this module stays pure. */
 export declare function digestSource(source: unknown): string | undefined;
-
-/** Whether a stored value is a digest this module could have written. */
-export declare function isRunDigest(value: unknown): value is string;
-
-/** What two runs' digests say about each other. The ONE place the scheme rule
- *  lives, so no caller compares an `s1` against an `x1` with `===`. */
-export declare function comparableDigests(
-  a: unknown,
-  b: unknown,
-): "same" | "different" | "unknown";

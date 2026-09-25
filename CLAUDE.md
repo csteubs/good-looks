@@ -237,7 +237,19 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      the wrong reading is the app asserting flake it cannot
                      support. Sixteen hex characters because the only
                      comparison is between two runs of ONE test.
-                     check:mcp-parity §19 pins both writers
+                     check:mcp-parity §19 pins both writers.
+                     run-digest.mjs is its READING half — the length, the
+                     scheme tags, isRunDigest and comparableDigests — split
+                     out (2026-09-25) because the renderer compares digests
+                     and steps-digest.mjs imports `node:crypto`: Vite's dev
+                     server hands a browser a builtin as a stub that throws,
+                     so the preview and the renderer under `npm run dev` died
+                     at load while the production bundle survived only on
+                     tree-shaking. steps-digest.mjs re-exports it for the
+                     writers; the renderer imports run-digest.mjs directly.
+                     check:renderer-builtins walks the renderer's import
+                     graph and fails on ANY Node builtin it reaches, so the
+                     next shared module to grow one is caught at the gate
                      attempt-artifacts.mjs is WHERE ONE ATTEMPT'S EVIDENCE
                      GOES (R24a). Playwright re-runs a failed test from the
                      top and the capture fixture is a `page` fixture, so every

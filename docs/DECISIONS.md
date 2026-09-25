@@ -11,6 +11,44 @@ Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
 
+### 2026-09-25 — The renderer compares run digests without `node:crypto`
+
+`shared/run-digest.mjs` (new), `shared/steps-digest.mjs`, and
+`check:renderer-builtins`. From #325 the browser preview failed at load with
+`Module "node:crypto" has been externalized for browser compatibility`:
+`renderer/lib/run-summary.ts` imported `comparableDigests` from
+`steps-digest.mjs`, which imports `createHash` at the top. The renderer under
+`npm run dev` is served by the same Vite dev server and was affected the same
+way. The packaged app was not — `npm run build` printed the externalization
+warning and tree-shook the hash out, because the renderer never calls it.
+Nothing in the gate failed: `type-check` reads the hand-written `.d.mts`,
+Vitest runs under Node, where the builtin is real, and the build succeeded.
+
+**Split by reader, not by moving one function.** The renderer and the ingest
+gate only ever READ a digest; only the two runners write one. So everything a
+digest's shape depends on — length, scheme tags, the stored pattern,
+`isRunDigest`, `comparableDigests` — moved to `run-digest.mjs`, which has no
+builtins, and `steps-digest.mjs` imports its constants from there. Moving only
+`comparableDigests` would have left the length and the scheme tags defined on
+the writing side and the pattern that validates them on the reading side,
+which is two places to change when a scheme bumps. `steps-digest.mjs`
+re-exports the reading half, so the runners, `check:mcp-parity` §19 and the
+tests needed no change; a unit test pins that both names are one
+implementation.
+
+**Lazy-loading `node:crypto` inside the hash was rejected.** It keeps one file,
+but makes the module async (or reliant on `require`, which plain ESM does not
+have), and leaves "this file is safe for the renderer" as a property of how
+one function happens to be written.
+
+**The guard is an import-graph walk, not a headless preview load.** Loading
+the preview would catch this and more, but it needs a Vite server and a
+browser in the check chain and says only "something threw", not which import
+did it. The walk runs in about a second and fails naming the chain
+(`renderer/lib/run-summary.ts > shared/steps-digest.mjs`, `node:crypto`). Its
+blind spot is anything not reached by a static specifier — a computed
+`import()` — which the renderer does not use.
+
 ### 2026-09-25 — A custom failure reason can be deleted, to a tombstone
 
 `failureReasonStore.remove`, the `failureReasons:remove` handler, and a Delete

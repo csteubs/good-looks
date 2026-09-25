@@ -23,6 +23,7 @@ import {
   SOURCE_SCHEME,
   STEPS_SCHEME,
 } from "../../shared/steps-digest.mjs";
+import * as runDigest from "../../shared/run-digest.mjs";
 
 /** A step, shaped like the ones the recorder writes. */
 function step(over: Record<string, unknown> = {}): Record<string, unknown> {
@@ -228,5 +229,23 @@ describe("comparableDigests", () => {
     expect(comparableDigests(undefined, steps)).toBe("unknown");
     expect(comparableDigests(undefined, undefined)).toBe("unknown");
     expect(comparableDigests(steps, "nonsense")).toBe("unknown");
+  });
+});
+
+describe("the reading half (run-digest.mjs)", () => {
+  // The renderer imports run-digest.mjs; the runners import steps-digest.mjs.
+  // One implementation behind both names, or a digest the app writes could be
+  // read by a different rule than the one it was written against.
+  it("is the SAME implementation steps-digest.mjs re-exports", () => {
+    expect(runDigest.comparableDigests).toBe(comparableDigests);
+    expect(runDigest.isRunDigest).toBe(isRunDigest);
+    expect(runDigest.STEPS_SCHEME).toBe(STEPS_SCHEME);
+    expect(runDigest.SOURCE_SCHEME).toBe(SOURCE_SCHEME);
+  });
+
+  it("recognises what the writing half writes", () => {
+    const written = digestSteps([step()]);
+    expect(runDigest.isRunDigest(written)).toBe(true);
+    expect(runDigest.comparableDigests(written, digestSteps([step()]))).toBe("same");
   });
 });
