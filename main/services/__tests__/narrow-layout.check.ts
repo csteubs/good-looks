@@ -175,7 +175,7 @@ const MEASURED_REQUIREMENT = 928;
   );
 }
 
-// ── 3. Test detail's head: fixed height, controls left-aligned under the name ─
+// ── 3. Test detail's head, now that it is one row ─────────────────────────
 {
   const detail = read("../../../renderer/main/test-detail-view.tsx");
   const screens = read("../../../renderer/theme/screens.css").replace(/\/\*[\s\S]*?\*\//g, "");
@@ -228,58 +228,6 @@ const MEASURED_REQUIREMENT = 928;
     );
   }
 
-  // The identity column takes the whole first line (so the controls always
-  // start a line of their own, under the name) and has a FIXED height that
-  // reserves the crawler-signature warning's line whether or not this test has
-  // a warning. Without the reservation a warning makes one test's head a line
-  // taller than the next test's.
-  if (identRule) {
-    const identBody = identRule[1].replace(/\/\*[\s\S]*?\*\//g, "");
-    assert(
-      /flex:\s*1\s+1\s+100%/.test(identBody),
-      ".gl-detail-ident: takes the whole first line (`flex: 1 1 100%`) — sharing it with the controls made where they sit, and how tall the head is, depend on the window and the test",
-    );
-    assert(
-      /(?:^|[;\s])height:\s*\d+px/.test(identBody),
-      ".gl-detail-ident: has a fixed height that reserves the warning line for every test",
-    );
-  }
-  assert(
-    /className="gl-detail-signature/.test(detail) &&
-      detail.indexOf('className="gl-detail-signature') > detail.indexOf('className="gl-detail-ident"') &&
-      detail.indexOf('className="gl-detail-signature') < detail.indexOf('className="gl-detail-tools"'),
-    "test-detail-view.tsx: the signature warning lives in the identity column, under the URL — not among the controls",
-  );
-
-  // Two lines of controls, neither of which may wrap: a wrapped line is the
-  // height change the fixed height exists to rule out. `Run test` shares the
-  // SECOND line with the toggles it applies to.
-  assert(
-    (detail.match(/className="gl-detail-tools-line"/g) ?? []).length === 2,
-    "test-detail-view.tsx: the controls are exactly two `gl-detail-tools-line` rows",
-  );
-  const secondLine = detail.slice(detail.lastIndexOf('className="gl-detail-tools-line"'));
-  assert(
-    secondLine.indexOf('className="gl-run-options"') >= 0 &&
-      secondLine.indexOf('className="gl-detail-run"') >= 0 &&
-      secondLine.indexOf('className="gl-run-options"') < secondLine.indexOf("</ToolbarActions>"),
-    "test-detail-view.tsx: the second line holds the run toggles and `Run test`",
-  );
-  const lineRule = screens.match(/\.gl-detail-tools-line\s*\{([^}]*)\}/);
-  assert(
-    lineRule !== null && /flex-wrap:\s*nowrap/.test(lineRule[1]),
-    ".gl-detail-tools-line: never wraps",
-  );
-  const optionText = screens.match(/\.gl-run-option-text\s*\{([^}]*)\}/);
-  assert(
-    optionText !== null && /white-space:\s*nowrap/.test(optionText[1]) && /text-overflow:\s*ellipsis/.test(optionText[1]),
-    ".gl-run-option-text: a toggle's label is one line (a wrapped label grows the toggle grid, and the head with it) and clips at an ellipsis rather than painting over its neighbour",
-  );
-  assert(
-    (detail.match(/className="gl-run-option-text"/g) ?? []).length === 5,
-    "test-detail-view.tsx: all five run toggles wrap their words in `gl-run-option-text`",
-  );
-
   // And the controls may not grow into the slack. `flex-grow` here would stretch
   // the group across a wide window and open gaps between its own buttons, which
   // is the shape that made the band look assembled rather than designed.
@@ -290,28 +238,11 @@ const MEASURED_REQUIREMENT = 928;
       /flex:\s*0\s+1\s+auto/.test(toolsRule[1]),
       ".gl-detail-tools: is `flex: 0 1 auto` — it may shrink onto a narrow line but never grow into a wide one",
     );
-    // LEFT-ALIGNED since 2026-09-25, reversing the rule that stood here. The
-    // auto start margin right-aligned the controls, which only looked
-    // deliberate while they filled their line; once the signature warning left
-    // the toolbar they floated right and started under nothing.
-    const toolsBody = toolsRule[1].replace(/\/\*[\s\S]*?\*\//g, "");
     assert(
-      !/margin-inline-start:\s*auto/.test(toolsBody) && /justify-content:\s*flex-start/.test(toolsBody),
-      ".gl-detail-tools: is left-aligned — no auto start margin, `justify-content: flex-start` — so `Edit test` starts under the test's name for every test",
+      /margin-inline-start:\s*auto/.test(toolsRule[1]),
+      ".gl-detail-tools: keeps the auto start margin — on a line of its own there is no identity column to push it right, and without it the controls ragged-left under the name",
     );
-    // FIXED HEIGHT, and the same number twice: `height` alone lets content
-    // taller than it spill, `max-height` alone lets the row be shorter for a
-    // test with less in it. Either way the head is a different size per test.
-    const h = toolsBody.match(/(?:^|[;\s])height:\s*(\d+)px/);
-    const maxH = toolsBody.match(/max-height:\s*(\d+)px/);
-    assert(
-      h !== null && maxH !== null && h[1] === maxH[1],
-      ".gl-detail-tools: pins `height` and `max-height` to the same px value, so the head is one height for every test and run state",
-    );
-    assert(
-      /flex-direction:\s*column/.test(toolsBody),
-      ".gl-detail-tools: stacks its two lines",
-    );  }
+  }
 
   // `Run test` and `Stop` are the same box. They are not the same word — `Stop`
   // is 31px narrower — and with the group right-aligned that difference pulled

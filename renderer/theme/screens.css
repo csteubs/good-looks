@@ -3371,9 +3371,7 @@
  */
 .gl-run-options {
   display: grid;
-  /* Three columns since 2026-09-25, when the toggles got the toolbar's second
-     line to themselves: two rows instead of three, so the line is 40px tall. */
-  grid-template-columns: auto auto auto;
+  grid-template-columns: auto auto;
   column-gap: 12px;
   row-gap: 4px;
 }
@@ -3388,26 +3386,6 @@
   color: var(--gl-tx-2);
   user-select: none;
   cursor: pointer;
-}
-
-/*
- * A run option's words: ONE LINE, never wrapped (2026-09-25).
- *
- * They used to wrap to two lines on a tight toolbar, and each wrap made the
- * control row taller — so the head's height depended on the window AND on the
- * test (an imported test's base-URL field squeezed the grid harder than a
- * recorded test's toolbar did). The toggles now have the second toolbar line
- * to themselves, where the three-column grid fits at this app's minimum window
- * with room to spare, so nothing needs to wrap. The ellipsis is the backstop
- * if a label ever outgrows its column: it clips rather than painting across
- * the neighbouring one, and the `title` and the checkbox's accessible name
- * carry the full wording.
- */
-.gl-run-option-text {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
 /* The test view's tab strip is its OWN band, closed by a hairline. Without
@@ -3631,10 +3609,6 @@
    instead of squeezing the controls beside it. */
 .gl-detail-baseurl {
   cursor: default;
-  /* The label gives up width only as far as its field's floor, never under it:
-     a label squeezed below its own input paints the input over the next
-     control. The field (`.gl-detail-baseurl-input`) is what shrinks. */
-  flex: 0 1 auto;
   min-width: 0;
 }
 
@@ -3695,8 +3669,8 @@
   background: var(--gl-ink);
 }
 
-/* The toolbar band. Not `--gl-strip-h`: this one holds a three-line identity
-   above two lines of controls, so matching the top strip's height would crush it. What it
+/* The toolbar band. Not `--gl-strip-h`: this one holds a two-line identity beside
+   a row of controls, so matching the top strip's height would crush it. What it
    does share is the hairline, so the two read as the same kind of edge.
    Vertical padding is `Toolbar`'s own `py-2` and nothing here adds to one side —
    the band's 8px above and 8px below its content is what makes the controls sit
@@ -3707,19 +3681,22 @@
 }
 
 /*
- * The head: identity on the first line, the controls under it.
+ * The head's single row: identity left, controls right.
  *
- * It still WRAPS, but no longer conditionally (2026-09-25). The identity column
- * takes 100% of the first line, so the controls always start a line of their
- * own at every width. That used to depend on the window: above ~1260px they
- * shared the name's line and the band was half as tall, which meant the head's
- * height, and where the controls sat, changed with the window and with the
- * test. Both parts are now fixed heights; `e2e/detail-head.spec.ts` measures
- * that the head is one height for every test, state and width.
+ * IT WRAPS, AND THE WRAP IS THE NARROW-WINDOW CONTRACT. The controls need about
+ * 800px at their comfortable width and this app's own minimum window leaves the
+ * detail pane 656px, so on a small window they cannot share a line with the name
+ * — the row breaks and they take one of their own, which is the two-line layout
+ * this replaced. Above roughly a 1260px window everything is on one line and the
+ * band halves in height. Neither state is a special case in the markup.
+ *
+ * `row-gap` is 4px rather than the row's own `gap-2`, so the wrapped state lands
+ * on the same two-line rhythm the stacked head had — a wrap that also grows the
+ * gap reads as a different screen rather than the same one at a smaller size.
  */
 .gl-detail-head-row {
   flex-wrap: wrap;
-  row-gap: 8px;
+  row-gap: 4px;
   column-gap: 16px;
 }
 
@@ -3732,21 +3709,8 @@
  * reach zero does not truncate, it vanishes.
  */
 .gl-detail-ident {
-  /* The whole first line, at every width (2026-09-25). It used to be
-     `flex: 1 1 180px` and share the line with the controls on a wide window,
-     which made the head's height, and whether the controls sat right or under
-     the name, a function of the window AND of the test. Taking the line
-     outright puts the controls on their own line, left-aligned, for every test
-     at every width. */
-  flex: 1 1 100%;
+  flex: 1 1 180px;
   min-width: 180px;
-  /* FIXED HEIGHT, with the third line — the crawler-signature warning —
-     RESERVED whether or not this test has one. Name 22px, URL 16px, warning
-     4px + 18px. A head that grows a line for the tests with a warning moves the
-     tab strip, the step list and the run panel down for exactly those tests. */
-  height: 60px;
-  justify-content: flex-start;
-  overflow: hidden;
 }
 
 /*
@@ -3776,59 +3740,27 @@
 }
 
 /*
- * The controls: TWO FIXED LINES, LEFT-ALIGNED (2026-09-25).
+ * The controls. `flex: 0 1 auto` — never grows (a control group stretched across
+ * a wide window is dead space between its own buttons), shrinks when it has to.
  *
- * Line 1 is what the test is and how it runs (Edit test, delete, engine, pace,
- * timeout, and an imported test's base URL); line 2 is the run toggles and
- * `Run test`. It was one line that wrapped its toggle labels as it ran out of
- * room, which made the head's height a function of the window AND of the test,
- * and it was right-aligned with an auto start margin, which only looked
- * deliberate while the controls filled their line — once the signature warning
- * moved out of it, the group floated right and started under nothing.
- *
- * `flex: 0 1 auto` — never grows (a control group stretched across a wide
- * window is dead space between its own buttons), shrinks when it has to.
- *
- * FIXED HEIGHT — `height` and `max-height` both — so the head is the same size
- * for every test in every state (running, imported with its base-URL field,
- * warning or not): line 1 is 30px, the gap 6px, line 2 the two-row toggle grid
- * (2 × 18px + 4px = 40px). Neither line may wrap, which is why the toggle
- * labels are one line and the base-URL field, the one elastic control, has a
- * floor instead of a fixed width. `check:narrow-layout` pins the rules and
- * `e2e/detail-head.spec.ts` measures them in a real browser.
+ * NO `flex-wrap` HERE, deliberately, and it is the opposite choice from
+ * `.gl-visual-head-tools`. That band's items are rigid, so wrapping is the only
+ * way to keep its last control on screen. These are not: the run-options grid
+ * wraps its own labels and the fields carry `min-width: 0`, so the group answers
+ * a narrow line by getting SHORTER rather than TALLER, and `Run test` stays on
+ * the same line as the toggles it applies to. Their minimums add up to about
+ * 550px against the 656px this app's smallest window leaves.
  */
 .gl-detail-tools {
   flex: 0 1 auto;
   min-width: 0;
-  margin-inline-start: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: flex-start;
-  height: 76px;
-  max-height: 76px;
-  gap: 6px;
-}
-
-/* One line of the controls. Never wraps: a wrapped line is the height change
-   this layout exists to rule out. Its clusters keep their natural widths except
-   the base-URL field, which gives up width first. */
-.gl-detail-tools-line {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
+  /* Right-aligned in BOTH states, and the auto margin is what buys the second
+     one. Beside the name the identity column's `flex-grow` already pushes the
+     controls to the edge; on a line of their own there is nothing to push
+     against, and without this they would ragged-left under the name. */
+  margin-inline-start: auto;
+  justify-content: flex-end;
   gap: 10px;
-  max-width: 100%;
-  min-width: 0;
-}
-
-/* The imported-test base URL input: its old fixed `w-52` (208px) is what
-   pushed an imported test's first line past the pane at this app's minimum
-   window. It prefers that width and yields down to a floor that still shows a
-   host. */
-.gl-detail-baseurl-input {
-  flex: 0 1 208px;
-  width: 208px;
-  min-width: 120px;
 }
 
 /* One cluster: controls that answer the same question. The gap inside a cluster
