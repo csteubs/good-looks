@@ -11,6 +11,46 @@ Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
 
+### 2026-09-25 — The test detail head is a fixed height, with its controls left-aligned
+
+Moving the "Signature expired" chip under the test's URL (the entry below)
+shipped a regression that only some tests showed. For a test with a warning, the
+identity column grew a line; and the controls, which the chip had been part of,
+got narrower than their own line and floated right on the auto start margin
+that used to right-align them. A test with no warning looked fine.
+
+**Fixed height, not "usually the same height".** The identity column reserves
+the warning's line for every test (60px), and the controls are two lines that
+never wrap (30px + 6px + 40px = 76px), both pinned with `height` and
+`max-height` together. So the head is one height (161px in the preview) for
+every test, while a test runs, and at every window width from the 960px
+minimum up. Before, it also changed with the window: above ~1260px the controls
+shared the name's line and the band halved.
+
+**Two lines, chosen over one line with truncated labels.** One fixed line was
+tried first and measured: at the minimum window the button and field groups
+take ~660 of the 688px available, which leaves the five toggle labels about
+25px — checkboxes with an ellipsis — and an imported test's `Run test` fell
+off the pane. Two lines put what the test is and how it runs on the first,
+and the toggles (now a three-column grid, two rows) and `Run test` on the
+second, which fits at 960px with every label whole. The cost is ~16px of head
+on a wide window. The user chose it over the truncating line.
+
+**Left-aligned, reversing the 2026-08 rule** that `check:narrow-layout` pinned
+(`margin-inline-start: auto`). That right-alignment was only visibly deliberate
+while the controls filled their line; it is what produced the regression.
+
+**Two guards, because each sees what the other cannot.** `check:narrow-layout`
+§3 pins the rules (no auto margin, equal `height`/`max-height`, identity at
+100% basis with a fixed height, two non-wrapping lines, one-line toggle labels).
+`e2e/detail-head.spec.ts` measures the result in a real browser, since jsdom
+reports every box as zero: it builds the browser preview and compares four
+fixture tests (warning / none / imported with a warning / imported without),
+plus a running state, at 960, 1000, 1280 and 1920px, asserting one head height
+across all of them, the controls starting under the name, nothing outside the
+pane, no control drawn over another and no truncated label. It fails on the
+regressed commit, with the auto margin restored, and without the reserved line.
+
 ### 2026-09-25 — An unusable crawler signature labels the failure, and its warning links to the fix
 
 A new built-in failure reason, **"Credentials Expired/Invalid"** (`credentials`),

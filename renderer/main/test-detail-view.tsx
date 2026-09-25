@@ -1146,13 +1146,13 @@ export function TestDetailView() {
           `check:clickable-chrome` is about exactly that. What changes is what is
           drawn in it. */}
       <Toolbar className="gl-detail-head">
-        {/* ONE ROW: the test's identity on the left, every control on the right.
-            `ToolbarRow` rather than letting `Toolbar`'s own column stack them,
-            because a stacked head spent 94px on two lines that each half-filled
-            their own — the name ran out at a third of the width and the controls
-            sat under an empty gutter. The row wraps (`.gl-detail-head-row`), so
-            a window too narrow to hold both drops the controls to their own line
-            and lands back on exactly the layout this replaced. */}
+        {/* The identity (name, URL, and a reserved line for the crawler-signature
+            warning) on the first line, the controls — two fixed lines of them —
+            under it, left-aligned. Every part is a fixed height, so the head is
+            the same size for every test in every state (2026-09-25; it used to
+            share one wrapping row, which made its height and the controls'
+            position depend on the window and on the test). See
+            `.gl-detail-head-row` / `.gl-detail-tools` in screens.css. */}
         <ToolbarRow className="gl-detail-head-row">
           <ToolbarContent className="gl-detail-ident">
             {editingName ? (
@@ -1219,6 +1219,13 @@ export function TestDetailView() {
             ) : null}
           </ToolbarContent>
           <ToolbarActions className="gl-detail-tools">
+            {/* TWO FIXED LINES (2026-09-25): what the test is and how it runs on
+                the first, the run toggles and `Run test` on the second. One line
+                could not hold readable toggle labels at this app's minimum
+                window, and a line that wraps when it runs out of room makes the
+                head's height depend on the window AND on the test. See
+                `.gl-detail-tools` in screens.css. */}
+            <div className="gl-detail-tools-line">
             {/* WHAT THE TEST IS — the two ways to change it. The delete lives here
                 rather than beside `Run test` on purpose: destructive and primary
                 actions at opposite ends of the same cluster is how a mis-click
@@ -1398,7 +1405,7 @@ export function TestDetailView() {
                   <span className="whitespace-nowrap">Base URL</span>
                   <Input
                     type="url"
-                    className="gl-input w-52"
+                    className="gl-input gl-detail-baseurl-input"
                     value={baseUrlDraft}
                     placeholder="https://example.com"
                     disabled={runInfo?.running}
@@ -1428,8 +1435,9 @@ export function TestDetailView() {
                 </label>
               ) : null}
             </div>
-            <span className="gl-detail-tool-rule" aria-hidden="true" />
-            {/* The run toggles, a compact two-column block. The column-track rule that
+            </div>
+            <div className="gl-detail-tools-line">
+            {/* The run toggles, a compact three-column block. The column-track rule that
                 keeps it from overlapping itself at narrow widths moved into
                 `.gl-run-options` (screens.css) in B5a — the reasoning is written
                 out there, and `check:narrow-layout` reads it from the stylesheet
@@ -1448,7 +1456,9 @@ export function TestDetailView() {
                   disabled={runInfo?.running}
                   aria-label="Run this test headless (no visible browser)"
                 />
-                Run headless
+                <span className="gl-run-option-text" title="Run headless">
+                  Run headless
+                </span>
               </label>
               <label className="gl-run-option">
                 {/* Independent of "Run headless". Headless Chromium renders to an
@@ -1469,7 +1479,9 @@ export function TestDetailView() {
                   disabled={runInfo?.running}
                   aria-label="Capture screenshots on this run"
                 />
-                Capture screenshots
+                <span className="gl-run-option-text" title="Capture screenshots">
+                  Capture screenshots
+                </span>
               </label>
               <label className="gl-run-option">
                 {/* Separate from screenshots on purpose: this writes page console
@@ -1487,7 +1499,9 @@ export function TestDetailView() {
                   disabled={runInfo?.running}
                   aria-label="Record console and network on this run"
                 />
-                Record console &amp; network
+                <span className="gl-run-option-text" title="Record console & network">
+                  Record console &amp; network
+                </span>
               </label>
               <label className="gl-run-option">
                 <Checkbox
@@ -1502,7 +1516,9 @@ export function TestDetailView() {
                   disabled={runInfo?.running}
                   aria-label="Check accessibility on this run"
                 />
-                Check accessibility
+                <span className="gl-run-option-text" title="Check accessibility">
+                  Check accessibility
+                </span>
               </label>
               <label className="gl-run-option">
                 {/* The runner reads this off the RECORD, exactly as it reads
@@ -1523,7 +1539,9 @@ export function TestDetailView() {
                   disabled={runInfo?.running}
                   aria-label="Handle pop-ups on this run"
                 />
-                Handle pop-ups
+                <span className="gl-run-option-text" title="Handle pop-ups">
+                  Handle pop-ups
+                </span>
               </label>
             </div>
             <span className="gl-detail-tool-rule" aria-hidden="true" />
@@ -1546,6 +1564,7 @@ export function TestDetailView() {
                 Run test
               </Btn>
             )}
+            </div>
           </ToolbarActions>
         </ToolbarRow>
       </Toolbar>
