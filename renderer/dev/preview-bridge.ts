@@ -1909,7 +1909,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
         {
           id: "sig-gone",
           // Deliberately the host `t-checkout` navigates to, so the expired
-          // chip on the test detail toolbar is reachable in a tab. A fixture
+          // chip under the test detail URL is reachable in a tab. A fixture
           // set whose hosts match nothing in the library would render the
           // settings row and leave the other half of the feature invisible.
           host: "shop.example.com",

@@ -361,6 +361,13 @@ function ensureSettleFixture(scriptsDir: string): void {
  *
  * Emitted through `emitOutput(runId, "system", …)`, the same surface that
  * already carries "Crawl: page-settling is skipped for imported tests".
+ *
+ * Answers the one fact the run-end failure-reason pass needs from here: the
+ * run went out unsigned BECAUSE the credential registered for its host was
+ * unusable (`"expired"` / `"unreadable"`), so a failure is filed under
+ * "Credentials Expired/Invalid" rather than under the symptom. Null for every
+ * other case — including an imported test, which never sends a signature
+ * however healthy it is, so its expiry is not what made the difference.
  */
 async function announceSignatureState(args: {
   runId: string;
@@ -368,7 +375,7 @@ async function announceSignatureState(args: {
   originEntry: ShopifySignatureEntry | null;
   entries: readonly ShopifySignatureEntry[];
   imported: boolean;
-}): Promise<void> {
+}): Promise<"expired" | "unreadable" | null> {
   const { runId, testHost, originEntry, entries, imported } = args;
   const say = (text: string): void => emitOutput(runId, "system", `${text}\n`);
 
@@ -376,7 +383,7 @@ async function announceSignatureState(args: {
     // The positive case gets a line too. "It is being sent" and "it silently is
     // not" are otherwise indistinguishable until the store starts refusing.
     say(`Sending the Shopify crawler signature for ${originEntry.host} on this run.`);
-    return;
+    return null;
   }
 
   // Everything below is a run that will NOT present a signature. Reading the
@@ -386,9 +393,9 @@ async function announceSignatureState(args: {
   try {
     statuses = await shopifySignatureStore.list();
   } catch {
-    return;
+    return null;
   }
-  if (statuses.length === 0) return;
+  if (statuses.length === 0) return null;
 
   const forHost = testHost ? statuses.find((entry) => entry.host === testHost) : undefined;
 
@@ -397,7 +404,7 @@ async function announceSignatureState(args: {
       `A Shopify crawler signature is registered for ${forHost.host} but couldn't be decrypted on ` +
         "this Mac, so it wasn't sent.",
     );
-    return;
+    return imported ? null : "unreadable";
   }
 
   if (forHost?.state === "expired") {
@@ -412,7 +419,7 @@ async function announceSignatureState(args: {
         "none. Shopify signatures last at most three months and can't be renewed; create a new one " +
         "in your Shopify admin.",
     );
-    return;
+    return imported ? null : "expired";
   }
 
   if (imported) {
@@ -427,7 +434,7 @@ async function announceSignatureState(args: {
           "import @playwright/test directly.",
       );
     }
-    return;
+    return null;
   }
 
   if (!forHost && testHost && entries.length > 0) {
@@ -440,6 +447,7 @@ async function announceSignatureState(args: {
         "can't be used for another.",
     );
   }
+  return null;
 }
 
 // Write the Shopify crawler-signature fixture. Unconditional for the same
@@ -1372,6 +1380,10 @@ export const playwrightRunner = {
       let aiCheckDir = "";
       let healDir = "";
       let healMapPath = "";
+      // Set inside the try when the run goes out unsigned because the
+      // credential for its host was unusable; read at run end so the failure
+      // is filed under "Credentials Expired/Invalid" (see announceSignatureState).
+      let unusableSignature: "expired" | "unreadable" | null = null;
       let healApplyMode: HealApplyMode = "suggest";
       // The budget this run actually got. Hoisted so the RunRecord can carry
       // it: read back from the TestRecord later it would be the CURRENT value,
@@ -1601,7 +1613,7 @@ export const playwrightRunner = {
         // opener. An imported spec that manages its own popups means `page`
         // as the opener from then on, and following would break it.
         const followTabs = !rec.sourceDir;
-        await announceSignatureState({
+        unusableSignature = await announceSignatureState({
           runId,
           testHost,
           originEntry,
@@ -2282,6 +2294,7 @@ export const playwrightRunner = {
               const suggestion = suggestFailureReason(
                 metricsStore.triage(recordId),
                 firstErrorLine(stripAnsi(logText)),
+                { signature: unusableSignature },
               );
               if (suggestion) {
                 runHistoryStore.setFailureReason(

@@ -34,11 +34,20 @@ export interface FailureReasonSuggestion {
   /** Always a built-in id — the mapper cannot read a custom definition. */
   reasonId: string;
   /** The triage signal that argued for it ("network-error" for the
-   *  error-line rule), stored with the assignment as its evidence. */
+   *  error-line rule, "signature-expired" / "signature-unreadable" for the
+   *  credential rule), stored with the assignment as its evidence. */
   signal: string;
+}
+
+/** What the caller knows about the run that is not on the record. */
+export interface FailureReasonContext {
+  /** The Shopify crawler signature for the test's host, when the run could
+   *  not send it because the stored credential was unusable. */
+  signature?: "expired" | "unreadable" | null;
 }
 
 export declare function suggestFailureReason(
   triage: Pick<TriageResult, "evidence"> | null | undefined,
   errorLine?: string,
+  context?: FailureReasonContext,
 ): FailureReasonSuggestion | null;

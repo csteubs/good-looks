@@ -11,6 +11,49 @@ Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
 
+### 2026-09-25 — An unusable crawler signature labels the failure, and its warning links to the fix
+
+A new built-in failure reason, **"Credentials Expired/Invalid"** (`credentials`),
+assigned automatically when a failed run went out unsigned because the Shopify
+crawler signature registered for the test's host was expired or could not be
+decrypted. And the "Signature expired" chip on the test detail view moved from
+the run controls to under the test's URL, as a button that opens Settings →
+Integrations.
+
+**Why the signature state is context, not evidence.** A store turning away an
+unsigned crawler does not fail the run with anything that names the signature:
+it fails "somewhere further down", as a timeout, a missing element or a
+challenge page over the target (`announceSignatureState`'s own header says
+so). Triage would file every one of those under the SYMPTOM — Timing, Target
+not actionable, Site regression — which sends the reader to the wrong fix.
+Only the app's runner knows the run went out unsigned for this reason, at the
+moment it decides not to sign, so `announceSignatureState` now answers the
+state and the run-end pass hands it to `suggestFailureReason` as a third
+argument. Nothing new is stored on `RunRecord`: a field there reaches the
+ingest gate, the export allowlists and the MCP, and the MCP/CLI runner never
+signs, so it would only ever be absent on that side.
+
+**Order: after network, before everything else.** A run that never reached the
+site was not refused for its credentials, so a connect-level error line still
+wins. Everything after that is a symptom the missing signature can cause.
+
+**Expired AND unreadable.** Both mean the stored credential is unusable and the
+run went out unsigned; the name's "Invalid" half is the unreadable case. An
+imported test is excluded — it never sends a signature however healthy one is,
+so an expired one is not what made the difference.
+
+**This attributes, it does not prove.** A run with an expired signature can fail
+for an unrelated reason and still be labelled Credentials. Accepted: the label
+is automatic only into a blank, a person's pick always wins, and the auto tag
+says the label is unreviewed. A store that is going to refuse the crawler
+makes every other explanation moot until the credential is replaced.
+
+**The chip moved because of what it describes.** Among Pace, Timeout and the run
+toggles it read as a run setting; it is a fact about the site the URL names.
+It is a button because the fix is never on this screen, and its explanation is
+on the theme's `Hint` rather than a native `title`, which macOS under the
+pinned Electron rarely shows.
+
 ### 2026-09-25 — The renderer compares run digests without `node:crypto`
 
 `shared/run-digest.mjs` (new), `shared/steps-digest.mjs`, and

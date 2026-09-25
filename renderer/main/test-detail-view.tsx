@@ -33,7 +33,7 @@ import {
 } from "@ui";
 import { ChevronDown, Pencil, TriangleAlert, Trash2 } from "lucide-react";
 
-import { Btn } from "../theme";
+import { Btn, Hint } from "../theme";
 import { api } from "../lib/api";
 import { normalizeSignatureHost } from "../../shared/shopify-signature.mjs";
 import { useRecorder } from "./recorder-store";
@@ -1199,6 +1199,24 @@ export function TestDetailView() {
               </span>
             ) : null}
             <ToolbarDescription>{test.url}</ToolbarDescription>
+            {/* Under the URL rather than among the run controls: it is a fact
+                about the SITE this test points at (its store's credential), and
+                it reads as the address's own caption. A button, because the fix
+                is never on this screen — the signature is replaced in Settings →
+                Integrations, so the warning is also the way there. */}
+            {signatureWarning ? (
+              <Hint text={`${signatureWarning.title} Click to open Settings → Integrations.`}>
+                <button
+                  type="button"
+                  className="gl-detail-signature no-drag"
+                  onClick={() =>
+                    void navigate({ to: "/settings/$pane", params: { pane: "integrations" } })
+                  }
+                >
+                  <Status variant="error">{signatureWarning.text}</Status>
+                </button>
+              </Hint>
+            ) : null}
           </ToolbarContent>
           <ToolbarActions className="gl-detail-tools">
             {/* WHAT THE TEST IS — the two ways to change it. The delete lives here
@@ -1408,11 +1426,6 @@ export function TestDetailView() {
                     }}
                   />
                 </label>
-              ) : null}
-              {signatureWarning ? (
-                <span title={signatureWarning.title}>
-                  <Status variant="error">{signatureWarning.text}</Status>
-                </span>
               ) : null}
             </div>
             <span className="gl-detail-tool-rule" aria-hidden="true" />

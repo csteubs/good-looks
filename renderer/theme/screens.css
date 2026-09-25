@@ -3714,6 +3714,32 @@
 }
 
 /*
+ * The crawler-signature warning, under the test's URL. A bare button around
+ * the status chip: no button chrome (it is a caption, not a control cluster),
+ * shrink-wrapped to the chip so the clickable area is the words and not the
+ * identity column's whole width, and the text underlines on hover and focus to
+ * say it goes somewhere — the Integrations pane, where the signature lives.
+ */
+.gl-detail-signature {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+}
+.gl-detail-signature:hover,
+.gl-detail-signature:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.gl-detail-signature:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 2px;
+}
+
+/*
  * The controls. `flex: 0 1 auto` — never grows (a control group stretched across
  * a wide window is dead space between its own buttons), shrinks when it has to.
  *

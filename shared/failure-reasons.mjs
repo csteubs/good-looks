@@ -69,6 +69,12 @@ export const DEFAULT_FAILURE_REASONS = [
       "The element was there but could not be acted on — covered, hidden, disabled, or still moving. If the overlay is by design, the click step's kebab offers Ignore Actionability (force).",
   },
   {
+    id: "credentials",
+    name: "Credentials Expired/Invalid",
+    description:
+      "The site's Shopify crawler signature had expired or could not be decrypted, so the run went out unsigned. Replace it in Settings → Integrations.",
+  },
+  {
     id: "other",
     name: "Other issue",
     description: "Anything the reasons above don't cover.",
@@ -146,6 +152,13 @@ const SIGNAL_REASON = {
   "capture-only": "environment",
 };
 
+/** The crawler-signature states that mean this run went out UNSIGNED because
+ *  the stored credential was unusable, and the signal each is stored under. */
+const CREDENTIAL_SIGNALS = {
+  expired: "signature-expired",
+  unreadable: "signature-unreadable",
+};
+
 /**
  * Suggest a built-in reason for one failed run, or nothing.
  *
@@ -155,14 +168,32 @@ const SIGNAL_REASON = {
  * app's side, the stored error signature on the MCP's — the network patterns
  * survive signature normalization, which strips digits and paths, not words).
  *
+ * `context.signature` is the state of the Shopify crawler signature registered
+ * for the test's host, when the run could not send it: `"expired"` or
+ * `"unreadable"`. Only the app's runner knows it (it is the process that signs;
+ * the MCP/CLI runner never does), so it is context the caller hands in rather
+ * than evidence on the record. It is checked AFTER the network rule — a run
+ * that never reached the site was not turned away for its credentials — and
+ * BEFORE everything else, because a store refusing an unsigned crawler fails
+ * the run "somewhere further down" (a timeout, a missing element, a challenge
+ * page covering the target), and every one of those would otherwise be filed
+ * under a triage signal that describes the symptom, not the cause.
+ *
  * Returns `{ reasonId, signal }` — the signal is stored with an automatic
  * assignment so the label carries its own evidence — or null when nothing
  * points anywhere. Null is deliberate and load-bearing: an uncategorized
  * failure invites a human answer, while a guessed one looks answered.
  */
-export function suggestFailureReason(triage, errorLine = "") {
+export function suggestFailureReason(triage, errorLine = "", context = {}) {
   if (NETWORK_FAILURE.test(errorLine)) {
     return { reasonId: "network", signal: "network-error" };
+  }
+  const credentialSignal =
+    context && typeof context.signature === "string"
+      ? CREDENTIAL_SIGNALS[context.signature]
+      : undefined;
+  if (credentialSignal) {
+    return { reasonId: "credentials", signal: credentialSignal };
   }
   if (ACTIONABILITY_FAILURE.test(errorLine)) {
     return { reasonId: "not-actionable", signal: "actionability-error" };

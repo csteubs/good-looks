@@ -132,8 +132,9 @@ vi.mock("./recorder-store", () => ({
   },
 }));
 
+const { navigateSpy } = vi.hoisted(() => ({ navigateSpy: vi.fn() }));
 vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => vi.fn(),
+  useNavigate: () => navigateSpy,
   useParams: () => ({ id: routeId }),
 }));
 
@@ -1436,9 +1437,34 @@ describe("the Shopify signature chip", () => {
     signatures = [sig({ state: "expired", expiresAt: NOW_S - DAY_S })];
     renderView();
     await waitFor(() => expect(screen.getByText("Signature expired")).toBeTruthy());
-    expect(screen.getByText("Signature expired").closest("[title]")?.getAttribute("title")).toMatch(
-      /worse than sending none/,
-    );
+    // The explanation is a Hint, not a native title (macOS rarely shows one);
+    // focus is the path jsdom can drive, and the keyboard one.
+    const chip = screen.getByRole("button", { name: /signature expired/i });
+    expect(chip.getAttribute("title")).toBeNull();
+    fireEvent.focus(chip);
+    expect((await screen.findAllByText(/worse than sending none/)).length).toBeGreaterThan(0);
+  });
+
+  it("puts the warning under the test's URL, not among the run controls", async () => {
+    signatures = [sig({ state: "expired", expiresAt: NOW_S - DAY_S })];
+    const { container } = renderView();
+    const chip = await screen.findByRole("button", { name: /signature expired/i });
+    expect(chip.closest(".gl-detail-ident")).toBeTruthy();
+    expect(chip.closest(".gl-detail-tools")).toBeNull();
+    // Directly after the URL line, so it reads as the address's caption.
+    const url = container.querySelector(".gl-detail-ident p");
+    expect(url?.nextElementSibling).toBe(chip);
+  });
+
+  it("opens Settings → Integrations, where the signature is replaced", async () => {
+    signatures = [sig({ state: "expired", expiresAt: NOW_S - DAY_S })];
+    renderView();
+    navigateSpy.mockClear();
+    fireEvent.click(await screen.findByRole("button", { name: /signature expired/i }));
+    expect(navigateSpy).toHaveBeenCalledWith({
+      to: "/settings/$pane",
+      params: { pane: "integrations" },
+    });
   });
 
   it("warns when the signature cannot be decrypted on this Mac", async () => {

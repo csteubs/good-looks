@@ -158,3 +158,51 @@ describe("the not-actionable reason", () => {
     expect(resolveFailureReason("not-actionable")?.name).toBe("Target not actionable");
   });
 });
+
+describe("the credentials reason", () => {
+  it("files a run that went out unsigned for an expired or unreadable signature", () => {
+    expect(suggestFailureReason(null, "", { signature: "expired" })).toEqual({
+      reasonId: "credentials",
+      signal: "signature-expired",
+    });
+    expect(suggestFailureReason(null, "", { signature: "unreadable" })).toEqual({
+      reasonId: "credentials",
+      signal: "signature-unreadable",
+    });
+  });
+
+  it("outranks the symptom triage and the error line would have named", () => {
+    // What an unsigned run turned away by the store looks like: a timeout, or a
+    // challenge page covering the target.
+    expect(
+      suggestFailureReason(triageWith("timeout-budget"), "Timeout 30000ms exceeded", {
+        signature: "expired",
+      })?.reasonId,
+    ).toBe("credentials");
+    expect(
+      suggestFailureReason(null, "<div id=challenge> intercepts pointer events", {
+        signature: "expired",
+      })?.reasonId,
+    ).toBe("credentials");
+  });
+
+  it("does not outrank a run that never reached the site", () => {
+    expect(
+      suggestFailureReason(null, "Error: page.goto: net::ERR_NAME_NOT_RESOLVED at https://x/", {
+        signature: "expired",
+      })?.reasonId,
+    ).toBe("network");
+  });
+
+  it("changes nothing without a signature problem — the old mapping stands", () => {
+    expect(suggestFailureReason(triageWith("server-error"), "", {})?.reasonId).toBe("regression");
+    expect(suggestFailureReason(triageWith("server-error"), "", { signature: null })?.reasonId).toBe(
+      "regression",
+    );
+    expect(suggestFailureReason(null, "", { signature: "valid" as never })).toBeNull();
+  });
+
+  it("resolves by the name it was asked for", () => {
+    expect(resolveFailureReason("credentials")?.name).toBe("Credentials Expired/Invalid");
+  });
+});
