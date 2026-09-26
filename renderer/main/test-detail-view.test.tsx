@@ -541,25 +541,22 @@ describe("run controls", () => {
     }
   });
 
-  it("stacks the run toggles as one two-column block", async () => {
+  it("keeps all five run toggles inside the one Options panel", async () => {
     renderView();
     await screen.findByText("Checkout");
-    const block = screen
-      .getByLabelText(/run this test headless/i)
-      .closest(".gl-run-options") as HTMLElement | null;
+    const panel = document.getElementById("run-options-panel");
+    expect(panel).not.toBeNull();
+    const block = panel!.querySelector(".gl-run-options") as HTMLElement | null;
     expect(block).not.toBeNull();
-    // The TRACK SIZING moved into `.gl-run-options` (screens.css) in B5a, and
-    // `check:narrow-layout` reads it from the stylesheet — it has to, because
-    // the dom project runs with `css: false` and there is no computed grid
-    // geometry here to measure. What this test still owns is the other half,
-    // which the stylesheet cannot answer: that all four toggles are actually
-    // INSIDE the block. A checkbox that escapes the grid breaks the
-    // gang-of-four layout while every CSS assertion stays green.
-    expect(block!.className).not.toContain("grid-cols-2");
-    // Every toggle lives in the same block — a checkbox that escapes the grid
-    // silently breaks the layout without failing anything. Handle pop-ups is
-    // the fifth, and the one most likely to have been bolted on outside.
+    // The TRACK SIZING lives in `.gl-run-options` (screens.css) and
+    // `check:narrow-layout` reads it from the stylesheet — the dom project runs
+    // with `css: false`, so there is no computed geometry here. What this test
+    // owns is the half the stylesheet cannot answer: that every toggle is
+    // INSIDE the panel. A checkbox that escapes it lands back on the toolbar
+    // row and pushes the head onto two lines while every CSS assertion stays
+    // green. Handle pop-ups is the one most likely to be bolted on outside.
     for (const label of [
+      /run this test headless/i,
       /capture screenshots on this run/i,
       /record console and network/i,
       /check accessibility/i,
@@ -567,6 +564,46 @@ describe("run controls", () => {
     ]) {
       expect(block!.contains(screen.getByLabelText(label))).toBe(true);
     }
+  });
+
+  it("opens the Options panel from its trigger, counts what is on, and closes on Escape and outside press", async () => {
+    renderView();
+    await screen.findByText("Checkout");
+    const panel = document.getElementById("run-options-panel") as HTMLElement;
+    const trigger = screen.getByRole("button", { name: /^options · \d+$/i });
+    // Closed by default: the toolbar is one row only while the toggles are not
+    // on it.
+    expect(panel.hidden).toBe(true);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(trigger.getAttribute("aria-controls")).toBe("run-options-panel");
+
+    // The count is the number of boxes actually checked, so a closed panel
+    // still says how much this run will do.
+    const checked = () =>
+      panel.querySelectorAll('[role="checkbox"][aria-checked="true"]').length;
+    expect(trigger.textContent).toContain(`Options · ${checked()}`);
+    const before = checked();
+    fireEvent.click(screen.getByLabelText(/run this test headless/i));
+    await waitFor(() => expect(checked()).not.toBe(before));
+    expect(trigger.textContent).toContain(`Options · ${checked()}`);
+
+    fireEvent.click(trigger);
+    expect(panel.hidden).toBe(false);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+
+    // Pressing inside the panel keeps it open — toggling three boxes is one
+    // visit, not three.
+    fireEvent.pointerDown(screen.getByLabelText(/check accessibility/i));
+    expect(panel.hidden).toBe(false);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(panel.hidden).toBe(true);
+    expect(document.activeElement).toBe(trigger);
+
+    fireEvent.click(trigger);
+    expect(panel.hidden).toBe(false);
+    fireEvent.pointerDown(document.body);
+    expect(panel.hidden).toBe(true);
   });
 });
 

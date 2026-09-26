@@ -54,7 +54,7 @@ export function VisualDashboard({
     return (
       <Panel title="By state">
         <p className="gl-panel-note">
-          No test has been captured yet. Switch on “Capture screenshots” beside Run test, then run a
+          No test has been captured yet. Switch on “Capture screenshots” in Options, beside Run test, then run a
           test.
         </p>
       </Panel>

@@ -233,7 +233,7 @@ export function A11yPanel({ test }: { test: TestRecord }) {
         description={
           test.a11yChecks
             ? "This test checks accessibility, but hasn’t been run since that was turned on. Run it and the results appear here."
-            : "Switch on “Check accessibility” beside Run test, then run this test. Results appear here."
+            : "Switch on “Check accessibility” in Options, beside Run test, then run this test. Results appear here."
         }
       />
     );

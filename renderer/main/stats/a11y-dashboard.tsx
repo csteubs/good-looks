@@ -84,8 +84,8 @@ export function A11yDashboard({
     return (
       <Panel title="By severity">
         <p className="gl-panel-note">
-          No run has completed an accessibility check yet. Switch on “Check accessibility” beside
-          Run test, then run a test.
+          No run has completed an accessibility check yet. Switch on “Check accessibility” in
+          Options, beside Run test, then run a test.
         </p>
       </Panel>
     );

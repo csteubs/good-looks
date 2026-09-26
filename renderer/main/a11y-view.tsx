@@ -302,7 +302,7 @@ export function TriagePane({
           </span>
           <span className="gl-empty-note">
             {rollup.checkedRuns === 0
-              ? "Switch on “Check accessibility” beside Run test, then run a test. Findings across the whole suite land here."
+              ? "Switch on “Check accessibility” in Options, beside Run test, then run a test. Findings across the whole suite land here."
               : "Every issue axe found on the latest checked runs is in the accepted baseline."}
           </span>
         </div>

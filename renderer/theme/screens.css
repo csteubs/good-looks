@@ -3371,9 +3371,46 @@
  */
 .gl-run-options {
   display: grid;
-  grid-template-columns: auto auto;
+  /* One column since 2026-09-26: the toggles moved into the Options popover
+     (`.gl-run-options-panel`), where a list reads top to bottom and width is
+     no longer the toolbar's to spend. Still `auto`, never `1fr` — the history
+     above is why. */
+  grid-template-columns: auto;
   column-gap: 12px;
-  row-gap: 4px;
+  row-gap: 6px;
+}
+
+/* The Options button and the popover it opens. The button is the toolbar's
+   only view of the five toggles, so its label counts the ones that are on
+   ("Options · 4"); the panel opens UNDER the button, anchored to its trailing
+   edge so it never runs past the pane's right side, and over the tab strip
+   rather than pushing it down — opening it must not move the screen. */
+.gl-run-options-root {
+  position: relative;
+  flex: 0 0 auto;
+}
+.gl-run-options-trigger {
+  white-space: nowrap;
+}
+.gl-run-options-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  inset-inline-end: 0;
+  z-index: var(--gl-z-menu);
+  padding: 10px 12px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+  /* Sized by its longest label, never by the trigger above it — an absolutely
+     positioned box otherwise shrinks to fit and wraps "Record console &
+     network" over three lines. */
+  width: max-content;
+}
+.gl-run-options-panel[hidden] {
+  display: none;
+}
+.gl-run-options-panel .gl-run-option {
+  white-space: nowrap;
 }
 
 .gl-run-option {
@@ -3606,7 +3643,9 @@
    URL that is cut off mid-host cannot be checked at a glance, and this is the
    field the user is sent to when a run refuses. It stays on the toolbar's own
    wrap rules — `.gl-run-option` — so a narrow window moves it to the next line
-   instead of squeezing the controls beside it. */
+   instead of squeezing the controls beside it. 144px (`w-36`) since
+   2026-09-26: at 208px an imported test's head could not stay on one line in
+   a full-width 1440px window, and 144px still shows a typical host whole. */
 .gl-detail-baseurl {
   cursor: default;
   min-width: 0;
@@ -3624,12 +3663,14 @@
  * Without them the flex algorithm takes its shrink out of every shrinkable item
  * in proportion, and the small ones lose first in relative terms: at this app's
  * minimum window the engine trigger fell to 61px, which renders "Chromium" as
- * "Chro…" — a control reporting a value it cannot show. The floors move that
- * shrink onto `.gl-run-options`, which is the one item here designed to absorb
- * it (it wraps its labels and gets taller, and nothing it says is lost).
+ * "Chro…" — a control reporting a value it cannot show. The floors keep the
+ * fields readable and leave the rest of the squeeze to the identity column
+ * (which truncates the name) and to the row's wrap.
  *
  * 92px is what the trigger measured at before the head became one row, so a
- * narrow window lands on the same reading it always had.
+ * narrow window lands on the same reading it always had. Its resting width is
+ * 96px (`w-24`) since 2026-09-26 — 16px back to the one-line head — and the
+ * pace select's 88px, both just above their floors.
  */
 .gl-detail-engine {
   min-width: 92px;
@@ -3773,7 +3814,7 @@
      against, and without this they would ragged-left under the name. */
   margin-inline-start: auto;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
 }
 
 /* One cluster: controls that answer the same question. The gap inside a cluster

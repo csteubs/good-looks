@@ -11,6 +11,44 @@ Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
 
+### 2026-09-26 — The test detail view's run toggles moved into an Options menu
+
+The five run toggles (Run headless, Capture screenshots, Record console &
+network, Check accessibility, Handle pop-ups) left the toolbar for a popover
+behind one **"Options · N"** button, N being how many are on. The toolbar is
+now one line: Edit test and delete, then engine, pace and timeout (and the base
+URL for an imported test), then Options, then Run test.
+
+**Why.** The toggles were a two-column, three-row grid — the widest and the
+tallest item on the band. With it there the controls could not share a line
+with the test's name at any ordinary window size, so the head wrapped and the
+tab strip sat at a different height depending on which test was open. The
+grid was the one item that did not need to be on screen: the toggles are set
+once per test and rarely touched, and the count on the button still says how
+much a run will do without opening anything.
+
+**What else gave.** Removing the grid bought most of the width; the rest came
+from the fields — the engine trigger 112 → 96px and the pace select 96 → 88px
+(both above their floors), the base URL field 208 → 144px, and the gap between
+clusters 10 → 8px. Measured in the browser preview with a 240px sidebar: one
+line from a 1280px window for a recorded test and from 1440px for an imported
+one, which is the size the app is used at.
+
+**Shape of the popover.** `hidden`, not unmounted, while closed: the checkbox
+state seeds from the record on load, and a toggle must not depend on the
+panel having been opened. Out of flow (absolute, under the button's trailing
+edge) so opening it overlays the tab strip instead of growing the head —
+`check:narrow-layout` pins both. Outside press and Escape close it, the
+theme `Menu`'s rules. It is not a `Menu` because the rows are checkboxes that
+stay open while several are toggled, and not the native `Select`, whose
+options never reach the DOM.
+
+**Rejected.** Shortening the labels to nouns (2026-08-17 already refused this:
+empty states across the app name these exact strings) — they now say where
+the strings live instead, "in Options, beside Run test". And moving the base
+URL into the popover: it is the field a refused run sends the user to, so it
+stays visible.
+
 ### 2026-09-25 — An unusable crawler signature labels the failure, and its warning links to the fix
 
 A new built-in failure reason, **"Credentials Expired/Invalid"** (`credentials`),
