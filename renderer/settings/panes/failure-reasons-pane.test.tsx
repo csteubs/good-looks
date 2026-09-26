@@ -2,12 +2,13 @@
 //
 // The properties pinned here are the store's rules as the pane exposes them:
 // rename goes through `update` on the SAME id (a rename that created a new
-// reason would orphan every labelled run), disable is offered instead of
-// delete, built-ins render with no edit affordance, and the automatic-pass
+// reason would orphan every labelled run), delete goes through a confirm that
+// says the labelled runs keep their label and hides a deleted reason from the
+// list, built-ins render with no edit affordance, and the automatic-pass
 // switch writes the one settings key it owns.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 import { renderPane, savedPatch } from "../__tests__/harness";
 import { FailureReasonsPane } from "./failure-reasons-pane";
@@ -36,6 +37,15 @@ const { reasonsApi } = vi.hoisted(() => ({
       createdAt: 1,
       updatedAt: 2,
       ...patch,
+    })),
+    remove: vi.fn(async (id: string) => ({
+      id,
+      name: "x",
+      description: "",
+      disabled: true,
+      deleted: true,
+      createdAt: 1,
+      updatedAt: 2,
     })),
   },
 }));
@@ -113,7 +123,7 @@ describe("custom reasons", () => {
     );
   });
 
-  it("offers disable — never delete — and enable back", async () => {
+  it("offers disable and enable back", async () => {
     withCustom([
       { id: "c1", name: "Vendor outage", description: "", createdAt: 1, updatedAt: 1 },
       {
@@ -126,7 +136,6 @@ describe("custom reasons", () => {
       },
     ]);
     renderPane(<FailureReasonsPane />);
-    expect(screen.queryByRole("button", { name: /delete|remove/i })).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: /disable vendor outage/i }));
     await waitFor(() =>
       expect(reasonsApi.update).toHaveBeenCalledWith("c1", { disabled: true }),
@@ -135,5 +144,66 @@ describe("custom reasons", () => {
     await waitFor(() =>
       expect(reasonsApi.update).toHaveBeenCalledWith("c2", { disabled: false }),
     );
+  });
+
+  it("deletes only after a confirm that says the labelled runs keep their label", async () => {
+    withCustom([
+      { id: "c1", name: "Cloudflare", description: "", createdAt: 1, updatedAt: 1 },
+    ]);
+    renderPane(<FailureReasonsPane />);
+    fireEvent.click(await screen.findByRole("button", { name: /delete cloudflare/i }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText(/delete “cloudflare”\?/i)).toBeTruthy();
+    expect(within(dialog).getByText(/runs already labelled with it keep the label/i)).toBeTruthy();
+    // Opening the dialog alone must not delete anything.
+    expect(reasonsApi.remove).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: /delete reason/i }));
+    await waitFor(() => expect(reasonsApi.remove).toHaveBeenCalledWith("c1"));
+  });
+
+  it("cancelling the confirm deletes nothing", async () => {
+    withCustom([
+      { id: "c1", name: "Cloudflare", description: "", createdAt: 1, updatedAt: 1 },
+    ]);
+    renderPane(<FailureReasonsPane />);
+    fireEvent.click(await screen.findByRole("button", { name: /delete cloudflare/i }));
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /cancel/i }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(reasonsApi.remove).not.toHaveBeenCalled();
+  });
+
+  it("offers delete on a disabled reason too", async () => {
+    withCustom([
+      {
+        id: "c2",
+        name: "Old reason",
+        description: "",
+        disabled: true,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]);
+    renderPane(<FailureReasonsPane />);
+    expect(await screen.findByRole("button", { name: /delete old reason/i })).toBeTruthy();
+  });
+
+  it("does not list a deleted reason — the catalog keeps it only for history", async () => {
+    withCustom([
+      { id: "c1", name: "Vendor outage", description: "", createdAt: 1, updatedAt: 1 },
+      {
+        id: "c3",
+        name: "Cloudflare",
+        description: "",
+        disabled: true,
+        deleted: true,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]);
+    renderPane(<FailureReasonsPane />);
+    expect(await screen.findByText("Vendor outage")).toBeTruthy();
+    expect(screen.queryByText("Cloudflare")).toBeNull();
+    expect(screen.queryByRole("button", { name: /cloudflare/i })).toBeNull();
   });
 });

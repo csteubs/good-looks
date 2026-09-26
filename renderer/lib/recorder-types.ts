@@ -1163,7 +1163,7 @@ export interface RunRecord {
    *  panel's picker. A user assignment is never overwritten by an auto one. */
   failureReasonBy?: "user" | "auto";
   /** WHAT THIS RUN EXECUTED, as `<scheme>:<hex>` (mirrors main types). Compared
-   *  ONLY through `comparableDigests` in shared/steps-digest.mjs — two schemes
+   *  ONLY through `comparableDigests` in shared/run-digest.mjs — two schemes
    *  share the field and `===` would read one against the other. Absent means
    *  UNKNOWN and never "unchanged"; it is what keeps the run summary panel from
    *  reporting flake across a test somebody edited. */
@@ -1397,6 +1397,10 @@ export interface CustomFailureReason {
   /** hidden from the picker and refused for NEW assignments; runs already
    *  labelled with it keep resolving. */
   disabled?: boolean;
+  /** deleted from Settings: hidden from the Settings list too, and kept only
+   *  so runs already labelled with it keep resolving. Always paired with
+   *  `disabled: true`. */
+  deleted?: boolean;
   createdAt: number;
   updatedAt: number;
 }

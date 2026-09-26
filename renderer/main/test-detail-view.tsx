@@ -33,7 +33,7 @@ import {
 } from "@ui";
 import { ChevronDown, Pencil, TriangleAlert, Trash2 } from "lucide-react";
 
-import { Btn } from "../theme";
+import { Btn, Hint } from "../theme";
 import { api } from "../lib/api";
 import { normalizeSignatureHost } from "../../shared/shopify-signature.mjs";
 import { useRecorder } from "./recorder-store";
@@ -232,6 +232,34 @@ export function TestDetailView() {
   // visible browser. Falls back to the global Settings default. Runs only; the
   // trainer/"Edit in Trainer" flow is always headed.
   const [runHeadless, setRunHeadless] = React.useState(false);
+  // The run options live behind one "Options · N" button (2026-09-26) so the
+  // test's name and every control fit on one line. The checkboxes stay
+  // MOUNTED while closed (the panel is only hidden): their state seeds from
+  // the record on load, and a toggle must never lose its value to an unmount.
+  const [optionsOpen, setOptionsOpen] = React.useState(false);
+  const optionsRef = React.useRef<HTMLDivElement | null>(null);
+  const optionsTriggerRef = React.useRef<HTMLButtonElement | null>(null);
+  React.useEffect(() => {
+    if (!optionsOpen) return;
+    // Outside press and Escape close it — the same two rules as the theme's
+    // Menu, for the same reasons: `pointerdown` so it is shut before the press
+    // lands on whatever is behind it, and focus back on the trigger after
+    // Escape so the keyboard is not dropped at the top of the document.
+    const onPointerDown = (e: PointerEvent) => {
+      if (!optionsRef.current?.contains(e.target as Node)) setOptionsOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setOptionsOpen(false);
+      optionsTriggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [optionsOpen]);
   // THIS RUN'S pace, not the test's (R18). Deliberately NOT persisted and
   // deliberately reset to "inherit" on every test: "run this one slowly while I
   // watch it" is a decision about one run, and a control that quietly rewrote
@@ -390,7 +418,15 @@ export function TestDetailView() {
   // this chip sits on the toolbar the live page is opened from. The imported
   // case does NOT: the live page is a browser the editor drives, not a spec the
   // app rewrote, so the fixture's reach is not its limit.
-  const signatureWarning = ((): { text: string; title: string } | null => {
+  // `credential` is the two cases a replaced signature fixes (expired,
+  // unreadable): the test's URL itself turns red and links to Settings →
+  // Integrations. `notSent` is a limit of imported tests, not a bad credential,
+  // so it stays a chip among the run controls and links nowhere.
+  const signatureWarning = ((): {
+    kind: "credential" | "notSent";
+    text: string;
+    title: string;
+  } | null => {
     if (!test) return null;
     const host = normalizeSignatureHost(test.sourceDir ? (test.baseUrl ?? "") : (test.url ?? ""));
     if (!host) return null;
@@ -398,12 +434,14 @@ export function TestDetailView() {
     if (!entry) return null;
     if (entry.state === "expired") {
       return {
+        kind: "credential",
         text: "Signature expired",
         title: `The Shopify crawler signature for ${host} has expired, so runs of this test — and its live page — go out unsigned. An expired signature fails verification, which is worse than sending none — create a new one in your Shopify admin.`,
       };
     }
     if (entry.state === "unreadable") {
       return {
+        kind: "credential",
         text: "Signature unreadable",
         title: `A Shopify crawler signature is registered for ${host} but can't be decrypted on this Mac, so runs of this test — and its live page — go out unsigned.`,
       };
@@ -412,6 +450,7 @@ export function TestDetailView() {
       // The gap the fixture cannot close, said on the screen where the run is
       // started rather than discovered in the output afterwards.
       return {
+        kind: "notSent",
         text: "Signature not sent",
         title: `The Shopify crawler signature for ${host} is not sent for imported tests — it travels on the same fixture as screenshots and Auto-Heal, which needs the spec to import @playwright/test directly.`,
       };
@@ -1198,7 +1237,31 @@ export function TestDetailView() {
                 flow
               </span>
             ) : null}
-            <ToolbarDescription>{test.url}</ToolbarDescription>
+            {/* An expired or unreadable crawler signature is shown ON the URL
+                rather than beside it: it is a fact about the site the URL names,
+                and marking the address itself adds no line to the head. Red is
+                the failure red (`--gl-red`, the FAILED badge's), the alert icon
+                says it is a warning rather than a styled link, and the whole
+                thing is a button because the fix is never on this screen — the
+                signature is replaced in Settings → Integrations. The accessible
+                name carries the state, which the colour alone cannot. */}
+            {signatureWarning?.kind === "credential" ? (
+              <Hint text={`${signatureWarning.title} Click to open Settings → Integrations.`}>
+                <button
+                  type="button"
+                  className="gl-detail-url-alert no-drag"
+                  aria-label={`${test.url || test.baseUrl || ""} — ${signatureWarning.text}. Open Settings, Integrations`}
+                  onClick={() =>
+                    void navigate({ to: "/settings/$pane", params: { pane: "integrations" } })
+                  }
+                >
+                  <TriangleAlert className="gl-detail-url-alert-icon" aria-hidden="true" />
+                  <span className="truncate">{test.url || test.baseUrl}</span>
+                </button>
+              </Hint>
+            ) : (
+              <ToolbarDescription>{test.url}</ToolbarDescription>
+            )}
           </ToolbarContent>
           <ToolbarActions className="gl-detail-tools">
             {/* WHAT THE TEST IS — the two ways to change it. The delete lives here
@@ -1298,7 +1361,7 @@ export function TestDetailView() {
                 <SelectTrigger
                   variant="filled"
                   size="small"
-                  className="gl-input gl-detail-engine w-28"
+                  className="gl-input gl-detail-engine w-24"
                   aria-label="Browser engine for this test's runs"
                 >
                   {/* No icon of ours here: SelectValue already draws the selected
@@ -1322,7 +1385,7 @@ export function TestDetailView() {
               <label className="gl-run-option">
                 <span className="whitespace-nowrap">Pace</span>
                 <select
-                  className="gl-input gl-detail-pace w-24"
+                  className="gl-input gl-detail-pace w-[88px]"
                   value={runSpeed}
                   disabled={runInfo?.running}
                   aria-label="Speed for this run only; leave on Inherit to use the test's own"
@@ -1380,7 +1443,7 @@ export function TestDetailView() {
                   <span className="whitespace-nowrap">Base URL</span>
                   <Input
                     type="url"
-                    className="gl-input w-52"
+                    className="gl-input w-36"
                     value={baseUrlDraft}
                     placeholder="https://example.com"
                     disabled={runInfo?.running}
@@ -1409,109 +1472,135 @@ export function TestDetailView() {
                   />
                 </label>
               ) : null}
-              {signatureWarning ? (
-                <span title={signatureWarning.title}>
-                  <Status variant="error">{signatureWarning.text}</Status>
-                </span>
+              {signatureWarning?.kind === "notSent" ? (
+                <Hint text={signatureWarning.title}>
+                  <span tabIndex={0}>
+                    <Status variant="error">{signatureWarning.text}</Status>
+                  </span>
+                </Hint>
               ) : null}
             </div>
             <span className="gl-detail-tool-rule" aria-hidden="true" />
-            {/* The run toggles, a compact two-column block. The column-track rule that
-                keeps it from overlapping itself at narrow widths moved into
-                `.gl-run-options` (screens.css) in B5a — the reasoning is written
-                out there, and `check:narrow-layout` reads it from the stylesheet
-                rather than from a Tailwind class here. */}
-            <div className="gl-run-options">
-              <label className="gl-run-option">
-                <Checkbox
-                  checked={runHeadless}
-                  onCheckedChange={(v) => {
-                    const next = v === true;
-                    setRunHeadless(next);
-                    api.tests.setHeadless(id, next).catch(() => {
-                      /* best-effort persist; the toggle still applies to this run */
-                    });
-                  }}
-                  disabled={runInfo?.running}
-                  aria-label="Run this test headless (no visible browser)"
-                />
-                Run headless
-              </label>
-              <label className="gl-run-option">
-                {/* Independent of "Run headless". Headless Chromium renders to an
-                    offscreen surface, so page.screenshot() works exactly the same —
-                    it's how visual regression testing is normally done. Headless is
-                    arguably the BETTER mode for it, since a headed run drags in
-                    window chrome, focus rings and whatever display it landed on,
-                    all of which read as visual changes nobody made. */}
-                <Checkbox
-                  checked={captureArtifacts}
-                  onCheckedChange={(v) => {
-                    const next = v === true;
-                    setCaptureArtifacts(next);
-                    api.tests.setCaptureArtifacts(id, next).catch(() => {
-                      /* best-effort persist; the toggle still applies to this run */
-                    });
-                  }}
-                  disabled={runInfo?.running}
-                  aria-label="Capture screenshots on this run"
-                />
-                Capture screenshots
-              </label>
-              <label className="gl-run-option">
-                {/* Separate from screenshots on purpose: this writes page console
-                    output and request URLs to disk. Off by default, and the model
-                    can only ASK for the result — it is never attached automatically. */}
-                <Checkbox
-                  checked={recordLogs}
-                  onCheckedChange={(v) => {
-                    const next = v === true;
-                    setRecordLogs(next);
-                    api.tests.setRecordLogs(id, next).catch(() => {
-                      /* best-effort persist; the toggle still applies to this run */
-                    });
-                  }}
-                  disabled={runInfo?.running}
-                  aria-label="Record console and network on this run"
-                />
-                Record console &amp; network
-              </label>
-              <label className="gl-run-option">
-                <Checkbox
-                  checked={a11yChecks}
-                  onCheckedChange={(v) => {
-                    const next = v === true;
-                    setA11yChecks(next);
-                    api.tests.setA11yChecks(id, next).catch(() => {
-                      /* best-effort persist; the toggle still applies to this run */
-                    });
-                  }}
-                  disabled={runInfo?.running}
-                  aria-label="Check accessibility on this run"
-                />
-                Check accessibility
-              </label>
-              <label className="gl-run-option">
-                {/* The runner reads this off the RECORD, exactly as it reads
-                    recordLogs — so it is persisted and never passed to run().
-                    Off means nothing is clicked away: the built-in Klaviyo and
-                    DataGrail handlers AND the rules taught for this host, because
-                    half a switch would leave a test that asserts on the consent
-                    banner watching it vanish anyway. */}
-                <Checkbox
-                  checked={handlePopups}
-                  onCheckedChange={(v) => {
-                    const next = v === true;
-                    setHandlePopups(next);
-                    api.tests.setHandlePopups(id, next).catch(() => {
-                      /* best-effort persist; the toggle still applies to this run */
-                    });
-                  }}
-                  disabled={runInfo?.running}
-                  aria-label="Handle pop-ups on this run"
-                />
-                Handle pop-ups
-              </label>
+            {/* The run toggles, behind one button that says how many are on.
+                They were a two-column, three-row grid in the toolbar, which was
+                the widest and the tallest thing in it: with the grid there, the
+                controls could not share a line with the test's name. The panel
+                is `hidden`, not unmounted, while closed — see optionsOpen. */}
+            <div className="gl-run-options-root" ref={optionsRef}>
+              <Btn
+                ref={optionsTriggerRef}
+                className="gl-run-options-trigger"
+                aria-haspopup="true"
+                aria-expanded={optionsOpen}
+                aria-controls="run-options-panel"
+                onClick={() => setOptionsOpen((v) => !v)}
+              >
+                {`Options · ${
+                  [runHeadless, captureArtifacts, recordLogs, a11yChecks, handlePopups].filter(Boolean)
+                    .length
+                }`}
+                <ChevronDown className="size-3.5" />
+              </Btn>
+              <div
+                id="run-options-panel"
+                className="gl-run-options-panel no-drag"
+                role="group"
+                aria-label="Run options"
+                hidden={!optionsOpen}
+              >
+                <div className="gl-run-options">
+                  <label className="gl-run-option">
+                    <Checkbox
+                      checked={runHeadless}
+                      onCheckedChange={(v) => {
+                        const next = v === true;
+                        setRunHeadless(next);
+                        api.tests.setHeadless(id, next).catch(() => {
+                          /* best-effort persist; the toggle still applies to this run */
+                        });
+                      }}
+                      disabled={runInfo?.running}
+                      aria-label="Run this test headless (no visible browser)"
+                    />
+                    Run headless
+                  </label>
+                  <label className="gl-run-option">
+                    {/* Independent of "Run headless". Headless Chromium renders to an
+                        offscreen surface, so page.screenshot() works exactly the same —
+                        it's how visual regression testing is normally done. Headless is
+                        arguably the BETTER mode for it, since a headed run drags in
+                        window chrome, focus rings and whatever display it landed on,
+                        all of which read as visual changes nobody made. */}
+                    <Checkbox
+                      checked={captureArtifacts}
+                      onCheckedChange={(v) => {
+                        const next = v === true;
+                        setCaptureArtifacts(next);
+                        api.tests.setCaptureArtifacts(id, next).catch(() => {
+                          /* best-effort persist; the toggle still applies to this run */
+                        });
+                      }}
+                      disabled={runInfo?.running}
+                      aria-label="Capture screenshots on this run"
+                    />
+                    Capture screenshots
+                  </label>
+                  <label className="gl-run-option">
+                    {/* Separate from screenshots on purpose: this writes page console
+                        output and request URLs to disk. Off by default, and the model
+                        can only ASK for the result — it is never attached automatically. */}
+                    <Checkbox
+                      checked={recordLogs}
+                      onCheckedChange={(v) => {
+                        const next = v === true;
+                        setRecordLogs(next);
+                        api.tests.setRecordLogs(id, next).catch(() => {
+                          /* best-effort persist; the toggle still applies to this run */
+                        });
+                      }}
+                      disabled={runInfo?.running}
+                      aria-label="Record console and network on this run"
+                    />
+                    Record console &amp; network
+                  </label>
+                  <label className="gl-run-option">
+                    <Checkbox
+                      checked={a11yChecks}
+                      onCheckedChange={(v) => {
+                        const next = v === true;
+                        setA11yChecks(next);
+                        api.tests.setA11yChecks(id, next).catch(() => {
+                          /* best-effort persist; the toggle still applies to this run */
+                        });
+                      }}
+                      disabled={runInfo?.running}
+                      aria-label="Check accessibility on this run"
+                    />
+                    Check accessibility
+                  </label>
+                  <label className="gl-run-option">
+                    {/* The runner reads this off the RECORD, exactly as it reads
+                        recordLogs — so it is persisted and never passed to run().
+                        Off means nothing is clicked away: the built-in Klaviyo and
+                        DataGrail handlers AND the rules taught for this host, because
+                        half a switch would leave a test that asserts on the consent
+                        banner watching it vanish anyway. */}
+                    <Checkbox
+                      checked={handlePopups}
+                      onCheckedChange={(v) => {
+                        const next = v === true;
+                        setHandlePopups(next);
+                        api.tests.setHandlePopups(id, next).catch(() => {
+                          /* best-effort persist; the toggle still applies to this run */
+                        });
+                      }}
+                      disabled={runInfo?.running}
+                      aria-label="Handle pop-ups on this run"
+                    />
+                    Handle pop-ups
+                  </label>
+                </div>
+              </div>
             </div>
             <span className="gl-detail-tool-rule" aria-hidden="true" />
             {/* `stop` and `go`, and this is the one place on the screen that earns

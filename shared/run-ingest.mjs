@@ -54,7 +54,7 @@
 import { normalizeSiteHealthSummary } from "./site-health.mjs";
 import { normalizeRunProvenance } from "./run-provenance.mjs";
 import { normalizeRunTrigger } from "./run-trigger.mjs";
-import { isRunDigest } from "./steps-digest.mjs";
+import { isRunDigest } from "./run-digest.mjs";
 
 /**
  * The most a free-text field on an ingested record may be.

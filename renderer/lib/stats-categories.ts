@@ -108,14 +108,14 @@ export const CATEGORIES: readonly CategoryMeta[] = [
     label: "Accessibility",
     short: "A11y",
     unit: "steps carry violations you haven’t accepted",
-    unmeasured: "Switch on “Check accessibility” beside Run test, then run a test.",
+    unmeasured: "Switch on “Check accessibility” in Options, beside Run test, then run a test.",
   },
   {
     id: "visual",
     label: "Visual diff",
     short: "Visual",
     unit: "steps changed against their baseline",
-    unmeasured: "Switch on “Capture screenshots” beside Run test, then run a test.",
+    unmeasured: "Switch on “Capture screenshots” in Options, beside Run test, then run a test.",
   },
   {
     id: "speed",

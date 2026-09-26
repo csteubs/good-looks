@@ -261,7 +261,7 @@ export function RunHistoryPanel({
           <div className="flex flex-1 flex-col items-center justify-center gap-1 px-4 text-center">
             <ImageOff className="size-4 text-tertiary" aria-hidden="true" />
             <span className="text-[11px] text-tertiary">
-              No screenshots yet — turn on “Capture screenshots” and run the test.
+              No screenshots yet — turn on “Capture screenshots” in Options and run the test.
             </span>
           </div>
         ) : (

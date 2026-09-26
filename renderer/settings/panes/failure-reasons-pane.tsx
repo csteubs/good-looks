@@ -5,9 +5,13 @@
 //
 //   • RENAME IN PLACE. The edit form updates the reason's record; runs store
 //     the id, so the new name reaches every historical label the moment the
-//     save lands. There is no delete — a custom reason is DISABLED instead,
-//     which hides it from the picker and stops new assignments while every
-//     run already filed under it keeps its label.
+//     save lands.
+//   • DISABLE OR DELETE, AND HISTORY KEEPS ITS LABEL EITHER WAY. Disabling
+//     hides a reason from the picker and stops new assignments; deleting
+//     also takes it off this list. The store keeps a deleted reason as a
+//     tombstone, so every run already filed under it keeps its name — which
+//     is what the confirm dialog says before it happens. Adding the same name
+//     again restores it (same id), so the list never needs a "deleted" section.
 //   • BUILT-INS ARE LISTED, NOT EDITABLE. They are what the automatic
 //     categorizer can assign, and renaming them would detach the triage
 //     mapping from the words the docs and the Stats breakdown use.
@@ -15,7 +19,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { Button, Input, Switch, toast } from "@ui";
+import { AlertDialog, Button, Input, Switch, toast } from "@ui";
 import { api } from "../../lib/api";
 import type { CustomFailureReason } from "../../lib/recorder-types";
 import {
@@ -71,7 +75,15 @@ export function FailureReasonsPane() {
     onError: (err: unknown) => toast.error(errorText(err)),
   });
 
-  const custom = catalog.data?.custom ?? [];
+  const remove = useMutation({
+    mutationFn: (id: string) => api.failureReasons.remove(id),
+    onSuccess: refetch,
+    onError: (err: unknown) => toast.error(errorText(err)),
+  });
+
+  // Deleted reasons stay in the catalog so history resolves their names; they
+  // are simply not the editor's any more.
+  const custom = (catalog.data?.custom ?? []).filter((r) => !r.deleted);
   const builtin = catalog.data?.builtin ?? [];
   const activeCount = custom.filter((r) => !r.disabled).length;
 
@@ -126,8 +138,9 @@ export function FailureReasonsPane() {
             <>
               Failure modes specific to how you work — an expired credential, a third-party
               outage — instead of forcing them into a broad built-in. Renaming one updates every
-              run already filed under it. Disabling hides it from the picker and keeps the runs
-              it already labels. Up to {MAX_ACTIVE_CUSTOM_REASONS} can be active.
+              run already filed under it. Disabling hides it from the picker; deleting also removes
+              it from this list. Either way, the runs it already labels keep the label. Up to{" "}
+              {MAX_ACTIVE_CUSTOM_REASONS} can be active.
             </>
           }
         >
@@ -196,6 +209,23 @@ export function FailureReasonsPane() {
                       >
                         {reason.disabled ? "Enable" : "Disable"}
                       </Button>
+                      <AlertDialog
+                        trigger={
+                          <Button
+                            variant="secondary"
+                            aria-label={`Delete ${reason.name}`}
+                            disabled={update.isPending || remove.isPending}
+                          >
+                            Delete
+                          </Button>
+                        }
+                        size="small"
+                        title={`Delete “${reason.name}”?`}
+                        description="It leaves this list and the run panel's picker. Runs already labelled with it keep the label. Adding a reason with this name again restores it."
+                        confirmLabel="Delete reason"
+                        confirmVariant="destructive"
+                        onConfirm={() => remove.mutate(reason.id)}
+                      />
                     </li>
                   ),
                 )}

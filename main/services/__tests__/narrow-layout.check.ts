@@ -142,6 +142,20 @@ const MEASURED_REQUIREMENT = 928;
       );
     }
   }
+  // Since 2026-09-26 the toggles sit in a popover behind "Options · N", and
+  // that is what lets the test's name and every control share one line. The
+  // panel must be OUT OF FLOW: a static panel would open by growing the head,
+  // pushing the tab strip and the steps down every time it is opened — the
+  // variable-height head this change exists to end.
+  const panel = screens.match(/\.gl-run-options-panel\s*\{([^}]*)\}/);
+  assert(
+    panel !== null && /position:\s*absolute/.test(panel[1]),
+    ".gl-run-options-panel: positioned absolutely, so opening it overlays the screen rather than growing the head",
+  );
+  assert(
+    /className="gl-run-options-panel[^"]*"/.test(detail) && /hidden=\{!optionsOpen\}/.test(detail),
+    "test-detail-view.tsx: the toggles live in `.gl-run-options-panel`, hidden (not unmounted) while closed",
+  );
   assert(
     !/grid-cols-2|grid-cols-\[/.test(detail),
     "test-detail-view.tsx: the run-options block has not gone back to a Tailwind grid utility",
@@ -266,8 +280,7 @@ const MEASURED_REQUIREMENT = 928;
   // step row and wrong here: proportional shrink takes it out of the small items
   // first in relative terms, and the engine trigger reached 61px — "Chromium"
   // rendered as "Chro…", a control that cannot show the value it reports. The
-  // floors move that shrink onto `.gl-run-options`, which absorbs it by wrapping
-  // its labels and losing nothing.
+  // floors leave that shrink to the identity column, which truncates the name.
   for (const [cls, what] of [
     ["gl-detail-engine", "the engine trigger"],
     ["gl-detail-secs", "the timeout field"],

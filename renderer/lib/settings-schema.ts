@@ -682,7 +682,7 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     id: "custom-failure-reasons",
     pane: "failure-reasons",
     label: "Custom reasons",
-    keywords: "failure reason custom label rename disable vocabulary",
+    keywords: "failure reason custom label rename disable delete remove vocabulary",
   },
 
   // Overlay rules

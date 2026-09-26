@@ -57,7 +57,7 @@
 // followed a failed run is both, and the within-run reading is the one with no
 // confounder in it.
 
-import { comparableDigests } from "../../shared/steps-digest.mjs";
+import { comparableDigests } from "../../shared/run-digest.mjs";
 
 import type { HealEntry, RunRecord } from "./recorder-types";
 
@@ -336,7 +336,7 @@ function summariseRecord(
       differences: runDifferences(previous, record),
       // Through `comparableDigests` and never `===`: one field carries two
       // schemes, and comparing a step digest against a source digest would
-      // report an edit nobody made (shared/steps-digest.mjs).
+      // report an edit nobody made (shared/run-digest.mjs).
       stepsChanged: digests === "unknown" ? null : digests === "different",
       attempt: 0,
       durationMs: record.durationMs,

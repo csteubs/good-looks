@@ -11,6 +11,172 @@ Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
 
+### 2026-09-26 — The test detail view's run toggles moved into an Options menu
+
+The five run toggles (Run headless, Capture screenshots, Record console &
+network, Check accessibility, Handle pop-ups) left the toolbar for a popover
+behind one **"Options · N"** button, N being how many are on. The toolbar is
+now one line: Edit test and delete, then engine, pace and timeout (and the base
+URL for an imported test), then Options, then Run test.
+
+**Why.** The toggles were a two-column, three-row grid — the widest and the
+tallest item on the band. With it there the controls could not share a line
+with the test's name at any ordinary window size, so the head wrapped and the
+tab strip sat at a different height depending on which test was open. The
+grid was the one item that did not need to be on screen: the toggles are set
+once per test and rarely touched, and the count on the button still says how
+much a run will do without opening anything.
+
+**What else gave.** Removing the grid bought most of the width; the rest came
+from the fields — the engine trigger 112 → 96px and the pace select 96 → 88px
+(both above their floors), the base URL field 208 → 144px, and the gap between
+clusters 10 → 8px. Measured in the browser preview with a 240px sidebar: one
+line from a 1280px window for a recorded test and from 1440px for an imported
+one, which is the size the app is used at.
+
+**Shape of the popover.** `hidden`, not unmounted, while closed: the checkbox
+state seeds from the record on load, and a toggle must not depend on the
+panel having been opened. Out of flow (absolute, under the button's trailing
+edge) so opening it overlays the tab strip instead of growing the head —
+`check:narrow-layout` pins both. Outside press and Escape close it, the
+theme `Menu`'s rules. It is not a `Menu` because the rows are checkboxes that
+stay open while several are toggled, and not the native `Select`, whose
+options never reach the DOM.
+
+**Rejected.** Shortening the labels to nouns (2026-08-17 already refused this:
+empty states across the app name these exact strings) — they now say where
+the strings live instead, "in Options, beside Run test". And moving the base
+URL into the popover: it is the field a refused run sends the user to, so it
+stays visible.
+
+### 2026-09-25 — An unusable crawler signature labels the failure, and its warning links to the fix
+
+A new built-in failure reason, **"Credentials Expired/Invalid"** (`credentials`),
+assigned automatically when a failed run went out unsigned because the Shopify
+crawler signature registered for the test's host was expired or could not be
+decrypted. And on the test detail view an expired or unreadable signature is
+shown ON the test's URL — the failure red, an alert icon, and a button that
+opens Settings → Integrations — instead of as a "Signature expired" chip among
+the run controls.
+
+**Why the signature state is context, not evidence.** A store turning away an
+unsigned crawler does not fail the run with anything that names the signature:
+it fails "somewhere further down", as a timeout, a missing element or a
+challenge page over the target (`announceSignatureState`'s own header says
+so). Triage would file every one of those under the SYMPTOM — Timing, Target
+not actionable, Site regression — which sends the reader to the wrong fix.
+Only the app's runner knows the run went out unsigned for this reason, at the
+moment it decides not to sign, so `announceSignatureState` now answers the
+state and the run-end pass hands it to `suggestFailureReason` as a third
+argument. Nothing new is stored on `RunRecord`: a field there reaches the
+ingest gate, the export allowlists and the MCP, and the MCP/CLI runner never
+signs, so it would only ever be absent on that side.
+
+**Order: after network, before everything else.** A run that never reached the
+site was not refused for its credentials, so a connect-level error line still
+wins. Everything after that is a symptom the missing signature can cause.
+
+**Expired AND unreadable.** Both mean the stored credential is unusable and the
+run went out unsigned; the name's "Invalid" half is the unreadable case. An
+imported test is excluded — it never sends a signature however healthy one is,
+so an expired one is not what made the difference.
+
+**This attributes, it does not prove.** A run with an expired signature can fail
+for an unrelated reason and still be labelled Credentials. Accepted: the label
+is automatic only into a blank, a person's pick always wins, and the auto tag
+says the label is unreviewed. A store that is going to refuse the crawler
+makes every other explanation moot until the credential is replaced.
+
+**The warning is the URL, not a chip beside it.** Among Pace, Timeout and the run
+toggles the chip read as a run setting; it is a fact about the site the URL
+names. A first attempt put the chip on a line of its own under the URL, which
+made the head a line taller for exactly the tests with a warning and let the
+narrowed toolbar drift right; a fixed-height two-line head was built to contain
+that and then reverted in favour of this, which adds no line at all. Red is the
+FAILED badge's `--gl-red`, the alert icon (lucide `TriangleAlert`) keeps it from
+reading as an ordinary styled link, and the accessible name carries the state
+("… — Signature expired"), which colour alone cannot. The explanation is on the
+theme's `Hint` rather than a native `title`, which macOS under the pinned
+Electron rarely shows. "Signature not sent" — an imported test, which cannot
+carry the signature whatever its state — is not a bad credential and is not
+fixed in Integrations, so it stays the chip among the run controls it was.
+
+### 2026-09-25 — The renderer compares run digests without `node:crypto`
+
+`shared/run-digest.mjs` (new), `shared/steps-digest.mjs`, and
+`check:renderer-builtins`. From #325 the browser preview failed at load with
+`Module "node:crypto" has been externalized for browser compatibility`:
+`renderer/lib/run-summary.ts` imported `comparableDigests` from
+`steps-digest.mjs`, which imports `createHash` at the top. The renderer under
+`npm run dev` is served by the same Vite dev server and was affected the same
+way. The packaged app was not — `npm run build` printed the externalization
+warning and tree-shook the hash out, because the renderer never calls it.
+Nothing in the gate failed: `type-check` reads the hand-written `.d.mts`,
+Vitest runs under Node, where the builtin is real, and the build succeeded.
+
+**Split by reader, not by moving one function.** The renderer and the ingest
+gate only ever READ a digest; only the two runners write one. So everything a
+digest's shape depends on — length, scheme tags, the stored pattern,
+`isRunDigest`, `comparableDigests` — moved to `run-digest.mjs`, which has no
+builtins, and `steps-digest.mjs` imports its constants from there. Moving only
+`comparableDigests` would have left the length and the scheme tags defined on
+the writing side and the pattern that validates them on the reading side,
+which is two places to change when a scheme bumps. `steps-digest.mjs`
+re-exports the reading half, so the runners, `check:mcp-parity` §19 and the
+tests needed no change; a unit test pins that both names are one
+implementation.
+
+**Lazy-loading `node:crypto` inside the hash was rejected.** It keeps one file,
+but makes the module async (or reliant on `require`, which plain ESM does not
+have), and leaves "this file is safe for the renderer" as a property of how
+one function happens to be written.
+
+**The guard is an import-graph walk, not a headless preview load.** Loading
+the preview would catch this and more, but it needs a Vite server and a
+browser in the check chain and says only "something threw", not which import
+did it. The walk runs in about a second and fails naming the chain
+(`renderer/lib/run-summary.ts > shared/steps-digest.mjs`, `node:crypto`). Its
+blind spot is anything not reached by a static specifier — a computed
+`import()` — which the renderer does not use.
+
+### 2026-09-25 — A custom failure reason can be deleted, to a tombstone
+
+`failureReasonStore.remove`, the `failureReasons:remove` handler, and a Delete
+button (behind a confirm) on each custom reason in Settings → Failure reasons.
+Disable stays; delete is the second, stronger verb — it also takes the reason
+off the Settings list, which disable deliberately does not.
+
+**The 2026-08-19 entry refused delete for one reason, and that reason still
+holds: runs store the reason's ID and resolve its name at display time, so
+erasing the definition strands every labelled run with a bare uuid.** So a
+delete does not erase. It marks the record `deleted` (always paired with
+`disabled: true`, so every reader that only knows `disabled` — the picker, the
+assignment guard, the active cap — already treats it as gone) and leaves it in
+`failure-reasons.json`. `list()` still returns it, so the run panel, the Stats
+breakdown, the report emitter and the MCP's `list_runs` keep resolving the
+name with no change of their own; only the Settings pane filters it out.
+
+**Snapshotting the name onto each labelled run, then erasing the definition,
+was rejected.** It is a new `RunRecord` field, which reaches the ingest gate,
+the export allowlists and the MCP — and it rewrites run-history.json, which
+the id-not-name design exists to avoid.
+
+**Re-adding a deleted reason's name RESTORES it — same id — rather than
+minting a new one.** Names are unique across the whole file for the reason
+they are unique across disabled reasons: a deleted reason still has a row in
+the Stats breakdown, so a fresh reason with the same name would put two
+identical rows there, splitting one failure mode across two ids. Restoring
+takes the name and description as typed now, like a rename. Renaming another
+reason ONTO a deleted one's name is refused instead (merging two ids' history
+would mean rewriting runs); the message names the way back. A deleted reason
+cannot be edited through `update` for the same reason — re-enabling it there
+would leave a live reason that is missing from Settings.
+
+**The confirm is there because delete has no undo button**, and because the
+dialog is where the one fact a user needs is stated: runs already labelled
+keep the label. It is the app's standard destructive `AlertDialog` (the heals
+and tag deletes use the same one), not a bespoke modal.
+
 ### 2026-09-13 — "Capture a value" asks which element to read
 
 **Four of the kind's six sources could not be added at all.** A `capture` step

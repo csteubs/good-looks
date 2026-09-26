@@ -1118,6 +1118,20 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       custom: state.failureReasons,
     }),
     "failureReasons:create": (p): CustomFailureReason => {
+      // Re-adding a deleted reason's name restores that record, as the real
+      // store does — otherwise the preview would show two rows with one name.
+      const name = String(p?.name ?? "").trim();
+      const buried = state.failureReasons.find(
+        (r) => r.deleted && r.name.toLowerCase() === name.toLowerCase(),
+      );
+      if (buried) {
+        buried.name = name;
+        buried.description = String(p?.description ?? "").trim();
+        delete buried.deleted;
+        delete buried.disabled;
+        buried.updatedAt = Date.now();
+        return buried;
+      }
       const rec: CustomFailureReason = {
         id: `fr-${state.failureReasons.length + 1}`,
         name: String(p?.name ?? "").trim(),
@@ -1137,6 +1151,14 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
         if (p.disabled === true) rec.disabled = true;
         else delete rec.disabled;
       }
+      rec.updatedAt = Date.now();
+      return rec;
+    },
+    "failureReasons:remove": (p): CustomFailureReason => {
+      const rec = state.failureReasons.find((r) => r.id === String(p?.id ?? ""));
+      if (!rec) throw new Error("No such custom reason: " + String(p?.id ?? ""));
+      rec.deleted = true;
+      rec.disabled = true;
       rec.updatedAt = Date.now();
       return rec;
     },
@@ -1887,7 +1909,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
         {
           id: "sig-gone",
           // Deliberately the host `t-checkout` navigates to, so the expired
-          // chip on the test detail toolbar is reachable in a tab. A fixture
+          // red URL on the test detail head is reachable in a tab. A fixture
           // set whose hosts match nothing in the library would render the
           // settings row and leave the other half of the feature invisible.
           host: "shop.example.com",

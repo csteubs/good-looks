@@ -371,6 +371,36 @@ function codeOnly(src: string): string {
   );
 }
 
+// ── 5. An unusable signature files the failure under credentials ─────
+//
+// A store refusing an unsigned crawler fails the run as a timeout or a missing
+// element, which triage would file under the symptom. The runner is the one
+// process that knows the run went out unsigned because the registered
+// credential was expired or undecryptable — and that fact reaches the run-end
+// failure-reason pass only through this wiring. It lives across ~700 lines of
+// one function, and losing either end leaves the reason defined, tested in
+// shared/, and never assigned. The rule itself is unit-tested in
+// failure-reasons.test.ts.
+{
+  const src = codeOnly(readFileSync(join(root, "main/services/playwright-runner.ts"), "utf-8"));
+  assert(
+    /unusableSignature = await announceSignatureState\(/.test(src),
+    "the runner keeps what announceSignatureState says about the credential",
+  );
+  assert(
+    /suggestFailureReason\([\s\S]{0,200}\{ signature: unusableSignature \}/.test(src),
+    "…and hands it to suggestFailureReason at run end",
+  );
+  const fnAt = src.indexOf("async function announceSignatureState(");
+  const fn = src.slice(fnAt, src.indexOf("\n}\n", fnAt));
+  assert(
+    fn.includes('return imported ? null : "expired";') &&
+      fn.includes('return imported ? null : "unreadable";'),
+    "announceSignatureState reports expired and unreadable — and not for an imported test, " +
+      "which never sends a signature, so its expiry is not what made the difference",
+  );
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

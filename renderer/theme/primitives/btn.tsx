@@ -23,6 +23,9 @@ import { TONE, toneSurface } from "../tokens";
 export type BtnTone = "go" | "stop" | "ghost" | "ai";
 
 export interface BtnProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  /** Passed through to the <button> (React 19 hands `ref` over as a prop). A
+   *  trigger that takes focus back after its popover closes needs it. */
+  ref?: React.Ref<HTMLButtonElement>;
   tone?: BtnTone;
 }
 

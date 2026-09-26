@@ -132,8 +132,9 @@ vi.mock("./recorder-store", () => ({
   },
 }));
 
+const { navigateSpy } = vi.hoisted(() => ({ navigateSpy: vi.fn() }));
 vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => vi.fn(),
+  useNavigate: () => navigateSpy,
   useParams: () => ({ id: routeId }),
 }));
 
@@ -540,25 +541,22 @@ describe("run controls", () => {
     }
   });
 
-  it("stacks the run toggles as one two-column block", async () => {
+  it("keeps all five run toggles inside the one Options panel", async () => {
     renderView();
     await screen.findByText("Checkout");
-    const block = screen
-      .getByLabelText(/run this test headless/i)
-      .closest(".gl-run-options") as HTMLElement | null;
+    const panel = document.getElementById("run-options-panel");
+    expect(panel).not.toBeNull();
+    const block = panel!.querySelector(".gl-run-options") as HTMLElement | null;
     expect(block).not.toBeNull();
-    // The TRACK SIZING moved into `.gl-run-options` (screens.css) in B5a, and
-    // `check:narrow-layout` reads it from the stylesheet — it has to, because
-    // the dom project runs with `css: false` and there is no computed grid
-    // geometry here to measure. What this test still owns is the other half,
-    // which the stylesheet cannot answer: that all four toggles are actually
-    // INSIDE the block. A checkbox that escapes the grid breaks the
-    // gang-of-four layout while every CSS assertion stays green.
-    expect(block!.className).not.toContain("grid-cols-2");
-    // Every toggle lives in the same block — a checkbox that escapes the grid
-    // silently breaks the layout without failing anything. Handle pop-ups is
-    // the fifth, and the one most likely to have been bolted on outside.
+    // The TRACK SIZING lives in `.gl-run-options` (screens.css) and
+    // `check:narrow-layout` reads it from the stylesheet — the dom project runs
+    // with `css: false`, so there is no computed geometry here. What this test
+    // owns is the half the stylesheet cannot answer: that every toggle is
+    // INSIDE the panel. A checkbox that escapes it lands back on the toolbar
+    // row and pushes the head onto two lines while every CSS assertion stays
+    // green. Handle pop-ups is the one most likely to be bolted on outside.
     for (const label of [
+      /run this test headless/i,
       /capture screenshots on this run/i,
       /record console and network/i,
       /check accessibility/i,
@@ -566,6 +564,46 @@ describe("run controls", () => {
     ]) {
       expect(block!.contains(screen.getByLabelText(label))).toBe(true);
     }
+  });
+
+  it("opens the Options panel from its trigger, counts what is on, and closes on Escape and outside press", async () => {
+    renderView();
+    await screen.findByText("Checkout");
+    const panel = document.getElementById("run-options-panel") as HTMLElement;
+    const trigger = screen.getByRole("button", { name: /^options · \d+$/i });
+    // Closed by default: the toolbar is one row only while the toggles are not
+    // on it.
+    expect(panel.hidden).toBe(true);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(trigger.getAttribute("aria-controls")).toBe("run-options-panel");
+
+    // The count is the number of boxes actually checked, so a closed panel
+    // still says how much this run will do.
+    const checked = () =>
+      panel.querySelectorAll('[role="checkbox"][aria-checked="true"]').length;
+    expect(trigger.textContent).toContain(`Options · ${checked()}`);
+    const before = checked();
+    fireEvent.click(screen.getByLabelText(/run this test headless/i));
+    await waitFor(() => expect(checked()).not.toBe(before));
+    expect(trigger.textContent).toContain(`Options · ${checked()}`);
+
+    fireEvent.click(trigger);
+    expect(panel.hidden).toBe(false);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+
+    // Pressing inside the panel keeps it open — toggling three boxes is one
+    // visit, not three.
+    fireEvent.pointerDown(screen.getByLabelText(/check accessibility/i));
+    expect(panel.hidden).toBe(false);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(panel.hidden).toBe(true);
+    expect(document.activeElement).toBe(trigger);
+
+    fireEvent.click(trigger);
+    expect(panel.hidden).toBe(false);
+    fireEvent.pointerDown(document.body);
+    expect(panel.hidden).toBe(true);
   });
 });
 
@@ -1432,25 +1470,73 @@ describe("the Shopify signature chip", () => {
     expect(screen.queryByText(/Signature/)).toBeNull();
   });
 
-  it("warns when the signature for this store has expired", async () => {
+  it("marks the URL itself when the signature for this store has expired", async () => {
     signatures = [sig({ state: "expired", expiresAt: NOW_S - DAY_S })];
     renderView();
-    await waitFor(() => expect(screen.getByText("Signature expired")).toBeTruthy());
-    expect(screen.getByText("Signature expired").closest("[title]")?.getAttribute("title")).toMatch(
-      /worse than sending none/,
+    const link = await screen.findByRole("button", { name: /signature expired/i });
+    // The URL is the warning: its text, the failure red, an alert icon — and no
+    // separate chip anywhere on the head.
+    expect(link.textContent).toContain("https://shop.example.com/products/hat");
+    expect(link.classList.contains("gl-detail-url-alert")).toBe(true);
+    expect(link.querySelector("svg")).toBeTruthy();
+    expect(screen.queryByText("Signature expired")).toBeNull();
+    // The explanation is a Hint, not a native title (macOS rarely shows one);
+    // focus is the path jsdom can drive, and the keyboard one.
+    expect(link.getAttribute("title")).toBeNull();
+    fireEvent.focus(link);
+    expect((await screen.findAllByText(/worse than sending none/)).length).toBeGreaterThan(0);
+  });
+
+  it("replaces the URL line rather than adding one, and stays out of the run controls", async () => {
+    signatures = [sig({ state: "expired", expiresAt: NOW_S - DAY_S })];
+    const { container } = renderView();
+    const link = await screen.findByRole("button", { name: /signature expired/i });
+    expect(link.closest(".gl-detail-ident")).toBeTruthy();
+    expect(link.closest(".gl-detail-tools")).toBeNull();
+    // The plain URL paragraph is gone — the red link IS the URL line — so the
+    // identity column holds the same number of lines as for a healthy test.
+    expect(container.querySelector(".gl-detail-ident p")).toBeNull();
+  });
+
+  it("opens Settings → Integrations, where the signature is replaced", async () => {
+    signatures = [sig({ state: "expired", expiresAt: NOW_S - DAY_S })];
+    renderView();
+    navigateSpy.mockClear();
+    fireEvent.click(await screen.findByRole("button", { name: /signature expired/i }));
+    expect(navigateSpy).toHaveBeenCalledWith({
+      to: "/settings/$pane",
+      params: { pane: "integrations" },
+    });
+  });
+
+  it("marks the URL the same way when the signature cannot be decrypted on this Mac", async () => {
+    // "Invalid" rather than "expired" — a different fix (re-paste the one you
+    // have), but the same place to make it, so the same link.
+    signatures = [sig({ state: "unreadable" })];
+    renderView();
+    const link = await screen.findByRole("button", { name: /signature unreadable/i });
+    expect(link.classList.contains("gl-detail-url-alert")).toBe(true);
+    navigateSpy.mockClear();
+    fireEvent.click(link);
+    expect(navigateSpy).toHaveBeenCalledWith({
+      to: "/settings/$pane",
+      params: { pane: "integrations" },
+    });
+  });
+
+  it("leaves a healthy test's URL plain", async () => {
+    signatures = [sig()];
+    const { container } = renderView();
+    await screen.findAllByRole("tab");
+    expect(container.querySelector(".gl-detail-url-alert")).toBeNull();
+    expect(container.querySelector(".gl-detail-ident p")?.textContent).toBe(
+      "https://shop.example.com/products/hat",
     );
   });
 
-  it("warns when the signature cannot be decrypted on this Mac", async () => {
-    // A different problem with a different fix — re-paste the one you have,
-    // rather than go and create a new one — so it must not read as "expired".
-    signatures = [sig({ state: "unreadable" })];
-    renderView();
-    await waitFor(() => expect(screen.getByText("Signature unreadable")).toBeTruthy());
-  });
-
-  it("warns an imported test that its runs cannot carry the signature", async () => {
-    // The gap the fixture cannot close: an imported spec never imports it.
+  it("warns an imported test that its runs cannot carry the signature — among the controls, not on the URL", async () => {
+    // The gap the fixture cannot close: an imported spec never imports it. Not
+    // a bad credential and not fixed in Integrations, so no red link.
     test_ = {
       id: "t1",
       name: "Imported checkout",
@@ -1462,8 +1548,10 @@ describe("the Shopify signature chip", () => {
       updatedAt: 0,
     } as unknown as TestRecord;
     signatures = [sig()];
-    renderView();
+    const { container } = renderView();
     await waitFor(() => expect(screen.getByText("Signature not sent")).toBeTruthy());
+    expect(screen.getByText("Signature not sent").closest(".gl-detail-tools")).toBeTruthy();
+    expect(container.querySelector(".gl-detail-url-alert")).toBeNull();
   });
 
   it("does not warn a test at a neighbouring host", async () => {

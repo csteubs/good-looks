@@ -185,6 +185,27 @@ describe("what the picker offers and writes", () => {
     expect(offered()).not.toContain("Old reason");
   });
 
+  it("withholds a deleted reason — even one missing the disabled flag it is written with", async () => {
+    h.custom = [
+      { id: "c1", name: "Vendor outage", description: "" },
+      { id: "c3", name: "Cloudflare", description: "", deleted: true },
+    ];
+    h.runs = [run()];
+    renderRow();
+    await screen.findByText("Uncategorized");
+    const offered = chooseFromNativeMenu("Vendor outage");
+    await waitFor(() => expect(offered()).toContain("Vendor outage"));
+    expect(offered()).not.toContain("Cloudflare");
+  });
+
+  it("keeps a deleted reason's NAME on the runs it already labels", async () => {
+    h.custom = [{ id: "c3", name: "Cloudflare", description: "", disabled: true, deleted: true }];
+    h.runs = [run({ failureReasonId: "c3", failureReasonBy: "user" })];
+    renderRow();
+    expect(await screen.findByText("Cloudflare")).toBeTruthy();
+    expect(screen.queryByText("c3")).toBeNull();
+  });
+
   it("keeps showing a disabled reason that is the CURRENT value", async () => {
     h.custom = [{ id: "c2", name: "Old reason", description: "", disabled: true }];
     h.runs = [run({ failureReasonId: "c2", failureReasonBy: "user" })];
